@@ -17,8 +17,12 @@ if (sessionStorage.redirect) {
   }
 }
 
-createApp(App)
+const app = createApp(App)
   .use(createPinia())
   .use(router)
-  .use(ElementPlus)
-  .mount('#app')
+  .use(ElementPlus);
+
+// 将router实例注册到全局，供store使用
+(window as any).routerInstance = router;
+
+app.mount('#app');

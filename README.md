@@ -1,11 +1,42 @@
-# Texas Holdem 在线德州扑克
+# 多桌游虚拟房间助手
 
-**进房间要先cashin, 钱不够无法开始**
+**支持多种桌游的在线助手平台**
+
+本项目是一个多桌游虚拟房间助手，支持以下桌游：
+- **德州扑克**（分为助手发牌/非助手发牌两种模式）
+- **狼人杀**
+- **杀人游戏**
+- **一夜终极狼人**
+- **阿瓦隆**
+- **血染钟楼**
+
+## 项目架构
 
 本项目包含前端和后端两部分：
 
 - `frontend`：Vue3 + TypeScript 前端，使用 Vite、Pinia、Element Plus。
 - `backend`：Node.js + Express + socket.io 后端，采用多线程架构，数据保存在内存。
+
+### 架构设计
+
+系统分为两个核心部分：
+- **A部分（通用）**：房间/线程控制，所有桌游共享的逻辑
+- **B部分（游戏特异）**：每个桌游独有的游戏逻辑
+
+## 功能特性
+
+### 房间系统
+- 动态创建房间，无预设房间
+- 房间名为随机6位字符（数字+大写字母）
+- 支持房间上锁/解锁
+- 在线/离线状态检测
+- 自动房间清理机制
+
+### 游戏支持
+- 每种游戏可配置最大人数
+- 游戏特异性配置支持
+- 统一的前端大厅界面
+- 独立的游戏房间页面
 
 ## 运行
 
@@ -14,8 +45,11 @@
 ```bash
 cd frontend
 npm install
-npm run 
+npm run dev
+```
 
+生产构建：
+```bash
 VITE_SOCKET_URL=your_server_url npm run build
 ```
 
@@ -60,10 +94,10 @@ npm run dev
 cd backend
 
 # 多阶段构建，自动处理编译和依赖优化
-docker build -t texas-holdem-backend .
+docker build -t boardgame-assistant-backend .
 
 # 运行容器
-docker run -d --name texas-backend -p 3000:3000 texas-holdem-backend
+docker run -d --name boardgame-backend -p 3000:3000 boardgame-assistant-backend
 ```
 
 **构建说明：**
@@ -88,22 +122,38 @@ node dist/server.js
 ## 架构说明
 
 ### 多线程架构
-- **主线程**：处理Socket.IO连接、任务分发、线程生命周期管理
+- **主线程**：处理Socket.IO连接、任务分发、线程生命周期管理、房间创建与管理
 - **房间线程**：每个房间独立的Worker线程，处理游戏逻辑、状态管理
-- **线程管理**：房间空闲1分钟后自动销毁线程，节省资源
+- **线程管理**：房间结束或空闲时自动销毁线程，节省资源
 
 ### 文件结构
 ```
 backend/
 ├── src/
-│   ├── controllers/     # 主线程控制器
-│   ├── workers/         # Worker线程实现
+│   ├── controllers/     # 主线程控制器（通用房间控制）
+│   ├── workers/         # Worker线程实现（游戏特异逻辑）
 │   ├── services/        # 线程管理服务
 │   ├── models/          # 数据模型
 │   └── utils/           # 工具函数
 ├── dist/               # 编译输出目录
 └── ...
+
+frontend/
+├── src/
+│   ├── components/     # 组件
+│   │   ├── common/     # 通用组件（大厅等）
+│   │   └── games/      # 游戏特异组件
+│   ├── router/         # 路由配置
+│   ├── store/          # 状态管理
+│   └── ...
+└── ...
 ```
+
+### 游戏配置系统
+- 配置文件支持多游戏类型设置
+- 每种游戏可单独配置最大人数
+- 游戏特异配置（如德州扑克的盲注设置）
+- 服务器最大房间数限制
 
 ### 生产环境路径处理
 - **开发环境**：Worker路径为 `src/services/ → ../../dist/workers/`

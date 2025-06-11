@@ -1,25 +1,42 @@
 <template>
   <div class="chat-wrapper">
     <el-card ref="chatContainer" class="chat-messages">
-      <div v-for="(msg, idx) in store.messages" :key="idx"
+      <div v-for="(msg, idx) in messages" :key="idx"
            :style="{ color: getMessageColor(msg.type) }">
         <span v-html="formatMessage(msg.message || msg)"></span>
       </div>
     </el-card>
     <div class="chat-input">
       <el-input v-model="input" @keyup.enter="send" placeholder="输入消息" style="flex:1; margin-right:8px;" />
-      <el-button type="primary" @click="send">发送</el-button>
+      <el-button type="primary" @click="send" :disabled="!canSend">发送</el-button>
     </div>
   </div>
 </template>
 
 <script lang="ts" setup>
-import { ref, nextTick, watch } from 'vue';
-import { useMainStore } from '../store';
+import { ref, nextTick, watch, computed } from 'vue';
 
-const store = useMainStore();
+interface Props {
+  messages: any[]
+  roomId?: string
+  nickname?: string
+  socket?: any
+}
+
+const props = withDefaults(defineProps<Props>(), {
+  messages: () => [],
+  roomId: '',
+  nickname: '',
+  socket: null
+})
+
 const input = ref('');
 const chatContainer = ref<HTMLElement>();
+
+// 检查是否可以发送消息
+const canSend = computed(() => {
+  return props.socket && props.roomId && props.nickname && input.value.trim()
+})
 
 // 滚动到底部
 const scrollToBottom = () => {
@@ -58,18 +75,18 @@ const formatMessage = (message: string): string => {
   });
 };
 
-// 监听 store.messages 变化，保持滚动到底部
+// 监听 messages 变化，保持滚动到底部
 watch(
-  () => store.messages.length,
+  () => props.messages.length,
   () => {
     scrollToBottom();
   }
 );
 
 function send() {
-  if (store.socket && store.currentRoom && input.value) {
-    const msg = `${store.nickname}: ${input.value}`;
-    store.socket.emit('chat_msg', { roomId: store.currentRoom, message: msg });
+  if (canSend.value) {
+    const msg = `${props.nickname}: ${input.value}`;
+    props.socket.emit('chat_msg', { roomId: props.roomId, message: msg });
     input.value = '';
   }
 }

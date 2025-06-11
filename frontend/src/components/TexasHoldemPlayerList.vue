@@ -10,7 +10,7 @@
 
 <script lang="ts" setup>
 import { computed } from 'vue';
-import { useMainStore } from '../store';
+import { useTexasHoldemStore } from '../store';
 
 interface PlayerInfo {
   id: string;
@@ -21,7 +21,7 @@ interface PlayerInfo {
   status: string;
 }
 
-const store = useMainStore();
+const store = useTexasHoldemStore();
 
 // 计算玩家状态
 const getPlayerStatus = (player: any, room: any) => {

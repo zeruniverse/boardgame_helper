@@ -39,7 +39,7 @@ app.post('/api/reset-server', async (req: Request, res: Response) => {
     const { password } = req.body;
     
     // 验证密码
-    if (!password || password !== config.resetPassword) {
+    if (!password || password !== config.server.resetPassword) {
       res.status(401).json({
         success: false,
         error: '密码错误'

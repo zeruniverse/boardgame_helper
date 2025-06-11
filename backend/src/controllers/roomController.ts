@@ -6,11 +6,39 @@ import { config } from '../config';
 import { v4 as uuidv4 } from 'uuid';
 import { setResetServerFunction } from '../server';
 
-const rooms: Room[] = [];
+const rooms: Map<string, Room> = new Map();
 let threadManager: RoomThreadManager;
 
+// 踢出房主的投票数据
+const hostKickVotes: Map<string, {
+  voters: Set<string>;
+  timer: NodeJS.Timeout;
+}> = new Map();
+
+// 生成随机房间名（6位数字+大写字母）
+function generateRoomName(): string {
+  const chars = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+  let result = '';
+  for (let i = 0; i < 6; i++) {
+    result += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return result;
+}
+
+// 确保房间名唯一
+function generateUniqueRoomName(): string {
+  let name: string;
+  do {
+    name = generateRoomName();
+  } while (Array.from(rooms.values()).some(room => room.name === name));
+  return name;
+}
+
 export function roomController(io: Server) {
-  // 重置服务器函数（移到这里可以访问handleThreadMessage）
+  // 初始化线程管理器
+  threadManager = new RoomThreadManager(handleThreadMessage);
+
+  // 重置服务器函数
   async function resetServer() {
     try {
       console.log('开始重置服务器...');
@@ -28,126 +56,18 @@ export function roomController(io: Server) {
         socket.disconnect(true);
       }
       
-      // 4. 处理现有的房间线程
+      // 4. 关闭所有房间线程
       if (threadManager) {
-        if (config.roomThreadPreserve) {
-          // 如果配置为保留线程，则重置所有房间状态但保留线程
-          for (const room of rooms) {
-            if (room.threadStatus === 'running') {
-              try {
-                await threadManager.stopRoomThread(room.id); // 这会重置房间状态但保留线程
-                console.log(`房间 ${room.id} 已重置状态但保留线程`);
-              } catch (error) {
-                console.error(`重置房间 ${room.id} 状态失败:`, error);
-              }
-            }
-          }
-        } else {
-          // 如果不保留线程，则完全关闭所有线程
-          await threadManager.shutdown();
-        }
+        await threadManager.shutdown();
       }
       
-      // 5. 重置房间数据（保持房间ID和线程状态）
-      const existingRooms = [...rooms]; // 保存现有房间引用
-      rooms.length = 0;
+      // 5. 清空所有房间
+      rooms.clear();
       
-      // 6. 重新创建房间（使用当前配置）
-      let roomCounter = 1;
+      // 6. 重新初始化线程管理器
+      threadManager = new RoomThreadManager(handleThreadMessage);
       
-      // 创建线下房间
-      for (let i = 1; i <= config.rooms.offline.count; i++) {
-        const roomId = `room${roomCounter}`;
-        const existingRoom = existingRooms.find(r => r.id === roomId);
-        
-        rooms.push({
-          id: roomId,
-          name: `${config.rooms.offline.namePrefix}${i}`,
-          maxPlayers: config.gameSettings.maxPlayers,
-          players: [],
-          online: false,
-          autoStart: false,
-          locked: false,
-          lastActiveTime: Date.now(),
-          // 如果保留线程且房间已存在，保持线程状态，否则设为idle
-          threadStatus: (config.roomThreadPreserve && existingRoom?.threadStatus === 'running') ? 'running' : 'idle',
-          threadId: (config.roomThreadPreserve && existingRoom?.threadId) ? existingRoom.threadId : undefined,
-          participants: [],
-          gameState: { 
-            deck: [], 
-            communityCards: [], 
-            pot: 0, 
-            bets: {}, 
-            totalBets: {}, 
-            currentTurn: 0, 
-            dealerIndex: 0, 
-            blinds: { sb: config.gameSettings.blinds.smallBlind, bb: config.gameSettings.blinds.bigBlind }, 
-            sbIndex: 0, 
-            bbIndex: 1, 
-            playerHands: {}, 
-            currentBet: config.gameSettings.blinds.bigBlind, 
-            folded: [], 
-            round: 0, 
-            acted: [],
-            stage: 'idle'
-          }
-        });
-        roomCounter++;
-      }
-      
-      // 创建线上房间
-      for (let i = 1; i <= config.rooms.online.count; i++) {
-        const roomId = `room${roomCounter}`;
-        const existingRoom = existingRooms.find(r => r.id === roomId);
-        
-        rooms.push({
-          id: roomId,
-          name: `${config.rooms.online.namePrefix}${i}`,
-          maxPlayers: config.gameSettings.maxPlayers,
-          players: [],
-          online: true,
-          autoStart: false,
-          locked: false,
-          lastActiveTime: Date.now(),
-          // 如果保留线程且房间已存在，保持线程状态，否则设为idle
-          threadStatus: (config.roomThreadPreserve && existingRoom?.threadStatus === 'running') ? 'running' : 'idle',
-          threadId: (config.roomThreadPreserve && existingRoom?.threadId) ? existingRoom.threadId : undefined,
-          participants: [],
-          gameState: { 
-            deck: [], 
-            communityCards: [], 
-            pot: 0, 
-            bets: {}, 
-            totalBets: {}, 
-            currentTurn: 0, 
-            dealerIndex: 0, 
-            blinds: { sb: config.gameSettings.blinds.smallBlind, bb: config.gameSettings.blinds.bigBlind }, 
-            sbIndex: 0, 
-            bbIndex: 1, 
-            playerHands: {}, 
-            currentBet: config.gameSettings.blinds.bigBlind, 
-            folded: [], 
-            round: 0, 
-            acted: [],
-            stage: 'idle'
-          }
-        });
-        roomCounter++;
-      }
-      
-      // 7. 重新初始化线程管理器（只有在不保留线程时才完全重新创建）
-      if (!config.roomThreadPreserve) {
-        threadManager = new RoomThreadManager(rooms, handleThreadMessage);
-      } else {
-        // 如果保留线程，只需要更新房间引用
-        threadManager.updateRooms(rooms);
-      }
-      
-      console.log(`服务器重置完成，重新创建了 ${config.rooms.offline.count} 个线下房间和 ${config.rooms.online.count} 个线上房间`);
-      if (config.roomThreadPreserve) {
-        console.log('已保留现有的worker线程');
-      }
-      
+      console.log('服务器重置完成，所有房间已清空');
       return true;
     } catch (error) {
       console.error('重置服务器失败:', error);
@@ -158,117 +78,24 @@ export function roomController(io: Server) {
   // 将重置函数注册到HTTP接口
   setResetServerFunction(resetServer);
 
-  // 从配置文件动态创建房间
-  let roomCounter = 1;
-  
-  // 创建线下房间
-  for (let i = 1; i <= config.rooms.offline.count; i++) {
-    rooms.push({
-      id: `room${roomCounter}`,
-      name: `${config.rooms.offline.namePrefix}${i}`,
-      maxPlayers: config.gameSettings.maxPlayers,
-      players: [],
-      online: false,
-      autoStart: false,
-      locked: false,
-      lastActiveTime: Date.now(),
-      threadStatus: 'idle',
-      gameState: { 
-        deck: [], 
-        communityCards: [], 
-        pot: 0, 
-        bets: {}, 
-        totalBets: {}, 
-        currentTurn: 0, 
-        dealerIndex: 0, 
-        blinds: { sb: config.gameSettings.blinds.smallBlind, bb: config.gameSettings.blinds.bigBlind }, 
-        sbIndex: 0, 
-        bbIndex: 1, 
-        playerHands: {}, 
-        currentBet: config.gameSettings.blinds.bigBlind, 
-        folded: [], 
-        round: 0, 
-        acted: [],
-        stage: 'idle'
-      }
-    });
-    roomCounter++;
-  }
-  
-  // 创建线上房间  
-  for (let i = 1; i <= config.rooms.online.count; i++) {
-    rooms.push({
-      id: `room${roomCounter}`,
-      name: `${config.rooms.online.namePrefix}${i}`,
-      maxPlayers: config.gameSettings.maxPlayers,
-      players: [],
-      online: true,
-      autoStart: false,
-      locked: false,
-      lastActiveTime: Date.now(),
-      threadStatus: 'idle',
-      gameState: { 
-        deck: [], 
-        communityCards: [], 
-        pot: 0, 
-        bets: {}, 
-        totalBets: {}, 
-        currentTurn: 0, 
-        dealerIndex: 0, 
-        blinds: { sb: config.gameSettings.blinds.smallBlind, bb: config.gameSettings.blinds.bigBlind }, 
-        sbIndex: 0, 
-        bbIndex: 1, 
-        playerHands: {}, 
-        currentBet: config.gameSettings.blinds.bigBlind, 
-        folded: [], 
-        round: 0, 
-        acted: [],
-        stage: 'idle'
-      }
-    });
-    roomCounter++;
-  }
-
-  console.log(`已根据配置创建 ${config.rooms.offline.count} 个线下房间和 ${config.rooms.online.count} 个线上房间`);
-
-  // 初始化线程管理器
-  threadManager = new RoomThreadManager(rooms, handleThreadMessage);
-
-  // 处理房间线程发来的事件
+  // 处理来自worker线程的消息
   async function handleThreadMessage(data: any) {
-    if (data.type === 'emit') {
-      // 特殊处理room_update事件
-      if (data.event === 'room_update') {
-        const roomIndex = rooms.findIndex(r => r.id === data.roomId);
-        if (roomIndex !== -1) {
-          // 同步更新主线程的房间数据
-          const { id, lastActiveTime, threadStatus, threadId, ...updateData } = data.data;
-          rooms[roomIndex] = { ...rooms[roomIndex], ...updateData };
-          
-          // 向所有客户端广播房间列表更新
-          const roomsInfo = rooms.map(room => ({
-            id: room.id,
-            name: room.name,
-            current: room.players.length,
-            online: room.online,
-            locked: room.locked
-          }));
-          io.emit('room_list', roomsInfo);
-        }
+    try {
+      if (data.type === 'emit') {
+        // 广播到房间内所有客户端
+        io.to(data.roomId).emit(data.event, data.data);
+      } else if (data.type === 'emit_to_socket') {
+        // 发送到特定socket
+        io.to(data.socketId).emit(data.event, data.data);
       }
-      
-      io.to(data.roomId).emit(data.event, data.data);
-    } else if (data.type === 'emit_to_socket') {
-      io.to(data.socketId).emit(data.event, data.data);
+    } catch (error) {
+      console.error('处理线程消息失败:', error);
     }
   }
 
-  // 向房间线程发送任务的通用函数
+  // 向房间线程发送任务
   async function sendTaskToRoom(roomId: string, taskType: string, taskData: any, socketId?: string, playerId?: string) {
     try {
-      // 确保房间线程运行
-      await threadManager.ensureRoomThreadRunning(roomId);
-      
       const response = await threadManager.sendTask(roomId, {
         type: taskType,
         roomId,
@@ -276,416 +103,645 @@ export function roomController(io: Server) {
         socketId,
         playerId
       });
-
+      
+      if (!response.success) {
+        console.error(`房间 ${roomId} 任务失败:`, response.error);
+      }
+      
       return response;
     } catch (error) {
-      console.error(`发送任务到房间 ${roomId} 失败:`, error);
+      console.error(`向房间 ${roomId} 发送任务失败:`, error);
       throw error;
     }
   }
 
+  // Socket连接处理
   io.on('connection', (socket: Socket) => {
-    console.log(`Socket connected: ${socket.id}`);
+    console.log(`客户端连接: ${socket.id}`);
 
-    // 发送房间列表给新连接，保持向后兼容
-    const roomsInfo = rooms.map(room => ({
-      id: room.id,
-      name: room.name,
-      current: room.players.length,
-      online: room.online,
-      locked: room.locked
-    }));
-    socket.emit('room_list', roomsInfo);
-
-    // 心跳更新 - 转发到对应房间线程
-    socket.on('heartbeat', async () => {
-      for (const room of rooms) {
-        const player = room.players.find(p => p.socketId === socket.id);
-        if (player) {
-          try {
-            await sendTaskToRoom(room.id, 'heartbeat', { playerId: player.id }, socket.id, player.id);
-          } catch (error) {
-            console.error('心跳处理失败:', error);
-          }
-          break;
-        }
-      }
-    });
-
-    // 聊天消息 - 转发到房间线程
-    socket.on('chat_msg', async ({ roomId, message }) => {
-      try {
-        await sendTaskToRoom(roomId, 'chat_message', { message }, socket.id);
-      } catch (error) {
-        socket.emit('error', '发送消息失败');
-      }
-    });
-
-    // cash in - 转发到房间线程
-    socket.on('cash_in', async ({ roomId }) => {
-      const room = rooms.find(r => r.id === roomId);
-      if (!room) {
-        socket.emit('error', '房间不存在');
-        return;
-      }
+    // 获取大厅信息（只显示非私有房间）
+    socket.on('get_lobby', () => {
+      const publicRooms = Array.from(rooms.values())
+        .filter(room => !room.private)
+        .map(room => ({
+          id: room.id,
+          name: room.name,
+          type: room.type,
+          displayName: config.games[room.type]?.displayName || room.type,
+          playerCount: room.players.length,
+          maxPlayers: room.maxPlayers,
+          private: room.private
+        }));
       
-      const player = room.players.find(p => p.socketId === socket.id);
-      if (!player) {
-        socket.emit('error', '玩家不存在');
-        return;
-      }
-
-      try {
-        await sendTaskToRoom(roomId, 'cash_in', { playerId: player.id }, socket.id, player.id);
-      } catch (error) {
-        socket.emit('error', 'Cash in 失败');
-      }
+      socket.emit('lobby_update', { 
+        rooms: publicRooms,
+        availableGames: Object.keys(config.games).map(gameType => ({
+          type: gameType,
+          displayName: config.games[gameType].displayName,
+          maxPlayers: config.games[gameType].maxPlayers
+        }))
+      });
     });
 
-    // cash out - 转发到房间线程
-    socket.on('cash_out', async ({ roomId }) => {
-      const room = rooms.find(r => r.id === roomId);
-      if (!room) {
-        socket.emit('error', '房间不存在');
-        return;
-      }
-      
-      const player = room.players.find(p => p.socketId === socket.id);
-      if (!player) {
-        socket.emit('error', '玩家不存在');
-        return;
-      }
-
+    // 创建房间
+    socket.on('create_room', async (data: { 
+      gameType: string; 
+      gameConfig: any; 
+      isPrivate?: boolean 
+    }) => {
       try {
-        await sendTaskToRoom(roomId, 'cash_out', { playerId: player.id }, socket.id, player.id);
-        socket.leave(roomId);
-      } catch (error) {
-        socket.emit('error', 'Cash out 失败');
-      }
-    });
-
-    // take (线下房间) - 转发到房间线程
-    socket.on('take', async ({ roomId, amount }) => {
-      const room = rooms.find(r => r.id === roomId);
-      if (!room) {
-        socket.emit('error', '房间不存在');
-        return;
-      }
-      
-      const player = room.players.find(p => p.socketId === socket.id);
-      if (!player) {
-        socket.emit('error', '玩家不存在');
-        return;
-      }
-
-      try {
-        const response = await sendTaskToRoom(roomId, 'take', { playerId: player.id, amount }, socket.id, player.id);
-        if (!response.success) {
-          socket.emit('error', response.error || 'Take 操作失败');
-        }
-      } catch (error) {
-        socket.emit('error', 'Take 操作失败');
-      }
-    });
-
-    // take_all (线下房间) - 转发到房间线程
-    socket.on('take_all', async ({ roomId }) => {
-      const room = rooms.find(r => r.id === roomId);
-      if (!room) {
-        socket.emit('error', '房间不存在');
-        return;
-      }
-      
-      const player = room.players.find(p => p.socketId === socket.id);
-      if (!player) {
-        socket.emit('error', '玩家不存在');
-        return;
-      }
-
-      try {
-        const response = await sendTaskToRoom(roomId, 'take_all', { playerId: player.id }, socket.id, player.id);
-        if (!response.success) {
-          socket.emit('error', response.error || 'Take all 操作失败');
-        }
-      } catch (error) {
-        socket.emit('error', 'Take all 操作失败');
-      }
-    });
-
-    // 切换自动开始状态 - 转发到房间线程
-    socket.on('toggle_auto_start', async ({ roomId }) => {
-      const room = rooms.find(r => r.id === roomId);
-      if (!room) {
-        socket.emit('error', '房间不存在');
-        return;
-      }
-      
-      const player = room.players.find(p => p.socketId === socket.id);
-      if (!player) {
-        socket.emit('error', '玩家不存在');
-        return;
-      }
-
-      try {
-        await sendTaskToRoom(roomId, 'toggle_auto_start', { playerId: player.id }, socket.id, player.id);
-      } catch (error) {
-        socket.emit('error', '切换自动开始状态失败');
-      }
-    });
-
-    // 切换房间锁定状态 - 转发到房间线程
-    socket.on('toggle_room_lock', async ({ roomId }) => {
-      const room = rooms.find(r => r.id === roomId);
-      if (!room) {
-        socket.emit('error', '房间不存在');
-        return;
-      }
-      
-      const player = room.players.find(p => p.socketId === socket.id);
-      if (!player) {
-        socket.emit('error', '玩家不存在');
-        return;
-      }
-
-      try {
-        await sendTaskToRoom(roomId, 'toggle_room_lock', { playerId: player.id }, socket.id, player.id);
-      } catch (error) {
-        socket.emit('error', '切换房间锁定状态失败');
-      }
-    });
-
-    // 客户端请求开始游戏 - 转发到房间线程
-    socket.on('start_game', async ({ roomId }) => {
-      const room = rooms.find(r => r.id === roomId);
-      if (!room) {
-        socket.emit('error', '房间不存在');
-        return;
-      }
-
-      try {
-        const response = await sendTaskToRoom(roomId, 'start_game', {}, socket.id);
-        if (!response.success) {
-          socket.emit('error', response.error || '开始游戏失败');
-        }
-      } catch (error) {
-        socket.emit('error', '开始游戏失败');
-      }
-    });
-
-    // 客户端请求延长思考时间 - 转发到房间线程
-    socket.on('extend_time', async ({ roomId }) => {
-      const room = rooms.find(r => r.id === roomId);
-      if (!room) {
-        socket.emit('error', '房间不存在');
-        return;
-      }
-      
-      const player = room.players.find(p => p.socketId === socket.id);
-      if (!player) {
-        socket.emit('error', '玩家不存在');
-        return;
-      }
-
-      try {
-        const response = await sendTaskToRoom(roomId, 'extend_time', { playerId: player.id }, socket.id, player.id);
-        if (!response.success) {
-          socket.emit('error', response.error || '延时失败');
-        }
-      } catch (error) {
-        socket.emit('error', '延时失败');
-      }
-    });
-
-    // 玩家行动 - 转发到房间线程
-    socket.on('player_action', async ({ roomId, action, amount }) => {
-      const room = rooms.find(r => r.id === roomId);
-      if (!room) {
-        socket.emit('error', '房间不存在');
-        return;
-      }
-      
-      const player = room.players.find(p => p.socketId === socket.id);
-      if (!player) {
-        socket.emit('error', '玩家不存在');
-        return;
-      }
-
-      try {
-        const response = await sendTaskToRoom(roomId, 'player_action', { 
-          playerId: player.id, 
-          action, 
-          amount 
-        }, socket.id, player.id);
-        
-        if (!response.success) {
-          socket.emit('error', response.error || '行动失败');
-        }
-      } catch (error) {
-        socket.emit('error', '行动失败');
-      }
-    });
-
-    // 兼容前端发送的action事件（与player_action相同的处理逻辑）
-    socket.on('action', async ({ roomId, action, amount }) => {
-      const room = rooms.find(r => r.id === roomId);
-      if (!room) {
-        socket.emit('error', '房间不存在');
-        return;
-      }
-      
-      const player = room.players.find(p => p.socketId === socket.id);
-      if (!player) {
-        socket.emit('error', '玩家不存在');
-        return;
-      }
-
-      try {
-        const response = await sendTaskToRoom(roomId, 'player_action', { 
-          playerId: player.id, 
-          action, 
-          amount 
-        }, socket.id, player.id);
-        
-        if (!response.success) {
-          socket.emit('error', response.error || '行动失败');
-        }
-      } catch (error) {
-        socket.emit('error', '行动失败');
-      }
-    });
-
-    // 获取房间列表
-    socket.on('get_rooms', () => {
-      // 返回房间基本信息，不包含敏感数据
-      const roomsInfo = rooms.map(room => ({
-        id: room.id,
-        name: room.name,
-        maxPlayers: room.maxPlayers,
-        playerCount: room.players.length,
-        online: room.online,
-        autoStart: room.autoStart,
-        gameInProgress: room.participants ? room.participants.length > 0 : false
-      }));
-      socket.emit('rooms_list', roomsInfo);
-    });
-
-    // 加入房间 - 转发到房间线程
-    socket.on('join_room', async ({ roomId, playerId, nickname }) => {
-      const room = rooms.find(r => r.id === roomId);
-      if (!room) {
-        socket.emit('kicked_out', { message: '房间不存在' });
-        socket.disconnect();
-        return;
-      }
-
-      try {
-        const response = await sendTaskToRoom(roomId, 'join_room', { 
-          playerId, 
-          nickname, 
-          socketId: socket.id 
-        }, socket.id, playerId);
-
-        if (response.success) {
-          socket.join(roomId);
-        } else {
-          // 房间锁定或房间已满等错误应该强制用户返回大厅
-          socket.emit('kicked_out', { message: response.error || '加入房间失败' });
-          socket.disconnect();
-        }
-      } catch (error) {
-        socket.emit('kicked_out', { message: '加入房间失败' });
-        socket.disconnect();
-      }
-    });
-
-    // 断线重连 - 转发到房间线程
-    socket.on('reconnect_room', async ({ roomId, playerId, nickname }) => {
-      const room = rooms.find(r => r.id === roomId);
-      if (!room) {
-        socket.emit('kicked_out', { message: '房间不存在' });
-        socket.disconnect();
-        return;
-      }
-
-      try {
-        const response = await sendTaskToRoom(roomId, 'reconnect', { 
-          playerId, 
-          nickname, 
-          socketId: socket.id 
-        }, socket.id, playerId);
-
-        if (response.success) {
-          socket.join(roomId);
-        } else {
-          // 使用后端返回的具体错误信息
-          socket.emit('kicked_out', { message: response.error || '重连失败' });
-          socket.disconnect();
-        }
-      } catch (error) {
-        socket.emit('kicked_out', { message: '重连失败，请重新进入房间' });
-        socket.disconnect();
-      }
-    });
-
-    // 重置服务器 - 需要密码验证
-    socket.on('reset_server', async ({ password }) => {
-      try {
-        // 验证密码
-        if (!password || password !== config.resetPassword) {
-          socket.emit('reset_server_response', { success: false, error: '密码错误' });
-          console.log(`重置服务器请求被拒绝：密码错误 (来自 ${socket.id})`);
+        // 检查房间数量限制
+        if (rooms.size >= config.server.maxRooms) {
+          socket.emit('error', { message: '服务器房间数量已达上限' });
           return;
         }
 
-        console.log(`收到重置服务器请求 (来自 ${socket.id})，密码验证通过`);
-        
-        // 密码正确，执行重置
-        const resetSuccess = await resetServer();
-        
-        if (resetSuccess) {
-          // 重置成功，但此时连接已断开，无需发送响应
-          console.log('服务器重置成功');
-        } else {
-          socket.emit('reset_server_response', { success: false, error: '重置服务器失败' });
+        // 验证游戏类型
+        if (!config.games[data.gameType]) {
+          socket.emit('error', { message: '不支持的游戏类型' });
+          return;
         }
+
+        // 创建玩家
+        const player: Player = {
+          id: uuidv4(),
+          nickname: data.gameConfig.nickname || `玩家${socket.id.substring(0, 6)}`,
+          socketId: socket.id,
+          lastHeartbeat: Date.now(),
+          online: true,
+          gameMetadata: {}
+        };
+
+        // 创建房间
+        const room: Room = {
+          id: uuidv4(),
+          name: generateUniqueRoomName(),
+          maxPlayers: config.games[data.gameType].maxPlayers,
+          players: [player],
+          hostId: player.id,
+          type: data.gameType as any,
+          private: data.isPrivate || false,
+          threadStatus: 'idle',
+          lastActiveTime: Date.now()
+        };
+
+        rooms.set(room.id, room);
+
+        // 玩家加入房间频道
+        await socket.join(room.id);
+
+        // 启动房间线程
+        const gameConfig = {
+          ...config.games[data.gameType].gameSpecificConfig,
+          ...data.gameConfig
+        };
+
+        await threadManager.startRoomThread(room, gameConfig);
+
+        // 发送玩家加入房间的任务
+        await sendTaskToRoom(room.id, 'join_room', { player }, socket.id, player.id);
+
+        socket.emit('room_joined', { 
+          room,
+          player,
+          isHost: true
+        });
+
+        // 更新大厅
+        io.emit('lobby_update', { 
+          rooms: Array.from(rooms.values())
+            .filter(r => !r.private)
+            .map(r => ({
+              id: r.id,
+              name: r.name,
+              type: r.type,
+              displayName: config.games[r.type]?.displayName || r.type,
+              playerCount: r.players.length,
+              maxPlayers: r.maxPlayers,
+              private: r.private
+            }))
+        });
+
+        console.log(`玩家 ${player.nickname} 创建了房间 ${room.name} (${room.type})`);
       } catch (error) {
-        console.error('重置服务器过程中发生错误:', error);
-        socket.emit('reset_server_response', { success: false, error: '重置服务器失败' });
+        console.error('创建房间失败:', error);
+        socket.emit('error', { message: '创建房间失败' });
       }
     });
 
-    // 断开连接处理
+    // 加入房间
+    socket.on('join_room', async (data: { roomId?: string; roomName?: string; nickname?: string }) => {
+      try {
+        let room: Room | undefined;
+
+        // 通过房间ID或房间名查找房间
+        if (data.roomId) {
+          room = rooms.get(data.roomId);
+        } else if (data.roomName) {
+          room = Array.from(rooms.values()).find(r => r.name === data.roomName);
+        }
+
+        if (!room) {
+          socket.emit('error', { message: '房间不存在' });
+          return;
+        }
+
+        // 检查房间是否已满
+        if (room.players.length >= room.maxPlayers) {
+          socket.emit('error', { message: '房间已满' });
+          return;
+        }
+
+        // 检查玩家是否已在房间中
+        if (room.players.some(p => p.socketId === socket.id)) {
+          socket.emit('error', { message: '您已在此房间中' });
+          return;
+        }
+
+        // 创建玩家
+        const player: Player = {
+          id: uuidv4(),
+          nickname: data.nickname || `玩家${socket.id.substring(0, 6)}`,
+          socketId: socket.id,
+          lastHeartbeat: Date.now(),
+          online: true,
+          gameMetadata: {}
+        };
+
+        // 将玩家添加到房间
+        room.players.push(player);
+        room.lastActiveTime = Date.now();
+
+        // 玩家加入房间频道
+        await socket.join(room.id);
+
+        // 确保房间线程正在运行
+        const gameConfig = config.games[room.type].gameSpecificConfig;
+        await threadManager.ensureRoomThreadRunning(room, gameConfig);
+
+        // 更新房间数据到线程管理器
+        threadManager.updateRoomData(room.id, room);
+
+        // 发送玩家加入房间的任务
+        await sendTaskToRoom(room.id, 'join_room', { player }, socket.id, player.id);
+
+        socket.emit('room_joined', { 
+          room,
+          player,
+          isHost: room.hostId === player.id
+        });
+
+        // 更新大厅
+        if (!room.private) {
+          io.emit('lobby_update', { 
+            rooms: Array.from(rooms.values())
+              .filter(r => !r.private)
+              .map(r => ({
+                id: r.id,
+                name: r.name,
+                type: r.type,
+                displayName: config.games[r.type]?.displayName || r.type,
+                playerCount: r.players.length,
+                maxPlayers: r.maxPlayers,
+                private: r.private
+              }))
+          });
+        }
+
+        console.log(`玩家 ${player.nickname} 加入了房间 ${room.name}`);
+      } catch (error) {
+        console.error('加入房间失败:', error);
+        socket.emit('error', { message: '加入房间失败' });
+      }
+    });
+
+    // 通过房间名或ID加入房间（用于直接链接）
+    socket.on('join_room_by_name', async (data: { roomName: string; nickname: string }) => {
+      try {
+        // 通过房间名查找房间
+        const room = Array.from(rooms.values()).find(r => r.name === data.roomName);
+
+        if (!room) {
+          socket.emit('error', { message: '房间不存在' });
+          return;
+        }
+
+        // 检查房间是否已满
+        if (room.players.length >= room.maxPlayers) {
+          socket.emit('error', { message: '房间已满' });
+          return;
+        }
+
+        // 检查玩家是否已在房间中
+        if (room.players.some(p => p.socketId === socket.id)) {
+          socket.emit('error', { message: '您已在此房间中' });
+          return;
+        }
+
+        // 创建玩家
+        const player: Player = {
+          id: uuidv4(),
+          nickname: data.nickname,
+          socketId: socket.id,
+          lastHeartbeat: Date.now(),
+          online: true,
+          gameMetadata: {}
+        };
+
+        // 将玩家添加到房间
+        room.players.push(player);
+        room.lastActiveTime = Date.now();
+
+        // 玩家加入房间频道
+        await socket.join(room.id);
+
+        // 确保房间线程正在运行
+        const gameConfig = config.games[room.type].gameSpecificConfig;
+        await threadManager.ensureRoomThreadRunning(room, gameConfig);
+
+        // 更新房间数据到线程管理器
+        threadManager.updateRoomData(room.id, room);
+
+        // 发送玩家加入房间的任务
+        await sendTaskToRoom(room.id, 'join_room', { player }, socket.id, player.id);
+
+        socket.emit('room_joined', { 
+          room,
+          player,
+          isHost: room.hostId === player.id
+        });
+
+        // 更新大厅
+        if (!room.private) {
+          io.emit('lobby_update', { 
+            rooms: Array.from(rooms.values())
+              .filter(r => !r.private)
+              .map(r => ({
+                id: r.id,
+                name: r.name,
+                type: r.type,
+                displayName: config.games[r.type]?.displayName || r.type,
+                playerCount: r.players.length,
+                maxPlayers: r.maxPlayers,
+                private: r.private
+              }))
+          });
+        }
+
+        console.log(`玩家 ${player.nickname} 通过链接加入了房间 ${room.name}`);
+      } catch (error) {
+        console.error('通过链接加入房间失败:', error);
+        socket.emit('error', { message: '加入房间失败' });
+      }
+    });
+
+    // 离开房间
+    socket.on('leave_room', async (data: { roomId: string }) => {
+      try {
+        const room = rooms.get(data.roomId);
+        if (!room) {
+          return;
+        }
+
+        const playerIndex = room.players.findIndex(p => p.socketId === socket.id);
+        if (playerIndex === -1) {
+          return;
+        }
+
+        const player = room.players[playerIndex];
+        
+        // 从房间中移除玩家
+        room.players.splice(playerIndex, 1);
+        room.lastActiveTime = Date.now();
+
+        // 离开房间频道
+        await socket.leave(room.id);
+
+        // 如果房间为空，删除房间
+        if (room.players.length === 0) {
+          await threadManager.stopRoomThread(room.id);
+          rooms.delete(room.id);
+          
+          // 更新大厅
+          if (!room.private) {
+            io.emit('lobby_update', { 
+              rooms: Array.from(rooms.values())
+                .filter(r => !r.private)
+                .map(r => ({
+                  id: r.id,
+                  name: r.name,
+                  type: r.type,
+                  displayName: config.games[r.type]?.displayName || r.type,
+                  playerCount: r.players.length,
+                  maxPlayers: r.maxPlayers,
+                  private: r.private
+                }))
+            });
+          }
+        } else {
+          // 如果离开的是房主，指定新的房主
+          if (room.hostId === player.id) {
+            room.hostId = room.players[0].id;
+          }
+
+          // 通知房间线程玩家离线
+          await sendTaskToRoom(room.id, 'player_offline', { playerId: player.id });
+
+          // 更新大厅
+          if (!room.private) {
+            io.emit('lobby_update', { 
+              rooms: Array.from(rooms.values())
+                .filter(r => !r.private)
+                .map(r => ({
+                  id: r.id,
+                  name: r.name,
+                  type: r.type,
+                  displayName: config.games[r.type]?.displayName || r.type,
+                  playerCount: r.players.length,
+                  maxPlayers: r.maxPlayers,
+                  private: r.private
+                }))
+            });
+          }
+        }
+
+        socket.emit('room_left', { roomId: room.id });
+        console.log(`玩家 ${player.nickname} 离开了房间 ${room.name}`);
+      } catch (error) {
+        console.error('离开房间失败:', error);
+      }
+    });
+
+    // 游戏行动
+    socket.on('game_action', async (data: { 
+      roomId: string; 
+      actionType: string; 
+      actionData: any 
+    }) => {
+      try {
+        const room = rooms.get(data.roomId);
+        if (!room) {
+          socket.emit('error', { message: '房间不存在' });
+          return;
+        }
+
+        const player = room.players.find(p => p.socketId === socket.id);
+        if (!player) {
+          socket.emit('error', { message: '您不在此房间中' });
+          return;
+        }
+
+        // 更新玩家心跳和房间活跃时间
+        player.lastHeartbeat = Date.now();
+        room.lastActiveTime = Date.now();
+
+        // 发送游戏行动到房间线程
+        await sendTaskToRoom(
+          room.id, 
+          'game_action', 
+          { 
+            actionType: data.actionType, 
+            actionData: data.actionData 
+          }, 
+          socket.id, 
+          player.id
+        );
+      } catch (error) {
+        console.error('处理游戏行动失败:', error);
+        socket.emit('error', { message: '操作失败' });
+      }
+    });
+
+    // 踢出玩家
+    socket.on('kick_player', async (data: { roomId: string; targetId: string }) => {
+      try {
+        const room = rooms.get(data.roomId);
+        if (!room) {
+          socket.emit('error', { message: '房间不存在' });
+          return;
+        }
+
+        const player = room.players.find(p => p.socketId === socket.id);
+        if (!player) {
+          socket.emit('error', { message: '您不在此房间中' });
+          return;
+        }
+
+        const targetPlayer = room.players.find(p => p.id === data.targetId);
+        if (!targetPlayer) {
+          socket.emit('error', { message: '目标玩家不存在' });
+          return;
+        }
+
+        // 如果是房主踢出其他人
+        if (room.hostId === player.id && data.targetId !== player.id) {
+          // 房主可以直接踢出其他玩家
+          await sendTaskToRoom(room.id, 'kick_out_player', { targetId: data.targetId });
+          
+          // 从房间中移除玩家
+          const targetIndex = room.players.findIndex(p => p.id === data.targetId);
+          if (targetIndex !== -1) {
+            room.players.splice(targetIndex, 1);
+            room.lastActiveTime = Date.now();
+            
+            // 通知被踢的玩家
+            io.to(targetPlayer.socketId).emit('kicked_out', { 
+              message: `您被房主${player.nickname}踢出房间` 
+            });
+            
+            // 更新房间信息
+            threadManager.updateRoomData(room.id, room);
+            
+            console.log(`房主 ${player.nickname} 踢出了玩家 ${targetPlayer.nickname}`);
+          }
+        } 
+        // 如果是其他人想踢出房主
+        else if (data.targetId === room.hostId && player.id !== room.hostId) {
+          // 投票踢出房主
+          let voteData = hostKickVotes.get(room.id);
+          
+          if (!voteData) {
+            // 创建新的投票
+            voteData = {
+              voters: new Set([player.id]),
+              timer: setTimeout(() => {
+                hostKickVotes.delete(room.id);
+                io.to(room.id).emit('chat_broadcast', { 
+                  message: '踢出房主投票超时，投票已重置', 
+                  type: 'system' 
+                });
+              }, 15000) // 15秒超时
+            };
+            hostKickVotes.set(room.id, voteData);
+            
+            io.to(room.id).emit('chat_broadcast', { 
+              message: `${player.nickname} 发起踢出房主投票，需要${Math.ceil(room.players.filter(p => p.online).length / 2)}票`, 
+              type: 'system' 
+            });
+          } else {
+            // 添加投票
+            voteData.voters.add(player.id);
+          }
+          
+          const onlinePlayerCount = room.players.filter(p => p.online).length;
+          const requiredVotes = Math.ceil(onlinePlayerCount / 2);
+          
+          if (voteData.voters.size >= requiredVotes) {
+            // 投票通过，踢出房主
+            clearTimeout(voteData.timer);
+            hostKickVotes.delete(room.id);
+            
+            await sendTaskToRoom(room.id, 'kick_out_player', { targetId: room.hostId });
+            
+            // 从房间中移除房主
+            const hostIndex = room.players.findIndex(p => p.id === room.hostId);
+            if (hostIndex !== -1) {
+              const oldHost = room.players[hostIndex];
+              room.players.splice(hostIndex, 1);
+              
+              // 指定新房主
+              const onlinePlayers = room.players.filter(p => p.online);
+              if (onlinePlayers.length > 0) {
+                room.hostId = onlinePlayers[0].id;
+                io.to(room.id).emit('chat_broadcast', { 
+                  message: `${onlinePlayers[0].nickname} 成为新的房主`, 
+                  type: 'system' 
+                });
+              } else {
+                room.hostId = '';
+              }
+              
+              room.lastActiveTime = Date.now();
+              
+              // 通知被踢的房主
+              io.to(oldHost.socketId).emit('kicked_out', { 
+                message: '您被投票踢出房间' 
+              });
+              
+              // 更新房间信息
+              threadManager.updateRoomData(room.id, room);
+              
+              io.to(room.id).emit('chat_broadcast', { 
+                message: `房主 ${oldHost.nickname} 被投票踢出房间`, 
+                type: 'system' 
+              });
+              
+              console.log(`房主 ${oldHost.nickname} 被投票踢出`);
+            }
+          } else {
+            io.to(room.id).emit('chat_broadcast', { 
+              message: `当前投票数: ${voteData.voters.size}/${requiredVotes}`, 
+              type: 'system' 
+            });
+          }
+        } else {
+          socket.emit('error', { message: '无法踢出自己' });
+        }
+      } catch (error) {
+        console.error('踢出玩家失败:', error);
+        socket.emit('error', { message: '踢出玩家失败' });
+      }
+    });
+
+    // 处理断开连接
     socket.on('disconnect', async () => {
-      console.log(`Socket disconnected: ${socket.id}`);
+      console.log(`客户端断开连接: ${socket.id}`);
       
-      // 查找该socket所在的房间并通知房间线程处理离线
-      for (const room of rooms) {
+      // 查找玩家所在的房间
+      for (const [roomId, room] of rooms.entries()) {
         const player = room.players.find(p => p.socketId === socket.id);
         if (player) {
+          // 标记玩家离线
+          player.online = false;
+          
+          // 通知房间线程玩家离线
           try {
-            await sendTaskToRoom(room.id, 'player_offline', { 
-              playerId: player.id, 
-              socketId: socket.id 
-            });
+            await sendTaskToRoom(room.id, 'player_offline', { playerId: player.id });
           } catch (error) {
-            console.error('处理玩家离线失败:', error);
+            console.error('通知玩家离线失败:', error);
           }
+          
+          // 设置定时器，如果玩家在一定时间内没有重连，则从房间中移除
+          setTimeout(async () => {
+            const currentRoom = rooms.get(roomId);
+            if (!currentRoom) return;
+            
+            const currentPlayer = currentRoom.players.find(p => p.id === player.id);
+            if (currentPlayer && !currentPlayer.online) {
+              // 从房间中移除玩家
+              const index = currentRoom.players.findIndex(p => p.id === player.id);
+              if (index !== -1) {
+                currentRoom.players.splice(index, 1);
+                
+                // 如果房间为空，删除房间
+                if (currentRoom.players.length === 0) {
+                  await threadManager.stopRoomThread(roomId);
+                  rooms.delete(roomId);
+                } else {
+                  // 如果离开的是房主，指定新的房主
+                  if (currentRoom.hostId === player.id) {
+                    currentRoom.hostId = currentRoom.players[0].id;
+                  }
+                }
+                
+                // 更新大厅
+                if (!currentRoom.private && rooms.has(roomId)) {
+                  io.emit('lobby_update', { 
+                    rooms: Array.from(rooms.values())
+                      .filter(r => !r.private)
+                      .map(r => ({
+                        id: r.id,
+                        name: r.name,
+                        type: r.type,
+                        displayName: config.games[r.type]?.displayName || r.type,
+                        playerCount: r.players.length,
+                        maxPlayers: r.maxPlayers,
+                        private: r.private
+                      }))
+                  });
+                }
+              }
+            }
+          }, 30000); // 30秒后移除离线玩家
+          
           break;
         }
       }
     });
   });
 
-  // 优雅关闭
-  process.on('SIGTERM', async () => {
-    console.log('正在优雅关闭服务器...');
-    await threadManager.shutdown();
-    process.exit(0);
-  });
+  // 定期清理空闲房间
+  setInterval(async () => {
+    const now = Date.now();
+    const idleThreshold = 300000; // 5分钟空闲时间
 
-  process.on('SIGINT', async () => {
-    console.log('正在优雅关闭服务器...');
-    await threadManager.shutdown();
-    process.exit(0);
-  });
+    for (const [roomId, room] of rooms.entries()) {
+      if (room.players.length === 0 || 
+          (now - room.lastActiveTime > idleThreshold && 
+           room.players.every(p => !p.online))) {
+        console.log(`清理空闲房间: ${room.name}`);
+        await threadManager.cleanupIdleRoom(roomId);
+        rooms.delete(roomId);
+        
+        // 更新大厅
+        if (!room.private) {
+          io.emit('lobby_update', { 
+            rooms: Array.from(rooms.values())
+              .filter(r => !r.private)
+              .map(r => ({
+                id: r.id,
+                name: r.name,
+                type: r.type,
+                displayName: config.games[r.type]?.displayName || r.type,
+                playerCount: r.players.length,
+                maxPlayers: r.maxPlayers,
+                private: r.private
+              }))
+          });
+        }
+      }
+    }
+  }, 60000); // 每分钟检查一次
+
+  console.log('房间控制器初始化完成');
 }

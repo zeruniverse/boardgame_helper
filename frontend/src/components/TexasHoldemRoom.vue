@@ -1,7 +1,17 @@
 <template>
   <el-container class="room-container">
+    <!-- 房间准备中的遮罩 -->
+    <div v-if="roomPreparing" class="room-loading-overlay">
+      <div class="loading-content">
+        <el-icon class="is-loading" size="48">
+          <Loading />
+        </el-icon>
+        <p>房间正在准备中...</p>
+      </div>
+    </div>
+
     <!-- 快捷操作按钮 - 固定在顶部 -->
-    <div class="floating-header">
+    <div v-else class="floating-header">
       <!-- 只有在未开始游戏且已在房间的玩家显示开始/CashIn/CashOut -->
       <template v-if="store.stage === 'idle' && isInRoom">
         <el-button type="success" @click="onStartGame"
@@ -69,7 +79,7 @@
       <!-- 大屏幕：使用行布局 -->
       <div class="desktop-layout">
         <div class="left-panel">
-          <PlayerList />
+          <TexasHoldemPlayerList />
           <!-- 分池阶段 -->
           <template v-if="store.stage === 'distribution' && isInGame && !online">
             <div class="take-controls">
@@ -90,7 +100,7 @@
           </template>
           <!-- 正常操作阶段 -->
           <template v-else-if="store.stage === 'playing' && isInGame">
-            <ActionBar />
+            <TexasHoldemActionBar />
           </template>
           <div class="control-buttons">
             <el-button size="small" @click="toggleAutoStart"
@@ -106,7 +116,13 @@
           </div>
         </div>
         <div class="chat-container">
-          <Chat class="chat-component" />
+          <TexasHoldemChat 
+            class="chat-component"
+            :messages="store.messages"
+            :room-id="store.currentRoom || undefined"
+            :nickname="store.nickname"
+            :socket="store.socket"
+          />
         </div>
       </div>
 
@@ -114,7 +130,7 @@
       <div class="mobile-layout">
         <!-- 玩家列表和操作按钮 -->
         <div class="mobile-section">
-          <PlayerList />
+          <TexasHoldemPlayerList />
           <!-- 分池阶段 -->
           <template v-if="store.stage === 'distribution' && isInGame && !online">
             <div class="take-controls-mobile">
@@ -135,7 +151,7 @@
           </template>
           <!-- 正常操作阶段 -->
           <template v-else-if="store.stage === 'playing' && isInGame">
-            <ActionBar />
+            <TexasHoldemActionBar />
           </template>
           <div class="control-buttons-mobile">
             <el-button size="small" @click="toggleAutoStart"
@@ -153,7 +169,13 @@
 
         <!-- 聊天窗口 -->
         <div class="mobile-section">
-          <Chat class="mobile-chat" />
+          <TexasHoldemChat 
+            class="mobile-chat"
+            :messages="store.messages"
+            :room-id="store.currentRoom || undefined"
+            :nickname="store.nickname"
+            :socket="store.socket"
+          />
         </div>
       </div>
     </el-main>
@@ -162,14 +184,15 @@
 
 <script lang="ts" setup>
 import { onMounted, computed, ref, onUnmounted } from 'vue';
-import { useMainStore } from '../store';
+import { useTexasHoldemStore, useMainStore } from '../store';
 import { storeToRefs } from 'pinia';
 import { useRouter, useRoute } from 'vue-router';
-import Chat from './Chat.vue';
-import PlayerList from './PlayerList.vue';
-import ActionBar from './ActionBar.vue';
+import { Loading } from '@element-plus/icons-vue';
+import TexasHoldemChat from './TexasHoldemChat.vue';
+import TexasHoldemPlayerList from './TexasHoldemPlayerList.vue';
+import TexasHoldemActionBar from './TexasHoldemActionBar.vue';
 
-const store = useMainStore();
+const store = useTexasHoldemStore();
 // 房间内玩家判断，用于控制预游戏按钮显示
 const isInRoom = computed(() => store.players.some((p: any) => p.id === store.nickname));
 const { round } = storeToRefs(store);
@@ -178,11 +201,42 @@ const route = useRoute();
 const roomId = route.params.id as string;
 const roundText = computed(() => ['翻前','翻后','转牌','河牌'][round.value] || '');
 
+// 房间准备状态
+const roomPreparing = ref(true);
+
 // 如果未加入此房间，则尝试重新加入
 onMounted(() => {
+  // 初始化socket监听器
+  store.initTexasHoldemSocket();
+  
   // 确保socket已初始化，但如果已存在且连接正常，则不重新初始化
   if (!store.socket || !store.socket.connected) {
-    store.initSocket();
+    const mainStore = useMainStore();
+    mainStore.initSocket();
+  }
+
+  // 监听房间准备完成事件
+  if (store.socket) {
+    store.socket.on('room_ready', () => {
+      roomPreparing.value = false;
+    });
+
+    // 监听房间加入成功事件（用于验证房间类型）
+    store.socket.on('room_joined', (data: { room: any; player: any; isHost: boolean }) => {
+      if (data.room.type !== 'texas-holdem') {
+        // 房间类型不匹配，跳转回大厅
+        router.push({ name: 'Lobby' });
+        return;
+      }
+      roomPreparing.value = false;
+    });
+
+    // 监听错误事件
+    store.socket.on('error', (data: { message: string }) => {
+      if (data.message.includes('房间不存在') || data.message.includes('房间类型不匹配')) {
+        router.push({ name: 'Lobby' });
+      }
+    });
   }
 
   if (store.nickname) {
@@ -374,9 +428,8 @@ function onTakeAll() {
   }
 }
 
-// 计算 currentRoom 和 online 标识
-const currentRoomInfo = computed(() => store.rooms.find(r => r.id === roomId));
-const online = computed(() => currentRoomInfo.value?.online || false);
+// 在德州扑克游戏中，默认使用在线模式（系统发牌）
+const online = computed(() => true);
 
 function formatCards(cards: string[]): string {
   return cards.map(card => {
@@ -628,5 +681,38 @@ function formatCards(cards: string[]): string {
 
 .control-buttons-mobile .el-button {
   width: 100%;
+}
+/* 房间加载遮罩样式 */
+.room-loading-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background-color: rgba(255, 255, 255, 0.8);
+  backdrop-filter: blur(2px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+}
+
+.loading-content {
+  text-align: center;
+  padding: 40px;
+  background: white;
+  border-radius: 12px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+}
+
+.loading-content .el-icon {
+  margin-bottom: 16px;
+  color: #409eff;
+}
+
+.loading-content p {
+  margin: 0;
+  font-size: 16px;
+  color: #666;
 }
 </style>

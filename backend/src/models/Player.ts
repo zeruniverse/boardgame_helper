@@ -1,9 +1,8 @@
 export interface Player {
   id: string;
   nickname: string;
-  chips: number;
   socketId: string;
   lastHeartbeat: number;
-  inGame: boolean;
-  cashinCount: number;
+  online: boolean; // 表示玩家与服务器有连接，为在线状态
+  gameMetadata: any; // 所有跟特定游戏相关的，绑定在玩家身上的信息都存在这里，不要存在别的地方，这是个字典。
 }

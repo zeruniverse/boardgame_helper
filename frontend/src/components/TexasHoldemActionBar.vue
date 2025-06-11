@@ -41,9 +41,9 @@
 
 <script lang="ts" setup>
 import { ref, computed } from 'vue';
-import { useMainStore } from '../store';
+import { useTexasHoldemStore } from '../store';
 
-const store = useMainStore();
+const store = useTexasHoldemStore();
 const raiseAmount = ref(0);
 const toCall = computed(() => store.currentBet - (store.bets[store.nickname] || 0));
 const ownPlayer = computed(() => store.players.find((p: any) => p.id === store.nickname));

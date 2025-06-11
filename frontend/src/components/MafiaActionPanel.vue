@@ -1,0 +1,398 @@
+<template>
+  <div class="mafia-action-panel">
+    <!-- 等待开始阶段 -->
+    <div v-if="gameState.status === 'WAITING'" class="waiting-actions">
+      <el-button 
+        v-if="isHost && !isReady" 
+        @click="ready" 
+        type="primary"
+      >
+        准备
+      </el-button>
+      <el-button 
+        v-if="isHost && isReady" 
+        @click="unready" 
+        type="default"
+      >
+        取消准备
+      </el-button>
+      <el-button 
+        v-if="isHost && canStartGame" 
+        @click="startGame" 
+        type="success"
+      >
+        开始游戏
+      </el-button>
+    </div>
+
+    <!-- 夜晚阶段 -->
+    <div v-if="gameState.status === 'NIGHT'" class="night-actions">
+      <div class="action-header">
+        <h4>夜晚阶段</h4>
+        <p>{{ getNightActionDescription() }}</p>
+      </div>
+
+      <!-- 杀手行动 -->
+      <div v-if="playerSecret?.role === 'KILLER'" class="killer-actions">
+        <h5>选择杀死的目标:</h5>
+        <div class="player-buttons">
+          <el-button
+            v-for="player in getAliveEnemyPlayers()"
+            :key="player.id"
+            @click="killPerson(player.id)"
+            :disabled="!canOperate"
+            size="small"
+          >
+            {{ player.name }}
+          </el-button>
+        </div>
+      </div>
+
+      <!-- 警察行动 -->
+      <div v-if="playerSecret?.role === 'COP'" class="cop-actions">
+        <h5>选择查验的目标:</h5>
+        <div class="player-buttons">
+          <el-button
+            v-for="player in getAliveOtherPlayers()"
+            :key="player.id"
+            @click="inspectSuspect(player.id)"
+            :disabled="!canOperate"
+            size="small"
+          >
+            {{ player.name }}
+          </el-button>
+        </div>
+      </div>
+
+      <!-- 平民等待 -->
+      <div v-if="playerSecret?.role === 'CIVILIAN'" class="civilian-wait">
+        <p>平民请耐心等待，夜晚即将结束...</p>
+      </div>
+    </div>
+
+    <!-- 发言阶段 -->
+    <div v-if="gameState.status === 'SPEAK'" class="speak-actions">
+      <div class="action-header">
+        <h4>发言阶段</h4>
+        <p v-if="getCurrentSpeaker()">
+          当前发言: {{ getCurrentSpeaker()?.name }}
+        </p>
+      </div>
+
+      <div v-if="isMyTurn" class="my-turn">
+        <el-alert
+          title="轮到你发言了！"
+          type="info"
+          show-icon
+          :closable="false"
+        />
+      </div>
+    </div>
+
+    <!-- 投票阶段 -->
+    <div v-if="gameState.status === 'VOTE'" class="vote-actions">
+      <div class="action-header">
+        <h4>投票阶段</h4>
+        <p>请选择要投票淘汰的玩家</p>
+      </div>
+
+      <div class="player-buttons">
+        <el-button
+          v-for="player in getAliveOtherPlayers()"
+          :key="player.id"
+          @click="vote(player.id)"
+          :disabled="!canOperate || hasVoted"
+          size="small"
+          :type="getVoteButtonType(player.id)"
+        >
+          {{ player.name }}
+          <span v-if="gameState.voteCounts?.[player.id]">
+            ({{ gameState.voteCounts[player.id] }})
+          </span>
+        </el-button>
+      </div>
+
+      <div v-if="hasVoted" class="voted-notice">
+        <el-tag type="success">已投票</el-tag>
+      </div>
+    </div>
+
+    <!-- PK阶段 -->
+    <div v-if="gameState.status === 'PK'" class="pk-actions">
+      <div class="action-header">
+        <h4>PK阶段</h4>
+        <p>平票玩家进行PK，请重新投票</p>
+      </div>
+
+      <div v-if="gameState.pkPlayers" class="pk-players">
+        <h5>PK玩家:</h5>
+        <div class="player-buttons">
+          <el-button
+            v-for="playerId in gameState.pkPlayers"
+            :key="playerId"
+            @click="vote(playerId)"
+            :disabled="!canOperate || hasVoted"
+            size="small"
+            :type="getVoteButtonType(playerId)"
+          >
+            {{ getPlayerName(playerId) }}
+            <span v-if="gameState.voteCounts?.[playerId]">
+              ({{ gameState.voteCounts[playerId] }})
+            </span>
+          </el-button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 遗言阶段 -->
+    <div v-if="gameState.status === 'LAST_WORD' || gameState.status === 'LAST_WORD_DAYTIME'" class="last-word-actions">
+      <div class="action-header">
+        <h4>遗言阶段</h4>
+        <p v-if="gameState.lastWordPlayer">
+          {{ getPlayerName(gameState.lastWordPlayer) }} 正在发表遗言
+        </p>
+      </div>
+
+      <div v-if="isLastWordPlayer" class="my-last-word">
+        <el-alert
+          title="请发表你的遗言"
+          type="warning"
+          show-icon
+          :closable="false"
+        />
+        <el-button 
+          @click="endLastWord" 
+          type="primary" 
+          style="margin-top: 10px;"
+        >
+          结束遗言
+        </el-button>
+      </div>
+    </div>
+
+    <!-- 游戏结束 -->
+    <div v-if="gameState.status === 'OVER'" class="game-over-actions">
+      <div class="action-header">
+        <h4>游戏结束</h4>
+        <div class="winner-display">
+          <el-tag 
+            :type="gameState.winner === 'red' ? 'danger' : 'primary'" 
+            size="large"
+          >
+            {{ gameState.winner === 'red' ? '狼人阵营' : '好人阵营' }} 获胜！
+          </el-tag>
+        </div>
+      </div>
+
+      <div v-if="isHost" class="restart-game">
+        <el-button @click="restartGame" type="success">
+          重新开始游戏
+        </el-button>
+      </div>
+    </div>
+
+    <!-- 特殊操作 -->
+    <div v-if="canConfess" class="confess-action">
+      <el-button @click="confess" type="danger" size="small">
+        自爆
+      </el-button>
+    </div>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { computed } from 'vue'
+import { useMafiaGameStore } from '../store/mafia'
+
+interface Player {
+  id: string
+  name: string
+  alive: boolean
+  team?: 'RED' | 'BLUE'
+  role?: 'KILLER' | 'COP' | 'CIVILIAN'
+}
+
+interface Props {
+  gameState: any
+  playerSecret: any
+  roomId: string
+}
+
+const props = defineProps<Props>()
+
+const store = useMafiaGameStore()
+
+// 计算属性
+const isHost = computed(() => store.isHost)
+const isReady = computed(() => store.isReady)
+const canStartGame = computed(() => store.canStartGame)
+const canOperate = computed(() => store.canOperate)
+const isMyTurn = computed(() => store.isMyTurn)
+const isAlive = computed(() => store.isAlive)
+
+const isLastWordPlayer = computed(() => {
+  return props.gameState.lastWordPlayer === store.currentUserId
+})
+
+const hasVoted = computed(() => {
+  if (!props.gameState.voteResult) return false
+  return store.currentUserId in props.gameState.voteResult
+})
+
+const canConfess = computed(() => {
+  return props.playerSecret?.role === 'KILLER' && 
+         isAlive.value && 
+         ['SPEAK', 'VOTE', 'PK'].includes(props.gameState.status)
+})
+
+// 方法
+const getCurrentSpeaker = () => {
+  if (!props.gameState.alivePlayersOrder || props.gameState.speakingPlayerIndex === undefined) {
+    return null
+  }
+  const speakerId = props.gameState.alivePlayersOrder[props.gameState.speakingPlayerIndex]
+  return props.gameState.players[speakerId]
+}
+
+const getAliveEnemyPlayers = (): Player[] => {
+  if (!props.gameState.players) return []
+  return Object.values(props.gameState.players).filter((player: any): player is Player => 
+    player.alive && 
+    player.id !== store.currentUserId && 
+    player.team !== props.playerSecret?.team
+  )
+}
+
+const getAliveOtherPlayers = (): Player[] => {
+  if (!props.gameState.players) return []
+  return Object.values(props.gameState.players).filter((player: any): player is Player => 
+    player.alive && player.id !== store.currentUserId
+  )
+}
+
+const getPlayerName = (playerId: string): string => {
+  return props.gameState.players[playerId]?.name || playerId
+}
+
+const getVoteButtonType = (playerId: string): string => {
+  if (!props.gameState.voteResult) return 'default'
+  const myVote = props.gameState.voteResult[store.currentUserId]
+  return myVote === playerId ? 'primary' : 'default'
+}
+
+const getNightActionDescription = (): string => {
+  if (props.playerSecret?.role === 'KILLER') {
+    return '杀手请选择tonight要杀死的目标'
+  } else if (props.playerSecret?.role === 'COP') {
+    return '警察请选择tonight要查验的目标'
+  } else {
+    return '夜晚降临，请耐心等待...'
+  }
+}
+
+// 游戏操作
+const ready = () => store.ready()
+const unready = () => store.unready()
+const startGame = () => store.startGame()
+const killPerson = (targetId: string) => store.killPerson(targetId)
+const inspectSuspect = (targetId: string) => store.inspectSuspect(targetId)
+const vote = (targetId: string) => store.vote(targetId)
+const confess = () => store.confess()
+const endLastWord = () => store.endLastWord()
+const restartGame = () => store.restartGame()
+</script>
+
+<style scoped>
+.mafia-action-panel {
+  background: #fff;
+  border: 1px solid #e4e7ed;
+  border-radius: 8px;
+  padding: 20px;
+  margin-bottom: 20px;
+}
+
+.action-header {
+  margin-bottom: 16px;
+}
+
+.action-header h4 {
+  margin: 0 0 8px 0;
+  color: #303133;
+  font-size: 16px;
+}
+
+.action-header p {
+  margin: 0;
+  color: #606266;
+  font-size: 14px;
+}
+
+.player-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.waiting-actions {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+}
+
+.night-actions .killer-actions,
+.night-actions .cop-actions {
+  margin-bottom: 16px;
+}
+
+.night-actions h5 {
+  margin: 0 0 8px 0;
+  color: #409eff;
+  font-size: 14px;
+}
+
+.civilian-wait {
+  text-align: center;
+  padding: 20px;
+  color: #909399;
+}
+
+.my-turn {
+  margin-bottom: 16px;
+}
+
+.voted-notice {
+  margin-top: 12px;
+  text-align: center;
+}
+
+.pk-players h5 {
+  margin: 0 0 8px 0;
+  color: #e6a23c;
+  font-size: 14px;
+}
+
+.my-last-word {
+  text-align: center;
+  padding: 16px;
+}
+
+.game-over-actions {
+  text-align: center;
+}
+
+.winner-display {
+  margin: 16px 0;
+}
+
+.restart-game {
+  margin-top: 16px;
+}
+
+.confess-action {
+  margin-top: 16px;
+  text-align: center;
+  padding-top: 16px;
+  border-top: 1px solid #e4e7ed;
+}
+</style> 
