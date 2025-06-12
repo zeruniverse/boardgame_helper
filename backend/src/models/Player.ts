@@ -1,6 +1,7 @@
 export interface Player {
   id: string;
   nickname: string;
+  name: string; // 玩家显示名称，默认与nickname相同
   socketId: string;
   lastHeartbeat: number;
   online: boolean; // 表示玩家与服务器有连接，为在线状态

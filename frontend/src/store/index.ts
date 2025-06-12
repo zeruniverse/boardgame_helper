@@ -74,6 +74,8 @@ export const useMainStore = defineStore('main', {
             router.push({ name: 'TexasHoldemRoom', params: { id: data.room.id } });
           } else if (data.room.type === 'avalon') {
             router.push({ name: 'AvalonRoom', params: { id: data.room.id } });
+          } else if (data.room.type === 'botc') {
+            router.push({ name: 'BOTCRoom', params: { id: data.room.id } });
           } else {
             // 其他游戏类型，暂时跳回大厅
             router.push({ name: 'Lobby' });

@@ -202,6 +202,22 @@
               </el-card>
             </el-col>
           </el-row>
+          <el-row :gutter="20" style="margin-top: 20px;">
+            <el-col :span="8">
+              <el-card 
+                class="game-card"
+                :class="{ 'selected': createRoomForm.gameType === 'botc' }"
+                @click="selectGame('botc')"
+                shadow="hover"
+              >
+                <div class="game-info">
+                  <h4>血染钟楼</h4>
+                  <p>角色扮演推理游戏</p>
+                  <p>支持5-15人</p>
+                </div>
+              </el-card>
+            </el-col>
+          </el-row>
         </div>
 
         <!-- 第二步：配置房间 -->
@@ -210,19 +226,14 @@
           
           <!-- 通用设置 -->
           <el-form :model="createRoomForm" label-width="120px">
-            <el-form-item label="房间名称">
-              <el-input
-                v-model="createRoomForm.roomName"
-                placeholder="请输入房间名称"
-              />
-            </el-form-item>
-            <el-form-item label="房间密码">
-              <el-input
-                v-model="createRoomForm.password"
-                placeholder="留空表示公开房间"
-                type="password"
-              />
-            </el-form-item>
+            <el-alert
+              title="房间信息"
+              type="info"
+              description="房间名称将由系统自动分配6位随机字符，无需设置密码"
+              :closable="false"
+              show-icon
+              style="margin-bottom: 20px"
+            />
             <el-form-item label="房间私有">
               <el-switch v-model="createRoomForm.isPrivate" />
               <span style="margin-left: 10px; color: #909399; font-size: 12px;">
@@ -304,6 +315,50 @@
                 </el-select>
               </el-form-item>
             </template>
+
+            <!-- 血染钟楼特有设置 -->
+            <template v-if="createRoomForm.gameType === 'botc'">
+              <el-divider content-position="left">血染钟楼设置</el-divider>
+              <el-form-item label="最大人数">
+                <el-select v-model="createRoomForm.maxPlayers" placeholder="选择最大人数">
+                  <el-option label="5人" :value="5" />
+                  <el-option label="6人" :value="6" />
+                  <el-option label="7人" :value="7" />
+                  <el-option label="8人" :value="8" />
+                  <el-option label="9人" :value="9" />
+                  <el-option label="10人" :value="10" />
+                  <el-option label="11人" :value="11" />
+                  <el-option label="12人" :value="12" />
+                  <el-option label="13人" :value="13" />
+                  <el-option label="14人" :value="14" />
+                  <el-option label="15人" :value="15" />
+                </el-select>
+              </el-form-item>
+              <el-form-item label="剧本选择">
+                <el-select v-model="createRoomForm.edition" placeholder="选择剧本">
+                  <el-option label="Trouble Brewing (初学者)" value="tb" />
+                  <el-option label="Bad Moon Rising (中级)" value="bmr" />
+                  <el-option label="Sects & Violets (中级)" value="snv" />
+                </el-select>
+              </el-form-item>
+              <el-form-item label="白天时间">
+                <el-select v-model="createRoomForm.dayTime" placeholder="选择白天讨论时间">
+                  <el-option label="5分钟" :value="300" />
+                  <el-option label="10分钟" :value="600" />
+                  <el-option label="15分钟" :value="900" />
+                  <el-option label="20分钟" :value="1200" />
+                  <el-option label="无限制" :value="0" />
+                </el-select>
+              </el-form-item>
+              <el-form-item label="夜晚时间">
+                <el-select v-model="createRoomForm.nightTime" placeholder="选择夜晚行动时间">
+                  <el-option label="2分钟" :value="120" />
+                  <el-option label="3分钟" :value="180" />
+                  <el-option label="5分钟" :value="300" />
+                  <el-option label="无限制" :value="0" />
+                </el-select>
+              </el-form-item>
+            </template>
           </el-form>
         </div>
 
@@ -365,15 +420,16 @@ const joinRoomForm = ref({
 // 创建房间相关状态
 const createRoomDialogVisible = ref(false);
 const createRoomForm = ref({
-  roomName: '',
-  password: '',
   maxPlayers: 8,
   enableLady: false,
   nickname: '',
   gameType: '',
   isPrivate: false,
   speakTime: 60,
-  actionTime: 60
+  actionTime: 60,
+  edition: 'tb',
+  dayTime: 600,
+  nightTime: 180
 });
 const createRoomStep = ref(0);
 const creatingRoom = ref(false);
@@ -390,6 +446,25 @@ onMounted(() => {
       store.socket.emit('get_lobby');
     }
   }, 100);
+
+  // 监听房间创建/加入成功事件
+  if (store.socket) {
+    store.socket.on('room_joined', (data: { room: any; player: any; isHost: boolean }) => {
+      console.log('大厅收到room_joined事件', data);
+      
+      // 根据游戏类型跳转到对应房间页面
+      if (data.room.type === 'texas-holdem') {
+        router.push({ name: 'TexasHoldemRoom', params: { id: data.room.id } });
+      } else if (data.room.type === 'avalon') {
+        router.push({ name: 'AvalonRoom', params: { id: data.room.id } });
+      } else if (data.room.type === 'mafia') {
+        router.push({ name: 'MafiaRoom', params: { id: data.room.id } });
+      } else {
+        // 其他游戏类型的处理
+        console.warn('未知的游戏类型:', data.room.type);
+      }
+    });
+  }
 });
 
 function enter(roomId: string) {
@@ -435,8 +510,6 @@ function showJoinRoomDialog() {
 
 // 显示创建房间对话框
 function showCreateRoomDialog() {
-  createRoomForm.value.roomName = '';
-  createRoomForm.value.password = '';
   createRoomForm.value.maxPlayers = 8;
   createRoomForm.value.enableLady = false;
   createRoomForm.value.nickname = '';
@@ -479,19 +552,30 @@ async function confirmCreateRoom() {
       nickname: createRoomForm.value.nickname
     };
 
-    // 添加房间名称（如果有的话）
-    if (createRoomForm.value.roomName.trim()) {
-      gameConfig.roomName = createRoomForm.value.roomName;
-    }
+    // 房间名称由系统自动分配，无需手动设置
 
     // 添加游戏特定配置
     if (createRoomForm.value.gameType === 'avalon') {
       gameConfig.enableLady = createRoomForm.value.enableLady;
       gameConfig.playerCount = createRoomForm.value.maxPlayers;
+    } else if (createRoomForm.value.gameType === 'botc') {
+      gameConfig.edition = createRoomForm.value.edition;
+      gameConfig.playerCount = createRoomForm.value.maxPlayers;
+      gameConfig.dayTime = createRoomForm.value.dayTime;
+      gameConfig.nightTime = createRoomForm.value.nightTime;
     }
 
     // 通过socket创建房间
     if (store.socket) {
+      // 如果是德州扑克，设置昵称到store
+      if (createRoomForm.value.gameType === 'texas-holdem') {
+        const texasStore = useTexasHoldemStore();
+        texasStore.nickname = createRoomForm.value.nickname;
+        localStorage.setItem('texas_nickname', createRoomForm.value.nickname);
+        // 设置新加入标记
+        sessionStorage.setItem('texas_newJoin', 'true');
+      }
+      
       store.socket.emit('create_room', {
         gameType: createRoomForm.value.gameType,
         gameConfig,

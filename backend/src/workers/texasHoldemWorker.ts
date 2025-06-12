@@ -113,7 +113,6 @@ class TexasHoldemWorker extends BaseGameWorker {
 
     this.sendToRoom('room_update', room);
     this.sendToRoom('chat_broadcast', { message: '德州扑克房间已准备就绪' });
-    this.sendToRoom('room_ready', {});
   }
 
   async changeConfig(config: TexasHoldemConfig): Promise<void> {
@@ -1450,9 +1449,22 @@ class TexasHoldemWorker extends BaseGameWorker {
 // 创建worker实例
 const worker = new TexasHoldemWorker();
 
+// 全局错误处理
+process.on('uncaughtException', (error) => {
+  console.error('德州扑克Worker未捕获异常:', error);
+  process.exit(1);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('德州扑克Worker未处理的Promise拒绝:', reason);
+  process.exit(1);
+});
+
 // 处理来自主线程的消息
 parentPort.on('message', async (task: GameTask) => {
   try {
+    console.log(`德州扑克Worker收到任务: ${task.type}, roomId: ${task.roomId}`);
+    
     const response: GameTaskResponse = {
       taskId: task.id,
       success: true,
@@ -1486,12 +1498,16 @@ parentPort.on('message', async (task: GameTask) => {
         response.error = `未知的任务类型: ${task.type}`;
     }
 
+    console.log(`德州扑克Worker任务完成: ${task.type}, success: ${response.success}`);
     parentPort!.postMessage(response);
   } catch (error) {
+    console.error(`德州扑克Worker任务失败: ${task.type}`, error);
     parentPort!.postMessage({
       taskId: task.id,
       success: false,
       error: error instanceof Error ? error.message : String(error)
     } as GameTaskResponse);
   }
-}); 
+});
+
+console.log('德州扑克Worker已启动'); 

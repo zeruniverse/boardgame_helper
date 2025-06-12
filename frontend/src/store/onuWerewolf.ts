@@ -1,0 +1,547 @@
+import { defineStore } from 'pinia';
+import { io, Socket } from 'socket.io-client';
+import { SOCKET_URL } from '../config';
+
+// 角色枚举
+export enum OnuWerewolfRole {
+  Unknown = 0,
+  Werewolf = 1,
+  Villager = 2,
+  Seer = 3,
+  Robber = 4,
+  Troublemaker = 5,
+  Drunk = 6,
+  Insomniac = 7,
+  Mason = 8,
+  Minion = 9,
+  Doppelganger = 10,
+  Hunter = 11,
+  Tanner = 12,
+  AlphaWolf = 13,
+  MysticWolf = 14,
+  ApprenticeSeer = 15,
+  ParanormalInvestigator = 16,
+  Witch = 17,
+  VillageIdiot = 18,
+  Revealer = 19,
+  Curator = 20,
+  Sentinel = 21,
+  ApprenticeTanner = 22,
+  AuraSeer = 23,
+  Beholder = 24,
+  Squire = 25,
+  Thing = 26
+}
+
+// 游戏状态枚举
+export enum OnuWerewolfGameStatus {
+  WAITING = 0,
+  PREPARING = 1,
+  NIGHT = 2,
+  VOTING = 3,
+  REVEALING = 4,
+  COMPLETED = 5
+}
+
+// 团队枚举
+export enum OnuWerewolfTeam {
+  Villager = 'villager',
+  Werewolf = 'werewolf',
+  Tanner = 'tanner'
+}
+
+// 角色名称映射
+export const ONU_WEREWOLF_ROLE_NAMES: Record<OnuWerewolfRole, string> = {
+  [OnuWerewolfRole.Unknown]: '未知',
+  [OnuWerewolfRole.Werewolf]: '狼人',
+  [OnuWerewolfRole.Villager]: '村民',
+  [OnuWerewolfRole.Seer]: '预言家',
+  [OnuWerewolfRole.Robber]: '强盗',
+  [OnuWerewolfRole.Troublemaker]: '捣蛋鬼',
+  [OnuWerewolfRole.Drunk]: '酒鬼',
+  [OnuWerewolfRole.Insomniac]: '失眠者',
+  [OnuWerewolfRole.Mason]: '石匠',
+  [OnuWerewolfRole.Minion]: '爪牙',
+  [OnuWerewolfRole.Doppelganger]: '化身',
+  [OnuWerewolfRole.Hunter]: '猎人',
+  [OnuWerewolfRole.Tanner]: '皮匠',
+  [OnuWerewolfRole.AlphaWolf]: '狼王',
+  [OnuWerewolfRole.MysticWolf]: '神秘狼',
+  [OnuWerewolfRole.ApprenticeSeer]: '预言家学徒',
+  [OnuWerewolfRole.ParanormalInvestigator]: '超自然调查员',
+  [OnuWerewolfRole.Witch]: '女巫',
+  [OnuWerewolfRole.VillageIdiot]: '村庄白痴',
+  [OnuWerewolfRole.Revealer]: '揭示者',
+  [OnuWerewolfRole.Curator]: '馆长',
+  [OnuWerewolfRole.Sentinel]: '哨兵',
+  [OnuWerewolfRole.ApprenticeTanner]: '皮匠学徒',
+  [OnuWerewolfRole.AuraSeer]: '光环预言家',
+  [OnuWerewolfRole.Beholder]: '旁观者',
+  [OnuWerewolfRole.Squire]: '侍从',
+  [OnuWerewolfRole.Thing]: '异形'
+};
+
+interface OnuWerewolfPlayer {
+  id: string;
+  name: string;
+  seat: number;
+  ready: boolean;
+  voted: boolean;
+  skillUsed: boolean;
+}
+
+interface OnuWerewolfGameState {
+  status: OnuWerewolfGameStatus;
+  currentPhase: string;
+  timeLeft: number;
+  playerCount: number;
+  readyCount: number;
+  day: number;
+  players: OnuWerewolfPlayer[];
+  config?: {
+    roles: OnuWerewolfRole[];
+    nightTime: number;
+    votingTime: number;
+    discussTime: number;
+  };
+}
+
+interface OnuWerewolfSecret {
+  myRole?: OnuWerewolfRole;
+  mySeat?: number;
+  canUseSkill?: boolean;
+  canVote?: boolean;
+  skillData?: any;
+  finalRole?: OnuWerewolfRole;
+  vision?: any;
+  gameResult?: any;
+}
+
+interface OnuWerewolfRoomState {
+  id: string;
+  name: string;
+  players: OnuWerewolfPlayer[];
+  hostId: string;
+  gameStarted: boolean;
+}
+
+export const useOnuWerewolfStore = defineStore('onuWerewolf', {
+  state: () => ({
+    socket: null as Socket | null,
+    connected: false,
+    currentRoomId: '',
+    currentUserId: '',
+    room: null as OnuWerewolfRoomState | null,
+    gameState: null as OnuWerewolfGameState | null,
+    playerSecret: null as OnuWerewolfSecret | null,
+    messages: [] as any[],
+    errorMessage: '',
+    timeLeft: 0,
+    timerInterval: null as ReturnType<typeof setInterval> | null,
+    skipDiscussionCount: 0,
+    skipDiscussionTotal: 0,
+  }),
+
+  getters: {
+    isHost(): boolean {
+      return this.room?.hostId === this.currentUserId;
+    },
+    
+    isReady(): boolean {
+      const player = this.room?.players.find(p => p.id === this.currentUserId);
+      return player?.ready ?? false;
+    },
+
+    canStartGame(): boolean {
+      if (!this.isHost || !this.room || !this.gameState?.config) return false;
+      const playerCount = this.room.players.length;
+      const roleCount = this.gameState.config.roles.length;
+      const readyCount = this.room.players.filter(p => p.ready).length;
+      
+      // 角色数量必须比玩家数量多3个，且所有玩家都准备就绪
+      return roleCount === playerCount + 3 && readyCount === playerCount && playerCount >= 3;
+    },
+
+    canUseSkill(): boolean {
+      return this.playerSecret?.canUseSkill ?? false;
+    },
+
+    canVote(): boolean {
+      return this.playerSecret?.canVote ?? false;
+    },
+
+    myRole(): OnuWerewolfRole | null {
+      return this.playerSecret?.myRole ?? null;
+    },
+
+    mySeat(): number | null {
+      return this.playerSecret?.mySeat ?? null;
+    },
+
+    getRoleName() {
+      return (role: OnuWerewolfRole) => ONU_WEREWOLF_ROLE_NAMES[role] || '未知';
+    }
+  },
+
+  actions: {
+    initSocket() {
+      if (this.socket) {
+        this.socket.removeAllListeners();
+        this.socket.disconnect();
+      }
+
+      this.socket = io(SOCKET_URL);
+
+      this.socket.on('connect', () => {
+        console.log('OnuWerewolf socket connected');
+        this.connected = true;
+      });
+
+      this.socket.on('disconnect', () => {
+        console.log('OnuWerewolf socket disconnected');
+        this.connected = false;
+      });
+
+      // 房间事件
+      this.socket.on('room_joined', (data: { room: OnuWerewolfRoomState; playerId: string }) => {
+        this.room = data.room;
+        this.currentUserId = data.playerId;
+        this.currentRoomId = data.room.id;
+      });
+
+      this.socket.on('room_update', (room: OnuWerewolfRoomState) => {
+        this.room = room;
+      });
+
+      // 游戏事件
+      this.socket.on('onu_game_prepared', (data: any) => {
+        if (this.gameState) {
+          this.gameState.config = data.config;
+        }
+      });
+
+      this.socket.on('onu_config_changed', (data: any) => {
+        if (this.gameState) {
+          this.gameState.config = data.config;
+        }
+      });
+
+      this.socket.on('onu_game_started', (data: any) => {
+        this.gameState = data.game;
+        this.playerSecret = data.secret;
+        if (this.room) {
+          this.room.gameStarted = true;
+        }
+      });
+
+      this.socket.on('onu_game_state', (data: any) => {
+        Object.assign(this.gameState || {}, data);
+        if (data.myRole !== undefined) {
+          if (!this.playerSecret) this.playerSecret = {};
+          Object.assign(this.playerSecret, data);
+        }
+      });
+
+      this.socket.on('onu_night_started', (data: any) => {
+        if (this.gameState) {
+          this.gameState.status = OnuWerewolfGameStatus.NIGHT;
+          this.gameState.currentPhase = data.message || '夜晚阶段';
+          this.updateTimer();
+        }
+      });
+
+      this.socket.on('onu_voting_started', (data: any) => {
+        if (this.gameState) {
+          this.gameState.status = OnuWerewolfGameStatus.VOTING;
+          this.gameState.currentPhase = data.message || '投票阶段';
+          this.updateTimer();
+        }
+        this.skipDiscussionCount = 0;
+        this.skipDiscussionTotal = this.room?.players.length || 0;
+      });
+
+      this.socket.on('onu_voting_ended', (data: any) => {
+        if (this.gameState) {
+          this.gameState.status = OnuWerewolfGameStatus.REVEALING;
+          this.gameState.currentPhase = '揭示结果';
+        }
+      });
+
+      this.socket.on('onu_game_completed', (data: any) => {
+        if (this.gameState) {
+          this.gameState.status = OnuWerewolfGameStatus.COMPLETED;
+          this.gameState.currentPhase = '游戏结束';
+        }
+        if (this.playerSecret) {
+          this.playerSecret.vision = data.vision;
+          this.playerSecret.gameResult = data.gameResult;
+        }
+      });
+
+      this.socket.on('onu_game_reset', (data: any) => {
+        this.gameState = null;
+        this.playerSecret = null;
+        if (this.room) {
+          this.room.gameStarted = false;
+        }
+        this.addSystemMessage(data.message);
+      });
+
+      this.socket.on('onu_player_ready', (data: any) => {
+        if (this.gameState) {
+          this.gameState.readyCount = data.readyCount;
+        }
+        if (this.room) {
+          const player = this.room.players.find(p => p.id === data.playerId);
+          if (player) player.ready = true;
+        }
+      });
+
+      this.socket.on('onu_player_unready', (data: any) => {
+        if (this.gameState) {
+          this.gameState.readyCount = data.readyCount;
+        }
+        if (this.room) {
+          const player = this.room.players.find(p => p.id === data.playerId);
+          if (player) player.ready = false;
+        }
+      });
+
+      this.socket.on('onu_skill_used', (data: any) => {
+        this.addSystemMessage(data.message);
+        if (this.playerSecret && data.skillData) {
+          this.playerSecret.skillData = data.skillData;
+        }
+      });
+
+      this.socket.on('onu_vote_cast', (data: any) => {
+        this.addSystemMessage(data.message);
+        if (this.room) {
+          const player = this.room.players.find(p => p.id === data.playerId);
+          if (player) player.voted = true;
+        }
+      });
+
+      this.socket.on('onu_skip_discussion', (data: any) => {
+        this.skipDiscussionCount = data.skipCount;
+        this.skipDiscussionTotal = data.totalPlayers;
+        this.addSystemMessage(data.message);
+      });
+
+      this.socket.on('onu_discussion_skipped', (data: any) => {
+        this.addSystemMessage(data.message);
+      });
+
+      // 聊天事件
+      this.socket.on('onu_chat_message', (message: any) => {
+        this.messages.push({
+          id: Date.now(),
+          playerId: message.playerId,
+          playerName: message.playerName,
+          message: message.message,
+          timestamp: message.timestamp,
+          type: 'chat'
+        });
+      });
+
+      this.socket.on('system_message', (message: string) => {
+        this.addSystemMessage(message);
+      });
+
+      // 错误事件
+      this.socket.on('onu_error', (data: { message: string }) => {
+        this.errorMessage = data.message;
+        this.addSystemMessage(`错误：${data.message}`);
+      });
+
+      this.socket.on('error', (error: string) => {
+        this.errorMessage = error;
+        this.addSystemMessage(`错误：${error}`);
+      });
+
+      // 游戏状态同步（用于重连）
+      this.socket.on('game_state_sync', (data: {
+        room: OnuWerewolfRoomState;
+        game: OnuWerewolfGameState | null;
+        secret: OnuWerewolfSecret | null;
+        currentUserId: string;
+      }) => {
+        this.room = data.room;
+        this.gameState = data.game;
+        this.playerSecret = data.secret;
+        this.currentUserId = data.currentUserId;
+        this.currentRoomId = data.room.id;
+      });
+
+      // 时间更新
+      this.socket.on('time_update', (data: { timeLeft: number }) => {
+        this.timeLeft = data.timeLeft;
+      });
+    },
+
+    connectToRoom(roomId: string, gameType: string = 'onu-werewolf') {
+      if (!this.socket) {
+        this.initSocket();
+      }
+
+      // 生成或获取用户ID
+      let userId = localStorage.getItem('onu_werewolf_userId');
+      if (!userId) {
+        userId = `player_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+        localStorage.setItem('onu_werewolf_userId', userId);
+      }
+
+      // 生成或获取昵称
+      let nickname = localStorage.getItem('onu_werewolf_nickname');
+      if (!nickname) {
+        nickname = `玩家${Math.floor(Math.random() * 1000)}`;
+        localStorage.setItem('onu_werewolf_nickname', nickname);
+      }
+
+      this.currentUserId = userId;
+      this.currentRoomId = roomId;
+
+      this.socket?.emit('join_room', {
+        roomId: roomId,
+        gameType: gameType,
+        playerId: userId,
+        nickname: nickname
+      });
+    },
+
+    disconnectFromRoom() {
+      if (this.socket && this.currentRoomId) {
+        this.socket.emit('leave_room', {
+          roomId: this.currentRoomId,
+          playerId: this.currentUserId
+        });
+      }
+      this.cleanup();
+    },
+
+    cleanup() {
+      this.clearTimer();
+      if (this.socket) {
+        this.socket.removeAllListeners();
+        this.socket.disconnect();
+        this.socket = null;
+      }
+      this.connected = false;
+      this.currentRoomId = '';
+      this.currentUserId = '';
+      this.room = null;
+      this.gameState = null;
+      this.playerSecret = null;
+      this.messages = [];
+      this.errorMessage = '';
+      this.timeLeft = 0;
+      this.skipDiscussionCount = 0;
+      this.skipDiscussionTotal = 0;
+    },
+
+    // 游戏操作方法
+    sendGameAction(actionType: string, actionData: any = {}) {
+      if (!this.socket || !this.currentRoomId) return;
+
+      this.socket.emit('game_action', {
+        roomId: this.currentRoomId,
+        playerId: this.currentUserId,
+        gameType: 'onu-werewolf',
+        actionType: actionType,
+        actionData: actionData
+      });
+    },
+
+    sendMessage(message: string) {
+      if (!message.trim()) return;
+      
+      this.sendGameAction('chat', { message: message.trim() });
+    },
+
+    transferHost(newHostId: string) {
+      this.socket?.emit('transfer_host', {
+        roomId: this.currentRoomId,
+        newHostId
+      });
+    },
+
+    kickPlayer(playerId: string) {
+      this.socket?.emit('kick_player', {
+        roomId: this.currentRoomId,
+        targetId: playerId
+      });
+    },
+
+    ready() {
+      this.sendGameAction('ready');
+    },
+
+    unready() {
+      this.sendGameAction('unready');
+    },
+
+    startGame() {
+      this.sendGameAction('start_game');
+    },
+
+    changeConfig(config: any) {
+      this.sendGameAction('change_config', { config });
+    },
+
+    useSkill(actionData: any) {
+      this.sendGameAction('use_skill', actionData);
+    },
+
+    skipSkill() {
+      this.sendGameAction('skip_skill');
+    },
+
+    vote(targetId: string) {
+      this.sendGameAction('vote', { targetId });
+    },
+
+    skipDiscussion() {
+      this.sendGameAction('skip_discussion');
+    },
+
+    addSystemMessage(message: string) {
+      this.messages.push({
+        id: Date.now(),
+        message,
+        timestamp: Date.now(),
+        type: 'system'
+      });
+    },
+
+    updateTimer() {
+      if (this.gameState?.timeLeft) {
+        this.timeLeft = this.gameState.timeLeft;
+        this.startTimer();
+      }
+    },
+
+    startTimer() {
+      this.clearTimer();
+      
+      if (this.timeLeft > 0) {
+        this.timerInterval = setInterval(() => {
+          this.timeLeft--;
+          if (this.timeLeft <= 0) {
+            this.clearTimer();
+          }
+        }, 1000);
+      }
+    },
+
+    clearTimer() {
+      if (this.timerInterval) {
+        clearInterval(this.timerInterval);
+        this.timerInterval = null;
+      }
+    }
+  }
+});
+
+export function useGameStore() {
+  return useOnuWerewolfStore();
+} 

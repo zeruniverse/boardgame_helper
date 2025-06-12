@@ -201,8 +201,19 @@ const route = useRoute();
 const roomId = route.params.id as string;
 const roundText = computed(() => ['翻前','翻后','转牌','河牌'][round.value] || '');
 
-// 房间准备状态
-const roomPreparing = ref(true);
+// 房间准备状态 - 使用ref来控制状态
+const roomPreparing = ref(true); // 默认显示准备中
+
+// 房间状态检查定时器
+let statusCheckInterval: number | null = null;
+
+// 检查房间状态的函数
+const checkRoomStatus = () => {
+  if (store.socket && roomId) {
+    console.log('检查房间状态...');
+    store.socket.emit('room_status_check', { roomId: roomId });
+  }
+};
 
 // 如果未加入此房间，则尝试重新加入
 onMounted(() => {
@@ -215,20 +226,27 @@ onMounted(() => {
     mainStore.initSocket();
   }
 
-  // 监听房间准备完成事件
-  if (store.socket) {
-    store.socket.on('room_ready', () => {
-      roomPreparing.value = false;
+  // 设置房间特定的事件监听器（避免重复设置）
+  if (store.socket && !store.socket.hasListeners('room_ready')) {
+    // 监听房间准备完成事件
+    store.socket.on('room_ready', (data: any) => {
+      console.log('收到room_ready事件 - 房间已准备好', data);
+      roomPreparing.value = false; // 隐藏准备中提示
+      if (statusCheckInterval) {
+        clearInterval(statusCheckInterval); // 停止定时检查
+        statusCheckInterval = null;
+      }
     });
 
     // 监听房间加入成功事件（用于验证房间类型）
     store.socket.on('room_joined', (data: { room: any; player: any; isHost: boolean }) => {
+      console.log('收到room_joined事件', data);
       if (data.room.type !== 'texas-holdem') {
         // 房间类型不匹配，跳转回大厅
         router.push({ name: 'Lobby' });
         return;
       }
-      roomPreparing.value = false;
+      console.log('房间加入成功，类型匹配');
     });
 
     // 监听错误事件
@@ -237,6 +255,14 @@ onMounted(() => {
         router.push({ name: 'Lobby' });
       }
     });
+  }
+
+  // 开始定时检查房间状态
+  if (!statusCheckInterval) {
+    // 立即检查一次
+    setTimeout(checkRoomStatus, 500);
+    // 然后每3秒检查一次
+    statusCheckInterval = setInterval(checkRoomStatus, 3000);
   }
 
   if (store.nickname) {
@@ -270,6 +296,11 @@ onMounted(() => {
 
 // 添加组件卸载时的清理
 onUnmounted(() => {
+  // 清理定时器
+  if (statusCheckInterval) {
+    clearInterval(statusCheckInterval);
+    statusCheckInterval = null;
+  }
   // 组件卸载时不断开socket连接，因为用户可能只是切换到大厅页面
   // socket连接的管理交给store统一处理
 });

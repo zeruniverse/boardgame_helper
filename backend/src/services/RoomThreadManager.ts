@@ -78,6 +78,8 @@ export class RoomThreadManager {
     }
 
     try {
+      console.log(`正在启动房间 ${room.id} (${room.type}) 的线程...`);
+      
       // 配置 Worker 选项
       const workerOptions: WorkerOptions = {
         workerData: { roomId: room.id, room }
@@ -89,6 +91,7 @@ export class RoomThreadManager {
       }
       
       const workerPath = this.getWorkerPath(room.type);
+      console.log(`Worker路径: ${workerPath}`);
       const worker = new Worker(workerPath, workerOptions);
 
       // 设置消息监听
@@ -131,6 +134,7 @@ export class RoomThreadManager {
       room.lastActiveTime = Date.now();
 
       // 发送准备房间任务
+      console.log(`发送prepare_room任务到房间 ${room.id}`);
       await this.sendTask(room.id, {
         type: 'prepare_room',
         roomId: room.id,
@@ -179,8 +183,11 @@ export class RoomThreadManager {
       timestamp: Date.now()
     };
 
+    console.log(`发送任务到房间 ${roomId}: ${task.type}, taskId: ${taskId}`);
+
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
+        console.error(`任务超时: ${taskId}, 房间: ${roomId}, 类型: ${task.type}`);
         this.tasks.delete(taskId);
         reject(new Error(`任务 ${taskId} 超时`));
       }, 10000); // 10秒超时

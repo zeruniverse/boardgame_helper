@@ -171,6 +171,13 @@ export const useTexasHoldemStore = defineStore('texas_holdem', {
           window.location.href = '/';
         }, 100);
       });
+
+      // 监听房间准备完成事件
+      mainStore.socket.on('room_ready', (data: any) => {
+        console.log('房间准备完成', data);
+        // 房间准备完成，可以开始游戏
+        // 这个事件会被TexasHoldemRoom组件监听来隐藏"正在准备"提示
+      });
     },
 
     // 加入房间

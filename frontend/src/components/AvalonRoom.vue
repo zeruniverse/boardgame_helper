@@ -1,7 +1,17 @@
 <template>
   <div class="avalon-room">
+    <!-- 房间准备中的遮罩 -->
+    <div v-if="roomPreparing" class="room-loading-overlay">
+      <div class="loading-content">
+        <el-icon class="is-loading" size="48">
+          <Loading />
+        </el-icon>
+        <p>房间正在准备中...</p>
+      </div>
+    </div>
+
     <!-- 头部导航 -->
-    <el-header class="room-header">
+    <el-header v-else class="room-header">
       <div class="header-left">
         <el-button @click="$router.push('/')" type="primary" plain>
           <el-icon><Back /></el-icon>
@@ -15,7 +25,7 @@
     </el-header>
 
     <!-- 主游戏区域 -->
-    <el-container class="game-container">
+    <el-container v-else class="game-container">
       <!-- 左侧游戏面板 -->
       <el-main class="game-main">
         <div class="game-content">
@@ -120,7 +130,7 @@
 import { ref, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useGameStore } from '../store/avalon'
-import { Back } from '@element-plus/icons-vue'
+import { Back, Loading } from '@element-plus/icons-vue'
 import AvalonActionPanel from './AvalonActionPanel.vue'
 import AvalonPlayerList from './AvalonPlayerList.vue'
 import AvalonChat from './AvalonChat.vue'
@@ -140,6 +150,20 @@ const timeLeft = ref<number>(0)
 
 let timerInterval: ReturnType<typeof setInterval> | null = null
 
+// 房间准备状态 - 使用ref来控制状态
+const roomPreparing = ref(true) // 默认显示准备中
+
+// 房间状态检查定时器
+let statusCheckInterval: number | null = null
+
+// 检查房间状态的函数
+const checkRoomStatus = () => {
+  if (store.socket && roomId) {
+    console.log('检查阿瓦隆房间状态...')
+    store.socket.emit('room_status_check', { roomId: roomId })
+  }
+}
+
 onMounted(() => {
   if (!roomId) {
     router.push('/')
@@ -148,6 +172,16 @@ onMounted(() => {
   
   // 连接到房间
   store.connectToRoom(roomId, 'avalon')
+  
+  // 监听房间准备完成事件
+  store.socket?.on('room_ready', (data: any) => {
+    console.log('收到阿瓦隆房间room_ready事件 - 房间已准备好', data)
+    roomPreparing.value = false // 隐藏准备中提示
+    if (statusCheckInterval) {
+      clearInterval(statusCheckInterval) // 停止定时检查
+      statusCheckInterval = null
+    }
+  })
   
   // 监听游戏状态更新
   store.socket?.on('game_state_sync', (data: any) => {
@@ -166,13 +200,26 @@ onMounted(() => {
     room.value = data
   })
 
+  // 开始定时检查房间状态
+  if (!statusCheckInterval) {
+    // 立即检查一次
+    setTimeout(checkRoomStatus, 500)
+    // 然后每3秒检查一次
+    statusCheckInterval = setInterval(checkRoomStatus, 3000)
+  }
+
   // 启动计时器
   startTimer()
 })
 
 onUnmounted(() => {
+  // 清理定时器
   if (timerInterval) {
     clearInterval(timerInterval)
+  }
+  if (statusCheckInterval) {
+    clearInterval(statusCheckInterval)
+    statusCheckInterval = null
   }
   store.disconnectFromRoom()
 })
@@ -246,6 +293,29 @@ const handleKickPlayer = (playerId: string) => {
 .avalon-room {
   height: 100vh;
   background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+}
+
+.room-loading-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.8);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 9999;
+}
+
+.loading-content {
+  text-align: center;
+  color: white;
+}
+
+.loading-content p {
+  margin-top: 16px;
+  font-size: 18px;
 }
 
 .room-header {

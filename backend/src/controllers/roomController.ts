@@ -25,12 +25,12 @@ function generateRoomName(): string {
   return result;
 }
 
-// 确保房间名唯一
-function generateUniqueRoomName(): string {
+// 确保房间ID和名称唯一
+function generateUniqueRoomIdAndName(): string {
   let name: string;
   do {
     name = generateRoomName();
-  } while (Array.from(rooms.values()).some(room => room.name === name));
+  } while (rooms.has(name) || Array.from(rooms.values()).some(room => room.name === name));
   return name;
 }
 
@@ -81,17 +81,43 @@ export function roomController(io: Server) {
   // 处理来自worker线程的消息
   async function handleThreadMessage(data: any) {
     try {
+      console.log('处理Worker消息:', data);
       if (data.type === 'emit') {
         // 广播到房间内所有客户端
+        console.log(`广播事件到房间 ${data.roomId}: ${data.event}`, data.data);
         io.to(data.roomId).emit(data.event, data.data);
       } else if (data.type === 'emit_to_socket') {
         // 发送到特定socket
+        console.log(`发送事件到socket ${data.socketId}: ${data.event}`, data.data);
         io.to(data.socketId).emit(data.event, data.data);
       }
     } catch (error) {
       console.error('处理线程消息失败:', error);
     }
   }
+
+  // 前端请求获取房间当前状态
+  io.on('connection', (socket: Socket) => {
+    socket.on('get_room_state', (data: { roomId: string }) => {
+      const room = rooms.get(data.roomId);
+      if (room) {
+        socket.emit('room_update', room);
+      }
+    });
+
+    // 新的房间状态检查接口，只有房间准备好时才响应
+    socket.on('room_status_check', (data: { roomId: string }) => {
+      const room = rooms.get(data.roomId);
+      if (room && room.threadStatus === 'running' && room.players.length > 0) {
+        // 只有房间线程运行且有玩家时才认为房间准备好了
+        socket.emit('room_ready', { 
+          roomId: room.id,
+          status: 'ready'
+        });
+      }
+      // 如果房间没有准备好，则不响应
+    });
+  });
 
   // 向房间线程发送任务
   async function sendTaskToRoom(roomId: string, taskType: string, taskData: any, socketId?: string, playerId?: string) {
@@ -163,19 +189,22 @@ export function roomController(io: Server) {
         }
 
         // 创建玩家
+        const nickname = data.gameConfig.nickname || `玩家${socket.id.substring(0, 6)}`;
         const player: Player = {
           id: uuidv4(),
-          nickname: data.gameConfig.nickname || `玩家${socket.id.substring(0, 6)}`,
+          nickname,
+          name: nickname, // 默认使用nickname作为显示名称
           socketId: socket.id,
           lastHeartbeat: Date.now(),
           online: true,
           gameMetadata: {}
         };
 
-        // 创建房间
+        // 创建房间，房间ID和名称使用相同的6位随机字符
+        const roomIdAndName = generateUniqueRoomIdAndName();
         const room: Room = {
-          id: uuidv4(),
-          name: generateUniqueRoomName(),
+          id: roomIdAndName,
+          name: roomIdAndName,
           maxPlayers: config.games[data.gameType].maxPlayers,
           players: [player],
           hostId: player.id,
@@ -259,9 +288,11 @@ export function roomController(io: Server) {
         }
 
         // 创建玩家
+        const nickname = data.nickname || `玩家${socket.id.substring(0, 6)}`;
         const player: Player = {
           id: uuidv4(),
-          nickname: data.nickname || `玩家${socket.id.substring(0, 6)}`,
+          nickname,
+          name: nickname, // 默认使用nickname作为显示名称
           socketId: socket.id,
           lastHeartbeat: Date.now(),
           online: true,
@@ -342,6 +373,7 @@ export function roomController(io: Server) {
         const player: Player = {
           id: uuidv4(),
           nickname: data.nickname,
+          name: data.nickname, // 默认使用nickname作为显示名称
           socketId: socket.id,
           lastHeartbeat: Date.now(),
           online: true,
