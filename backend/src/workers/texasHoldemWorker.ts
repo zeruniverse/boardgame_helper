@@ -88,6 +88,48 @@ class TexasHoldemWorker extends BaseGameWorker {
       stage: 'idle'
     } as TexasHoldemGameState;
     this.participants = [];
+
+    // 监听来自主线程的消息
+    if (parentPort) {
+      parentPort.on('message', async (task: GameTask) => {
+        try {
+          const response = await this.handleTask(task);
+          parentPort?.postMessage({
+            taskId: task.id,
+            success: true,
+            data: response
+          });
+        } catch (error: any) {
+          parentPort?.postMessage({
+            taskId: task.id,
+            success: false,
+            error: error.message
+          });
+        }
+      });
+    }
+  }
+
+  async handleTask(task: GameTask): Promise<any> {
+    switch (task.type) {
+      case 'prepare_room':
+        return await this.prepareRoom(workerData.room, task.data.config);
+      case 'join_room':
+        return await this.joinRoom(task.data.player);
+      case 'update_room_data':
+        this.room = task.data.room;
+        return;
+      case 'player_online':
+        return await this.playerOnline(task.playerId!);
+      case 'player_offline':
+        return await this.playerOffline(task.playerId!);
+      case 'game_action':
+        return await this.gameAction(task.playerId!, task.data.actionType, task.data.actionData);
+      case 'kick_player':
+        return await this.kickOutPlayer(task.data.targetId);
+      default:
+        throw new Error(`未知的任务类型: ${task.type}`);
+    }
   }
 
   async prepareRoom(room: Room, config: TexasHoldemConfig): Promise<void> {
@@ -527,8 +569,6 @@ class TexasHoldemWorker extends BaseGameWorker {
     // 开始游戏
     this.startGame();
   }
-
-
 
   private clearActionTimer() {
     if (this.actionTimer) {
@@ -1458,56 +1498,6 @@ process.on('uncaughtException', (error) => {
 process.on('unhandledRejection', (reason, promise) => {
   console.error('德州扑克Worker未处理的Promise拒绝:', reason);
   process.exit(1);
-});
-
-// 处理来自主线程的消息
-parentPort.on('message', async (task: GameTask) => {
-  try {
-    console.log(`德州扑克Worker收到任务: ${task.type}, roomId: ${task.roomId}`);
-    
-    const response: GameTaskResponse = {
-      taskId: task.id,
-      success: true,
-      data: null
-    };
-
-    switch (task.type) {
-      case 'prepare_room':
-        await worker.prepareRoom(workerData.room, task.data.config);
-        break;
-      case 'change_config':
-        await worker.changeConfig(task.data.config);
-        break;
-      case 'join_room':
-        await worker.joinRoom(task.data.player);
-        break;
-      case 'player_online':
-        await worker.playerOnline(task.data.playerId);
-        break;
-      case 'player_offline':
-        await worker.playerOffline(task.data.playerId);
-        break;
-      case 'game_action':
-        await worker.gameAction(task.playerId!, task.data.actionType, task.data.actionData);
-        break;
-      case 'kick_out_player':
-        await worker.kickOutPlayer(task.data.targetId);
-        break;
-      default:
-        response.success = false;
-        response.error = `未知的任务类型: ${task.type}`;
-    }
-
-    console.log(`德州扑克Worker任务完成: ${task.type}, success: ${response.success}`);
-    parentPort!.postMessage(response);
-  } catch (error) {
-    console.error(`德州扑克Worker任务失败: ${task.type}`, error);
-    parentPort!.postMessage({
-      taskId: task.id,
-      success: false,
-      error: error instanceof Error ? error.message : String(error)
-    } as GameTaskResponse);
-  }
 });
 
 console.log('德州扑克Worker已启动'); 

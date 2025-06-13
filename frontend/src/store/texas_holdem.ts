@@ -6,6 +6,7 @@ export const useTexasHoldemStore = defineStore('texas_holdem', {
     messages: [] as any[],
     currentRoom: localStorage.getItem('texas_currentRoom') || null,
     nickname: localStorage.getItem('texas_nickname') || '',
+    playerId: localStorage.getItem('texas_playerId') || '',
     hand: [] as string[],
     communityCards: [] as string[],
     pot: 0,
@@ -139,17 +140,18 @@ export const useTexasHoldemStore = defineStore('texas_holdem', {
       });
 
       // 房间更新
-      mainStore.socket.on('room_update', (room: any) => {
-        this.players = room.players;
+      mainStore.socket.on('room_update', (data: any) => {
+        this.players = data.players;
+        this.pot = data.game?.pot;
         // 同步游戏参与者列表
-        this.participants = room.participants || [];
+        this.participants = data.participants || [];
         // 同步房间的自动开始状态
-        if (room.autoStart !== undefined) {
-          this.autoStart = room.autoStart;
+        if (data.autoStart !== undefined) {
+          this.autoStart = data.autoStart;
         }
         // 同步房间锁定状态
-        if (room.locked !== undefined) {
-          this.roomLocked = room.locked;
+        if (data.locked !== undefined) {
+          this.roomLocked = data.locked;
         }
       });
 
@@ -164,6 +166,7 @@ export const useTexasHoldemStore = defineStore('texas_holdem', {
         // 清理本地存储
         localStorage.removeItem('texas_currentRoom');
         localStorage.removeItem('texas_nickname');
+        localStorage.removeItem('texas_playerId');
         // 清理store状态
         this.resetGameState();
         // 跳转到房间列表
@@ -192,8 +195,10 @@ export const useTexasHoldemStore = defineStore('texas_holdem', {
       const playerId = nickname; // 简化: 使用昵称作为 playerId
       this.currentRoom = roomId;
       this.nickname = nickname;
-      localStorage.setItem('texas_nickname', nickname); // 保存昵称到localStorage
-      localStorage.setItem('texas_currentRoom', roomId); // 保存当前房间到localStorage
+      this.playerId = playerId;
+      localStorage.setItem('texas_nickname', nickname);
+      localStorage.setItem('texas_playerId', playerId);
+      localStorage.setItem('texas_currentRoom', roomId);
       
       // 设置新加入标记，避免Room组件重复reconnect
       sessionStorage.setItem('texas_newJoin', 'true');
@@ -211,7 +216,9 @@ export const useTexasHoldemStore = defineStore('texas_holdem', {
       this.resetGameState();
       
       this.nickname = nickname;
-      localStorage.setItem('texas_nickname', nickname); // 保存昵称到localStorage
+      this.playerId = nickname;
+      localStorage.setItem('texas_nickname', nickname);
+      localStorage.setItem('texas_playerId', nickname);
       
       // 设置新加入标记，避免Room组件重复reconnect
       sessionStorage.setItem('texas_newJoin', 'true');
@@ -268,11 +275,68 @@ export const useTexasHoldemStore = defineStore('texas_holdem', {
       this.messages = [];
       this.currentRoom = null;
       this.nickname = '';
+      this.playerId = '';
       
       // 清理本地存储
       localStorage.removeItem('texas_currentRoom');
       localStorage.removeItem('texas_nickname');
+      localStorage.removeItem('texas_playerId');
       sessionStorage.removeItem('texas_newJoin');
+    },
+
+    setNicknameAndRoom(
+      nickname: string,
+      roomId: string,
+      playerId: string
+    ) {
+      if (this.socket) {
+        this.currentRoom = roomId;
+        this.nickname = nickname;
+        this.playerId = playerId;
+        localStorage.setItem('texas_nickname', nickname);
+        localStorage.setItem('texas_playerId', playerId);
+        localStorage.setItem('texas_currentRoom', roomId);
+        
+        sessionStorage.setItem('texas_newJoin', 'true');
+      }
+    },
+
+    setNickname(nickname: string) {
+      if (this.socket) {
+        this.nickname = nickname;
+        localStorage.setItem('texas_nickname', nickname);
+      }
+    },
+
+    // 退出房间或断开连接时清理状态
+    leaveRoom() {
+      if (this.socket) {
+        if (this.currentRoom) {
+          this.socket.emit('leave_room', { roomId: this.currentRoom });
+        }
+        
+        this.currentRoom = null;
+        this.nickname = '';
+        this.playerId = '';
+        
+        // 清理本地存储
+        localStorage.removeItem('texas_currentRoom');
+        localStorage.removeItem('texas_nickname');
+        localStorage.removeItem('texas_playerId');
+        sessionStorage.removeItem('texas_newJoin');
+      }
+    },
+
+    setPlayerInfo({ nickname, playerId }: { nickname: string; playerId: string }) {
+      this.nickname = nickname;
+      this.playerId = playerId;
+      localStorage.setItem('texas_nickname', nickname);
+      localStorage.setItem('texas_playerId', playerId);
+    },
+
+    setCurrentRoom(roomId: string) {
+      this.currentRoom = roomId;
+      localStorage.setItem('texas_currentRoom', roomId);
     }
   }
 }); 

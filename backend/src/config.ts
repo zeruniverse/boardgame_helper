@@ -7,11 +7,14 @@ interface GameConfig {
   gameSpecificConfig: any;
 }
 
+interface ServerConfig {
+  maxRooms: number;
+  resetPassword: string;
+  roomCleanupTimeout: number;
+}
+
 interface Config {
-  server: {
-    maxRooms: number;
-    resetPassword: string;
-  };
+  server: ServerConfig;
   games: {
     [gameType: string]: GameConfig;
   };
@@ -37,7 +40,8 @@ function loadConfig(): Config {
     return {
       server: {
         maxRooms: 10,
-        resetPassword: "admin123"
+        resetPassword: "admin123",
+        roomCleanupTimeout: 60000 // 60秒清理空房间
       },
       games: {
         "texas-holdem": {

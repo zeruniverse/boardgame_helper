@@ -80,10 +80,11 @@
       <el-dialog
         v-model="helpDialogVisible"
         title="玩家帮助"
-        width="60%"
+        width="80%"
         center
+        :close-on-click-modal="false"
       >
-        <div class="help-content">
+        <div class="help-content" style="max-height: 70vh; overflow-y: auto; padding-right: 10px;">
           <h3>平台操作指南</h3>
           <ul>
             <li>进入游戏：在房间列表点击"进入"，输入昵称后进入对应房间。</li>
@@ -98,12 +99,290 @@
               </ul>
             </li>
           </ul>
+          
           <h3>支持的游戏</h3>
-          <ul>
-            <li><strong>德州扑克</strong>：经典扑克游戏，支持多人在线游戏。</li>
-            <li><strong>阿瓦隆</strong>：策略推理游戏，支持5-10人游戏，包含多种角色和模式。</li>
-            <li><strong>杀人游戏</strong>：经典推理游戏，支持8-16人游戏，包含杀手、警察、平民三种角色。</li>
-          </ul>
+          
+          <div class="game-help-section">
+            <h4>🃏 德州扑克 (Texas Hold'em)</h4>
+            <p><strong>人数：</strong>2-10人</p>
+            <p><strong>游戏目标：</strong>通过组合手牌和公共牌形成最佳牌型，赢得彩池。</p>
+            <p><strong>游戏流程：</strong></p>
+            <ol>
+              <li><strong>发牌：</strong>每位玩家获得2张底牌</li>
+              <li><strong>翻牌前：</strong>根据底牌决定跟注、加注或弃牌</li>
+              <li><strong>翻牌：</strong>发出3张公共牌，进行新一轮下注</li>
+              <li><strong>转牌：</strong>发出第4张公共牌，进行下注</li>
+              <li><strong>河牌：</strong>发出第5张公共牌，进行最后下注</li>
+              <li><strong>摊牌：</strong>比较牌型大小，最大者获胜</li>
+            </ol>
+            <p><strong>牌型大小（从大到小）：</strong></p>
+            <ul>
+              <li>皇家同花顺 > 同花顺 > 四条 > 葫芦 > 同花 > 顺子 > 三条 > 两对 > 一对 > 高牌</li>
+            </ul>
+          </div>
+
+          <div class="game-help-section">
+            <h4>⚔️ 阿瓦隆 (The Resistance: Avalon)</h4>
+            <p><strong>人数：</strong>5-10人</p>
+            <p><strong>游戏目标：</strong>正义方完成3次任务获胜，邪恶方破坏3次任务或成功刺杀梅林获胜。</p>
+            <p><strong>角色介绍：</strong></p>
+            <ul>
+              <li><strong>梅林（正义）：</strong>知道所有邪恶方身份，但不能暴露自己</li>
+              <li><strong>派西维尔（正义）：</strong>知道梅林和莫甘娜的身份</li>
+              <li><strong>忠臣（正义）：</strong>普通正义方角色</li>
+              <li><strong>莫德雷德（邪恶）：</strong>梅林看不到的邪恶方</li>
+              <li><strong>莫甘娜（邪恶）：</strong>在派西维尔眼中伪装成梅林</li>
+              <li><strong>奥伯伦（邪恶）：</strong>其他邪恶方看不到的邪恶方</li>
+              <li><strong>爪牙（邪恶）：</strong>普通邪恶方角色</li>
+            </ul>
+            <p><strong>游戏流程：</strong></p>
+            <ol>
+              <li>队长选择队员执行任务</li>
+              <li>所有人投票决定是否批准队伍</li>
+              <li>被批准的队伍执行任务（正义方必须成功，邪恶方可选择失败）</li>
+              <li>重复直到3次任务成功或失败</li>
+              <li>如果正义方赢得3次任务，邪恶方可尝试刺杀梅林</li>
+            </ol>
+          </div>
+
+          <div class="game-help-section">
+            <h4>🔫 杀人游戏 (Mafia)</h4>
+            <p><strong>人数：</strong>8-16人</p>
+            <p><strong>游戏目标：</strong>杀手消灭所有好人，或好人找出所有杀手。</p>
+            <p><strong>角色介绍：</strong></p>
+            <ul>
+              <li><strong>杀手：</strong>每晚可以杀死一名玩家，白天伪装成好人</li>
+              <li><strong>警察：</strong>每晚可以查验一名玩家的身份</li>
+              <li><strong>平民：</strong>没有特殊能力，依靠推理和投票</li>
+            </ul>
+            <p><strong>游戏流程：</strong></p>
+            <ol>
+              <li><strong>夜晚阶段：</strong>杀手选择杀害目标，警察选择查验目标</li>
+              <li><strong>白天阶段：</strong>公布死亡信息，所有人发言讨论</li>
+              <li><strong>投票阶段：</strong>投票处决一名玩家</li>
+              <li>重复直到一方获胜</li>
+            </ol>
+            <p><strong>人数配置：</strong></p>
+            <ul>
+              <li>8人：2杀手，2警察，4平民</li>
+              <li>9人：2杀手，2警察，5平民</li>
+              <li>10人：2杀手，2警察，6平民</li>
+              <li>11人：3杀手，3警察，5平民</li>
+              <li>12人：3杀手，3警察，6平民</li>
+            </ul>
+          </div>
+
+          <div class="game-help-section">
+            <h4>🐺 狼人杀 (Werewolf)</h4>
+            <p><strong>人数：</strong>6-16人</p>
+            <p><strong>游戏目标：</strong>狼人消灭所有村民，或村民找出所有狼人。</p>
+            <p><strong>角色介绍：</strong></p>
+            <ul>
+              <li><strong>狼人：</strong>每晚可以杀死一名村民，白天伪装成村民</li>
+              <li><strong>预言家：</strong>每晚可以查验一名玩家的身份（狼人或好人）</li>
+              <li><strong>女巫：</strong>拥有一瓶解药（救人）和一瓶毒药（杀人），每晚最多使用一瓶</li>
+              <li><strong>猎人：</strong>被投票出局或被狼人杀死时，可以开枪带走一名玩家</li>
+              <li><strong>守卫：</strong>每晚可以保护一名玩家，被保护者当晚不会死亡</li>
+              <li><strong>村民：</strong>没有特殊能力，依靠推理和投票</li>
+            </ul>
+            <p><strong>游戏流程：</strong></p>
+            <ol>
+              <li><strong>夜晚阶段：</strong>
+                <ul>
+                  <li>狼人选择杀害目标</li>
+                  <li>预言家查验玩家身份</li>
+                  <li>女巫选择是否使用药剂</li>
+                  <li>守卫选择保护目标</li>
+                </ul>
+              </li>
+              <li><strong>白天阶段：</strong>
+                <ul>
+                  <li>公布夜晚死亡信息</li>
+                  <li>死者发表遗言（如果允许）</li>
+                  <li>所有存活玩家依次发言</li>
+                  <li>投票处决一名玩家</li>
+                </ul>
+              </li>
+              <li>重复直到一方获胜</li>
+            </ol>
+          </div>
+
+          <div class="game-help-section">
+            <h4>🌙 一夜狼人 (One Night Ultimate Werewolf)</h4>
+            <p><strong>人数：</strong>3-10人</p>
+            <p><strong>游戏目标：</strong>村民找出狼人，狼人避免被发现。</p>
+            <p><strong>特殊规则：</strong>只有一个夜晚和一个白天，角色可能在夜晚被交换。</p>
+            <p><strong>角色介绍：</strong></p>
+            <ul>
+              <li><strong>狼人：</strong>互相认识，如果只有一只狼人可以查看中心卡牌</li>
+              <li><strong>村民：</strong>没有特殊能力</li>
+              <li><strong>预言家：</strong>可以查看一名玩家的角色或两张中心卡牌</li>
+              <li><strong>强盗：</strong>可以与另一名玩家交换角色卡</li>
+              <li><strong>捣蛋鬼：</strong>可以交换其他两名玩家的角色卡</li>
+              <li><strong>酒鬼：</strong>必须与一张中心卡牌交换角色</li>
+              <li><strong>失眠者：</strong>在夜晚结束时查看自己的最终角色</li>
+              <li><strong>石匠：</strong>互相认识的村民</li>
+              <li><strong>猎人：</strong>如果被投票出局，可以带走一名玩家</li>
+              <li><strong>皮匠：</strong>只有被投票出局才能获胜</li>
+              <li><strong>爪牙：</strong>知道狼人身份，与狼人同一阵营</li>
+            </ul>
+            <p><strong>游戏流程：</strong></p>
+            <ol>
+              <li><strong>夜晚阶段：</strong>按顺序执行各角色技能</li>
+              <li><strong>白天阶段：</strong>讨论并投票处决一名玩家</li>
+              <li><strong>结算：</strong>根据被处决者的身份判断胜负</li>
+            </ol>
+          </div>
+
+          <div class="game-help-section">
+            <h4>🩸 血染钟楼 (Blood on the Clocktower)</h4>
+            <p><strong>人数：</strong>5-15人</p>
+            <p><strong>游戏目标：</strong>善良阵营找出并处决恶魔，邪恶阵营消灭足够多的善良玩家。</p>
+            <p><strong>游戏特色：</strong></p>
+            <ul>
+              <li>死亡玩家仍可参与游戏，拥有一次投票权。</li>
+              <li>说书人（主持人）可以根据情况调整游戏进程。</li>
+              <li>角色能力复杂多样，每局游戏都有不同体验。</li>
+            </ul>
+            <p>下面是当前支持的三个剧本及其角色介绍：</p>
+
+            <el-collapse accordion>
+              <el-collapse-item name="tb">
+                <template #title>
+                  <strong style="font-size: 16px;">📖 灾祸滋生 (Trouble Brewing) - 新手推荐</strong>
+                </template>
+                <div class="script-details">
+                  <p><em>一个相对直接的剧本，侧重于信息的收集与逻辑推理，非常适合初学者。</em></p>
+                  <h5>村民 (Townsfolk)</h5>
+                  <ul>
+                    <li><strong>洗衣妇:</strong> 首夜，你会得知两名玩家中有一位是某个特定的村民身份。</li>
+                    <li><strong>图书管理员:</strong> 首夜，你会得知两名玩家中有一位是某个特定的外来者身份。</li>
+                    <li><strong>调查员:</strong> 首夜，你会得知两名玩家中有一位是某个特定的爪牙身份。</li>
+                    <li><strong>厨师:</strong> 首夜，你会得知有多少对邪恶玩家是邻座。</li>
+                    <li><strong>共情者:</strong> 每晚，你会得知你左右两边的邻居中，有几位是邪恶玩家。</li>
+                    <li><strong>占卜师:</strong> 每晚，选择两名玩家，你会得知其中是否有恶魔。</li>
+                    <li><strong>掘墓人:</strong> 每当有玩家被处决，当晚你会得知其身份。</li>
+                    <li><strong>僧侣:</strong> 每晚，保护一名玩家（除你之外）免受恶魔的攻击。</li>
+                    <li><strong>养鸦人:</strong> 如果你在夜晚死亡，当晚你可以选择一名玩家，得知其身份。</li>
+                    <li><strong>圣女:</strong> 当你被提名时，若提名者是村民，他会立即被处决。你的能力只能生效一次。</li>
+                    <li><strong>杀手:</strong> 每局游戏一次，在白天，你可以公开选择一名玩家，如果他是恶魔，他会立即死亡。</li>
+                    <li><strong>士兵:</strong> 你不会被恶魔攻击。</li>
+                    <li><strong>市长:</strong> 如果只有三名玩家存活且没有玩家因你的能力而死，你获得胜利。</li>
+                  </ul>
+                  <h5>外来者 (Outsiders)</h5>
+                  <ul>
+                    <li><strong>管家:</strong> 每晚，选择一位存活的玩家（你的主人）。在第二天的投票中，你必须跟随主人的投票。</li>
+                    <li><strong>酒鬼:</strong> 你并不知道你是酒鬼。你是一个村民，但你的能力失效。说书人会告知你一个假的村民身份。</li>
+                    <li><strong>隐士:</strong> 你可能会被视为邪恶阵营的成员，即使你不是。</li>
+                    <li><strong>圣人:</strong> 如果你因处决而死，你的阵营会输掉游戏。</li>
+                  </ul>
+                  <h5>爪牙 (Minions)</h5>
+                  <ul>
+                    <li><strong>投毒者:</strong> 每晚，选择一名玩家，使其能力失效直到下一个黎明。</li>
+                    <li><strong>间谍:</strong> 每晚，你可以看到魔典，并可能会被登记为善良阵营。</li>
+                    <li><strong>猩红女郎:</strong> 当恶魔死亡且场上存活玩家多于等于5人时，你会变成新的恶魔。</li>
+                    <li><strong>男爵:</strong> 场上外来者的数量+2。</li>
+                  </ul>
+                  <h5>恶魔 (Demon)</h5>
+                  <ul>
+                    <li><strong>小恶魔:</strong> 每晚，选择一名玩家，他会死亡。如果你自杀了，你可以选择一名爪牙成为新的小恶魔。</li>
+                  </ul>
+                </div>
+              </el-collapse-item>
+
+              <el-collapse-item name="bmr">
+                <template #title>
+                  <strong style="font-size: 16px;">🌙 暗月升起 (Bad Moon Rising) - 中级</strong>
+                </template>
+                <div class="script-details">
+                  <p><em>这是一个充满了死亡和疯狂的剧本。角色能力更强大，但也更危险，死亡会频繁发生，善良阵营需要保护关键人物。</em></p>
+                  <h5>村民 (Townsfolk)</h5>
+                  <ul>
+                    <li><strong>祖母:</strong> 你有一个"孙辈"（另一名善良玩家）。如果恶魔攻击你，你的孙辈会代替你死亡。</li>
+                    <li><strong>水手:</strong> 每晚，选择一名存活的玩家，你或他会醉酒，直到明天黄昏。</li>
+                    <li><strong>侍女:</strong> 首夜，选择两名存活的玩家，得知他们当晚是否因能力而醒来。</li>
+                    <li><strong>驱魔师:</strong> 每晚，选择一名玩家。如果他是恶魔，他第二天会死亡，但会有一个爪牙变成新的恶魔。</li>
+                    <li><strong>旅店老板:</strong> 每晚，选择两名玩家，他们当晚不会被恶魔攻击，但可能会醉酒。</li>
+                    <li><strong>赌徒:</strong> 每晚，猜测一名玩家和他的角色，如果正确，你当晚不会被恶魔攻击。</li>
+                    <li><strong>造谣者:</strong> 每天，你可以散布一个谣言。说书人会选择一名玩家，当晚他的能力会失效。</li>
+                    <li><strong>侍臣:</strong> 每晚，选择一个角色。如果该角色是恶魔，你会在3个夜晚后中毒身亡，并变成一个邪恶的爪牙。</li>
+                    <li><strong>教授:</strong> 每局游戏一次，你可以选择一个已死亡的善良玩家，使其能力复活。</li>
+                    <li><strong>吟游诗人:</strong> 当爪牙或恶魔因提名而死亡时，所有玩家（除了旅行者）都会醉酒，直到明天黄昏。</li>
+                    <li><strong>茶女郎:</strong> 如果你和你左右两边的邻居都存活，他们不会因恶魔攻击而死亡。</li>
+                    <li><strong>和平主义者:</strong> 你选择的一名玩家的提名，需要两个附议者才能成立。</li>
+                    <li><strong>弄臣:</strong> 如果你的提名导致一个玩家被处决，你可能会死亡。</li>
+                  </ul>
+                  <h5>外来者 (Outsiders)</h5>
+                  <ul>
+                    <li><strong>修补匠:</strong> 你可能会在任何时候因说书人的决定而死亡。</li>
+                    <li><strong>月之子:</strong> 当你死亡时，你需要选择一名玩家，如果他是好人，他也会死亡。</li>
+                    <li><strong>打手:</strong> 你是邪恶的，但你看上去是善良的。</li>
+                    <li><strong>疯子:</strong> 你以为你是恶魔，但你不是。你不知道你的爪牙是谁，但他们知道你。</li>
+                  </ul>
+                  <h5>爪牙 (Minions)</h5>
+                  <ul>
+                    <li><strong>黑手党首领:</strong> 你知道哪些外来者在场。每晚，你可以选择杀死一名村民。</li>
+                    <li><strong>恶魔拥护者:</strong> 你选择的玩家在第二天的投票中不会死亡。</li>
+                    <li><strong>刺客:</strong> 每局游戏一次，在白天选择一名玩家，如果他是善良的，他会死亡。</li>
+                    <li><strong>幕后主谋:</strong> 如果恶魔因处决死亡，游戏不会结束，而是继续进行。</li>
+                  </ul>
+                  <h5>恶魔 (Demon)</h5>
+                  <ul>
+                    <li><strong>丧尸:</strong> 你杀死的玩家不会立即死亡，而是在第二天的某个时候突然死亡。</li>
+                    <li><strong>纯种恶魔:</strong> 如果你被处决，游戏不会结束。你每晚只能杀死一名玩家。</li>
+                    <li><strong>巨颚:</strong> 每晚，你可以选择杀死两名玩家。</li>
+                    <li><strong>恶之花:</strong> 你杀死的玩家会中毒。每天，一名中毒的玩家会死亡。</li>
+                  </ul>
+                </div>
+              </el-collapse-item>
+
+              <el-collapse-item name="snv">
+                <template #title>
+                  <strong style="font-size: 16px;">🟣 紫罗兰教派 (Sects & Violets) - 中级</strong>
+                </template>
+                <div class="script-details">
+                  <p><em>该剧本充满了疯狂和身份错乱。信息真假难辨，玩家需要仔细甄别哪些信息是真实的，哪些是谎言，或者是由能力导致的错误信息。</em></p>
+                  <h5>村民 (Townsfolk)</h5>
+                  <ul>
+                    <li><strong>钟表匠:</strong> 首夜，你得知恶魔和爪牙之间的距离。</li>
+                    <li><strong>筑梦师:</strong> 首夜，选择一名玩家，你会得知他的身份是善良还是邪恶（其中一个信息可能是假的）。</li>
+                    <li><strong>舞蛇人:</strong> 每晚，选择一名活着的玩家。如果他是恶魔，你成为新的舞蛇人，他中毒。</li>
+                    <li><strong>数学家:</strong> 首夜，得知有多少玩家的能力不正常（由于醉酒或中毒）。</li>
+                    <li><strong>卖花女:</strong> 每天，你得知恶魔今天是否投票。</li>
+                    <li><strong>城镇公告员:</strong> 每当爪牙提名玩家时，你会得知。</li>
+                    <li><strong>神谕者:</strong> 每晚，你得知有多少死去的玩家是邪恶的。</li>
+                    <li><strong>博学者:</strong> 如果你因恶魔攻击死亡，你会得知两名玩家中有一位是恶魔。</li>
+                    <li><strong>女裁缝:</strong> 每局游戏一次，在白天，你可以选择两名玩家，得知他们是同一阵营还是不同阵营。</li>
+                    <li><strong>哲学家:</strong> 每局游戏一次，选择一个善良角色，你获得其能力，但你会醉酒。</li>
+                    <li><strong>艺术家:</strong> 每局游戏一次，在白天，向说书人提一个问题，他会如实回答是或否。</li>
+                    <li><strong>杂耍艺人:</strong> 在你的第一个白天，公开猜测最多五个玩家的身份。</li>
+                    <li><strong>贤者:</strong> 在你的第一个白天，你会得知两段信息，一段真，一段假。</li>
+                  </ul>
+                  <h5>外来者 (Outsiders)</h5>
+                  <ul>
+                    <li><strong>畸形秀演员:</strong> 如果你是邪恶的，你可能会以为自己是善良的，反之亦然。</li>
+                    <li><strong>心上人:</strong> 当你死亡时，另一名玩家会醉酒。</li>
+                    <li><strong>理发师:</strong> 当恶魔死亡时，说书人可以交换两名玩家的角色。</li>
+                    <li><strong>傻瓜:</strong> 当你死亡时，选择一名玩家，你认为他是邪恶的。</li>
+                  </ul>
+                  <h5>爪牙 (Minions)</h5>
+                  <ul>
+                    <li><strong>熬药巫婆:</strong> 每晚，你可以选择一名玩家和一个角色，该玩家变成该角色。</li>
+                    <li><strong>洗脑师:</strong> 每晚，选择一名玩家，说书人会让他"疯狂地"声称某事。</li>
+                    <li><strong>邪恶双子:</strong> 你和另一名玩家是邪恶双子。如果好人阵营处决了你们中的一个，邪恶阵营胜利。</li>
+                    <li><strong>女巫:</strong> 每晚，选择一名玩家。如果他在白天提名某人，他会死亡。</li>
+                  </ul>
+                  <h5>恶魔 (Demon)</h5>
+                  <ul>
+                    <li><strong>蚀梦游魂:</strong> 你杀死的玩家会中毒。如果你杀死一个被你毒害过的玩家，他会死亡，且一个邻居也会死亡。</li>
+                    <li><strong>死灵法师:</strong> 你杀死的玩家会变成你的爪牙。</li>
+                    <li><strong>腐肢:</strong> 你不知道你的爪牙是谁。你的爪牙会变成外来者。</li>
+                    <li><strong>悖论漩涡:</strong> 如果你被处决，另一名玩家会代替你死亡。</li>
+                  </ul>
+                </div>
+              </el-collapse-item>
+            </el-collapse>
+          </div>
         </div>
         <template #footer>
           <span class="dialog-footer">
@@ -203,6 +482,34 @@
             </el-col>
           </el-row>
           <el-row :gutter="20" style="margin-top: 20px;">
+            <el-col :span="8">
+              <el-card 
+                class="game-card"
+                :class="{ 'selected': createRoomForm.gameType === 'werewolf' }"
+                @click="selectGame('werewolf')"
+                shadow="hover"
+              >
+                <div class="game-info">
+                  <h4>狼人杀</h4>
+                  <p>经典狼人杀游戏</p>
+                  <p>支持6-16人</p>
+                </div>
+              </el-card>
+            </el-col>
+            <el-col :span="8">
+              <el-card 
+                class="game-card"
+                :class="{ 'selected': createRoomForm.gameType === 'one-night-werewolf' }"
+                @click="selectGame('one-night-werewolf')"
+                shadow="hover"
+              >
+                <div class="game-info">
+                  <h4>一夜狼人</h4>
+                  <p>快节奏狼人杀变种</p>
+                  <p>支持3-10人</p>
+                </div>
+              </el-card>
+            </el-col>
             <el-col :span="8">
               <el-card 
                 class="game-card"
@@ -312,6 +619,82 @@
                   <el-option label="60秒" :value="60" />
                   <el-option label="90秒" :value="90" />
                   <el-option label="120秒" :value="120" />
+                </el-select>
+              </el-form-item>
+            </template>
+
+            <!-- 狼人杀特有设置 -->
+            <template v-if="createRoomForm.gameType === 'werewolf'">
+              <el-divider content-position="left">狼人杀设置</el-divider>
+              <el-form-item label="最大人数">
+                <el-select v-model="createRoomForm.maxPlayers" placeholder="选择最大人数">
+                  <el-option label="6人" :value="6" />
+                  <el-option label="8人" :value="8" />
+                  <el-option label="9人" :value="9" />
+                  <el-option label="10人" :value="10" />
+                  <el-option label="12人" :value="12" />
+                  <el-option label="16人" :value="16" />
+                </el-select>
+              </el-form-item>
+              <el-form-item label="发言时间">
+                <el-select v-model="createRoomForm.speakTime" placeholder="选择发言时间">
+                  <el-option label="60秒" :value="60" />
+                  <el-option label="90秒" :value="90" />
+                  <el-option label="120秒" :value="120" />
+                  <el-option label="180秒" :value="180" />
+                </el-select>
+              </el-form-item>
+              <el-form-item label="行动时间">
+                <el-select v-model="createRoomForm.actionTime" placeholder="选择行动时间">
+                  <el-option label="30秒" :value="30" />
+                  <el-option label="60秒" :value="60" />
+                  <el-option label="90秒" :value="90" />
+                  <el-option label="120秒" :value="120" />
+                </el-select>
+              </el-form-item>
+              <el-form-item label="夜晚时间">
+                <el-select v-model="createRoomForm.nightTime" placeholder="选择夜晚时间">
+                  <el-option label="60秒" :value="60" />
+                  <el-option label="90秒" :value="90" />
+                  <el-option label="120秒" :value="120" />
+                  <el-option label="180秒" :value="180" />
+                </el-select>
+              </el-form-item>
+            </template>
+
+            <!-- 一夜狼人特有设置 -->
+            <template v-if="createRoomForm.gameType === 'one-night-werewolf'">
+              <el-divider content-position="left">一夜狼人设置</el-divider>
+              <el-form-item label="最大人数">
+                <el-select v-model="createRoomForm.maxPlayers" placeholder="选择最大人数">
+                  <el-option label="3人" :value="3" />
+                  <el-option label="4人" :value="4" />
+                  <el-option label="5人" :value="5" />
+                  <el-option label="6人" :value="6" />
+                  <el-option label="7人" :value="7" />
+                  <el-option label="8人" :value="8" />
+                  <el-option label="10人" :value="10" />
+                </el-select>
+              </el-form-item>
+              <el-form-item label="夜晚时间">
+                <el-select v-model="createRoomForm.nightTime" placeholder="选择夜晚行动时间">
+                  <el-option label="3分钟" :value="180" />
+                  <el-option label="5分钟" :value="300" />
+                  <el-option label="8分钟" :value="480" />
+                </el-select>
+              </el-form-item>
+              <el-form-item label="投票时间">
+                <el-select v-model="createRoomForm.votingTime" placeholder="选择投票时间">
+                  <el-option label="3分钟" :value="180" />
+                  <el-option label="5分钟" :value="300" />
+                  <el-option label="8分钟" :value="480" />
+                </el-select>
+              </el-form-item>
+              <el-form-item label="讨论时间">
+                <el-select v-model="createRoomForm.discussTime" placeholder="选择讨论时间">
+                  <el-option label="3分钟" :value="180" />
+                  <el-option label="5分钟" :value="300" />
+                  <el-option label="8分钟" :value="480" />
                 </el-select>
               </el-form-item>
             </template>
@@ -429,7 +812,9 @@ const createRoomForm = ref({
   actionTime: 60,
   edition: 'tb',
   dayTime: 600,
-  nightTime: 180
+  nightTime: 180,
+  votingTime: 300,
+  discussTime: 180
 });
 const createRoomStep = ref(0);
 const creatingRoom = ref(false);
@@ -459,6 +844,12 @@ onMounted(() => {
         router.push({ name: 'AvalonRoom', params: { id: data.room.id } });
       } else if (data.room.type === 'mafia') {
         router.push({ name: 'MafiaRoom', params: { id: data.room.id } });
+      } else if (data.room.type === 'werewolf') {
+        router.push({ name: 'WerewolfRoom', params: { id: data.room.id } });
+      } else if (data.room.type === 'one-night-werewolf') {
+        router.push({ name: 'OnuWerewolfRoom', params: { id: data.room.id } });
+      } else if (data.room.type === 'blood-on-the-clocktower' || data.room.type === 'botc') {
+        router.push({ name: 'BOTCRoom', params: { id: data.room.id } });
       } else {
         // 其他游戏类型的处理
         console.warn('未知的游戏类型:', data.room.type);
@@ -481,6 +872,15 @@ function enter(roomId: string) {
       } else if (room.type === 'mafia') {
         // 杀人游戏使用独立的连接方式
         router.push({ name: 'MafiaRoom', params: { id: roomId } });
+      } else if (room.type === 'werewolf') {
+        // 狼人杀游戏使用独立的连接方式
+        router.push({ name: 'WerewolfRoom', params: { id: roomId } });
+      } else if (room.type === 'one-night-werewolf') {
+        // 一夜狼人游戏使用独立的连接方式
+        router.push({ name: 'OnuWerewolfRoom', params: { id: roomId } });
+      } else if (room.type === 'blood-on-the-clocktower' || room.type === 'botc') {
+        // 血染钟楼游戏使用独立的连接方式
+        router.push({ name: 'BOTCRoom', params: { id: roomId } });
       } else {
         // 其他游戏类型待实现
         // 暂时不支持其他游戏类型
@@ -517,6 +917,9 @@ function showCreateRoomDialog() {
   createRoomForm.value.isPrivate = false;
   createRoomForm.value.speakTime = 60;
   createRoomForm.value.actionTime = 60;
+  createRoomForm.value.nightTime = 180;
+  createRoomForm.value.votingTime = 300;
+  createRoomForm.value.discussTime = 180;
   createRoomStep.value = 0;
   createRoomDialogVisible.value = true;
 }
@@ -563,6 +966,16 @@ async function confirmCreateRoom() {
       gameConfig.playerCount = createRoomForm.value.maxPlayers;
       gameConfig.dayTime = createRoomForm.value.dayTime;
       gameConfig.nightTime = createRoomForm.value.nightTime;
+    } else if (createRoomForm.value.gameType === 'werewolf') {
+      gameConfig.playerCount = createRoomForm.value.maxPlayers;
+      gameConfig.speakTime = createRoomForm.value.speakTime;
+      gameConfig.actionTime = createRoomForm.value.actionTime;
+      gameConfig.nightTime = createRoomForm.value.nightTime;
+    } else if (createRoomForm.value.gameType === 'one-night-werewolf') {
+      gameConfig.playerCount = createRoomForm.value.maxPlayers;
+      gameConfig.nightTime = createRoomForm.value.nightTime;
+      gameConfig.votingTime = createRoomForm.value.votingTime;
+      gameConfig.discussTime = createRoomForm.value.discussTime;
     }
 
     // 通过socket创建房间
@@ -689,6 +1102,65 @@ function nextStep() {
 
 .help-content {
   padding: 20px;
+  line-height: 1.6;
+  color: #333;
+}
+
+.help-content h3 {
+  color: #409eff;
+  border-bottom: 2px solid #409eff;
+  padding-bottom: 8px;
+  margin-bottom: 16px;
+}
+
+.help-content h4 {
+  color: #e6a23c;
+  margin: 20px 0 12px 0;
+  font-size: 18px;
+}
+
+.game-help-section {
+  margin-bottom: 30px;
+  padding: 20px;
+  background-color: #f8f9fa;
+  border-radius: 8px;
+  border-left: 4px solid #409eff;
+}
+
+.game-help-section p {
+  margin: 8px 0;
+}
+
+.game-help-section ul, .game-help-section ol {
+  margin: 8px 0;
+  padding-left: 20px;
+}
+
+.game-help-section li {
+  margin: 4px 0;
+}
+
+.game-help-section strong {
+  color: #303133;
+}
+
+/* 滚动条样式 */
+.help-content::-webkit-scrollbar {
+  width: 8px;
+}
+
+.help-content::-webkit-scrollbar-track {
+  background: #f1f1f1;
+  border-radius: 4px;
+}
+
+.help-content::-webkit-scrollbar-thumb {
+  background: #c1c1c1;
+  border-radius: 4px;
+}
+
+.help-content::-webkit-scrollbar-thumb:hover {
+  background: #a8a8a8;
 }
 
 .game-selection {
@@ -728,5 +1200,19 @@ function nextStep() {
 
 .room-config {
   padding: 20px;
+}
+
+.script-details {
+  padding: 10px 15px;
+  background-color: #fcfcfc;
+}
+
+.script-details h5 {
+  margin-top: 15px;
+  margin-bottom: 10px;
+  color: #606266;
+  font-size: 16px;
+  border-bottom: 1px solid #e4e7ed;
+  padding-bottom: 5px;
 }
 </style>

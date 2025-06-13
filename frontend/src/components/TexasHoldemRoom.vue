@@ -194,7 +194,7 @@ import TexasHoldemActionBar from './TexasHoldemActionBar.vue';
 
 const store = useTexasHoldemStore();
 // 房间内玩家判断，用于控制预游戏按钮显示
-const isInRoom = computed(() => store.players.some((p: any) => p.id === store.nickname));
+const isInRoom = computed(() => store.players.some((p: { id: string }) => p.id === store.playerId));
 const { round } = storeToRefs(store);
 const router = useRouter();
 const route = useRoute();
@@ -207,11 +207,11 @@ const roomPreparing = ref(true); // 默认显示准备中
 // 房间状态检查定时器
 let statusCheckInterval: number | null = null;
 
-// 检查房间状态的函数
-const checkRoomStatus = () => {
+// 请求房间状态的函数
+const requestRoomState = () => {
   if (store.socket && roomId) {
-    console.log('检查房间状态...');
-    store.socket.emit('room_status_check', { roomId: roomId });
+    console.log(`请求房间 ${roomId} 的状态...`);
+    store.socket.emit('get_room_state', { roomId });
   }
 };
 
@@ -220,89 +220,69 @@ onMounted(() => {
   // 初始化socket监听器
   store.initTexasHoldemSocket();
   
-  // 确保socket已初始化，但如果已存在且连接正常，则不重新初始化
+  // 确保socket已初始化
   if (!store.socket || !store.socket.connected) {
     const mainStore = useMainStore();
     mainStore.initSocket();
   }
 
-  // 设置房间特定的事件监听器（避免重复设置）
-  if (store.socket && !store.socket.hasListeners('room_ready')) {
-    // 监听房间准备完成事件
-    store.socket.on('room_ready', (data: any) => {
-      console.log('收到room_ready事件 - 房间已准备好', data);
+  const socket = store.socket;
+  if (!socket) return;
+
+  // 检查是否需要重连
+  const isNewJoin = sessionStorage.getItem('texas_newJoin') === 'true';
+  if (store.playerId && store.currentRoom === roomId && !isNewJoin) {
+    console.log(`尝试重连房间 ${roomId}，玩家ID ${store.playerId}`);
+    socket.emit('reconnect_room', { 
+      roomId: store.currentRoom, 
+      playerId: store.playerId 
+    });
+  }
+  // 成功加入或重连后，清除新加入标记
+  if (isNewJoin) {
+    sessionStorage.removeItem('texas_newJoin');
+  }
+
+  // 监听房间更新事件，以取消"准备中"状态
+  const onRoomUpdate = (data: any) => {
+    // 确保是当前房间的更新
+    if (data && data.id === roomId) {
+      console.log('收到 room_update 事件，房间已准备好', data);
       roomPreparing.value = false; // 隐藏准备中提示
       if (statusCheckInterval) {
-        clearInterval(statusCheckInterval); // 停止定时检查
+        clearInterval(statusCheckInterval);
         statusCheckInterval = null;
       }
-    });
+    }
+  };
+  socket.on('room_update', onRoomUpdate);
 
-    // 监听房间加入成功事件（用于验证房间类型）
-    store.socket.on('room_joined', (data: { room: any; player: any; isHost: boolean }) => {
-      console.log('收到room_joined事件', data);
-      if (data.room.type !== 'texas-holdem') {
-        // 房间类型不匹配，跳转回大厅
-        router.push({ name: 'Lobby' });
-        return;
-      }
-      console.log('房间加入成功，类型匹配');
-    });
-
-    // 监听错误事件
-    store.socket.on('error', (data: { message: string }) => {
-      if (data.message.includes('房间不存在') || data.message.includes('房间类型不匹配')) {
-        router.push({ name: 'Lobby' });
-      }
-    });
-  }
-
-  // 开始定时检查房间状态
-  if (!statusCheckInterval) {
-    // 立即检查一次
-    setTimeout(checkRoomStatus, 500);
-    // 然后每3秒检查一次
-    statusCheckInterval = setInterval(checkRoomStatus, 3000);
-  }
-
-  if (store.nickname) {
-    // 设置当前房间ID
-    store.currentRoom = roomId;
-    localStorage.setItem('texas_currentRoom', roomId);
-
-    // 检查是否是从大厅新加入的（通过URL参数或状态判断）
-    // 如果是刚从大厅join_room过来的，就不需要reconnect_room了
-    const isNewJoin = sessionStorage.getItem('texas_newJoin') === 'true';
-    if (isNewJoin) {
-      // 清除标记，避免下次页面加载时误判
-      sessionStorage.removeItem('texas_newJoin');
+  // 监听房间加入成功事件（用于验证房间类型）
+  const onRoomJoined = (data: { room: any; player: any; isHost: boolean }) => {
+    console.log('收到room_joined事件', data);
+    if (data.room.type !== 'texas-holdem') {
+      router.push({ name: 'Lobby' });
       return;
     }
+    console.log('房间加入成功，类型匹配');
+    requestRoomState();
+  };
+  socket.on('room_joined', onRoomJoined);
 
-    // 如果socket已连接，直接重建会话；否则等待connect事件
-    if (store.socket && store.socket.connected) {
-      store.socket.emit('reconnect_room', { roomId, playerId: store.nickname, nickname: store.nickname });
-    } else if (store.socket) {
-      const onConnect = () => {
-        store.socket?.emit('reconnect_room', { roomId, playerId: store.nickname, nickname: store.nickname });
-        store.socket?.off('connect', onConnect);
-      };
-      store.socket.on('connect', onConnect);
-    }
-  } else {
-    router.push({ name: 'Lobby' });
-  }
+  // 立即请求一次，并设置定时器
+  requestRoomState();
+  statusCheckInterval = setInterval(requestRoomState, 3000);
 });
 
-// 添加组件卸载时的清理
 onUnmounted(() => {
-  // 清理定时器
   if (statusCheckInterval) {
     clearInterval(statusCheckInterval);
-    statusCheckInterval = null;
   }
-  // 组件卸载时不断开socket连接，因为用户可能只是切换到大厅页面
-  // socket连接的管理交给store统一处理
+  // 清理组件特有的监听器，避免内存泄漏
+  if (store.socket) {
+    store.socket.off('room_update');
+    store.socket.off('room_joined');
+  }
 });
 
 function onCashIn() {

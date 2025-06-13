@@ -71,10 +71,16 @@ export class RoomThreadManager {
   }
 
   // 启动房间线程
-  async startRoomThread(room: Room, config: any): Promise<boolean> {
+  async startRoomThread(room: Room, config: any): Promise<Room | null> {
     if (this.workers.has(room.id)) {
       console.log(`房间 ${room.id} 的线程已存在`);
-      return true;
+      // 如果已存在，也认为成功，并返回更新后的房间对象
+      const existingRoom = this.roomData.get(room.id);
+      if (existingRoom) {
+        existingRoom.threadStatus = 'running';
+        return existingRoom;
+      }
+      return room; // Fallback
     }
 
     try {
@@ -142,10 +148,10 @@ export class RoomThreadManager {
       });
 
       console.log(`房间 ${room.id} (${room.type}) 线程启动成功`);
-      return true;
+      return room;
     } catch (error) {
       console.error(`启动房间 ${room.id} 线程失败:`, error);
-      return false;
+      return null;
     }
   }
 
@@ -220,23 +226,25 @@ export class RoomThreadManager {
 
   // 获取房间线程状态
   getRoomThreadStatus(roomId: string): 'idle' | 'running' | 'stopping' | 'not_found' {
-    const worker = this.workers.get(roomId);
-    if (!worker) {
-      return 'not_found';
-    }
-    return 'running';
+    if (!this.workers.has(roomId)) return 'not_found';
+    const room = this.roomData.get(roomId);
+    return room?.threadStatus || 'idle';
   }
 
   // 确保房间线程正在运行
   async ensureRoomThreadRunning(room: Room, config: any): Promise<boolean> {
-    if (!this.workers.has(room.id)) {
-      return await this.startRoomThread(room, config);
+    if (this.workers.has(room.id)) {
+      return true; // 线程已在运行
     }
-    return true;
+    
+    // 如果线程不存在，则启动它
+    const updatedRoom = await this.startRoomThread(room, config);
+    return !!updatedRoom;
   }
 
   // 关闭所有线程
   async shutdown() {
+    console.log('正在关闭所有房间线程...');
     clearInterval(this.cleanupInterval);
     
     const stopPromises = [];

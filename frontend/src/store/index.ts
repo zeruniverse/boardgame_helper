@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia';
 import { io, Socket } from 'socket.io-client';
 import { SOCKET_URL } from '../config';
+import { useTexasHoldemStore } from './texas_holdem';
 
 // 重新导出游戏特定的store
 export { useTexasHoldemStore } from './texas_holdem';
@@ -42,7 +43,9 @@ export const useMainStore = defineStore('main', {
 
       // 创建新的socket连接
       console.log('创建新的socket连接到:', SOCKET_URL);
-      this.socket = io(SOCKET_URL);
+      this.socket = io(SOCKET_URL, {
+        transports: ['websocket'],
+      });
 
       // 连接建立后的处理
       this.socket.on('connect', () => {
@@ -71,6 +74,8 @@ export const useMainStore = defineStore('main', {
         const router = (window as any).routerInstance;
         if (router) {
           if (data.room.type === 'texas-holdem') {
+            const texasStore = useTexasHoldemStore();
+            texasStore.setNicknameAndRoom(data.player.nickname, data.room.id, data.player.id);
             router.push({ name: 'TexasHoldemRoom', params: { id: data.room.id } });
           } else if (data.room.type === 'avalon') {
             router.push({ name: 'AvalonRoom', params: { id: data.room.id } });
