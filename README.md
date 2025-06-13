@@ -80,26 +80,11 @@ VITE_SOCKET_URL=your_server_url npm run build
 
 ### 后端
 
-#### 本地开发
-
-**重要：** 由于后端使用了Worker线程加载编译后的JavaScript文件，在开发环境中需要先编译TypeScript代码。
-
 ```bash
 cd backend
-npm install
-
-# 首次运行或代码修改后需要编译
-npm run build
-
 # 启动开发服务器
 npm run dev
 ```
-
-**开发流程说明：**
-1. 修改TypeScript代码后，需要重新运行 `npm run build` 编译
-2. Worker线程会加载 `dist/workers/roomWorker.js` 文件
-3. 如果只修改了主线程代码（如controllers），nodemon会自动重启
-4. 如果修改了Worker代码（如workers/roomWorker.ts），需要手动重新编译
 
 **快速开发模式：**
 ```bash
