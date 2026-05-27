@@ -58,7 +58,8 @@ export class BOTCWorker extends BaseGameWorker {
     this.room = room;
     this.gameConfig = {
       edition: config.edition || 'tb',
-      storytellerId: config.storytellerId,
+      // 如果没有指定说书人，默认使用房主
+      storytellerId: config.storytellerId || room.hostId,
       allowSpectators: config.allowSpectators !== undefined ? config.allowSpectators : true,
       isPrivate: config.isPrivate || false,
       maxPlayers: config.maxPlayers || 15,
@@ -141,6 +142,12 @@ export class BOTCWorker extends BaseGameWorker {
       return;
     }
 
+    // 房间锁定切换特殊处理（不需要游戏进行中）
+    if (actionType === 'toggleRoomLock') {
+      this.toggleRoomLock();
+      return;
+    }
+
     const action: BOTCGameAction = { type: actionType as any, data: actionData };
     
     const validation = validatePlayerAction(
@@ -188,8 +195,12 @@ export class BOTCWorker extends BaseGameWorker {
       return;
     }
 
-    if (playerId !== this.gameConfig.storytellerId) {
-      this.sendToPlayer(playerId, 'actionError', { message: '只有说书人可以开始游戏' });
+    // 允许房主或说书人开始游戏
+    const isHost = playerId === this.room.hostId;
+    const isStoryteller = playerId === this.gameConfig.storytellerId;
+    
+    if (!isHost && !isStoryteller) {
+      this.sendToPlayer(playerId, 'actionError', { message: '只有房主或说书人可以开始游戏' });
       return;
     }
 
@@ -301,6 +312,9 @@ export class BOTCWorker extends BaseGameWorker {
     // 如果没有夜晚行动，直接进入白天
     if (this.gameState.nightOrder.length === 0) {
       setTimeout(() => this.startDay(), 2000);
+    } else {
+      // 如果配置了电脑说书人，自动处理夜晚
+      this.autoStorytellerProcess();
     }
   }
 
@@ -1114,9 +1128,10 @@ export class BOTCWorker extends BaseGameWorker {
     const target = this.room.players.find(p => p.id === data.targetId);
     if (!sender || !target) return;
 
-    // 验证不能发给自己，且双方都在游戏中
+    // 验证不能发给自己，且双方都在游戏中（游戏未开始时跳过gamePlayers检查）
     if (playerId === data.targetId) return;
-    if (!this.gamePlayers.has(playerId) || !this.gamePlayers.has(data.targetId)) return;
+    if (this.gameState.phase !== GamePhase.SETUP && 
+        (!this.gamePlayers.has(playerId) || !this.gamePlayers.has(data.targetId))) return;
 
     // 发送给目标玩家
     this.sendToPlayer(data.targetId, 'privateMessage', {
@@ -1133,6 +1148,78 @@ export class BOTCWorker extends BaseGameWorker {
       message: data.message,
       timestamp: Date.now()
     });
+  }
+
+  /**
+   * 电脑说书人自动处理夜晚阶段
+   * 当说书人是电脑时，自动推进游戏进程，模拟随机事件
+   */
+  private autoStorytellerProcess(): void {
+    // 检查是否配置了电脑说书人
+    const isComputerStoryteller = this.gameConfig.storytellerId?.startsWith('computer_') || false;
+    if (!isComputerStoryteller) return;
+
+    const delay = 5000 + Math.random() * 5000; // 5-10秒随机延迟
+
+    setTimeout(async () => {
+      // 如果游戏不在夜晚阶段，不处理
+      if (this.gameState.phase !== GamePhase.FIRST_NIGHT && 
+          this.gameState.phase !== GamePhase.NIGHT) return;
+
+      const nightActions: Array<{playerId: string; action: string; targetId: string; data: any}> = [];
+      
+      for (const playerId of this.gameState.nightOrder) {
+        const player = this.gamePlayers.get(playerId);
+        if (!player || player.isDead) continue;
+
+        // 电脑随机选择目标
+        const validTargets = Array.from(this.gamePlayers.values())
+          .filter(p => !p.isDead)
+          .map(p => p.playerId);
+        
+        if (validTargets.length === 0) continue;
+
+        const targetId = validTargets[Math.floor(Math.random() * validTargets.length)];
+        const role = player.role;
+        
+        if (!role) continue;
+
+        // 根据角色类型执行不同行动
+        let action = 'night_action';
+        const actionData: any = { targetId };
+
+        if (['slayer', 'sage', 'investigator', 'chef', 'empath', 'fortune_teller', 'undertaker', 'monk', 'ravenkeeper', 'virgin', 'soldier', 'mayor'].includes(role.id)) {
+          // 信息类角色：随机选择目标获取信息
+          actionData.roleId = role.id;
+        } else if (['poisoner', 'scarlet_woman', 'spy', 'baron'].includes(role.id)) {
+          // 邪恶角色：随机选择目标干扰
+          actionData.roleId = role.id;
+        } else if (role.id === 'washerwoman' || role.id === 'librarian') {
+          // 首夜信息角色：随机选择两个目标
+          const target2 = validTargets[Math.floor(Math.random() * validTargets.length)];
+          actionData.targetId2 = target2;
+        }
+
+        nightActions.push({
+          playerId,
+          action,
+          targetId,
+          data: actionData
+        });
+      }
+
+      // 批量处理夜晚行动
+      for (const na of nightActions) {
+        try {
+          await this.handleNightAction(na.playerId, na.data);
+        } catch (e) {
+          // 忽略个别行动错误，继续处理下一个
+        }
+      }
+
+      // 处理完所有行动后，自动进入白天
+      await this.processNightActions();
+    }, delay);
   }
 
   /**

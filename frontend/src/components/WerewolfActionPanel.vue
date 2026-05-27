@@ -13,7 +13,7 @@
     </div>
 
     <!-- 准备阶段 -->
-    <div v-if="gameState.status === 'preparing'" class="action-section">
+    <div v-if="gameState.status === 'WAITING' || gameState.status === 'preparing'" class="action-section">
       <h4>游戏准备</h4>
       <div class="ready-actions">
         <el-button
@@ -436,15 +436,19 @@ const isCurrentSpeaker = computed(() => {
 })
 
 const isAlive = computed(() => {
-  if (!props.gameState || !props.playerSecret?.playerId) return false
-  return props.gameState.players[props.playerSecret.playerId]?.alive ?? false
+  if (!props.gameState || !props.playerSecret?.playerId) return true
+  // 游戏未开始时默认活着
+  if (props.gameState.status === 'WAITING' || props.gameState.status === 'preparing') return true
+  return props.gameState.players[props.playerSecret.playerId]?.alive ?? true
 })
 
 const canStartGame = computed(() => {
   if (!props.isHost) return false
   const players = Object.values(props.gameState.players || {})
   const readyCount = players.filter((p: any) => p.ready).length
-  return readyCount >= 6
+  // 需要至少角色配置所需人数的玩家准备
+  const needingCount = props.gameState.needingCharacters?.length || 6
+  return readyCount >= needingCount && readyCount >= Math.min(players.length, 6)
 })
 
 // 获取存活的玩家列表

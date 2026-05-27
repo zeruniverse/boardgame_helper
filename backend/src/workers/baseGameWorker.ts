@@ -119,4 +119,18 @@ export abstract class BaseGameWorker {
     // 这里需要通过主线程来发送消息
     // 具体实现在子类中通过parentPort来实现
   }
+
+  /**
+   * 切换房间锁定状态
+   * 锁定后不允许新成员加入房间（不影响房间是否公开，且房间可以解锁）
+   */
+  public toggleRoomLock(): void {
+    if (!this.room) return;
+    this.room.locked = !this.room.locked;
+    this.sendToRoom('room_update', this.room);
+    this.sendToRoom('chat_broadcast', {
+      message: `房间已${this.room.locked ? '锁定' : '解锁'}，${this.room.locked ? '新成员将无法加入' : '新成员现在可以加入'}`,
+      type: 'system'
+    });
+  }
 } 

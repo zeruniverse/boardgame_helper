@@ -8,6 +8,7 @@ export interface Room {
   hostId: string;
   type: 'texas-holdem' | 'werewolf' | 'mafia' | 'one-night-werewolf' | 'avalon' | 'blood-on-the-clocktower';
   private: boolean;
+  locked?: boolean; // 新增：房间锁定状态，锁定后不允许新成员加入（不影响房间是否公开）
   threadId?: string;
   threadStatus: 'idle' | 'running' | 'stopping';
   lastActiveTime: number;

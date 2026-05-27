@@ -91,12 +91,28 @@ class WerewolfWorker extends BaseGameWorker {
 
     this.gameState.needingCharacters = this.config.characters;
 
-    // 设置房间玩家metadata
-    this.room.players.forEach(player => {
+    // 设置房间玩家metadata，并初始化游戏状态中的玩家记录（游戏未开始时默认活着）
+    this.room.players.forEach((player, index) => {
       player.gameMetadata = {
         ready: false,
         muted: false
       };
+      // 确保游戏状态中有对应的玩家记录，游戏未开始时默认isAlive为true
+      if (!this.gameState.players[player.id]) {
+        this.gameState.players[player.id] = {
+          id: player.id,
+          index: index + 1,
+          name: player.nickname,
+          character: 'UNKNOWN' as WerewolfCharacter,
+          isAlive: true,
+          isSheriff: false,
+          isDying: false,
+          canBeVoted: false,
+          hasVotedAt: [],
+          sheriffVotes: [],
+          characterStatus: {}
+        };
+      }
     });
 
     // 发送房间准备完成事件
@@ -304,6 +320,12 @@ class WerewolfWorker extends BaseGameWorker {
   async gameAction(playerId: string, actionType: string, actionData: any): Promise<void> {
     const player = this.room.players.find(p => p.id === playerId);
     if (!player) return;
+
+    // toggleRoomLock是房间管理操作，不需要玩家在游戏中
+    if (actionType === 'toggleRoomLock') {
+      this.toggleRoomLock();
+      return;
+    }
 
     const gamePlayer = this.gameState.players[playerId];
     if (!gamePlayer) return;

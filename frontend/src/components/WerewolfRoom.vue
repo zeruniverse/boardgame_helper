@@ -1,19 +1,9 @@
 <template>
   <div class="werewolf-room">
-    <!-- 房间准备中的遮罩 - 只在真正没有gameState时显示 -->
-    <div v-if="!gameState && roomPreparing" class="room-loading-overlay">
-      <div class="loading-content">
-        <el-icon class="is-loading" size="48">
-          <Loading />
-        </el-icon>
-        <p>房间正在准备中...</p>
-      </div>
-    </div>
-
-    <!-- 头部导航 -->
-    <el-header v-else class="room-header">
+    <!-- 头部导航 - 始终显示 -->
+    <el-header class="room-header">
       <div class="header-left">
-        <el-button @click="$router.push('/')" type="primary" plain>
+        <el-button @click="goToLobby" type="primary" plain>
           <el-icon><Back /></el-icon>
           返回大厅
         </el-button>
@@ -22,8 +12,21 @@
       <div class="header-right">
         <span class="room-id">房间ID: {{ roomId }}</span>
         <span v-if="gameState?.day" class="day-badge">第{{ Math.ceil(gameState.day / 2) }}天</span>
+        <el-button size="small" @click="toggleRoomLock" :type="roomLocked ? 'danger' : 'success'">
+          {{ roomLocked ? '解锁房间' : '锁定房间' }}
+        </el-button>
       </div>
     </el-header>
+
+    <!-- 房间准备中的遮罩 -->
+    <div v-if="!gameState && roomPreparing" class="room-loading-overlay">
+      <div class="loading-content">
+        <el-icon class="is-loading" size="48">
+          <Loading />
+        </el-icon>
+        <p>房间正在准备中...</p>
+      </div>
+    </div>
 
     <!-- 主游戏区域 -->
     <el-container v-if="gameState || !roomPreparing" class="game-container">
@@ -168,6 +171,9 @@ const currentUserNickname = computed(() => {
 
 const gameHistory = ref<any[]>([])
 
+// 房间锁定状态
+const roomLocked = ref(false)
+
 // 房间准备状态 - 修改为只要连接成功就不显示loading
 const roomPreparing = ref(true)
 let statusCheckInterval: number | null = null
@@ -252,6 +258,18 @@ const handleUpdateConfig = (config: any) => {
 
 const handleSendMessage = (message: string, channel: string) => {
   store.sendMessage(message, channel)
+}
+
+// 返回大厅
+const goToLobby = () => {
+  store.disconnectFromRoom()
+  router.push('/')
+}
+
+// 切换房间锁定
+const toggleRoomLock = () => {
+  store.sendGameAction('toggleRoomLock', {})
+  roomLocked.value = !roomLocked.value
 }
 
 // 检查房间状态

@@ -82,6 +82,14 @@ export const useGameStore = defineStore('botc', () => {
 
         socket.value.on('room_update', (data) => {
           room.value = data
+          // 如果锁定了房间，更新本地状态
+          if (data && data.locked !== undefined) {
+            room.value.locked = data.locked
+          }
+          // 更新说书人状态
+          if (data && gameConfig.value) {
+            isStoryteller.value = currentUserId.value === gameConfig.value.storytellerId || currentUserId.value === data.hostId
+          }
         })
 
         // 监听游戏状态同步 - 后端使用gameState

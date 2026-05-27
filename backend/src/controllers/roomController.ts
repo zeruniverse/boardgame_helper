@@ -415,6 +415,13 @@ export function roomController(io: Server) {
           return;
         }
 
+        // 检查房间是否被锁定（非重连的新玩家）
+        if (room.locked === true && !player) {
+          socket.emit('error', { message: '房间已被锁定，不允许新成员加入' });
+          ack?.({ success: false, error: '房间已被锁定，不允许新成员加入' });
+          return;
+        }
+
         // 检查房间是否已满
         if (room.players.length >= room.maxPlayers) {
           socket.emit('error', { message: '房间已满' });
@@ -491,6 +498,12 @@ export function roomController(io: Server) {
 
         if (!room) {
           socket.emit('error', { message: '房间不存在' });
+          return;
+        }
+
+        // 检查房间是否被锁定
+        if (room.locked === true) {
+          socket.emit('error', { message: '房间已被锁定，不允许新成员加入' });
           return;
         }
 

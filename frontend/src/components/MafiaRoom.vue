@@ -10,8 +10,8 @@
       </div>
     </div>
 
-    <!-- 头部导航 -->
-    <el-header v-else-if="!roomPreparing" class="room-header">
+    <!-- 头部导航 - 始终显示 -->
+    <el-header class="room-header">
       <div class="header-left">
         <el-button @click="$router.push('/')" type="primary" plain>
           <el-icon><Back /></el-icon>
@@ -21,6 +21,9 @@
       </div>
       <div class="header-right">
         <span class="room-id">房间ID: {{ roomId }}</span>
+        <el-button size="small" @click="toggleRoomLock" :type="room?.locked ? 'danger' : 'success'">
+          {{ room?.locked ? '解锁房间' : '锁定房间' }}
+        </el-button>
       </div>
     </el-header>
 
@@ -177,6 +180,11 @@ const timeLeft = computed(() => store.timeLeft)
 
 // 房间准备状态 - 使用ref来控制状态
 const roomPreparing = ref(true) // 默认显示准备中
+
+// 切换房间锁定
+const toggleRoomLock = () => {
+  store.sendGameAction('toggleRoomLock', {})
+}
 
 // 房间状态检查定时器
 let statusCheckInterval: number | null = null

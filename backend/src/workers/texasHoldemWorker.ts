@@ -157,8 +157,8 @@ class TexasHoldemWorker extends BaseGameWorker {
       if (!player.gameMetadata) {
         player.gameMetadata = {};
       }
-      if (typeof player.gameMetadata.chips !== 'number') {
-        player.gameMetadata.chips = 0;
+      if (typeof player.gameMetadata.chips !== 'number' || player.gameMetadata.chips === 0) {
+        player.gameMetadata.chips = config.defaultStack || 1000;
       }
       player.gameMetadata.inGame = true;
       player.gameMetadata.cashinCount = player.gameMetadata.cashinCount || 0;
@@ -183,8 +183,8 @@ class TexasHoldemWorker extends BaseGameWorker {
     const roomPlayer = this.upsertRoomPlayer(player);
 
     // 初始化玩家的德州扑克游戏数据，写回 this.room.players 中的对象
-    if (typeof roomPlayer.gameMetadata.chips !== 'number') {
-      roomPlayer.gameMetadata.chips = 0;
+    if (typeof roomPlayer.gameMetadata.chips !== 'number' || roomPlayer.gameMetadata.chips === 0) {
+      roomPlayer.gameMetadata.chips = this.config?.defaultStack || 1000;
     }
     roomPlayer.gameMetadata.inGame = true;
     roomPlayer.gameMetadata.cashinCount = roomPlayer.gameMetadata.cashinCount || 0;
@@ -628,15 +628,15 @@ class TexasHoldemWorker extends BaseGameWorker {
       return;
     }
 
-    // 修复：使用 chips > 0 && inGame 作为参与条件（与参考项目一致）
+    // 修复：使用 inGame !== false 作为参与条件（自动给予默认筹码后不需要检查chips）
     const participants = this.room.players.filter(p => {
       const gm = p.gameMetadata || {};
-      return gm.chips > 0 && gm.inGame !== false;
+      return gm.inGame !== false;
     }).map(p => p.id);
 
     if (participants.length < 2) {
       this.sendToRoom('chat_broadcast', {
-        message: '至少需要2名有筹码的玩家才能开始游戏'
+        message: '至少需要2名玩家才能开始游戏'
       });
       return;
     }

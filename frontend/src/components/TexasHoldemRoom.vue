@@ -12,6 +12,11 @@
 
     <!-- 快捷操作按钮 - 固定在顶部 -->
     <div v-else class="floating-header">
+      <!-- 返回大厅按钮 - 始终显示 -->
+      <el-button type="info" @click="goToLobby" :class="{ 'colored-border': true }">
+        <el-icon><Home /></el-icon>
+        返回大厅
+      </el-button>
       <!-- 只有在未开始游戏且已在房间的玩家显示开始/CashIn/CashOut -->
       <template v-if="store.stage === 'idle' && isInRoom">
         <el-button type="success" @click="onStartGame"
@@ -188,7 +193,7 @@ import { onMounted, computed, ref, onUnmounted } from 'vue';
 import { useTexasHoldemStore, useMainStore } from '../store';
 import { storeToRefs } from 'pinia';
 import { useRouter, useRoute } from 'vue-router';
-import { Loading } from '@element-plus/icons-vue';
+import { Loading, Home } from '@element-plus/icons-vue';
 import TexasHoldemChat from './TexasHoldemChat.vue';
 import TexasHoldemPlayerList from './TexasHoldemPlayerList.vue';
 import TexasHoldemActionBar from './TexasHoldemActionBar.vue';
@@ -302,6 +307,16 @@ onUnmounted(() => {
     store.socket.off('room_joined');
   }
 });
+
+// 返回大厅
+function goToLobby() {
+  // 先离开当前房间
+  if (store.socket && store.currentRoom) {
+    store.socket.emit('leave_room', { roomId: store.currentRoom });
+  }
+  store.resetGameState();
+  router.push({ name: 'Lobby' });
+}
 
 // Cash In - 使用game_action统一格式
 function onCashIn() {

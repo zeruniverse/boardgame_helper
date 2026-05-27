@@ -3,11 +3,20 @@
     <!-- 房间头部 -->
     <div class="room-header">
       <div class="room-info">
+        <el-button @click="goToLobby" type="primary" plain size="small">
+          <el-icon><Back /></el-icon>
+          返回大厅
+        </el-button>
         <h2>一夜终极狼人</h2>
         <span class="room-id">房间号: {{ roomId }}</span>
       </div>
-      <div class="connection-status" :class="{ connected: connected }">
-        {{ connected ? '已连接' : '未连接' }}
+      <div class="header-actions">
+        <el-button size="small" @click="toggleRoomLock" :type="room?.locked ? 'danger' : 'success'">
+          {{ room?.locked ? '解锁房间' : '锁定房间' }}
+        </el-button>
+        <div class="connection-status" :class="{ connected: connected }">
+          {{ connected ? '已连接' : '未连接' }}
+        </div>
       </div>
     </div>
 
@@ -66,13 +75,15 @@
 
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue';
-import { useRoute } from 'vue-router';
+import { useRoute, useRouter } from 'vue-router';
 import { useOnuWerewolfStore } from '../store/onuWerewolf';
+import { Back } from '@element-plus/icons-vue';
 import OnuWerewolfActionPanel from './OnuWerewolfActionPanel.vue';
 import OnuWerewolfPlayerList from './OnuWerewolfPlayerList.vue';
 import OnuWerewolfChat from './OnuWerewolfChat.vue';
 
 const route = useRoute();
+const router = useRouter();
 const roomId = computed(() => route.params.id as string);
 
 const store = useOnuWerewolfStore();
@@ -101,6 +112,15 @@ const nickname = computed(() => {
 });
 
 // 游戏动作处理
+const goToLobby = () => {
+  store.disconnectFromRoom();
+  router.push('/');
+};
+
+const toggleRoomLock = () => {
+  store.sendGameAction('toggleRoomLock', {});
+};
+
 const handleGameAction = (actionType: string, actionData?: any) => {
   store.sendGameAction(actionType, actionData);
 };

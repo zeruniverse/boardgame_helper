@@ -239,6 +239,9 @@ class MafiaWorker extends BaseGameWorker {
   async gameAction(playerId: string, actionType: string, actionData: any): Promise<void> {
     try {
       switch (actionType) {
+        case 'toggleRoomLock':
+          this.toggleRoomLock();
+          break;
         case 'ready':
           this.handleReady(playerId);
           break;

@@ -179,6 +179,9 @@ class OnuWerewolfWorker extends BaseGameWorker {
 
     try {
       switch (actionType) {
+        case 'toggleRoomLock':
+          this.toggleRoomLock();
+          break;
         case 'ready':
           await this.handleReady(playerId);
           break;

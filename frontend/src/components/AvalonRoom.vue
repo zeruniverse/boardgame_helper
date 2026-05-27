@@ -1,5 +1,22 @@
 <template>
   <div class="avalon-room">
+    <!-- 头部导航 - 始终显示 -->
+    <el-header class="room-header">
+      <div class="header-left">
+        <el-button @click="$router.push('/')" type="primary" plain>
+          <el-icon><Back /></el-icon>
+          返回大厅
+        </el-button>
+        <span class="room-name">{{ room?.name || '阿瓦隆房间' }}</span>
+      </div>
+      <div class="header-right">
+        <span class="room-id">房间ID: {{ roomId }}</span>
+        <el-button size="small" @click="toggleRoomLock" :type="room?.locked ? 'danger' : 'success'">
+          {{ room?.locked ? '解锁房间' : '锁定房间' }}
+        </el-button>
+      </div>
+    </el-header>
+
     <!-- 房间准备中的遮罩 -->
     <div v-if="roomPreparing" class="room-loading-overlay">
       <div class="loading-content">
@@ -12,19 +29,6 @@
 
     <!-- 主游戏区域 -->
     <template v-else>
-      <!-- 头部导航 -->
-      <el-header class="room-header">
-        <div class="header-left">
-          <el-button @click="$router.push('/')" type="primary" plain>
-            <el-icon><Back /></el-icon>
-            返回大厅
-          </el-button>
-          <span class="room-name">{{ room?.name || '阿瓦隆房间' }}</span>
-        </div>
-        <div class="header-right">
-          <span class="room-id">房间ID: {{ roomId }}</span>
-        </div>
-      </el-header>
 
       <el-container class="game-container">
       <!-- 左侧游戏面板 -->
@@ -146,6 +150,11 @@ const roomId = route.params.id as string
 
 // 房间准备状态
 const roomPreparing = ref(true)
+
+// 切换房间锁定
+const toggleRoomLock = () => {
+  store.sendGameAction('toggleRoomLock', {})
+}
 
 // 从store同步数据
 const room = computed(() => store.room)
