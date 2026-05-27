@@ -15,6 +15,11 @@ const hostKickVotes: Map<string, {
   timer: NodeJS.Timeout;
 }> = new Map();
 
+// 广播大厅更新给所有客户端
+function broadcastLobbyUpdate() {
+  broadcastLobbyUpdate();
+}
+
 // 生成随机房间名（6位数字+大写字母）
 function generateRoomName(): string {
   const chars = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ';
@@ -37,7 +42,7 @@ function generateUniqueRoomIdAndName(): string {
 // 获取所有公共房间的信息
 function getPublicRooms() {
   return Array.from(rooms.values())
-    .filter(room => !room.private)
+    .filter(room => room.private !== true)
     .map(room => ({
       id: room.id,
       name: room.name,
@@ -45,7 +50,7 @@ function getPublicRooms() {
       displayName: config.games[room.type]?.displayName || room.type,
       playerCount: room.players.length,
       maxPlayers: room.maxPlayers,
-      private: room.private
+      private: room.private === true
     }));
 }
 
@@ -101,16 +106,34 @@ export function roomController(io: Server) {
         // 广播到房间内所有客户端
         console.log(`广播事件到房间 ${data.roomId}: ${data.event}`, data.data);
         if (data.event === 'room_update' && data.data?.id) {
-          rooms.set(data.data.id, data.data);
-          threadManager.updateRoomData(data.data.id, data.data);
+          const existingRoom = rooms.get(data.data.id);
+          const oldPrivate = existingRoom?.private;
+          const mergedRoom = existingRoom 
+            ? { ...existingRoom, ...data.data, private: data.data.private !== undefined ? data.data.private === true : existingRoom.private }
+            : data.data;
+          rooms.set(data.data.id, mergedRoom);
+          threadManager.updateRoomData(data.data.id, mergedRoom);
+          // 如果房间的private状态发生变化，广播大厅更新
+          if (oldPrivate !== undefined && mergedRoom.private !== oldPrivate) {
+            broadcastLobbyUpdate();
+          }
         }
         io.to(data.roomId).emit(data.event, data.data);
       } else if (data.type === 'emit_to_socket') {
         // 发送到特定socket
         console.log(`发送事件到socket ${data.socketId}: ${data.event}`, data.data);
         if (data.event === 'room_update' && data.data?.id) {
-          rooms.set(data.data.id, data.data);
-          threadManager.updateRoomData(data.data.id, data.data);
+          const existingRoom = rooms.get(data.data.id);
+          const oldPrivate = existingRoom?.private;
+          const mergedRoom = existingRoom 
+            ? { ...existingRoom, ...data.data, private: data.data.private !== undefined ? data.data.private === true : existingRoom.private }
+            : data.data;
+          rooms.set(data.data.id, mergedRoom);
+          threadManager.updateRoomData(data.data.id, mergedRoom);
+          // 如果房间的private状态发生变化，广播大厅更新
+          if (oldPrivate !== undefined && mergedRoom.private !== oldPrivate) {
+            broadcastLobbyUpdate();
+          }
         }
         io.to(data.socketId).emit(data.event, data.data);
       }
@@ -267,7 +290,7 @@ export function roomController(io: Server) {
         ack?.({ success: true, room: joinedRoom, player, playerId: player.id, isHost: true });
 
         // 更新大厅
-        io.emit('lobby_update', { rooms: getPublicRooms() });
+        broadcastLobbyUpdate();
 
         console.log(`玩家 ${player.nickname} 创建了房间 ${room.name} (${room.type})`);
       } catch (error) {
@@ -320,7 +343,7 @@ export function roomController(io: Server) {
 
           // 更新大厅信息
           if (!room.private) {
-            io.emit('lobby_update', { rooms: getPublicRooms() });
+            broadcastLobbyUpdate();
           }
         } else {
           socket.emit('error', { message: '重连失败，房间或玩家不存在' });
@@ -381,7 +404,7 @@ export function roomController(io: Server) {
           ack?.({ success: true, ...payload });
 
           if (!room.private) {
-            io.emit('lobby_update', { rooms: getPublicRooms() });
+            broadcastLobbyUpdate();
           }
           console.log(`玩家 ${player.nickname} 重新进入了房间 ${room.name}`);
           return;
@@ -444,7 +467,7 @@ export function roomController(io: Server) {
 
         // 更新大厅
         if (!room.private) {
-          io.emit('lobby_update', { rooms: getPublicRooms() });
+          broadcastLobbyUpdate();
         }
 
         console.log(`玩家 ${player.nickname} 加入了房间 ${room.name}`);
@@ -518,7 +541,7 @@ export function roomController(io: Server) {
 
         // 更新大厅
         if (!room.private) {
-          io.emit('lobby_update', { rooms: getPublicRooms() });
+          broadcastLobbyUpdate();
         }
 
         console.log(`玩家 ${player.nickname} 通过链接加入了房间 ${room.name}`);
@@ -557,7 +580,7 @@ export function roomController(io: Server) {
           
           // 更新大厅
           if (!room.private) {
-            io.emit('lobby_update', { rooms: getPublicRooms() });
+            broadcastLobbyUpdate();
           }
         } else {
           // 如果离开的是房主，指定新的房主
@@ -572,7 +595,7 @@ export function roomController(io: Server) {
 
           // 更新大厅
           if (!room.private) {
-            io.emit('lobby_update', { rooms: getPublicRooms() });
+            broadcastLobbyUpdate();
           }
         }
 
@@ -792,7 +815,7 @@ export function roomController(io: Server) {
 
         // 更新大厅中该房间的玩家数量
         if (!currentRoom.private) {
-          io.emit('lobby_update', { rooms: getPublicRooms() });
+          broadcastLobbyUpdate();
         }
 
         // 检查房间是否已空，如果空则设置清理定时器
@@ -811,7 +834,7 @@ export function roomController(io: Server) {
             rooms.delete(roomId);
             
             // 更新大厅
-            io.emit('lobby_update', { rooms: getPublicRooms() });
+            broadcastLobbyUpdate();
           }, config.server.roomCleanupTimeout || 60000);
         }
       }
@@ -838,7 +861,7 @@ export function roomController(io: Server) {
         
         // 更新大厅
         if (!room.private) {
-          io.emit('lobby_update', { rooms: getPublicRooms() });
+          broadcastLobbyUpdate();
         }
       }
     }
