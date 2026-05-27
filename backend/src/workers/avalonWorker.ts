@@ -232,28 +232,27 @@ class AvalonWorker extends BaseGameWorker {
   }
 
   async joinRoom(player: Player): Promise<void> {
-    // 初始化玩家的阿瓦隆游戏数据
-    if (!player.gameMetadata) {
-      player.gameMetadata = {};
-    }
-    player.gameMetadata.ready = false;
+    const roomPlayer = this.upsertRoomPlayer(player);
+    // 初始化玩家的阿瓦隆游戏数据，写回 this.room.players 中的对象
+    roomPlayer.gameMetadata.ready = false;
 
     // 如果房间没有房主，将新加入的玩家设为房主
     if (!this.room.hostId) {
-      this.room.hostId = player.id;
+      this.room.hostId = roomPlayer.id;
       this.sendToRoom('chat_broadcast', { 
-        message: `${player.nickname} 成为房主并加入了房间`, 
+        message: `${roomPlayer.nickname} 成为房主并加入了房间`, 
         type: 'system' 
       });
     } else {
       this.sendToRoom('chat_broadcast', { 
-        message: `${player.nickname} 加入了房间`,
+        message: `${roomPlayer.nickname} 加入了房间`,
         type: 'system'
       });
     }
-    
+
+    this.sendToRoom('room_update', this.room);
     // 同步游戏状态给新玩家
-    this.syncGameStateToPlayer(player.socketId, player.id);
+    this.syncGameStateToPlayer(roomPlayer.socketId, roomPlayer.id);
   }
 
   async playerOnline(playerId: string): Promise<void> {
@@ -1433,27 +1432,33 @@ parentPort.on('message', async (task: GameTask) => {
         response = { taskId: task.id, success: true };
         break;
 
+      case 'update_room_data':
+        worker.syncRoom(task.data.room);
+        response = { taskId: task.id, success: true };
+        break;
+
       case 'join_room':
         await worker.joinRoom(task.data.player);
         response = { taskId: task.id, success: true };
         break;
 
       case 'player_online':
-        await worker.playerOnline(task.playerId!);
+        await worker.playerOnline((task.playerId || task.data.playerId)!);
         response = { taskId: task.id, success: true };
         break;
 
       case 'player_offline':
-        await worker.playerOffline(task.playerId!);
+        await worker.playerOffline((task.playerId || task.data.playerId)!);
         response = { taskId: task.id, success: true };
         break;
 
       case 'game_action':
-        await worker.gameAction(task.playerId!, task.data.actionType, task.data.actionData);
+        await worker.gameAction((task.playerId || task.data.playerId)!, task.data.actionType, task.data.actionData);
         response = { taskId: task.id, success: true };
         break;
 
       case 'kick_player':
+      case 'kick_out_player':
         await worker.kickOutPlayer(task.data.targetId);
         response = { taskId: task.id, success: true };
         break;

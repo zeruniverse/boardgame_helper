@@ -67,6 +67,9 @@ export const useGameStore = defineStore('botc', () => {
           console.log('血染钟楼: 成功加入房间:', data)
           room.value = data.room
           currentRoomId.value = data.room.id
+          currentUserId.value = data.player?.id || data.playerId || currentUserId.value
+          if (currentUserId.value) localStorage.setItem('botc_userId', currentUserId.value)
+          if (data.player?.nickname || data.player?.name) localStorage.setItem('botc_nickname', data.player.nickname || data.player.name)
         })
 
         socket.value.on('room_left', () => {
@@ -276,30 +279,23 @@ export const useGameStore = defineStore('botc', () => {
         await connect()
       }
 
-      return new Promise((resolve, reject) => {
-        if (!socket.value) {
-          reject(new Error('Socket not connected'))
-          return
-        }
+      if (!socket.value) throw new Error('Socket not connected')
 
-        socket.value.emit('join_room', { roomId, gameType }, (response: any) => {
-          if (response.success) {
-            console.log('血染钟楼: 加入房间成功:', response)
-            room.value = response.room
-            currentRoomId.value = roomId
-            resolve(response)
-          } else {
-            console.error('血染钟楼: 加入房间失败:', response.error)
-            ElMessage.error(response.error || '加入房间失败')
-            reject(new Error(response.error))
-          }
-        })
+      let userId = localStorage.getItem('botc_userId')
+      if (!userId) {
+        userId = `player_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`
+        localStorage.setItem('botc_userId', userId)
+      }
+      let nickname = localStorage.getItem('botc_nickname')
+      if (!nickname) {
+        nickname = `玩家${Math.floor(Math.random() * 1000)}`
+        localStorage.setItem('botc_nickname', nickname)
+      }
 
-        // 设置超时
-        setTimeout(() => {
-          reject(new Error('加入房间超时'))
-        }, 10000)
-      })
+      currentUserId.value = userId
+      currentRoomId.value = roomId
+      socket.value.emit('join_room', { roomId, gameType, playerId: userId, userId, nickname })
+      return { success: true }
     } catch (error) {
       console.error('血染钟楼: 连接房间失败:', error)
       throw error

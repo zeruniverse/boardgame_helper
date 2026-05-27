@@ -171,10 +171,12 @@ export const useMafiaStore = defineStore('mafia', {
       });
 
       // 房间事件
-      this.socket.on('room_joined', (data: { room: MafiaRoomState; playerId: string }) => {
+      this.socket.on('room_joined', (data: { room: MafiaRoomState; player?: any; playerId?: string }) => {
         this.room = data.room;
-        this.currentUserId = data.playerId;
+        this.currentUserId = data.player?.id || data.playerId || this.currentUserId;
         this.currentRoomId = data.room.id;
+        if (this.currentUserId) localStorage.setItem('mafia_userId', this.currentUserId);
+        if (data.player?.nickname || data.player?.name) localStorage.setItem('mafia_nickname', data.player.nickname || data.player.name);
       });
 
       this.socket.on('room_update', (room: MafiaRoomState) => {
@@ -368,9 +370,13 @@ export const useMafiaStore = defineStore('mafia', {
         localStorage.setItem('mafia_nickname', nickname);
       }
 
+      this.currentUserId = userId;
+      this.currentRoomId = roomId;
+
       this.socket?.emit('join_room', {
         roomId,
         userId,
+        playerId: userId,
         nickname,
         gameType
       });

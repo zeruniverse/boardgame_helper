@@ -134,10 +134,12 @@ export const useWerewolfStore = defineStore('werewolf', {
       });
 
       // 房间事件
-      this.socket.on('room_joined', (data: { room: WerewolfRoomState; playerId: string }) => {
+      this.socket.on('room_joined', (data: { room: WerewolfRoomState; player?: any; playerId?: string }) => {
         this.room = data.room;
-        this.currentUserId = data.playerId;
+        this.currentUserId = data.player?.id || data.playerId || this.currentUserId;
         this.currentRoomId = data.room.id;
+        if (this.currentUserId) localStorage.setItem('werewolf_userId', this.currentUserId);
+        if (data.player?.nickname || data.player?.name) localStorage.setItem('werewolf_nickname', data.player.nickname || data.player.name);
       });
 
       this.socket.on('room_update', (data: any) => {
@@ -148,6 +150,8 @@ export const useWerewolfStore = defineStore('werewolf', {
         // 也可能直接发送room对象
         if (data.room) {
           this.room = data.room;
+        } else if (data.id && data.players) {
+          this.room = data;
         }
       });
 
@@ -335,9 +339,11 @@ export const useWerewolfStore = defineStore('werewolf', {
       }
 
       this.currentUserId = userId;
+      this.currentRoomId = roomId;
       this.socket?.emit('join_room', {
         roomId,
         playerId: userId,
+        userId,
         nickname,
         gameType
       });

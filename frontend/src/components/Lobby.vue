@@ -819,6 +819,28 @@ const createRoomForm = ref({
 const createRoomStep = ref(0);
 const creatingRoom = ref(false);
 
+const gameStorageKeys: Record<string, { id: string; nickname: string; room?: string }> = {
+  'texas-holdem': { id: 'texas_playerId', nickname: 'texas_nickname', room: 'texas_currentRoom' },
+  'avalon': { id: 'avalon_userId', nickname: 'avalon_nickname' },
+  'mafia': { id: 'mafia_userId', nickname: 'mafia_nickname' },
+  'werewolf': { id: 'werewolf_userId', nickname: 'werewolf_nickname' },
+  'one-night-werewolf': { id: 'onu_werewolf_userId', nickname: 'onu_werewolf_nickname' },
+  'blood-on-the-clocktower': { id: 'botc_userId', nickname: 'botc_nickname' }
+};
+
+function ensureLocalPlayer(gameType: string, nickname: string, roomId?: string) {
+  const keys = gameStorageKeys[gameType];
+  if (!keys) return undefined;
+  let playerId = localStorage.getItem(keys.id);
+  if (!playerId) {
+    playerId = `player_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
+    localStorage.setItem(keys.id, playerId);
+  }
+  localStorage.setItem(keys.nickname, nickname);
+  if (keys.room && roomId) localStorage.setItem(keys.room, roomId);
+  return playerId;
+}
+
 onMounted(() => {
   // 确保socket已初始化，但如果已存在且连接正常，则不重新初始化
   if (!store.socket || !store.socket.connected) {
@@ -837,6 +859,11 @@ onMounted(() => {
     store.socket.on('room_joined', (data: { room: any; player: any; isHost: boolean }) => {
       console.log('大厅收到room_joined事件', data);
       
+      ensureLocalPlayer(data.room.type, data.player?.nickname || data.player?.name || '', data.room.id);
+      if (data.player?.id) {
+        const keys = gameStorageKeys[data.room.type];
+        if (keys) localStorage.setItem(keys.id, data.player.id);
+      }
       // 根据游戏类型跳转到对应房间页面
       if (data.room.type === 'texas-holdem') {
         router.push({ name: 'TexasHoldemRoom', params: { id: data.room.id } });
@@ -860,34 +887,33 @@ onMounted(() => {
 
 function enter(roomId: string) {
   const nickname = prompt('请输入昵称');
-  if (nickname) {
-    const room = rooms.value.find(r => r.id === roomId);
-    if (room) {
-      if (room.type === 'texas-holdem') {
-        texasStore.joinRoom(roomId, nickname);
-        router.push({ name: 'TexasHoldemRoom', params: { id: roomId } });
-      } else if (room.type === 'avalon') {
-        // 阿瓦隆游戏使用独立的连接方式
-        router.push({ name: 'AvalonRoom', params: { id: roomId } });
-      } else if (room.type === 'mafia') {
-        // 杀人游戏使用独立的连接方式
-        router.push({ name: 'MafiaRoom', params: { id: roomId } });
-      } else if (room.type === 'werewolf') {
-        // 狼人杀游戏使用独立的连接方式
-        router.push({ name: 'WerewolfRoom', params: { id: roomId } });
-      } else if (room.type === 'one-night-werewolf') {
-        // 一夜狼人游戏使用独立的连接方式
-        router.push({ name: 'OnuWerewolfRoom', params: { id: roomId } });
-      } else if (room.type === 'blood-on-the-clocktower') {
-        // 血染钟楼游戏使用独立的连接方式
-        router.push({ name: 'BOTCRoom', params: { id: roomId } });
-      } else {
-        // 其他游戏类型待实现
-        // 暂时不支持其他游戏类型
-        ElMessage.warning('暂不支持该游戏类型');
-      }
-    }
+  if (!nickname) return;
+
+  const room = rooms.value.find(r => r.id === roomId);
+  if (!room) return;
+
+  const playerId = ensureLocalPlayer(room.type, nickname, roomId);
+  if (room.type === 'texas-holdem') {
+    texasStore.joinRoom(roomId, nickname);
+    router.push({ name: 'TexasHoldemRoom', params: { id: roomId } });
+    return;
   }
+
+  const routeMap: Record<string, string> = {
+    'avalon': 'AvalonRoom',
+    'mafia': 'MafiaRoom',
+    'werewolf': 'WerewolfRoom',
+    'one-night-werewolf': 'OnuWerewolfRoom',
+    'blood-on-the-clocktower': 'BOTCRoom'
+  };
+  const routeName = routeMap[room.type];
+  if (!routeName) {
+    ElMessage.warning('暂不支持该游戏类型');
+    return;
+  }
+
+  // 非德州扑克房间由各自房间页的 store 建立连接；这里先保存昵称和本地ID，避免重复进房。
+  router.push({ name: routeName, params: { id: roomId }, query: playerId ? { playerId } : undefined });
 }
 
 // 显示重置对话框
@@ -936,7 +962,14 @@ function confirmJoinRoom() {
     return;
   }
 
-  texasStore.joinRoomByName(joinRoomForm.value.roomName, joinRoomForm.value.nickname);
+  if (!store.socket || !store.socket.connected) {
+    store.initSocket();
+  }
+
+  store.socket?.emit('join_room', {
+    roomName: joinRoomForm.value.roomName.trim().toUpperCase(),
+    nickname: joinRoomForm.value.nickname.trim()
+  });
   joinRoomDialogVisible.value = false;
 }
 
@@ -951,8 +984,13 @@ async function confirmCreateRoom() {
     creatingRoom.value = true;
     
     // 构建游戏配置
+    const playerId = ensureLocalPlayer(createRoomForm.value.gameType, createRoomForm.value.nickname);
     const gameConfig: any = {
-      nickname: createRoomForm.value.nickname
+      nickname: createRoomForm.value.nickname,
+      playerId,
+      userId: playerId,
+      maxPlayers: createRoomForm.value.maxPlayers,
+      playerCount: createRoomForm.value.maxPlayers
     };
 
     // 房间名称由系统自动分配，无需手动设置

@@ -109,10 +109,12 @@ export const useAvalonStore = defineStore('avalon', {
       });
 
       // 房间事件
-      this.socket.on('room_joined', (data: { room: AvalonRoomState; playerId: string }) => {
+      this.socket.on('room_joined', (data: { room: AvalonRoomState; player?: any; playerId?: string }) => {
         this.room = data.room;
-        this.currentUserId = data.playerId;
+        this.currentUserId = data.player?.id || data.playerId || this.currentUserId;
         this.currentRoomId = data.room.id;
+        if (this.currentUserId) localStorage.setItem('avalon_userId', this.currentUserId);
+        if (data.player?.nickname || data.player?.name) localStorage.setItem('avalon_nickname', data.player.nickname || data.player.name);
       });
 
       this.socket.on('room_update', (room: AvalonRoomState) => {
@@ -225,6 +227,7 @@ export const useAvalonStore = defineStore('avalon', {
       this.socket?.emit('join_room', {
         roomId,
         playerId: userId,
+        userId,
         nickname,
         gameType
       });

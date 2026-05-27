@@ -68,8 +68,35 @@ export abstract class BaseGameWorker {
   /**
    * 获取当前房间引用
    */
+  public syncRoom(room: Room): void {
+    this.room = room;
+  }
+
   protected getRoom(): Room {
     return this.room;
+  }
+
+  /**
+   * 根据框架传入的玩家信息同步房间内的玩家对象。
+   * Worker 收到的 task.data.player 与 this.room.players 中的对象不是同一个引用，
+   * 因此游戏初始化数据必须写回房间里的玩家对象。
+   */
+  protected upsertRoomPlayer(player: Player): Player {
+    let roomPlayer = this.room.players.find(p => p.id === player.id);
+    if (!roomPlayer) {
+      roomPlayer = player;
+      this.room.players.push(roomPlayer);
+    } else {
+      roomPlayer.socketId = player.socketId;
+      roomPlayer.nickname = player.nickname || roomPlayer.nickname;
+      roomPlayer.name = player.name || player.nickname || roomPlayer.name;
+      roomPlayer.online = true;
+      roomPlayer.lastHeartbeat = player.lastHeartbeat || Date.now();
+    }
+    if (!roomPlayer.gameMetadata) {
+      roomPlayer.gameMetadata = {};
+    }
+    return roomPlayer;
   }
 
   /**

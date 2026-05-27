@@ -203,10 +203,12 @@ export const useOnuWerewolfStore = defineStore('onuWerewolf', {
       });
 
       // 房间事件
-      this.socket.on('room_joined', (data: { room: OnuWerewolfRoomState; playerId: string }) => {
+      this.socket.on('room_joined', (data: { room: OnuWerewolfRoomState; player?: any; playerId?: string }) => {
         this.room = data.room;
-        this.currentUserId = data.playerId;
+        this.currentUserId = data.player?.id || data.playerId || this.currentUserId;
         this.currentRoomId = data.room.id;
+        if (this.currentUserId) localStorage.setItem('onu_werewolf_userId', this.currentUserId);
+        if (data.player?.nickname || data.player?.name) localStorage.setItem('onu_werewolf_nickname', data.player.nickname || data.player.name);
       });
 
       this.socket.on('room_update', (room: OnuWerewolfRoomState) => {
@@ -455,6 +457,7 @@ export const useOnuWerewolfStore = defineStore('onuWerewolf', {
         roomId: roomId,
         gameType: gameType,
         playerId: userId,
+        userId,
         nickname: nickname
       });
     },

@@ -140,16 +140,18 @@ class OnuWerewolfWorker extends BaseGameWorker {
   }
 
   async joinRoom(player: Player): Promise<void> {
-    player.gameMetadata = {
+    const roomPlayer = this.upsertRoomPlayer(player);
+    roomPlayer.gameMetadata = {
       ready: false,
-      seatKey: onuGenerateRandomString(16)
+      seatKey: roomPlayer.gameMetadata.seatKey || onuGenerateRandomString(16)
     };
 
-    const message = `${player.nickname} 加入了终极一夜狼人房间`;
+    const message = `${roomPlayer.nickname} 加入了终极一夜狼人房间`;
     this.sendToRoom('onu_player_joined', {
       message,
       gameInfo: this.getGameInfo()
     });
+    this.sendToRoom('room_update', this.room);
   }
 
   async playerOnline(playerId: string): Promise<void> {
@@ -961,24 +963,28 @@ parentPort?.on('message', async (task: GameTask) => {
 
     switch (task.type) {
       case 'prepare_room':
-        await worker.prepareRoom(task.data.room, task.data.config);
+        await worker.prepareRoom(task.data.room || workerData.room, task.data.config);
         break;
       case 'change_config':
         await worker.changeConfig(task.data.config);
+        break;
+      case 'update_room_data':
+        worker.syncRoom(task.data.room);
         break;
       case 'join_room':
         await worker.joinRoom(task.data.player);
         break;
       case 'player_online':
-        await worker.playerOnline(task.data.playerId);
+        await worker.playerOnline(task.playerId || task.data.playerId);
         break;
       case 'player_offline':
-        await worker.playerOffline(task.data.playerId);
+        await worker.playerOffline(task.playerId || task.data.playerId);
         break;
       case 'game_action':
-        await worker.gameAction(task.data.playerId, task.data.actionType, task.data.actionData);
+        await worker.gameAction(task.playerId || task.data.playerId, task.data.actionType, task.data.actionData);
         break;
       case 'kick_player':
+      case 'kick_out_player':
         await worker.kickOutPlayer(task.data.targetId);
         break;
       default:

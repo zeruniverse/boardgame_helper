@@ -118,16 +118,18 @@ class WerewolfWorker extends BaseGameWorker {
   }
 
   async joinRoom(player: Player): Promise<void> {
-    player.gameMetadata = {
+    const roomPlayer = this.upsertRoomPlayer(player);
+    roomPlayer.gameMetadata = {
       ready: false,
       muted: false
     };
 
-    const message = `${player.nickname}加入了房间`;
+    const message = `${roomPlayer.nickname}加入了房间`;
     this.sendToRoom('player_joined', {
       message,
       gameInfo: this.getGameInfo()
     });
+    this.sendToRoom('room_update', this.room);
   }
 
   async playerOnline(playerId: string): Promise<void> {
@@ -1252,12 +1254,17 @@ if (parentPort) {
 
       switch (task.type) {
         case 'prepare_room':
-          await worker.prepareRoom(task.data.room, task.data.config);
+          await worker.prepareRoom(task.data.room || workerData.room, task.data.config);
           response = { taskId: task.id, success: true };
           break;
 
         case 'change_config':
           await worker.changeConfig(task.data.config);
+          response = { taskId: task.id, success: true };
+          break;
+
+        case 'update_room_data':
+          worker.syncRoom(task.data.room);
           response = { taskId: task.id, success: true };
           break;
 
@@ -1267,24 +1274,25 @@ if (parentPort) {
           break;
 
         case 'player_online':
-          await worker.playerOnline(task.data.playerId);
+          await worker.playerOnline(task.playerId || task.data.playerId);
           response = { taskId: task.id, success: true };
           break;
 
         case 'player_offline':
-          await worker.playerOffline(task.data.playerId);
+          await worker.playerOffline(task.playerId || task.data.playerId);
           response = { taskId: task.id, success: true };
           break;
 
         case 'game_action':
           await worker.gameAction(
-            task.playerId!,
+            (task.playerId || task.data.playerId)!,
             task.data.actionType,
             task.data.actionData
           );
           response = { taskId: task.id, success: true };
           break;
 
+        case 'kick_player':
         case 'kick_out_player':
           await worker.kickOutPlayer(task.data.targetId);
           response = { taskId: task.id, success: true };

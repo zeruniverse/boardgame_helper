@@ -1,4 +1,4 @@
-import { parentPort } from 'worker_threads';
+import { parentPort, workerData } from 'worker_threads';
 import { BaseGameWorker } from './baseGameWorker';
 import { Room } from '../models/Room';
 import { Player } from '../models/Player';
@@ -84,29 +84,31 @@ export class BOTCWorker extends BaseGameWorker {
   }
 
   async joinRoom(player: Player): Promise<void> {
+    const roomPlayer = this.upsertRoomPlayer(player);
     if (this.gameState.phase !== GamePhase.SETUP) {
-      this.sendToPlayer(player.id, 'joinError', { message: '游戏已开始，无法加入' });
+      this.sendToPlayer(roomPlayer.id, 'joinError', { message: '游戏已开始，无法加入' });
       return;
     }
 
     if (this.room.players.length > this.gameConfig.maxPlayers) {
-      this.sendToPlayer(player.id, 'joinError', { message: '房间已满' });
+      this.sendToPlayer(roomPlayer.id, 'joinError', { message: '房间已满' });
       return;
     }
 
     this.sendToRoom('playerJoined', {
       player: {
-        id: player.id,
-        name: this.getPlayerName(player.id),
+        id: roomPlayer.id,
+        name: this.getPlayerName(roomPlayer.id),
         isOnline: true
       },
       playerCount: this.room.players.length
     });
+    this.sendToRoom('room_update', this.room);
 
     // 发送当前游戏状态给新玩家
-    this.sendToPlayer(player.id, 'gameState', {
+    this.sendToPlayer(roomPlayer.id, 'gameState', {
       gameState: this.getPublicGameState(),
-      isStoryteller: player.id === this.gameConfig.storytellerId
+      isStoryteller: roomPlayer.id === this.gameConfig.storytellerId
     });
   }
 
@@ -1218,38 +1220,52 @@ export class BOTCWorker extends BaseGameWorker {
 if (parentPort) {
   const worker = new BOTCWorker();
 
-  parentPort.on('message', async (message) => {
+  parentPort.on('message', async (task: any) => {
     try {
-      switch (message.type) {
+      switch (task.type) {
+        case 'prepare_room':
         case 'prepareRoom':
-          await worker.prepareRoom(message.room, message.config);
+          await worker.prepareRoom(task.data?.room || task.room || workerData?.room, task.data?.config || task.config);
           break;
+        case 'change_config':
         case 'changeConfig':
-          await worker.changeConfig(message.config);
+          await worker.changeConfig(task.data?.config || task.config);
           break;
+        case 'update_room_data':
+          worker.syncRoom(task.data.room);
+          break;
+        case 'join_room':
         case 'joinRoom':
-          await worker.joinRoom(message.player);
+          await worker.joinRoom(task.data?.player || task.player);
           break;
+        case 'player_online':
         case 'playerOnline':
-          await worker.playerOnline(message.playerId);
+          await worker.playerOnline(task.playerId || task.data?.playerId);
           break;
+        case 'player_offline':
         case 'playerOffline':
-          await worker.playerOffline(message.playerId);
+          await worker.playerOffline(task.playerId || task.data?.playerId);
           break;
+        case 'game_action':
         case 'gameAction':
-          await worker.gameAction(message.playerId, message.actionType, message.actionData);
+          await worker.gameAction(task.playerId || task.data?.playerId, task.data?.actionType || task.actionType, task.data?.actionData || task.actionData);
           break;
+        case 'kick_player':
+        case 'kick_out_player':
         case 'kickOutPlayer':
-          await worker.kickOutPlayer(message.targetId);
+          await worker.kickOutPlayer(task.data?.targetId || task.targetId);
           break;
+        default:
+          parentPort!.postMessage({ taskId: task.id, success: false, error: `未知任务类型: ${task.type}` });
+          return;
       }
+      parentPort!.postMessage({ taskId: task.id, success: true });
     } catch (error) {
-      if (parentPort) {
-        parentPort.postMessage({
-          type: 'error',
-          error: error instanceof Error ? error.message : String(error)
-        });
-      }
+      parentPort!.postMessage({
+        taskId: task.id,
+        success: false,
+        error: error instanceof Error ? error.message : String(error)
+      });
     }
   });
 }

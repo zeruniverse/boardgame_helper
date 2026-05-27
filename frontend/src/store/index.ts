@@ -7,6 +7,33 @@ import { useTexasHoldemStore } from './texas_holdem';
 export { useTexasHoldemStore } from './texas_holdem';
 export { useAvalonStore } from './avalon';
 
+
+const gameRoutes: Record<string, string> = {
+  'texas-holdem': 'TexasHoldemRoom',
+  'avalon': 'AvalonRoom',
+  'mafia': 'MafiaRoom',
+  'werewolf': 'WerewolfRoom',
+  'one-night-werewolf': 'OnuWerewolfRoom',
+  'blood-on-the-clocktower': 'BOTCRoom'
+};
+
+const gameStorageKeys: Record<string, { id: string; nickname: string; room?: string }> = {
+  'texas-holdem': { id: 'texas_playerId', nickname: 'texas_nickname', room: 'texas_currentRoom' },
+  'avalon': { id: 'avalon_userId', nickname: 'avalon_nickname' },
+  'mafia': { id: 'mafia_userId', nickname: 'mafia_nickname' },
+  'werewolf': { id: 'werewolf_userId', nickname: 'werewolf_nickname' },
+  'one-night-werewolf': { id: 'onu_werewolf_userId', nickname: 'onu_werewolf_nickname' },
+  'blood-on-the-clocktower': { id: 'botc_userId', nickname: 'botc_nickname' }
+};
+
+function rememberGameSession(room: any, player: any) {
+  const keys = gameStorageKeys[room?.type];
+  if (!keys || !player) return;
+  if (player.id) localStorage.setItem(keys.id, player.id);
+  if (player.nickname || player.name) localStorage.setItem(keys.nickname, player.nickname || player.name);
+  if (keys.room && room?.id) localStorage.setItem(keys.room, room.id);
+}
+
 interface RoomInfo {
   id: string;
   name: string;
@@ -69,22 +96,17 @@ export const useMainStore = defineStore('main', {
       });
 
       // 监听房间加入成功事件 - 通用路由处理
-      this.socket.on('room_joined', (data: { room: any; player: any; isHost: boolean }) => {
+      this.socket.on('room_joined', (data: { room: any; player: any; playerId?: string; isHost: boolean }) => {
+        rememberGameSession(data.room, data.player);
         // 根据房间类型导航到对应的游戏页面
         const router = (window as any).routerInstance;
-        if (router) {
-          if (data.room.type === 'texas-holdem') {
-            const texasStore = useTexasHoldemStore();
-            texasStore.setNicknameAndRoom(data.player.nickname, data.room.id, data.player.id);
-            router.push({ name: 'TexasHoldemRoom', params: { id: data.room.id } });
-          } else if (data.room.type === 'avalon') {
-            router.push({ name: 'AvalonRoom', params: { id: data.room.id } });
-          } else if (data.room.type === 'blood-on-the-clocktower') {
-            router.push({ name: 'BOTCRoom', params: { id: data.room.id } });
-          } else {
-            // 其他游戏类型，暂时跳回大厅
-            router.push({ name: 'Lobby' });
-          }
+        const routeName = gameRoutes[data.room?.type];
+        if (data.room?.type === 'texas-holdem' && data.player) {
+          const texasStore = useTexasHoldemStore();
+          texasStore.setNicknameAndRoom(data.player.nickname, data.room.id, data.player.id);
+        }
+        if (router && routeName) {
+          router.push({ name: routeName, params: { id: data.room.id } });
         }
       });
       

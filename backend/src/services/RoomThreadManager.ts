@@ -101,13 +101,24 @@ export class RoomThreadManager {
       const worker = new Worker(workerPath, workerOptions);
 
       // 设置消息监听
-      worker.on('message', (response: GameTaskResponse) => {
-        // 处理事件转发
-        if (response.taskId === 'emit' && this.onMessage) {
-          this.onMessage(response.data);
+      worker.on('message', (message: any) => {
+        // 各个游戏 worker 早期实现的消息格式不完全一致，这里统一兼容。
+        const forwardedEvent = this.normalizeWorkerEvent(room.id, message);
+        if (forwardedEvent) {
+          this.onMessage?.(forwardedEvent);
           return;
         }
-        
+
+        const response: GameTaskResponse | undefined =
+          message?.type === 'task_response'
+            ? { taskId: message.taskId, success: message.success, data: message.data, error: message.error }
+            : (message?.taskId ? message as GameTaskResponse : undefined);
+
+        if (!response?.taskId) {
+          console.warn(`房间 ${room.id} 收到无法识别的Worker消息:`, message);
+          return;
+        }
+
         // 处理任务响应
         const task = this.tasks.get(response.taskId);
         if (task) {
@@ -144,7 +155,7 @@ export class RoomThreadManager {
       await this.sendTask(room.id, {
         type: 'prepare_room',
         roomId: room.id,
-        data: { config }
+        data: { room, config }
       });
 
       console.log(`房间 ${room.id} (${room.type}) 线程启动成功`);
@@ -185,6 +196,8 @@ export class RoomThreadManager {
     const taskId = uuidv4();
     const fullTask: GameTask = {
       ...task,
+      playerId: task.playerId || task.data?.playerId || task.data?.userId,
+      socketId: task.socketId || task.data?.socketId,
       id: taskId,
       timestamp: Date.now()
     };
@@ -263,9 +276,52 @@ export class RoomThreadManager {
 
   // 更新房间数据（用于外部调用更新房间状态）
   updateRoomData(roomId: string, room: Room): void {
-    if (this.roomData.has(roomId)) {
-      this.roomData.set(roomId, room);
+    this.roomData.set(roomId, room);
+  }
+
+  private normalizeWorkerEvent(roomId: string, message: any): any | null {
+    if (!message) return null;
+
+    const payload = message.taskId === 'emit' ? message.data : message;
+    if (!payload || !payload.type) return null;
+
+    const roomEventTypes = new Set(['emit', 'room_broadcast', 'room', 'broadcast', 'room_message', 'sendToRoom']);
+    const socketEventTypes = new Set(['emit_to_socket', 'player_message', 'player', 'socket', 'send_to_player', 'sendToPlayer']);
+
+    if (roomEventTypes.has(payload.type)) {
+      return {
+        type: 'emit',
+        roomId: payload.roomId || roomId,
+        event: payload.event,
+        data: payload.data
+      };
     }
+
+    if (socketEventTypes.has(payload.type)) {
+      let socketId = payload.socketId;
+      if (!socketId && payload.playerId) {
+        const room = this.roomData.get(payload.roomId || roomId);
+        socketId = room?.players.find(p => p.id === payload.playerId)?.socketId;
+      }
+      if (!socketId) {
+        console.warn(`房间 ${roomId} 无法投递给玩家/socket的Worker消息:`, payload);
+        return null;
+      }
+      return {
+        type: 'emit_to_socket',
+        socketId,
+        event: payload.event,
+        data: payload.data
+      };
+    }
+
+    // worker 主循环里抛出的异步错误，没有 taskId，按日志处理。
+    if (payload.type === 'error') {
+      console.error(`房间 ${roomId} Worker错误:`, payload.error);
+      return null;
+    }
+
+    return null;
   }
 
   // 获取房间数据

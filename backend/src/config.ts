@@ -26,6 +26,10 @@ function loadConfig(): Config {
     const configPath = path.join(__dirname, '../config.json');
     const configData = fs.readFileSync(configPath, 'utf8');
     const config = JSON.parse(configData);
+    config.server = {
+      roomCleanupTimeout: 60000,
+      ...config.server
+    };
     console.log('配置加载成功:', { 
       server: { ...config.server, resetPassword: '***' }, // 隐藏密码
       games: Object.keys(config.games).reduce((acc, key) => {

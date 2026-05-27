@@ -121,19 +121,20 @@ class TexasHoldemWorker extends BaseGameWorker {
   async handleTask(task: GameTask): Promise<any> {
     switch (task.type) {
       case 'prepare_room':
-        return await this.prepareRoom(workerData.room, task.data.config);
+        return await this.prepareRoom(task.data.room || workerData.room, task.data.config);
       case 'join_room':
         return await this.joinRoom(task.data.player);
       case 'update_room_data':
         this.room = task.data.room;
         return;
       case 'player_online':
-        return await this.playerOnline(task.playerId!);
+        return await this.playerOnline((task.playerId || task.data.playerId)!);
       case 'player_offline':
-        return await this.playerOffline(task.playerId!);
+        return await this.playerOffline((task.playerId || task.data.playerId)!);
       case 'game_action':
-        return await this.gameAction(task.playerId!, task.data.actionType, task.data.actionData);
+        return await this.gameAction((task.playerId || task.data.playerId)!, task.data.actionType, task.data.actionData);
       case 'kick_player':
+      case 'kick_out_player':
         return await this.kickOutPlayer(task.data.targetId);
       default:
         throw new Error(`未知的任务类型: ${task.type}`);
@@ -177,29 +178,31 @@ class TexasHoldemWorker extends BaseGameWorker {
   }
 
   async joinRoom(player: Player): Promise<void> {
-    // 初始化玩家的德州扑克游戏数据
-    if (!player.gameMetadata) {
-      player.gameMetadata = {};
+    const roomPlayer = this.upsertRoomPlayer(player);
+
+    // 初始化玩家的德州扑克游戏数据，写回 this.room.players 中的对象
+    if (typeof roomPlayer.gameMetadata.chips !== 'number') {
+      roomPlayer.gameMetadata.chips = this.config.defaultStack;
     }
-    player.gameMetadata.chips = this.config.defaultStack;
-    player.gameMetadata.inGame = false;
-    player.gameMetadata.cashinCount = 0;
+    roomPlayer.gameMetadata.inGame = false;
+    roomPlayer.gameMetadata.cashinCount = roomPlayer.gameMetadata.cashinCount || 0;
 
     // 如果房间没有房主，将新加入的玩家设为房主
     if (!this.room.hostId) {
-      this.room.hostId = player.id;
+      this.room.hostId = roomPlayer.id;
       this.sendToRoom('chat_broadcast', { 
-        message: `${player.nickname} 成为房主并加入了房间`, 
+        message: `${roomPlayer.nickname} 成为房主并加入了房间`, 
         type: 'system' 
       });
     } else {
       this.sendToRoom('chat_broadcast', { 
-        message: `${player.nickname} 加入了房间` 
+        message: `${roomPlayer.nickname} 加入了房间` 
       });
     }
-    
+
+    this.sendToRoom('room_update', this.room);
     // 同步游戏状态给新玩家
-    this.syncGameStateToPlayer(player.socketId, player.id);
+    this.syncGameStateToPlayer(roomPlayer.socketId, roomPlayer.id);
   }
 
   async playerOnline(playerId: string): Promise<void> {
