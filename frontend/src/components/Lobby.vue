@@ -773,7 +773,7 @@
 </template>
 
 <script lang="ts" setup>
-import { onMounted, ref } from 'vue';
+import { onMounted, onUnmounted, ref } from 'vue';
 import { useMainStore, useTexasHoldemStore } from '../store';
 import { storeToRefs } from 'pinia';
 import { useRouter } from 'vue-router';
@@ -841,47 +841,64 @@ function ensureLocalPlayer(gameType: string, nickname: string, roomId?: string) 
   return playerId;
 }
 
+// Bug L1+L2: 使用作用域变量存储处理器引用，便于在onUnmounted中清理
+let handleConnect: (() => void) | null = null;
+let handleRoomJoined: ((data: { room: any; player: any; isHost: boolean }) => void) | null = null;
+
 onMounted(() => {
-  // 确保socket已初始化，但如果已存在且连接正常，则不重新初始化
-  if (!store.socket || !store.socket.connected) {
+  // 确保socket已初始化
+  if (!store.socket) {
     store.initSocket();
   }
   
-  // 获取大厅数据
-  setTimeout(() => {
-    if (store.socket && store.socket.connected) {
-      store.socket.emit('get_lobby');
-    }
-  }, 100);
+  // Bug L1: 立即请求大厅数据（如果未连接，socket.io会自动排队）
+  store.getLobbyData();
+  
+  // Bug L1: 监听连接成功事件，重连后自动刷新大厅数据
+  handleConnect = () => {
+    store.getLobbyData();
+  };
+  store.socket?.on('connect', handleConnect);
 
-  // 监听房间创建/加入成功事件
+  // Bug L2: 监听房间创建/加入成功事件，注册到作用域变量以便清理
+  handleRoomJoined = (data: { room: any; player: any; isHost: boolean }) => {
+    console.log('大厅收到room_joined事件', data);
+    
+    ensureLocalPlayer(data.room.type, data.player?.nickname || data.player?.name || '', data.room.id);
+    if (data.player?.id) {
+      const keys = gameStorageKeys[data.room.type];
+      if (keys) localStorage.setItem(keys.id, data.player.id);
+    }
+    // 根据游戏类型跳转到对应房间页面
+    if (data.room.type === 'texas-holdem') {
+      router.push({ name: 'TexasHoldemRoom', params: { id: data.room.id } });
+    } else if (data.room.type === 'avalon') {
+      router.push({ name: 'AvalonRoom', params: { id: data.room.id } });
+    } else if (data.room.type === 'mafia') {
+      router.push({ name: 'MafiaRoom', params: { id: data.room.id } });
+    } else if (data.room.type === 'werewolf') {
+      router.push({ name: 'WerewolfRoom', params: { id: data.room.id } });
+    } else if (data.room.type === 'one-night-werewolf') {
+      router.push({ name: 'OnuWerewolfRoom', params: { id: data.room.id } });
+    } else if (data.room.type === 'blood-on-the-clocktower') {
+      router.push({ name: 'BOTCRoom', params: { id: data.room.id } });
+    } else {
+      // 其他游戏类型的处理
+      console.warn('未知的游戏类型:', data.room.type);
+    }
+  };
   if (store.socket) {
-    store.socket.on('room_joined', (data: { room: any; player: any; isHost: boolean }) => {
-      console.log('大厅收到room_joined事件', data);
-      
-      ensureLocalPlayer(data.room.type, data.player?.nickname || data.player?.name || '', data.room.id);
-      if (data.player?.id) {
-        const keys = gameStorageKeys[data.room.type];
-        if (keys) localStorage.setItem(keys.id, data.player.id);
-      }
-      // 根据游戏类型跳转到对应房间页面
-      if (data.room.type === 'texas-holdem') {
-        router.push({ name: 'TexasHoldemRoom', params: { id: data.room.id } });
-      } else if (data.room.type === 'avalon') {
-        router.push({ name: 'AvalonRoom', params: { id: data.room.id } });
-      } else if (data.room.type === 'mafia') {
-        router.push({ name: 'MafiaRoom', params: { id: data.room.id } });
-      } else if (data.room.type === 'werewolf') {
-        router.push({ name: 'WerewolfRoom', params: { id: data.room.id } });
-      } else if (data.room.type === 'one-night-werewolf') {
-        router.push({ name: 'OnuWerewolfRoom', params: { id: data.room.id } });
-      } else if (data.room.type === 'blood-on-the-clocktower') {
-        router.push({ name: 'BOTCRoom', params: { id: data.room.id } });
-      } else {
-        // 其他游戏类型的处理
-        console.warn('未知的游戏类型:', data.room.type);
-      }
-    });
+    store.socket.on('room_joined', handleRoomJoined);
+  }
+});
+
+onUnmounted(() => {
+  // Bug L2: 清理所有socket事件监听器，防止重复注册和内存泄漏
+  if (handleConnect) {
+    store.socket?.off('connect', handleConnect);
+  }
+  if (handleRoomJoined) {
+    store.socket?.off('room_joined', handleRoomJoined);
   }
 });
 
@@ -893,13 +910,9 @@ function enter(roomId: string) {
   if (!room) return;
 
   const playerId = ensureLocalPlayer(room.type, nickname, roomId);
-  if (room.type === 'texas-holdem') {
-    texasStore.joinRoom(roomId, nickname);
-    router.push({ name: 'TexasHoldemRoom', params: { id: roomId } });
-    return;
-  }
-
+  
   const routeMap: Record<string, string> = {
+    'texas-holdem': 'TexasHoldemRoom',
     'avalon': 'AvalonRoom',
     'mafia': 'MafiaRoom',
     'werewolf': 'WerewolfRoom',
@@ -912,7 +925,12 @@ function enter(roomId: string) {
     return;
   }
 
-  // 非德州扑克房间由各自房间页的 store 建立连接；这里先保存昵称和本地ID，避免重复进房。
+  // Bug L3: 统一所有游戏类型的处理逻辑
+  // 德州扑克先设置昵称和房间信息，再统一跳转
+  if (room.type === 'texas-holdem') {
+    texasStore.joinRoom(roomId, nickname);
+  }
+  // 所有游戏类型统一跳转，确保逻辑一致性
   router.push({ name: routeName, params: { id: roomId }, query: playerId ? { playerId } : undefined });
 }
 
@@ -966,8 +984,9 @@ function confirmJoinRoom() {
     store.initSocket();
   }
 
+  // Bug L4: 参数名使用roomId与后端期望一致（用户输入的是房间号）
   store.socket?.emit('join_room', {
-    roomName: joinRoomForm.value.roomName.trim().toUpperCase(),
+    roomId: joinRoomForm.value.roomName.trim().toUpperCase(),
     nickname: joinRoomForm.value.nickname.trim()
   });
   joinRoomDialogVisible.value = false;
@@ -990,7 +1009,7 @@ async function confirmCreateRoom() {
       playerId,
       userId: playerId,
       maxPlayers: createRoomForm.value.maxPlayers,
-      playerCount: createRoomForm.value.maxPlayers
+      playerCount: 1 // Bug L5: 创建房间时只有创建者1人
     };
 
     // 房间名称由系统自动分配，无需手动设置
@@ -1027,6 +1046,12 @@ async function confirmCreateRoom() {
         sessionStorage.setItem('texas_newJoin', 'true');
       }
       
+      // Bug L6: 检查socket连接状态，避免请求静默失败
+      if (!store.socket.connected) {
+        ElMessage.error('连接未建立，请刷新页面重试');
+        creatingRoom.value = false;
+        return;
+      }
       store.socket.emit('create_room', {
         gameType: createRoomForm.value.gameType,
         gameConfig,

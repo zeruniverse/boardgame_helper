@@ -983,6 +983,7 @@ class WerewolfWorker extends BaseGameWorker {
       if (actionData.targetId !== null && actionData.targetId !== undefined && actionData.targetId !== '') {
         const targetId = String(actionData.targetId);
         const target = this.gameState.players[targetId];
+        if (target && !target.isAlive) { return; }
         if (target) {
           targetIndex = target.index;
         }

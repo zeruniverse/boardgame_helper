@@ -675,6 +675,14 @@ export class BOTCWorker extends BaseGameWorker {
       executedBy: this.getPlayerName(executedBy)
     });
 
+    // 检查幕后黑手 - 如果恶魔被处决且幕后黑手存活，游戏继续一天
+    if (player.role?.team === 'demon') {
+      const mastermind = Array.from(this.gamePlayers.values()).find(p => p.role?.id === 'mastermind' && !p.isDead);
+      if (mastermind) {
+        return;
+      }
+    }
+
     // 检查游戏是否结束
     const gameEnd = checkGameEnd(Array.from(this.gamePlayers.values()));
     if (gameEnd.isEnded) {
@@ -835,8 +843,8 @@ export class BOTCWorker extends BaseGameWorker {
       summary: `处理了 ${processedActions.length} 个夜晚行动`
     });
 
-    // 检查游戏是否结束
-    const gameEnd = checkGameEnd(Array.from(this.gamePlayers.values()));
+    // 检查游戏是否结束（夜晚只检查善良胜利条件，邪恶胜利在白天结束时检查）
+    const gameEnd = checkGameEnd(Array.from(this.gamePlayers.values()), false);
     if (gameEnd.isEnded) {
       await this.endGame(gameEnd.winner!, gameEnd.reason!);
       return;
@@ -1020,8 +1028,8 @@ export class BOTCWorker extends BaseGameWorker {
       }
     }
 
-    // 处理乌鸦饲养员的死亡能力
-    if (player.role?.id === 'ravenkeeper' && cause === 'demon') {
+    // 处理乌鸦饲养员的死亡能力（任何死亡原因都触发）
+    if (player.role?.id === 'ravenkeeper') {
       player.isDead = true;
       player.deathCause = cause;
       player.canVote = true; // 获得遗言票
@@ -1105,6 +1113,10 @@ export class BOTCWorker extends BaseGameWorker {
     const sender = this.room.players.find(p => p.id === playerId);
     const target = this.room.players.find(p => p.id === data.targetId);
     if (!sender || !target) return;
+
+    // 验证不能发给自己，且双方都在游戏中
+    if (playerId === data.targetId) return;
+    if (!this.gamePlayers.has(playerId) || !this.gamePlayers.has(data.targetId)) return;
 
     // 发送给目标玩家
     this.sendToPlayer(data.targetId, 'privateMessage', {

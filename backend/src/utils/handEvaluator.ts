@@ -30,7 +30,7 @@ export function evaluateHand(cards: string[]): number {
     const suits = cards5.map(c=>c.suit);
     const counts: Record<number, number> = {};
     ranks.forEach(r=>counts[r]=(counts[r]||0)+1);
-    const uniqueRanks = Object.keys(counts).map(x=>parseInt(x)).sort((a,b)=>b-a);
+    const uniqueRanks = Object.keys(counts).map(x=>parseInt(x, 10)).sort((a,b)=>b-a);
     const isFlush = suits.every(s=>s===suits[0]);
     // straight 检测
     let isStraight = false;
@@ -42,8 +42,8 @@ export function evaluateHand(cards: string[]): number {
         highStraight = uniq[i+4];
       }
     }
-    // A-2-3-4-5
-    if (!isStraight && uniq.slice(-4).toString()=== '2,3,4,5' && uniq.includes(14)) {
+    // A-2-3-4-5 (Wheel Straight)
+    if (!isStraight && uniq.includes(14) && uniq.includes(2) && uniq.includes(3) && uniq.includes(4) && uniq.includes(5)) {
       isStraight = true;
       highStraight = 5;
     }

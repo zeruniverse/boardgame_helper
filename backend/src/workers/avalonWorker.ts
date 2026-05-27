@@ -672,7 +672,21 @@ class AvalonWorker extends BaseGameWorker {
     const totalVotes = state.voteResult.true.length + state.voteResult.false.length;
     const totalPlayers = Object.keys(state.players).length;
 
-    if (totalVotes >= totalPlayers) {
+    // 如果所有在线玩家都已投票，为掉线玩家自动投反对票
+    const onlinePlayers = Object.keys(state.players).filter(id => {
+      const roomPlayer = this.room.players.find(p => p.id === id);
+      return roomPlayer?.online !== false;
+    });
+    const votedPlayers = new Set([...state.voteResult.true, ...state.voteResult.false]);
+    const onlineVoted = onlinePlayers.filter(id => votedPlayers.has(id)).length;
+
+    if (onlineVoted >= onlinePlayers.length || totalVotes >= totalPlayers) {
+      // 为掉线玩家自动投反对票
+      Object.keys(state.players).forEach(id => {
+        if (!votedPlayers.has(id)) {
+          state.voteResult.false.push(id);
+        }
+      });
       this.processVoteResult();
     }
   }
@@ -680,6 +694,9 @@ class AvalonWorker extends BaseGameWorker {
   private handleTakeAction(playerId: string, success: boolean): void {
     const state = this.gameState as AvalonGameState;
     if (state.status !== GameStatus.ACTION || !state.operators.includes(playerId)) return;
+
+    // 检查玩家是否在执行任务队伍中
+    if (!state.team.includes(playerId)) { return; }
 
     // 只有红方可以选择失败
     const isRed = state.topSecret.red[playerId] !== undefined;
@@ -1400,7 +1417,8 @@ class AvalonWorker extends BaseGameWorker {
   }
 
   private isLakeLadyEnabled(): boolean {
-    const playerCount = this.room.players.length;
+    const state = this.gameState as AvalonGameState;
+    const playerCount = state.players ? Object.keys(state.players).length : this.room.players.length;
     return this.config.lakeLady && playerCount >= 7 && playerCount <= 12;
   }
 

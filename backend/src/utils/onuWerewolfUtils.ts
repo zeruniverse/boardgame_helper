@@ -249,12 +249,12 @@ export function onuCalculateWinner(
   const lynchSet = new Set(lynched);
 
   // 检查是否有皮匠被处决
-  const lyncheddTanners = lynched.filter(playerId => {
+  const lynchedTanners = lynched.filter(playerId => {
     const player = players[playerId];
     return player && onuIsTannerTeam(player.actualRole);
   });
 
-  if (lyncheddTanners.length > 0) {
+  if (lynchedTanners.length > 0) {
     return OnuWerewolfTeam.Tanner;
   }
 

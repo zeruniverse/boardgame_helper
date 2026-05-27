@@ -25,6 +25,7 @@ export class RoomThreadManager {
   private workers: Map<string, Worker> = new Map();
   private tasks: Map<string, { resolve: (value: any) => void; reject: (reason: any) => void; timeout: NodeJS.Timeout }> = new Map();
   private roomData: Map<string, Room> = new Map();
+  private startingPromises: Map<string, Promise<Room | null>> = new Map();
   private cleanupInterval: NodeJS.Timeout;
   private onMessage?: (data: any) => void;
 
@@ -83,6 +84,23 @@ export class RoomThreadManager {
       return room; // Fallback
     }
 
+    // 如果正在启动中，返回现有的 promise，防止并发启动
+    if (this.startingPromises.has(room.id)) {
+      console.log(`房间 ${room.id} 的线程正在启动中，复用现有启动任务`);
+      return this.startingPromises.get(room.id)!;
+    }
+
+    const startPromise = this.doStartRoomThread(room, config);
+    this.startingPromises.set(room.id, startPromise);
+    try {
+      const result = await startPromise;
+      return result;
+    } finally {
+      this.startingPromises.delete(room.id);
+    }
+  }
+
+  private async doStartRoomThread(room: Room, config: any): Promise<Room | null> {
     try {
       console.log(`正在启动房间 ${room.id} (${room.type}) 的线程...`);
       
@@ -276,7 +294,7 @@ export class RoomThreadManager {
 
   // 更新房间数据（用于外部调用更新房间状态）
   updateRoomData(roomId: string, room: Room): void {
-    this.roomData.set(roomId, room);
+    this.roomData.set(roomId, JSON.parse(JSON.stringify(room)));
   }
 
   private normalizeWorkerEvent(roomId: string, message: any): any | null {

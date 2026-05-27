@@ -407,9 +407,11 @@ class OnuWerewolfWorker extends BaseGameWorker {
 
     // 分配角色和座位
     const playerCount = this.room.players.length;
+    // 修复Bug 5.3: 将loneWolf配置存储到gameState中供后续使用
+    this.gameState.config.loneWolf = this.config.loneWolf;
     const { playerRoles, centerCards } = onuDistributeRoles(
-      this.config.roles, 
-      playerCount, 
+      this.config.roles,
+      playerCount,
       this.config.random
     );
 
@@ -535,6 +537,8 @@ class OnuWerewolfWorker extends BaseGameWorker {
       clearTimeout(this.skillTimeout);
       this.skillTimeout = null;
     }
+    // 修复Bug 5.2: 使用配置的夜间时间平分每个技能时间，避免硬编码30秒
+    const perSkillTime = Math.max(10000, Math.floor((this.config.nightTime * 1000) / Math.max(this.skillQueue.length, 1)));
     this.skillTimeout = setTimeout(() => {
       try {
         if (!player.skillUsed) {
@@ -546,7 +550,7 @@ class OnuWerewolfWorker extends BaseGameWorker {
         this.currentSkillIndex++;
         this.processNextSkill();
       }
-    }, 30000); // 30秒超时
+    }, perSkillTime);
   }
 
   private async handleUseSkill(playerId: string, actionData: any): Promise<void> {
@@ -614,6 +618,12 @@ class OnuWerewolfWorker extends BaseGameWorker {
         this.skillQueue.splice(this.currentSkillIndex, 0, { player, skill: followUpSkill });
         player.skillUsed = false; // 重置技能使用状态以便执行后续技能
       }
+    }
+
+    // 修复Bug 5.1: 为后续技能显式重置超时定时器，确保processNextSkill设置新的定时器
+    if (this.skillTimeout) {
+      clearTimeout(this.skillTimeout);
+      this.skillTimeout = null;
     }
 
     this.processNextSkill();
@@ -703,7 +713,16 @@ class OnuWerewolfWorker extends BaseGameWorker {
       clearTimeout(this.skillTimeout);
       this.skillTimeout = null;
     }
-    
+
+    // 修复Bug 5.4: 如果技能队列未完成，先自动跳过剩余技能
+    while (this.currentSkillIndex < this.skillQueue.length) {
+      const currentSkillItem = this.skillQueue[this.currentSkillIndex];
+      if (currentSkillItem && !currentSkillItem.player.skillUsed) {
+        currentSkillItem.player.skillUsed = true;
+      }
+      this.currentSkillIndex++;
+    }
+
     this.gameState.status = OnuWerewolfGameStatus.VOTING;
     this.gameState.currentPhase = '讨论投票阶段';
     this.gameState.timeLeft = this.config.discussTime + this.config.votingTime;

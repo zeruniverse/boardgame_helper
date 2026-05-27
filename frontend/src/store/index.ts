@@ -2,6 +2,7 @@ import { defineStore } from 'pinia';
 import { io, Socket } from 'socket.io-client';
 import { SOCKET_URL } from '../config';
 import { useTexasHoldemStore } from './texas_holdem';
+import router from '../router';
 
 // 重新导出游戏特定的store
 export { useTexasHoldemStore } from './texas_holdem';
@@ -78,11 +79,18 @@ export const useMainStore = defineStore('main', {
       this.socket.on('connect', () => {
         console.log('Socket connected to:', SOCKET_URL);
         this.connected = true;
+        // Bug S1: 连接成功后自动获取大厅数据
+        this.socket?.emit('get_lobby');
       });
 
       this.socket.on('disconnect', () => {
         console.log('Socket disconnected');
         this.connected = false;
+        // Bug S4: 断开连接时清理心跳定时器
+        if (this.heartbeatInterval) {
+          clearInterval(this.heartbeatInterval);
+          this.heartbeatInterval = null;
+        }
       });
 
       // 房间列表
@@ -99,7 +107,7 @@ export const useMainStore = defineStore('main', {
       this.socket.on('room_joined', (data: { room: any; player: any; playerId?: string; isHost: boolean }) => {
         rememberGameSession(data.room, data.player);
         // 根据房间类型导航到对应的游戏页面
-        const router = (window as any).routerInstance;
+        // Bug S5: 使用import引入的router实例，替代全局window访问
         const routeName = gameRoutes[data.room?.type];
         if (data.room?.type === 'texas-holdem' && data.player) {
           const texasStore = useTexasHoldemStore();
@@ -151,6 +159,16 @@ export const useMainStore = defineStore('main', {
     getLobbyData() {
       if (this.socket && this.connected) {
         this.socket.emit('get_lobby');
+      } else if (this.socket && !this.connected) {
+        // Bug S3: 未连接时等待连接后自动发送
+        const checkInterval = setInterval(() => {
+          if (this.connected) {
+            this.socket?.emit('get_lobby');
+            clearInterval(checkInterval);
+          }
+        }, 100);
+        // 5秒后超时清理
+        setTimeout(() => clearInterval(checkInterval), 5000);
       }
     }
   }

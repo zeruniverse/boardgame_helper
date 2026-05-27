@@ -244,7 +244,7 @@ export const WolfKillHandler: StateHandler = {
   status: GameStatus.WOLF_KILL,
 
   startOfState(gameState, context, showCloseEye = true) {
-    // 递增天数（只有在这里递增一次）
+    // 递增回合计数器（currentDay在白天和夜晚都会递增，所以实际天数 = Math.ceil(currentDay / 2)）
     gameState.currentDay++;
 
     // 清除之前的发言顺序
@@ -254,8 +254,9 @@ export const WolfKillHandler: StateHandler = {
     // 重置夜间行动记录
     gameState.nightActions = {};
 
-    // 重置投票记录
+    // 重置投票记录和PK轮数
     gameState.votes = {};
+    (gameState as any).pkRound = 0;
 
     // 重置canBeVoted
     Object.values(gameState.players).forEach(p => {
@@ -861,7 +862,23 @@ export const ExileVoteHandler: StateHandler = {
         return;
       }
     } else {
-      // 平票处理
+      // 平票处理 - 限制PK轮数防止无限循环
+      const pkRound = ((gameState as any).pkRound || 0) + 1;
+      (gameState as any).pkRound = pkRound;
+
+      if (pkRound > 2) {
+        // 超过最大PK轮数，无人被放逐
+        context.sendToRoom('show_message', {
+          message: '平票PK已达最大轮数，无人被放逐，即将进入夜晚'
+        });
+        setTimeout(() => {
+          if (!checkAndHandleGameEnd(gameState, context)) {
+            WolfKillHandler.startOfState(gameState, context, true);
+          }
+        }, 5000);
+        return;
+      }
+
       context.sendToRoom('show_message', {
         message: renderPlayersHTML('以下玩家平票，进入PK发言:', highestVotes)
       });

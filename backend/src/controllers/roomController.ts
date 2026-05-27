@@ -4,7 +4,7 @@ import { Player } from '../models/Player';
 import { RoomThreadManager } from '../services/RoomThreadManager';
 import { config } from '../config';
 import { v4 as uuidv4 } from 'uuid';
-import { setResetServerFunction } from '../server';
+import { setResetServerFunction } from '../services/resetService';
 
 const rooms: Map<string, Room> = new Map();
 let threadManager: RoomThreadManager;
@@ -48,7 +48,7 @@ function getPublicRooms() {
       name: room.name,
       type: room.type,
       displayName: config.games[room.type]?.displayName || room.type,
-      playerCount: room.players.length,
+      playerCount: room.players.filter(p => p.online).length,
       maxPlayers: room.maxPlayers,
       private: room.private === true
     }));
@@ -83,6 +83,7 @@ export function roomController(io: Server) {
       
       // 5. 清空所有房间
       rooms.clear();
+      hostKickVotes.clear();
       
       // 6. 重新初始化线程管理器
       threadManager = new RoomThreadManager(handleThreadMessage);
@@ -114,7 +115,7 @@ export function roomController(io: Server) {
           const existingRoom = rooms.get(data.data.id);
           const oldPrivate = existingRoom?.private;
           const mergedRoom = existingRoom 
-            ? { ...existingRoom, ...data.data, private: data.data.private !== undefined ? data.data.private === true : existingRoom.private }
+            ? { ...existingRoom, ...data.data, private: existingRoom.private }
             : data.data;
           rooms.set(data.data.id, mergedRoom);
           threadManager.updateRoomData(data.data.id, mergedRoom);
@@ -131,7 +132,7 @@ export function roomController(io: Server) {
           const existingRoom = rooms.get(data.data.id);
           const oldPrivate = existingRoom?.private;
           const mergedRoom = existingRoom 
-            ? { ...existingRoom, ...data.data, private: data.data.private !== undefined ? data.data.private === true : existingRoom.private }
+            ? { ...existingRoom, ...data.data, private: existingRoom.private }
             : data.data;
           rooms.set(data.data.id, mergedRoom);
           threadManager.updateRoomData(data.data.id, mergedRoom);
@@ -146,29 +147,6 @@ export function roomController(io: Server) {
       console.error('处理线程消息失败:', error);
     }
   }
-
-  // 前端请求获取房间当前状态
-  io.on('connection', (socket: Socket) => {
-    socket.on('get_room_state', (data: { roomId: string }) => {
-      const room = rooms.get(data.roomId);
-      if (room) {
-        socket.emit('room_update', room);
-      }
-    });
-
-    // 新的房间状态检查接口，只有房间存在时才响应
-    socket.on('room_status_check', (data: { roomId: string }) => {
-      const room = rooms.get(data.roomId);
-      if (room) {
-        socket.emit('room_ready', { 
-          roomId: room.id,
-          status: room.threadStatus === 'running' ? 'ready' : 'starting',
-          room
-        });
-        socket.emit('room_update', room);
-      }
-    });
-  });
 
   // 向房间线程发送任务
   async function sendTaskToRoom(roomId: string, taskType: string, taskData: any, socketId?: string, playerId?: string) {
@@ -196,6 +174,27 @@ export function roomController(io: Server) {
   // Socket连接处理
   io.on('connection', (socket: Socket) => {
     console.log(`客户端连接: ${socket.id}`);
+
+    // 前端请求获取房间当前状态
+    socket.on('get_room_state', (data: { roomId: string }) => {
+      const room = rooms.get(data.roomId);
+      if (room) {
+        socket.emit('room_update', room);
+      }
+    });
+
+    // 新的房间状态检查接口，只有房间存在时才响应
+    socket.on('room_status_check', (data: { roomId: string }) => {
+      const room = rooms.get(data.roomId);
+      if (room) {
+        socket.emit('room_ready', { 
+          roomId: room.id,
+          status: room.threadStatus === 'running' ? 'ready' : 'starting',
+          room
+        });
+        socket.emit('room_update', room);
+      }
+    });
 
     // 获取大厅信息（只显示非私有房间）
     socket.on('get_lobby', () => {
@@ -274,6 +273,7 @@ export function roomController(io: Server) {
           socket.emit('error', { message: '启动房间线程失败' });
           ack?.({ success: false, error: '启动房间线程失败' });
           rooms.delete(room.id);
+          socket.leave(room.id);
           return;
         }
 
@@ -582,6 +582,7 @@ export function roomController(io: Server) {
         if (room.players.length === 0) {
           await threadManager.stopRoomThread(room.id);
           rooms.delete(room.id);
+          hostKickVotes.delete(room.id);
           
           // 更新大厅
           if (!room.private) {
@@ -783,7 +784,7 @@ export function roomController(io: Server) {
     });
 
     // 处理断开连接
-    socket.on('disconnect', () => {
+    socket.on('disconnect', async () => {
       console.log(`客户端断开连接: ${socket.id}`);
       
       // 查找玩家所在的房间
@@ -809,14 +810,18 @@ export function roomController(io: Server) {
         player.online = false;
         
         // 将更新后的房间数据同步到工作线程
-        sendTaskToRoom(roomId, 'update_room_data', { room: currentRoom }).catch(error => {
+        try {
+          await sendTaskToRoom(roomId, 'update_room_data', { room: currentRoom });
+        } catch (error: any) {
           console.error(`向房间 ${roomId} 同步数据失败 (disconnect):`, error);
-        });
+        }
 
         // 向游戏线程发送玩家离线事件
-        sendTaskToRoom(roomId, 'player_offline', { playerId: player.id }).catch(error => {
+        try {
+          await sendTaskToRoom(roomId, 'player_offline', { playerId: player.id });
+        } catch (error: any) {
           console.error(`向房间 ${roomId} 发送 player_offline 任务失败:`, error);
-        });
+        }
 
         // 更新大厅中该房间的玩家数量
         if (!currentRoom.private) {
@@ -837,6 +842,7 @@ export function roomController(io: Server) {
             console.log(`清理空房间: ${roomId}`);
             threadManager.stopRoomThread(roomId);
             rooms.delete(roomId);
+            hostKickVotes.delete(roomId);
             
             // 更新大厅
             broadcastLobbyUpdate();
@@ -847,7 +853,13 @@ export function roomController(io: Server) {
 
     // 处理心跳
     socket.on('heartbeat', () => {
-      // 实现心跳处理逻辑
+      for (const room of rooms.values()) {
+        const player = room.players.find(p => p.socketId === socket.id);
+        if (player) {
+          player.lastHeartbeat = Date.now();
+          break;
+        }
+      }
     });
   });
 

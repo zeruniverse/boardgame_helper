@@ -27,8 +27,10 @@ function loadConfig(): Config {
     const configData = fs.readFileSync(configPath, 'utf8');
     const config = JSON.parse(configData);
     config.server = {
-      roomCleanupTimeout: 60000,
-      ...config.server
+      ...config.server,
+      roomCleanupTimeout: config.server?.roomCleanupTimeout ?? 60000,
+      maxRooms: config.server?.maxRooms ?? 10,
+      resetPassword: config.server?.resetPassword ?? 'admin123'
     };
     console.log('配置加载成功:', { 
       server: { ...config.server, resetPassword: '***' }, // 隐藏密码
@@ -41,6 +43,7 @@ function loadConfig(): Config {
   } catch (error) {
     console.error('配置文件加载失败，使用默认配置:', error);
     // 返回默认配置
+    console.warn('警告: 使用默认重置密码，请在生产环境中修改');
     return {
       server: {
         maxRooms: 10,

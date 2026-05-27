@@ -336,6 +336,11 @@ class TexasHoldemWorker extends BaseGameWorker {
         this.participants.splice(participantIndex, 1);
       }
 
+      // 修复Bug 1.4: 参考handleCashOut逻辑，在移除玩家后调整currentTurn
+      if (this.gameState.currentTurn >= this.participants.length) {
+        this.gameState.currentTurn = 0;
+      }
+
       this.sendToRoom('chat_broadcast', {
         message: `${targetPlayer.nickname} 被踢出房间`
       });
@@ -693,6 +698,12 @@ class TexasHoldemWorker extends BaseGameWorker {
     const player = this.room.players[gs.currentTurn];
     if (!player || !this.participants.includes(player.id)) {
       console.log('当前玩家已不在游戏中，忽略超时处理');
+      return;
+    }
+
+    // 修复Bug 1.6: 检查玩家是否已fold或已行动，避免重复处理
+    if (gs.folded.includes(player.id) || gs.acted.includes(player.id)) {
+      this.clearActionTimer();
       return;
     }
 
@@ -1378,7 +1389,8 @@ class TexasHoldemWorker extends BaseGameWorker {
       gs.currentBet = allInAmount;
       gs.acted = [playerId];
     } else {
-      // 修复：all-in 未超过当前最高注时，确保 playerId 已加入 acted
+      // 修复Bug 1.2: all-in金额未超过当前最高注时，确保playerId已加入acted
+      // 边池资格由totalBets和splitPotSidePots正确追踪：all-in玩家只对等于其all-in金额的pot有资格
       if (!gs.acted.includes(playerId)) gs.acted.push(playerId);
     }
 
@@ -1664,9 +1676,10 @@ class TexasHoldemWorker extends BaseGameWorker {
           this.sendToRoom('chat_broadcast', { message: `${winnerNames} 平分池子 ${pot.amount}`, type: 'system' });
         }
 
-        // 修复：使用participatingPlayers来正确计算sbOrder
+        // 修复Bug 1.3: 找到小盲注玩家在participatingPlayers中的正确索引，避免gs.sbIndex越界
+        const sbIndex = gs.sbIndex < participatingPlayers.length ? gs.sbIndex : 0;
         const sbOrder: string[] = [];
-        let idx = gs.sbIndex;
+        let idx = sbIndex;
         const maxIterations = Math.max(participatingPlayers.length * 2, 1);
         let iterations = 0;
         while (sbOrder.length < winners.length && iterations < maxIterations) {

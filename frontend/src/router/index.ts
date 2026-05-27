@@ -17,8 +17,8 @@ const routes: RouteRecordRaw[] = [
   { path: '/onu-werewolf/:id', name: 'OnuWerewolfRoom', component: OnuWerewolfRoom, props: true },
   { path: '/werewolf/:id', name: 'WerewolfRoom', component: WerewolfRoom, props: true },
   { path: '/botc/:id', name: 'BOTCRoom', component: BOTCRoom, props: true },
-  // 兼容旧的路由格式，重定向到大厅
-  { path: '/room/:id', redirect: '/' }
+  // Bug R1: 兼容旧的路由格式，重定向时保留房间ID参数
+  { path: '/room/:id', redirect: (to) => ({ path: '/', query: { room: to.params.id as string } }) }
 ];
 
 const router = createRouter({

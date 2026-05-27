@@ -4,6 +4,7 @@ import cors from 'cors';
 import { Server as SocketIOServer } from 'socket.io';
 import { roomController } from './controllers/roomController';
 import { config } from './config';
+import { setResetServerFunction, resetServerFunction } from './services/resetService';
 
 const app = express();
 app.use(cors());
@@ -16,14 +17,6 @@ const io = new SocketIOServer(httpServer, {
     methods: ['GET', 'POST']
   }
 });
-
-// 存储重置函数的引用
-let resetServerFunction: (() => Promise<boolean>) | null = null;
-
-// 设置重置函数的方法
-export function setResetServerFunction(resetFn: () => Promise<boolean>) {
-  resetServerFunction = resetFn;
-}
 
 // 初始化房间控制器
 roomController(io);

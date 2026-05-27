@@ -740,8 +740,10 @@ class MafiaWorker extends BaseGameWorker {
     // 检查是否所有在线医生都做出了选择
     const aliveOnlineDoctors = this.getAliveOnlineDoctors();
     const allDoctorsChosen = aliveOnlineDoctors.every(docId => docId in gameState.wantToSave);
-    
-    if (allDoctorsChosen) {
+    // 修复Bug 6.4: 像killer一样检查所有doctor是否选择同一目标
+    const allSameChoice = new Set(Object.values(gameState.wantToSave)).size === 1;
+
+    if (allDoctorsChosen && allSameChoice) {
       // 执行救人（取第一个医生的选择）
       const personSaved = Object.values(gameState.wantToSave)[0];
       gameState.personSaved = personSaved;
@@ -796,13 +798,7 @@ class MafiaWorker extends BaseGameWorker {
       const message = `你们合伙谋害了${this.getPlayerName(targetId)}`;
       this.sendToRoom('kill_result', { message });
 
-      // 检查游戏是否结束
-      const gameResult = this.checkGameEnd(personWillDie);
-      if (gameResult) {
-        this.endGame(gameResult, personWillDie);
-        return;
-      }
-
+      // 修复Bug 6.1: 移除杀手行动后立即checkGameEnd，移到endNight()中确保cop/doctor先完成行动
       // 检查是否可以结束夜晚（所有角色都完成行动）
       if (!gameState.copActionLock && !gameState.killerActionLock && !gameState.doctorActionLock) {
         this.endNight();
@@ -824,6 +820,8 @@ class MafiaWorker extends BaseGameWorker {
 
     if (gameState.status === GameStatus.LAST_WORD) {
       // 夜晚遗言结束，进入发言阶段
+      // 修复Bug 6.3: 记录死亡玩家在alivePlayersOrder中的位置，设置speakingPlayerIndex为该位置
+      const deadPlayerPosition = gameState.alivePlayersOrder.indexOf(playerId);
       gameState.players[playerId].alive = false;
       gameState.deathQueue.push({
         playerId,
@@ -831,13 +829,14 @@ class MafiaWorker extends BaseGameWorker {
         deathDay: gameState.day
       });
       gameState.personWillDie = null;
-      
-      // 更新发言顺序（移除死亡的玩家）
+
+      // 更新发言顺序（移除死亡的玩家），从死亡位置的下一位开始发言
       gameState.alivePlayersOrder = this.getAlivePlayers();
-      const nextSpeaker = gameState.alivePlayersOrder[0] || '';
+      const nextSpeakerIndex = deadPlayerPosition >= 0 && deadPlayerPosition < gameState.alivePlayersOrder.length ? deadPlayerPosition : 0;
+      const nextSpeaker = gameState.alivePlayersOrder[nextSpeakerIndex] || '';
       gameState.status = GameStatus.SPEAK;
       gameState.operators = [nextSpeaker];
-      gameState.speakingPlayerIndex = 0;
+      gameState.speakingPlayerIndex = nextSpeakerIndex;
       gameState.speakedCount = 0;
       gameState.step += 1;
       gameState.operateEndTime = new Date(Date.now() + this.config.speakTime * 1000);
@@ -1199,6 +1198,15 @@ class MafiaWorker extends BaseGameWorker {
     gameState.wantToKill = {};
     gameState.wantToSave = {};
     gameState.step += 1;
+
+    // 修复Bug 6.1: 在endNight中检查游戏是否结束（确保所有角色完成行动后再检查）
+    if (gameState.personWillDie) {
+      const gameResult = this.checkGameEnd(gameState.personWillDie);
+      if (gameResult) {
+        this.endGame(gameResult, gameState.personWillDie);
+        return;
+      }
+    }
 
     if (isSaved) {
       // 医生救活了被杀的人 - 平安夜

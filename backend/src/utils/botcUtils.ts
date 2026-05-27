@@ -240,25 +240,19 @@ function shouldWakeWhenDead(roleId: string, isFirstNight: boolean): boolean {
 /**
  * 检查游戏是否结束 - 包含特殊胜利条件
  */
-export function checkGameEnd(gamePlayers: GamePlayer[]): { isEnded: boolean; winner?: 'good' | 'evil'; reason?: string } {
+export function checkGameEnd(gamePlayers: GamePlayer[], checkEvilWin: boolean = true): { isEnded: boolean; winner?: 'good' | 'evil'; reason?: string } {
   const alivePlayers = gamePlayers.filter(p => !p.isDead);
   const aliveEvil = alivePlayers.filter(p => p.role && (p.role.team === Team.DEMON || p.role.team === Team.MINION));
   const aliveGood = alivePlayers.filter(p => p.role && (p.role.team === Team.TOWNSFOLK || p.role.team === Team.OUTSIDER));
   const aliveDemon = alivePlayers.filter(p => p.role && p.role.team === Team.DEMON);
 
-  // 恶魔死亡，善良阵营获胜
+  // 恶魔死亡，善良阵营获胜（Mastermind检查由调用方在处决路径中处理）
   if (aliveDemon.length === 0) {
-    // 检查幕后黑手 - 如果恶魔被处决，游戏继续一天
-    const mastermind = gamePlayers.find(p => p.role?.id === 'mastermind' && !p.isDead);
-    if (mastermind) {
-      // 幕后黑手效果：游戏继续一天
-      return { isEnded: false };
-    }
     return { isEnded: true, winner: 'good', reason: '恶魔已死亡' };
   }
 
-  // 邪恶玩家数量等于或超过善良玩家，邪恶阵营获胜
-  if (aliveEvil.length >= aliveGood.length && aliveGood.length > 0) {
+  // 邪恶玩家数量等于或超过善良玩家，邪恶阵营获胜（只在白天结束时检查）
+  if (checkEvilWin && aliveEvil.length >= aliveGood.length && aliveGood.length > 0) {
     return { isEnded: true, winner: 'evil', reason: '邪恶玩家数量占优' };
   }
 

@@ -6,7 +6,12 @@ import { createPinia } from 'pinia'
 import ElementPlus from 'element-plus'
 import 'element-plus/dist/index.css'
 
-// GitHub Pages 重定向处理
+const app = createApp(App)
+  .use(createPinia())
+  .use(router)
+  .use(ElementPlus);
+
+// Bug M1: 重定向逻辑必须在app.use(router)之后执行
 if (sessionStorage.redirect) {
   const redirect = sessionStorage.redirect;
   delete sessionStorage.redirect;
@@ -17,12 +22,6 @@ if (sessionStorage.redirect) {
   }
 }
 
-const app = createApp(App)
-  .use(createPinia())
-  .use(router)
-  .use(ElementPlus);
-
-// 将router实例注册到全局，供store使用
-(window as any).routerInstance = router;
+// Bug M2: 移除全局window暴露router实例，store通过import引入router
 
 app.mount('#app');
