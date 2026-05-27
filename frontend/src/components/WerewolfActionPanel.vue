@@ -1,30 +1,9 @@
 <template>
   <div class="werewolf-action-panel">
-    <!-- 准备阶段 -->
-    <div v-if="gameState.status === 'preparing'" class="action-section">
-      <h4>游戏准备</h4>
-      <div class="ready-actions">
-        <el-button 
-          v-if="!isReady" 
-          type="success" 
-          @click="handleReady"
-        >
-          准备
-        </el-button>
-        <el-button 
-          v-else 
-          type="warning" 
-          @click="handleUnready"
-        >
-          取消准备
-        </el-button>
-      </div>
-    </div>
-
     <!-- 时间显示 -->
     <div v-if="gameState.timeLeft && gameState.timeLeft > 0" class="time-display">
-      <el-progress 
-        :percentage="getTimePercentage()" 
+      <el-progress
+        :percentage="getTimePercentage()"
         :color="getTimeColor()"
         :show-text="false"
       />
@@ -33,26 +12,54 @@
       </div>
     </div>
 
+    <!-- 准备阶段 -->
+    <div v-if="gameState.status === 'preparing'" class="action-section">
+      <h4>游戏准备</h4>
+      <div class="ready-actions">
+        <el-button
+          v-if="!isReady"
+          type="success"
+          @click="handleReady"
+        >
+          准备
+        </el-button>
+        <el-button
+          v-else
+          type="warning"
+          @click="handleUnready"
+        >
+          取消准备
+        </el-button>
+      </div>
+      <div v-if="isHost" class="host-actions">
+        <el-divider />
+        <el-button type="primary" @click="handleStartGame" :disabled="!canStartGame">
+          开始游戏
+        </el-button>
+        <p v-if="!canStartGame" class="hint-text">需要至少6名玩家准备才能开始</p>
+      </div>
+    </div>
+
     <!-- 狼人杀人阶段 -->
-    <div v-if="gameState.status === 'WOLF_KILL'" class="action-section">
+    <div v-else-if="gameState.status === 'WOLF_KILL'" class="action-section">
       <h4>狼人行动</h4>
-      <div v-if="canOperate" class="wolf-kill-section">
+      <div v-if="canOperate && playerSecret?.role === 'WEREWOLF'" class="wolf-kill-section">
         <p>选择要杀害的玩家:</p>
         <div class="player-selection">
-          <div 
-            v-for="(player, playerId) in getTargetablePlayers()" 
-            :key="String(playerId)"
+          <div
+            v-for="player in getAliveOtherPlayers()"
+            :key="player.id"
             class="player-option"
-            :class="{ selected: selectedTarget === String(playerId) }"
-            @click="selectedTarget = String(playerId)"
+            :class="{ selected: selectedTarget === player.id, dead: !player.alive }"
+            @click="selectedTarget = player.id"
           >
-            <span class="player-number">{{ String((player as any).index) }}</span>
-            <span class="player-name">{{ (player as any).name }}</span>
+            <span class="player-number">{{ player.index }}号</span>
+            <span class="player-name">{{ player.name }}</span>
           </div>
         </div>
         <div class="action-buttons">
-          <el-button 
-            type="danger" 
+          <el-button
+            type="danger"
             :disabled="!selectedTarget"
             @click="handleWolfKill"
           >
@@ -62,30 +69,31 @@
         </div>
       </div>
       <div v-else class="waiting-section">
-        <p>等待狼人行动...</p>
+        <p v-if="playerSecret?.role === 'WEREWOLF'">等待其他狼人...</p>
+        <p v-else>等待狼人行动...</p>
       </div>
     </div>
 
     <!-- 预言家验人阶段 -->
-    <div v-if="gameState.status === 'SEER_CHECK'" class="action-section">
+    <div v-else-if="gameState.status === 'SEER_CHECK'" class="action-section">
       <h4>预言家验人</h4>
-      <div v-if="canOperate" class="seer-check-section">
+      <div v-if="canOperate && playerSecret?.role === 'SEER'" class="seer-check-section">
         <p>选择要验证身份的玩家:</p>
         <div class="player-selection">
-          <div 
-            v-for="(player, playerId) in getTargetablePlayers()" 
-            :key="String(playerId)"
+          <div
+            v-for="player in getAliveOtherPlayers()"
+            :key="player.id"
             class="player-option"
-            :class="{ selected: selectedTarget === String(playerId) }"
-            @click="selectedTarget = String(playerId)"
+            :class="{ selected: selectedTarget === player.id }"
+            @click="selectedTarget = player.id"
           >
-            <span class="player-number">{{ String((player as any).index) }}</span>
-            <span class="player-name">{{ (player as any).name }}</span>
+            <span class="player-number">{{ player.index }}号</span>
+            <span class="player-name">{{ player.name }}</span>
           </div>
         </div>
         <div class="action-buttons">
-          <el-button 
-            type="primary" 
+          <el-button
+            type="primary"
             :disabled="!selectedTarget"
             @click="handleSeerCheck"
           >
@@ -95,14 +103,15 @@
         </div>
       </div>
       <div v-else class="waiting-section">
-        <p>等待预言家验人...</p>
+        <p v-if="playerSecret?.role === 'SEER'">等待你的回合...</p>
+        <p v-else>等待预言家验人...</p>
       </div>
     </div>
 
     <!-- 女巫用药阶段 -->
-    <div v-if="gameState.status === 'WITCH_ACT'" class="action-section">
+    <div v-else-if="gameState.status === 'WITCH_ACT'" class="action-section">
       <h4>女巫行动</h4>
-      <div v-if="canOperate" class="witch-action-section">
+      <div v-if="canOperate && playerSecret?.role === 'WITCH'" class="witch-action-section">
         <div class="potion-info" v-if="playerSecret.potions">
           <p>你的药剂状态:</p>
           <div class="potions">
@@ -115,39 +124,37 @@
           </div>
         </div>
 
-        <div v-if="gameState.nightActions?.lastKilled" class="death-info">
-          <p>昨晚死亡玩家: {{ getPlayerName(gameState.nightActions.lastKilled) }}</p>
-        </div>
-
         <div class="witch-actions">
           <!-- 解药 -->
-          <div v-if="playerSecret.potions?.antidote && gameState.nightActions?.lastKilled" class="antidote-section">
-            <h5>使用解药</h5>
-            <el-button 
-              type="success" 
+          <div v-if="playerSecret.potions?.antidote" class="antidote-section">
+            <h5>使用解药救活昨晚被狼人杀的玩家</h5>
+            <el-button
+              type="success"
               @click="handleWitchAntidote"
             >
-              救活 {{ getPlayerName(gameState.nightActions.lastKilled) }}
+              使用解药救人
             </el-button>
           </div>
+
+          <el-divider v-if="playerSecret.potions?.antidote && playerSecret.potions?.poison" />
 
           <!-- 毒药 -->
           <div v-if="playerSecret.potions?.poison" class="poison-section">
             <h5>使用毒药</h5>
             <div class="player-selection">
-              <div 
-                v-for="(player, playerId) in getTargetablePlayers()" 
-                :key="String(playerId)"
+              <div
+                v-for="player in getAliveOtherPlayers()"
+                :key="player.id"
                 class="player-option"
-                :class="{ selected: selectedTarget === String(playerId) }"
-                @click="selectedTarget = String(playerId)"
+                :class="{ selected: selectedTarget === player.id }"
+                @click="selectedTarget = player.id"
               >
-                <span class="player-number">{{ String((player as any).index) }}</span>
-                <span class="player-name">{{ (player as any).name }}</span>
+                <span class="player-number">{{ player.index }}号</span>
+                <span class="player-name">{{ player.name }}</span>
               </div>
             </div>
-            <el-button 
-              type="danger" 
+            <el-button
+              type="danger"
               :disabled="!selectedTarget"
               @click="handleWitchPoison"
             >
@@ -155,34 +162,37 @@
             </el-button>
           </div>
 
+          <el-divider v-if="playerSecret.potions?.antidote || playerSecret.potions?.poison" />
+
           <el-button @click="handleWitchSkip">跳过</el-button>
         </div>
       </div>
       <div v-else class="waiting-section">
-        <p>等待女巫行动...</p>
+        <p v-if="playerSecret?.role === 'WITCH'">等待你的回合...</p>
+        <p v-else>等待女巫行动...</p>
       </div>
     </div>
 
     <!-- 守卫保护阶段 -->
-    <div v-if="gameState.status === 'GUARD_PROTECT'" class="action-section">
+    <div v-else-if="gameState.status === 'GUARD_PROTECT'" class="action-section">
       <h4>守卫保护</h4>
-      <div v-if="canOperate" class="guard-protect-section">
-        <p>选择要保护的玩家:</p>
+      <div v-if="canOperate && playerSecret?.role === 'GUARD'" class="guard-protect-section">
+        <p>选择要保护的玩家（不能连续两晚守护同一人）:</p>
         <div class="player-selection">
-          <div 
-            v-for="(player, playerId) in getTargetablePlayers()" 
-            :key="String(playerId)"
+          <div
+            v-for="player in getAlivePlayers()"
+            :key="player.id"
             class="player-option"
-            :class="{ selected: selectedTarget === String(playerId) }"
-            @click="selectedTarget = String(playerId)"
+            :class="{ selected: selectedTarget === player.id }"
+            @click="selectedTarget = player.id"
           >
-            <span class="player-number">{{ String((player as any).index) }}</span>
-            <span class="player-name">{{ (player as any).name }}</span>
+            <span class="player-number">{{ player.index }}号</span>
+            <span class="player-name">{{ player.name }}</span>
           </div>
         </div>
         <div class="action-buttons">
-          <el-button 
-            type="primary" 
+          <el-button
+            type="primary"
             :disabled="!selectedTarget"
             @click="handleGuardProtect"
           >
@@ -192,62 +202,79 @@
         </div>
       </div>
       <div v-else class="waiting-section">
-        <p>等待守卫保护...</p>
+        <p v-if="playerSecret?.role === 'GUARD'">等待你的回合...</p>
+        <p v-else>等待守卫保护...</p>
       </div>
     </div>
 
-    <!-- 白天发言阶段 -->
-    <div v-if="gameState.status === 'DAY_DISCUSS'" class="action-section">
+    <!-- 警长竞选阶段 -->
+    <div v-else-if="gameState.status === 'SHERIFF_ELECT'" class="action-section">
+      <h4>警长竞选</h4>
+      <div v-if="isAlive" class="sheriff-elect-section">
+        <p>是否参与警长竞选？</p>
+        <div class="action-buttons">
+          <el-button type="primary" @click="handleSheriffElect(true)">上警</el-button>
+          <el-button @click="handleSheriffElect(false)">不上警</el-button>
+        </div>
+      </div>
+      <div v-else class="waiting-section">
+        <p>你已死亡，无法参与警长竞选</p>
+      </div>
+    </div>
+
+    <!-- 白天讨论阶段 -->
+    <div v-else-if="gameState.status === 'DAY_DISCUSS'" class="action-section">
       <h4>白天发言</h4>
       <div class="discuss-section">
         <div v-if="gameState.currentSpeaker" class="current-speaker">
-          <p>当前发言者: {{ getPlayerName(gameState.currentSpeaker) }}</p>
+          <p>
+            当前发言者: {{ getPlayerDisplayName(gameState.currentSpeaker) }}
+            <span v-if="gameState.currentSpeaker === playerSecret?.playerId" class="your-turn">（你）</span>
+          </p>
         </div>
-        
-        <div v-if="canSpeak" class="speak-actions">
-          <el-button 
-            type="primary" 
-            @click="handleSpeak"
-          >
-            开始发言
-          </el-button>
+        <div v-else class="free-discuss">
+          <p>自由讨论时间</p>
         </div>
-        
-        <div v-if="isSpeaking" class="speaking-actions">
-          <p>你正在发言中...</p>
-          <el-button 
-            type="warning" 
+
+        <div v-if="canOperate || isCurrentSpeaker" class="speak-actions">
+          <el-button
+            v-if="isCurrentSpeaker"
+            type="warning"
             @click="handleEndSpeak"
           >
             结束发言
           </el-button>
+          <p v-else-if="canOperate" class="hint">你可以自由发言和投票</p>
+        </div>
+        <div v-else class="waiting-section">
+          <p>等待你的回合...</p>
         </div>
       </div>
     </div>
 
     <!-- 投票放逐阶段 -->
-    <div v-if="gameState.status === 'EXILE_VOTE'" class="action-section">
+    <div v-else-if="gameState.status === 'EXILE_VOTE'" class="action-section">
       <h4>投票放逐</h4>
-      <div class="vote-section">
+      <div v-if="isAlive" class="vote-section">
         <p>选择要放逐的玩家:</p>
         <div class="player-selection">
-          <div 
-            v-for="(player, playerId) in getVotablePlayers()" 
-            :key="String(playerId)"
+          <div
+            v-for="player in getAlivePlayers()"
+            :key="player.id"
             class="player-option"
-            :class="{ selected: selectedTarget === String(playerId) }"
-            @click="selectedTarget = String(playerId)"
+            :class="{ selected: selectedTarget === player.id }"
+            @click="selectedTarget = player.id"
           >
-            <span class="player-number">{{ String((player as any).index) }}</span>
-            <span class="player-name">{{ (player as any).name }}</span>
-            <span v-if="gameState.votes && gameState.votes[String(playerId)]" class="vote-count">
-              ({{ Object.values(gameState.votes).filter(v => v === String(playerId)).length }}票)
+            <span class="player-number">{{ player.index }}号</span>
+            <span class="player-name">{{ player.name }}</span>
+            <span v-if="gameState.votes && Object.values(gameState.votes).includes(player.id)" class="vote-count">
+              ({{ Object.entries(gameState.votes).filter(([_, v]) => v === player.id).length }}票)
             </span>
           </div>
         </div>
         <div class="vote-actions">
-          <el-button 
-            type="danger" 
+          <el-button
+            type="danger"
             :disabled="!selectedTarget"
             @click="handleVote"
           >
@@ -256,20 +283,125 @@
           <el-button @click="handleSkipVote">弃权</el-button>
         </div>
       </div>
+      <div v-else class="waiting-section">
+        <p>你已死亡，不能投票</p>
+      </div>
+    </div>
+
+    <!-- 猎人开枪阶段 -->
+    <div v-else-if="gameState.status === 'HUNTER_SHOOT'" class="action-section">
+      <h4>猎人开枪</h4>
+      <div v-if="canOperate && playerSecret?.role === 'HUNTER'" class="hunter-shoot-section">
+        <p>你是猎人，是否要开枪带走一名玩家？</p>
+        <div class="player-selection">
+          <div
+            v-for="player in getAlivePlayers()"
+            :key="player.id"
+            class="player-option"
+            :class="{ selected: selectedTarget === player.id }"
+            @click="selectedTarget = player.id"
+          >
+            <span class="player-number">{{ player.index }}号</span>
+            <span class="player-name">{{ player.name }}</span>
+          </div>
+        </div>
+        <div class="action-buttons">
+          <el-button
+            type="danger"
+            :disabled="!selectedTarget"
+            @click="handleHunterShoot"
+          >
+            开枪带走
+          </el-button>
+          <el-button @click="handleHunterSkip">不开枪</el-button>
+        </div>
+      </div>
+      <div v-else class="waiting-section">
+        <p>等待猎人选择...</p>
+      </div>
+    </div>
+
+    <!-- 警长指派阶段 -->
+    <div v-else-if="gameState.status === 'SHERIFF_ASSIGN'" class="action-section">
+      <h4>警长指派</h4>
+      <div v-if="canOperate && playerSecret?.role && gameState.players[playerSecret.playerId]?.isSheriff" class="sheriff-assign-section">
+        <p>你是警长，请选择一名玩家继承警徽（不选则销毁警徽）：</p>
+        <div class="player-selection">
+          <div
+            v-for="player in getAlivePlayers()"
+            :key="player.id"
+            class="player-option"
+            :class="{ selected: selectedTarget === player.id }"
+            @click="selectedTarget = player.id"
+          >
+            <span class="player-number">{{ player.index }}号</span>
+            <span class="player-name">{{ player.name }}</span>
+          </div>
+        </div>
+        <div class="action-buttons">
+          <el-button
+            type="primary"
+            :disabled="!selectedTarget"
+            @click="handleSheriffAssign"
+          >
+            传递警徽
+          </el-button>
+          <el-button @click="handleSheriffAssignSkip">撕毁警徽</el-button>
+        </div>
+      </div>
+      <div v-else class="waiting-section">
+        <p>等待警长选择继承人...</p>
+      </div>
+    </div>
+
+    <!-- 遗言阶段 -->
+    <div v-else-if="gameState.status === 'LEAVE_MSG'" class="action-section">
+      <h4>留遗言</h4>
+      <div v-if="canOperate" class="leave-msg-section">
+        <p>请发表你的遗言：</p>
+        <el-input
+          v-model="leaveMsg"
+          type="textarea"
+          :rows="3"
+          placeholder="输入你的遗言..."
+        />
+        <div class="action-buttons">
+          <el-button type="primary" @click="handleLeaveMsg">发表遗言</el-button>
+        </div>
+      </div>
+      <div v-else class="waiting-section">
+        <p>等待其他玩家留遗言...</p>
+      </div>
+    </div>
+
+    <!-- 夜晚结算/过渡阶段 -->
+    <div v-else-if="['WOLF_KILL_CHECK', 'BEFORE_DAY_DISCUSS', 'EXILE_VOTE_CHECK', 'SHERIFF_VOTE_CHECK', 'HUNTER_CHECK', 'SHERIFF_ASSIGN_CHECK', 'SHERIFF_SPEECH'].includes(gameState.status)" class="action-section">
+      <h4>{{ getStatusDisplayName() }}</h4>
+      <div class="waiting-section">
+        <p>等待系统处理...</p>
+      </div>
     </div>
 
     <!-- 游戏结束 -->
-    <div v-if="gameState.status === 'finished'" class="action-section">
+    <div v-else-if="gameState.status === 'finished'" class="action-section">
       <h4>游戏结束</h4>
       <div class="game-over">
         <p class="winner">{{ getWinnerText() }}</p>
-        <el-button 
-          v-if="isHost" 
-          type="primary" 
+        <el-button
+          v-if="isHost"
+          type="primary"
           @click="handleRestartGame"
         >
           重新开始
         </el-button>
+      </div>
+    </div>
+
+    <!-- 未知状态 -->
+    <div v-else class="action-section">
+      <h4>{{ getStatusDisplayName() }}</h4>
+      <div class="waiting-section">
+        <p>游戏进行中...</p>
       </div>
     </div>
   </div>
@@ -284,6 +416,7 @@ const props = defineProps<{
   roomId: string
   isReady?: boolean
   isHost?: boolean
+  timeLeft?: number
 }>()
 
 const emit = defineEmits<{
@@ -291,69 +424,84 @@ const emit = defineEmits<{
 }>()
 
 const selectedTarget = ref<string>('')
+const leaveMsg = ref('')
 
 // 计算属性
 const canOperate = computed(() => {
   return props.gameState.operators?.includes(props.playerSecret?.playerId)
 })
 
-const canSpeak = computed(() => {
-  return props.gameState.status === 'DAY_DISCUSS' && 
-         !props.gameState.currentSpeaker && 
-         props.playerSecret?.playerId && 
-         props.gameState.players[props.playerSecret.playerId]?.alive
-})
-
-const isSpeaking = computed(() => {
+const isCurrentSpeaker = computed(() => {
   return props.gameState.currentSpeaker === props.playerSecret?.playerId
 })
 
-// 获取可选择的目标玩家
-const getTargetablePlayers = () => {
-  if (!props.gameState.players) return {}
-  
-  // 过滤出存活的其他玩家
-  return Object.fromEntries(
-    Object.entries(props.gameState.players).filter(([playerId, player]: [string, any]) => 
-      player.alive && playerId !== props.playerSecret?.playerId
-    )
+const isAlive = computed(() => {
+  if (!props.gameState || !props.playerSecret?.playerId) return false
+  return props.gameState.players[props.playerSecret.playerId]?.alive ?? false
+})
+
+const canStartGame = computed(() => {
+  if (!props.isHost) return false
+  const players = Object.values(props.gameState.players || {})
+  const readyCount = players.filter((p: any) => p.ready).length
+  return readyCount >= 6
+})
+
+// 获取存活的玩家列表
+const getAlivePlayers = () => {
+  if (!props.gameState.players) return []
+  return Object.values(props.gameState.players).filter((p: any) => p.alive)
+}
+
+// 获取存活的其他玩家（排除自己）
+const getAliveOtherPlayers = () => {
+  if (!props.gameState.players || !props.playerSecret?.playerId) return []
+  return Object.values(props.gameState.players).filter((p: any) =>
+    p.alive && p.id !== props.playerSecret.playerId
   )
 }
 
-// 获取可投票的玩家
-const getVotablePlayers = () => {
-  if (!props.gameState.players) return {}
-  
-  // 存活的玩家都可以被投票
-  return Object.fromEntries(
-    Object.entries(props.gameState.players).filter(([_, player]: [string, any]) => 
-      player.alive
-    )
-  )
+// 获取玩家显示名称
+const getPlayerDisplayName = (playerId: string) => {
+  const player = props.gameState.players[playerId]
+  if (player) {
+    return `${player.index}号 ${player.name}`
+  }
+  return `玩家${playerId}`
 }
 
-// 获取玩家名称
-const getPlayerName = (playerId: string) => {
-  return props.gameState.players[playerId]?.name || `玩家${playerId}`
+// 获取状态显示名称
+const getStatusDisplayName = () => {
+  const names: Record<string, string> = {
+    'WOLF_KILL_CHECK': '确认击杀结果',
+    'BEFORE_DAY_DISCUSS': '天亮结算',
+    'EXILE_VOTE_CHECK': '统计投票',
+    'SHERIFF_VOTE_CHECK': '统计警长投票',
+    'HUNTER_CHECK': '确认猎人开枪',
+    'SHERIFF_ASSIGN_CHECK': '确认警长传递',
+    'SHERIFF_SPEECH': '警长竞选发言'
+  }
+  return names[props.gameState.status] || props.gameState.status
 }
 
 // 获取时间百分比
 const getTimePercentage = () => {
   if (!props.gameState.timeLeft || !props.gameState.config) return 0
-  
-  let totalTime = 60 // 默认60秒
+
+  let totalTime = 60
   switch (props.gameState.status) {
     case 'DAY_DISCUSS':
-      totalTime = props.gameState.config.dayDiscussTime || 300
+      totalTime = props.gameState.config.dayDiscussTime || 120
       break
     case 'EXILE_VOTE':
-      totalTime = props.gameState.config.voteTime || 180
+      totalTime = props.gameState.config.voteTime || 60
       break
     default:
       totalTime = props.gameState.config.nightActionTime || 60
   }
-  
-  return (props.gameState.timeLeft / totalTime) * 100
+
+  if (totalTime <= 0) return 100
+  return Math.min(100, Math.max(0, (props.gameState.timeLeft / totalTime) * 100))
 }
 
 // 获取时间进度条颜色
@@ -377,13 +525,18 @@ const getWinnerText = () => {
   return props.gameState.winner === 'werewolf' ? '狼人阵营胜利！' : '村民阵营胜利！'
 }
 
-// 事件处理
+// ==================== 事件处理 ====================
+
 const handleReady = () => {
   emit('gameAction', 'ready', {})
 }
 
 const handleUnready = () => {
   emit('gameAction', 'unready', {})
+}
+
+const handleStartGame = () => {
+  emit('gameAction', 'start_game', {})
 }
 
 const handleWolfKill = () => {
@@ -409,18 +562,12 @@ const handleSeerSkip = () => {
 }
 
 const handleWitchAntidote = () => {
-  emit('gameAction', 'witch_action', { 
-    actionType: 'antidote', 
-    targetId: props.gameState.nightActions?.lastKilled 
-  })
+  emit('gameAction', 'witch_action', { actionType: 'antidote' })
 }
 
 const handleWitchPoison = () => {
   if (selectedTarget.value) {
-    emit('gameAction', 'witch_action', { 
-      actionType: 'poison', 
-      targetId: selectedTarget.value 
-    })
+    emit('gameAction', 'witch_action', { actionType: 'poison', targetId: selectedTarget.value })
     selectedTarget.value = ''
   }
 }
@@ -440,8 +587,11 @@ const handleGuardSkip = () => {
   emit('gameAction', 'guard_protect', { targetId: null })
 }
 
-const handleSpeak = () => {
-  emit('gameAction', 'speak', {})
+const handleSheriffElect = (participate: boolean) => {
+  if (participate) {
+    emit('gameAction', 'sheriff_elect', {})
+  }
+  // 不上警不需要发送动作
 }
 
 const handleEndSpeak = () => {
@@ -457,6 +607,33 @@ const handleVote = () => {
 
 const handleSkipVote = () => {
   emit('gameAction', 'vote', { targetId: null })
+}
+
+const handleHunterShoot = () => {
+  if (selectedTarget.value) {
+    emit('gameAction', 'hunter_shoot', { targetId: selectedTarget.value })
+    selectedTarget.value = ''
+  }
+}
+
+const handleHunterSkip = () => {
+  emit('gameAction', 'hunter_shoot', { targetId: null })
+}
+
+const handleSheriffAssign = () => {
+  if (selectedTarget.value) {
+    emit('gameAction', 'sheriff_assign', { targetId: selectedTarget.value })
+    selectedTarget.value = ''
+  }
+}
+
+const handleSheriffAssignSkip = () => {
+  emit('gameAction', 'sheriff_assign', { targetId: null })
+}
+
+const handleLeaveMsg = () => {
+  emit('gameAction', 'leave_msg', { message: leaveMsg.value })
+  leaveMsg.value = ''
 }
 
 const handleRestartGame = () => {
@@ -595,6 +772,11 @@ const handleRestartGame = () => {
   margin-bottom: 15px;
 }
 
+.your-turn {
+  color: #67c23a;
+  font-weight: bold;
+}
+
 .speak-actions, .speaking-actions {
   text-align: center;
 }
@@ -624,4 +806,48 @@ const handleRestartGame = () => {
   margin-bottom: 20px;
   color: #333;
 }
-</style> 
+
+.host-actions {
+  margin-top: 15px;
+}
+
+.hint-text {
+  color: #999;
+  font-size: 12px;
+  margin-top: 8px;
+}
+
+.hint {
+  color: #909399;
+  font-size: 14px;
+}
+
+.antidote-section, .poison-section {
+  margin: 15px 0;
+  padding: 15px;
+  background: white;
+  border-radius: 6px;
+}
+
+.hunter-shoot-section, .sheriff-assign-section, .leave-msg-section {
+  padding: 10px 0;
+}
+
+.sheriff-elect-section {
+  text-align: center;
+  padding: 20px;
+}
+
+.free-discuss {
+  text-align: center;
+  padding: 15px;
+  background: #f0f9ff;
+  border-radius: 4px;
+  margin-bottom: 15px;
+}
+
+.free-discuss p {
+  margin: 0;
+  color: #409eff;
+}
+</style>

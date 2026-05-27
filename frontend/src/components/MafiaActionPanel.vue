@@ -3,14 +3,14 @@
     <!-- 等待开始阶段 -->
     <div v-if="gameState.status === 'WAITING'" class="waiting-actions">
       <el-button 
-        v-if="isHost && !isReady" 
+        v-if="!isReady" 
         @click="ready" 
         type="primary"
       >
         准备
       </el-button>
       <el-button 
-        v-if="isHost && isReady" 
+        v-if="isReady" 
         @click="unready" 
         type="default"
       >
@@ -64,6 +64,22 @@
         </div>
       </div>
 
+      <!-- 医生行动 -->
+      <div v-if="playerSecret?.role === 'DOCTOR'" class="doctor-actions">
+        <h5>选择要救的目标:</h5>
+        <div class="player-buttons">
+          <el-button
+            v-for="player in getAliveAllPlayers()"
+            :key="player.id"
+            @click="doctorSave(player.id)"
+            :disabled="!canOperate"
+            size="small"
+          >
+            {{ player.name }}
+          </el-button>
+        </div>
+      </div>
+
       <!-- 平民等待 -->
       <div v-if="playerSecret?.role === 'CIVILIAN'" class="civilian-wait">
         <p>平民请耐心等待，夜晚即将结束...</p>
@@ -71,21 +87,28 @@
     </div>
 
     <!-- 发言阶段 -->
-    <div v-if="gameState.status === 'SPEAK'" class="speak-actions">
+    <div v-if="gameState.status === 'SPEAK' || gameState.status === 'PK'" class="speak-actions">
       <div class="action-header">
-        <h4>发言阶段</h4>
+        <h4>{{ gameState.status === 'PK' ? 'PK发言阶段' : '发言阶段' }}</h4>
         <p v-if="getCurrentSpeaker()">
           当前发言: {{ getCurrentSpeaker()?.name }}
         </p>
       </div>
 
-      <div v-if="isMyTurn" class="my-turn">
+      <div v-if="canOperate" class="my-turn">
         <el-alert
-          title="轮到你发言了！"
+          :title="gameState.status === 'PK' ? '轮到你在PK中发言了！' : '轮到你发言了！'"
           type="info"
           show-icon
           :closable="false"
         />
+        <el-button 
+          @click="endSpeak" 
+          type="primary" 
+          style="margin-top: 10px;"
+        >
+          结束发言
+        </el-button>
       </div>
     </div>
 
@@ -209,7 +232,7 @@ interface Player {
   name: string
   alive: boolean
   team?: 'RED' | 'BLUE'
-  role?: 'KILLER' | 'COP' | 'CIVILIAN'
+  role?: 'KILLER' | 'COP' | 'DOCTOR' | 'CIVILIAN'
 }
 
 interface Props {
@@ -256,18 +279,43 @@ const getCurrentSpeaker = () => {
 
 const getAliveEnemyPlayers = (): Player[] => {
   if (!props.gameState.players) return []
-  return Object.values(props.gameState.players).filter((player: any): player is Player => 
-    player.alive && 
-    player.id !== store.currentUserId && 
-    player.team !== props.playerSecret?.team
-  )
+  const myTeam = props.playerSecret?.team
+  return Object.entries(props.gameState.players)
+    .filter(([id, player]: [string, any]) => {
+      return player.alive && id !== store.currentUserId && !isTeammate(id)
+    })
+    .map(([id, player]: [string, any]) => ({ ...player, id }))
 }
 
 const getAliveOtherPlayers = (): Player[] => {
   if (!props.gameState.players) return []
-  return Object.values(props.gameState.players).filter((player: any): player is Player => 
-    player.alive && player.id !== store.currentUserId
-  )
+  return Object.entries(props.gameState.players)
+    .filter(([id, player]: [string, any]) => player.alive && id !== store.currentUserId)
+    .map(([id, player]: [string, any]) => ({ ...player, id }))
+}
+
+const getAliveAllPlayers = (): Player[] => {
+  if (!props.gameState.players) return []
+  return Object.entries(props.gameState.players)
+    .filter(([_, player]: [string, any]) => player.alive)
+    .map(([id, player]: [string, any]) => ({ ...player, id }))
+}
+
+const isTeammate = (playerId: string): boolean => {
+  if (!props.playerSecret) return false
+  // 杀手之间是队友
+  if (props.playerSecret.role === 'KILLER') {
+    return props.playerSecret.teammates?.includes(playerId) ?? false
+  }
+  // 警察之间是队友
+  if (props.playerSecret.role === 'COP') {
+    return props.playerSecret.teammates?.includes(playerId) ?? false
+  }
+  // 医生之间是队友
+  if (props.playerSecret.role === 'DOCTOR') {
+    return props.playerSecret.teammates?.includes(playerId) ?? false
+  }
+  return false
 }
 
 const getPlayerName = (playerId: string): string => {
@@ -282,9 +330,11 @@ const getVoteButtonType = (playerId: string): string => {
 
 const getNightActionDescription = (): string => {
   if (props.playerSecret?.role === 'KILLER') {
-    return '杀手请选择tonight要杀死的目标'
+    return '杀手请选择今晚要杀死的目标'
   } else if (props.playerSecret?.role === 'COP') {
-    return '警察请选择tonight要查验的目标'
+    return '警察请选择今晚要查验的目标'
+  } else if (props.playerSecret?.role === 'DOCTOR') {
+    return '医生请选择今晚要救的目标'
   } else {
     return '夜晚降临，请耐心等待...'
   }
@@ -296,7 +346,9 @@ const unready = () => store.unready()
 const startGame = () => store.startGame()
 const killPerson = (targetId: string) => store.killPerson(targetId)
 const inspectSuspect = (targetId: string) => store.inspectSuspect(targetId)
+const doctorSave = (targetId: string) => store.doctorSave(targetId)
 const vote = (targetId: string) => store.vote(targetId)
+const endSpeak = () => store.endSpeak()
 const confess = () => store.confess()
 const endLastWord = () => store.endLastWord()
 const restartGame = () => store.restartGame()

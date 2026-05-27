@@ -3,7 +3,7 @@
  * One Night Ultimate Werewolf Game Presets
  */
 
-import { OnuWerewolfRole, OnuWerewolfConfig } from './onuWerewolfTypes';
+import { OnuWerewolfRole, OnuWerewolfConfig, ONU_WEREWOLF_ROLE_NAMES } from './onuWerewolfTypes';
 
 // 游戏预设接口
 export interface OnuWerewolfPreset {
@@ -297,6 +297,7 @@ export function validatePreset(preset: OnuWerewolfPreset): { valid: boolean; err
   const uniqueRoles = [
     OnuWerewolfRole.Doppelganger,
     OnuWerewolfRole.AlphaWolf,
+    OnuWerewolfRole.MysticWolf,
     OnuWerewolfRole.Seer,
     OnuWerewolfRole.Robber,
     OnuWerewolfRole.Troublemaker,
@@ -307,7 +308,7 @@ export function validatePreset(preset: OnuWerewolfPreset): { valid: boolean; err
   for (const role of uniqueRoles) {
     const count = preset.roles.filter(r => r === role).length;
     if (count > 1) {
-      return { valid: false, error: `角色${role}只能有一个` };
+      return { valid: false, error: `角色${ONU_WEREWOLF_ROLE_NAMES[role] || role}只能有一个` };
     }
   }
 

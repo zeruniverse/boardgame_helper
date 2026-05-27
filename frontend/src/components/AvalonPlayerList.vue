@@ -59,7 +59,7 @@ interface Props {
   players: Player[]
   hostId?: string
   currentUserId?: string
-  gamePlayersbyId?: Record<string, GamePlayer>
+  gamePlayersById?: Record<string, GamePlayer>
   showHostActions?: boolean
 }
 
@@ -74,7 +74,7 @@ defineEmits<{
 }>()
 
 const gamePlayer = (playerId: string): GamePlayer | undefined => {
-  return props.gamePlayersbyId?.[playerId]
+  return props.gamePlayersById?.[playerId]
 }
 
 const getTeamName = (team: string): string => {

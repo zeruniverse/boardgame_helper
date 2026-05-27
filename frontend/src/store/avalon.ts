@@ -25,6 +25,7 @@ interface AvalonGameState {
   statusMessage?: string;
   winner?: 'blue' | 'red';
   ladys?: string[];
+  consecutiveRejections?: number;
 }
 
 interface AvalonSecret {
@@ -32,7 +33,7 @@ interface AvalonSecret {
   role: string;
   team: 'blue' | 'red';
   visions?: string[];
-  ladyVision?: [string, string]; // [playerId, team]
+  ladyVision?: [string, string][]; // Array of [playerId, team] records
 }
 
 interface AvalonRoomState {
@@ -119,7 +120,7 @@ export const useAvalonStore = defineStore('avalon', {
       });
 
       // 游戏事件
-      this.socket.on('game_started', (data: { game: AvalonGameState; secret: AvalonSecret }) => {
+      this.socket.on('game_start', (data: { game: AvalonGameState; secret: AvalonSecret }) => {
         this.gameState = data.game;
         this.playerSecret = data.secret;
         if (this.room) {
@@ -145,12 +146,32 @@ export const useAvalonStore = defineStore('avalon', {
       });
 
       // 聊天事件
-      this.socket.on('chat_message', (message: any) => {
+      this.socket.on('chat_broadcast', (message: any) => {
         this.messages.push(message);
+      });
+
+      // 游戏消息事件
+      this.socket.on('game_message', (data: { message: string; timestamp: number }) => {
+        this.messages.push({
+          id: `gm_${Date.now()}`,
+          type: 'game',
+          message: data.message,
+          timestamp: data.timestamp
+        });
       });
 
       this.socket.on('system_message', (message: string) => {
         this.addSystemMessage(message);
+      });
+
+      // 湖上夫人验人结果
+      this.socket.on('lady_result', (data: { target: string; team: string }) => {
+        this.addSystemMessage(`湖上夫人验人结果：${data.target} 属于 ${data.team}`);
+      });
+
+      // 刺杀投票开始
+      this.socket.on('assassinate_vote_start', (data: any) => {
+        this.addSystemMessage(data.message || '刺客请求进行刺杀');
       });
 
       // 错误事件
@@ -252,14 +273,10 @@ export const useAvalonStore = defineStore('avalon', {
     },
 
     // 房间动作
-    sendMessage(message: string) {
+    sendMessage(message: string, channel: string = 'all') {
       if (!this.socket || !this.currentRoomId) return;
 
-      this.socket.emit('chat', {
-        roomId: this.currentRoomId,
-        playerId: this.currentUserId,
-        message
-      });
+      this.sendGameAction('chat', { message, channel });
     },
 
     transferHost(newHostId: string) {

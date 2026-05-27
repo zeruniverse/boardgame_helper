@@ -69,6 +69,14 @@ class TexasHoldemWorker extends BaseGameWorker {
 
   constructor() {
     super();
+    // 监听线程终止事件，清理定时器
+    if (parentPort) {
+      parentPort.on('message', (task: GameTask) => {
+        if (task.type === 'dispose') {
+          this.dispose();
+        }
+      });
+    }
     this.gameState = {
       deck: [],
       communityCards: [],
@@ -578,6 +586,11 @@ class TexasHoldemWorker extends BaseGameWorker {
     this.actionDeadline = null;
   }
 
+  // Worker线程终止时清理资源
+  private dispose() {
+    this.clearActionTimer();
+  }
+
   private handleTimeout() {
     // 超时处理 - 自动fold
     const gs = this.gameState;
@@ -685,6 +698,7 @@ class TexasHoldemWorker extends BaseGameWorker {
     this.gameState.acted = [];
     this.gameState.folded = [];
     this.gameState.stage = 'idle';
+    this.gameState.totalBets = {}; // 重置总投注记录
     
     // 同步最终的游戏状态（包括完整的公共牌）
     const gs = this.gameState;
@@ -1094,8 +1108,10 @@ class TexasHoldemWorker extends BaseGameWorker {
     const activeIds = this.participants.filter((id: string) => !gs.folded.includes(id));
     if (activeIds.length === 1) {
       const winner = this.room.players.find(p => p.id === activeIds[0])!;
-      winner.gameMetadata.chips += gs.pot;
-      this.sendToRoom('chat_broadcast', { message: `${winner.nickname} 赢得底池 ${gs.pot}` });
+      const potAmount = gs.pot;
+      winner.gameMetadata.chips += potAmount;
+      gs.pot = 0; // 清空底池，防止重复分配
+      this.sendToRoom('chat_broadcast', { message: `${winner.nickname} 赢得底池 ${potAmount}` });
       this.sendToRoom('room_update', this.room);
       this.handleGameOver();
       return;
@@ -1284,8 +1300,20 @@ class TexasHoldemWorker extends BaseGameWorker {
     const dealerGlobalIndex = this.room.players.findIndex(p => p.id === dealerPlayer.id);
     
     let nextPlayerIndex = (dealerGlobalIndex + 1) % this.room.players.length;
-    while (!activeIds.includes(this.room.players[nextPlayerIndex].id) || this.room.players[nextPlayerIndex].gameMetadata.chips === 0) {
+    let iterations = 0;
+    const maxIterations = this.room.players.length;
+    while (iterations < maxIterations && (!activeIds.includes(this.room.players[nextPlayerIndex].id) || this.room.players[nextPlayerIndex].gameMetadata.chips === 0)) {
       nextPlayerIndex = (nextPlayerIndex + 1) % this.room.players.length;
+      iterations++;
+    }
+    // 如果所有活跃玩家都已全下，直接结束游戏
+    if (iterations >= maxIterations) {
+      while (gs.round < 4) {
+        this.dealCommunityCards();
+        gs.round++;
+      }
+      this.showdown();
+      return;
     }
     
     gs.currentTurn = nextPlayerIndex;
@@ -1420,7 +1448,11 @@ class TexasHoldemWorker extends BaseGameWorker {
         }
         
         const sbOrder: string[] = [];
-        let idx = gs.sbIndex;
+        // 正确找到SB玩家在activeIds中的位置
+        const participatingPlayers = this.room.players.filter(p => this.participants.includes(p.id));
+        const sbPlayerId = participatingPlayers[gs.sbIndex]?.id;
+        let idx = sbPlayerId ? activeIds.indexOf(sbPlayerId) : 0;
+        if (idx < 0) idx = 0;
         while (sbOrder.length < winners.length) {
           const pid = activeIds[idx % activeIds.length];
           if (winners.some(w => w.id === pid)) {
@@ -1471,7 +1503,10 @@ class TexasHoldemWorker extends BaseGameWorker {
     totalBets: Record<string, number>,
     activeIds: string[]
   ): SidePot[] {
-    const entries = Object.entries(totalBets).map(([pid, amt]) => ({ pid, amt }));
+    const entries = Object.entries(totalBets)
+      .map(([pid, amt]) => ({ pid, amt }))
+      .filter(e => e.amt > 0); // 过滤掉0下注的条目
+    if (entries.length === 0) return [];
     const uniqueAmounts = Array.from(new Set(entries.map(e => e.amt))).sort((a, b) => a - b);
     const sidePots: SidePot[] = [];
     let prev = 0;
@@ -1479,7 +1514,9 @@ class TexasHoldemWorker extends BaseGameWorker {
       const eligibleAll = entries.filter(e => e.amt >= amt).map(e => e.pid);
       if (eligibleAll.length === 0) { prev = amt; continue; }
       const potAmt = (amt - prev) * eligibleAll.length;
-      sidePots.push({ amount: potAmt, eligibleIds: eligibleAll.filter(pid => activeIds.includes(pid)) });
+      if (potAmt > 0) {
+        sidePots.push({ amount: potAmt, eligibleIds: eligibleAll.filter(pid => activeIds.includes(pid)) });
+      }
       prev = amt;
     }
     return sidePots;

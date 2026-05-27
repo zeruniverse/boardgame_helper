@@ -60,6 +60,7 @@ interface AvalonGameState {
     system: string[];
   };
   actionFailed: number;               // 行动失败数
+  consecutiveRejections: number;      // 连续投票否决计数
   winner?: Team;                      // 获胜方
   // 阿瓦隆特有属性
   roles: [Role[], Role[]];            // [蓝方角色, 红方角色]
@@ -180,6 +181,7 @@ class AvalonWorker extends BaseGameWorker {
       speakedCount: 0,
       voteResult: { true: [], false: [], system: [] },
       actionFailed: 0,
+      consecutiveRejections: 0,
       roles: [[], []],
       assassinateInfo: {
         votes: { true: [], false: [] },
@@ -328,6 +330,15 @@ class AvalonWorker extends BaseGameWorker {
         case 'chat':
           this.handleChatMessage(playerId, actionData);
           break;
+        case 'restartGame':
+          this.handleRestartGame(playerId);
+          break;
+        case 'transferHost':
+          this.handleTransferHostAction(playerId, actionData.newHostId || actionData.playerId);
+          break;
+        case 'kickPlayer':
+          this.handleKickPlayerAction(playerId, actionData.playerId);
+          break;
         case 'heartbeat':
           this.handleHeartbeat(playerId);
           break;
@@ -424,6 +435,7 @@ class AvalonWorker extends BaseGameWorker {
       speakedCount: state.speakedCount,
       voteResult: state.voteResult,
       actionFailed: state.actionFailed,
+      consecutiveRejections: state.consecutiveRejections,
       winner: state.winner,
       roles: state.roles,
       ladys: state.ladys,
@@ -453,18 +465,19 @@ class AvalonWorker extends BaseGameWorker {
       }
       
       return {
+        playerId,
         team: Team.RED,
         role,
         visions: visions.sort((a, b) => state.players[a].index - state.players[b].index),
         ladyVision
       };
     }
-    
+
     // 蓝方成员
     if (state.topSecret.blue[playerId]) {
       const role = state.topSecret.blue[playerId];
       let visions: string[] = [];
-      
+
       switch (role) {
         case Role.MERLIN:
           // 梅林可以看到除莫德雷德外的所有红方
@@ -486,17 +499,19 @@ class AvalonWorker extends BaseGameWorker {
           // 普通忠臣没有特殊视野
           visions = [];
       }
-      
+
       return {
+        playerId,
         team: Team.BLUE,
         role,
         visions: visions.sort((a, b) => state.players[a].index - state.players[b].index),
         ladyVision
       };
     }
-    
+
     // 观战者
     return {
+      playerId,
       team: 'guest',
       role: 'guest',
       visions: [],
@@ -650,7 +665,10 @@ class AvalonWorker extends BaseGameWorker {
 
     // 记录投票
     state.voteResult[agree ? 'true' : 'false'].push(playerId);
-    
+
+    // 从operators中移除已投票的玩家
+    state.operators = state.operators.filter(id => id !== playerId);
+
     // 检查是否所有人都投票了
     const totalVotes = state.voteResult.true.length + state.voteResult.false.length;
     const totalPlayers = Object.keys(state.players).length;
@@ -750,11 +768,11 @@ class AvalonWorker extends BaseGameWorker {
       return;
     }
 
-    // 检查目标是否有效（必须是蓝方或奥伯伦）
-    const isValidTarget = state.topSecret.blue[targetId] || state.topSecret.red[targetId] === Role.OBERON;
+    // 检查目标是否有效（必须是蓝方阵营，奥伯伦不可作为刺杀目标）
+    const isValidTarget = state.topSecret.blue[targetId] !== undefined;
     if (!isValidTarget) {
       this.sendToPlayer(playerId, 'game_error', {
-        message: '无效的刺杀目标'
+        message: '无效的刺杀目标，只能选择亚瑟方成员'
       });
       return;
     }
@@ -821,13 +839,25 @@ class AvalonWorker extends BaseGameWorker {
 
   private handleChatMessage(playerId: string, data: any): void {
     const player = this.room.players.find(p => p.id === playerId);
-    if (player) {
-      this.sendToRoom('chat_broadcast', {
-        playerId,
-        playerName: player.nickname,
-        message: data.message,
-        timestamp: Date.now()
+    if (!player) return;
+
+    const messagePayload = {
+      playerId,
+      playerName: player.nickname,
+      message: data.message,
+      channel: data.channel || 'all',
+      timestamp: Date.now()
+    };
+
+    if (data.channel === 'evil') {
+      // 邪恶方密聊只发送给红方成员
+      const redPlayers = this.getRedPlayers();
+      redPlayers.forEach(id => {
+        this.sendToPlayer(id, 'chat_broadcast', messagePayload);
       });
+    } else {
+      // 全员频道广播给所有人
+      this.sendToRoom('chat_broadcast', messagePayload);
     }
   }
 
@@ -836,6 +866,49 @@ class AvalonWorker extends BaseGameWorker {
     if (player) {
       player.lastHeartbeat = Date.now();
     }
+  }
+
+  private handleRestartGame(playerId: string): void {
+    if (playerId !== this.room.hostId) return;
+
+    const state = this.gameState as AvalonGameState;
+    if (state.status !== GameStatus.OVER) return;
+
+    // 重置所有玩家准备状态
+    this.room.players.forEach(player => {
+      if (player.gameMetadata) {
+        player.gameMetadata.ready = false;
+      }
+    });
+
+    // 重新初始化游戏
+    this.initializeGameState();
+    this.sendToRoom('chat_broadcast', {
+      message: '房主重新开始游戏，请所有玩家重新准备',
+      type: 'system'
+    });
+    this.sendToRoom('room_update', this.room);
+  }
+
+  private handleTransferHostAction(playerId: string, newHostId: string): void {
+    if (playerId !== this.room.hostId) return;
+
+    const newHost = this.room.players.find(p => p.id === newHostId);
+    if (!newHost) return;
+
+    this.room.hostId = newHostId;
+    this.sendToRoom('chat_broadcast', {
+      message: `${newHost.nickname} 成为新的房主`,
+      type: 'system'
+    });
+    this.sendToRoom('room_update', this.room);
+  }
+
+  private handleKickPlayerAction(playerId: string, targetId: string): void {
+    if (playerId !== this.room.hostId) return;
+    if (playerId === targetId) return; // 不能踢自己
+
+    this.kickOutPlayer(targetId);
   }
 
   // 工具方法实现
@@ -885,16 +958,18 @@ class AvalonWorker extends BaseGameWorker {
 
   private getLadyVision(playerId: string): any {
     const state = this.gameState as AvalonGameState;
-    
+
     if (!this.isLakeLadyEnabled() || !state.ladys.includes(playerId)) {
       return [];
     }
 
-    const log = state.ladyLog.find(([from, _]) => from === playerId);
-    if (log) {
-      const [_, targetId] = log;
-      const team = state.topSecret.blue[targetId] ? 'blue' : 'red';
-      return [playerId, team];
+    // 返回所有验人记录
+    const logs = state.ladyLog.filter(([from, _]) => from === playerId);
+    if (logs.length > 0) {
+      return logs.map(([_, targetId]) => {
+        const team = state.topSecret.blue[targetId] ? 'blue' : 'red';
+        return [targetId, team];
+      });
     }
 
     return [];
@@ -1082,7 +1157,8 @@ class AvalonWorker extends BaseGameWorker {
     state.actionFailed = 0;
     state.ladys = [];
     state.ladyLog = [];
-    
+    state.consecutiveRejections = 0;
+
     // 设置操作时间
     state.operateEndTime = new Date(Date.now() + this.config.actionTime * 1000);
     
@@ -1160,18 +1236,28 @@ class AvalonWorker extends BaseGameWorker {
     const majorityNeeded = Math.floor(totalPlayers / 2) + 1;
     
     if (agreeCount >= majorityNeeded) {
-      // 投票通过，进入行动阶段
+      // 投票通过，进入行动阶段，重置连续否决计数
+      state.consecutiveRejections = 0;
       state.status = GameStatus.ACTION;
       state.operators = [...state.team];
       state.operateEndTime = new Date(Date.now() + this.config.actionTime * 1000);
-      
+
       this.setTimer(this.config.actionTime);
       this.sendGameMessage(`投票通过，队伍开始执行任务`);
     } else {
-      // 投票不通过，换下一个队长
+      // 投票不通过，递增连续否决计数
+      state.consecutiveRejections++;
+
+      // 检查是否连续5次否决
+      if (state.consecutiveRejections >= 5) {
+        this.endGame(Team.RED, `连续5次投票被否决`);
+        return;
+      }
+
+      // 换下一个队长
       state.captain = this.getNextPlayer(state.captain);
       this.startNewRound();
-      this.sendGameMessage(`投票不通过，队长更换为${this.getPlayerName(state.captain)}`);
+      this.sendGameMessage(`投票不通过（连续${state.consecutiveRejections}次），队长更换为${this.getPlayerName(state.captain)}`);
     }
   }
 

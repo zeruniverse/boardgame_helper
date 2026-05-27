@@ -149,8 +149,12 @@ function processWasherwoman(
   }
 
   const randomTownsfolk = townsfolk[Math.floor(Math.random() * townsfolk.length)];
-  const otherPlayers = allPlayers.filter(p => p.playerId !== player.playerId);
-  const randomOther = otherPlayers[Math.floor(Math.random() * otherPlayers.length)];
+  const otherPlayers = allPlayers.filter(p => 
+    p.playerId !== player.playerId && p.playerId !== randomTownsfolk.playerId
+  );
+  const randomOther = otherPlayers.length > 0 
+    ? otherPlayers[Math.floor(Math.random() * otherPlayers.length)]
+    : randomTownsfolk;
   
   const chosenPlayers = Math.random() < 0.5 
     ? [randomTownsfolk.playerId, randomOther.playerId]
@@ -185,8 +189,12 @@ function processLibrarian(
   }
 
   const randomOutsider = outsiders[Math.floor(Math.random() * outsiders.length)];
-  const otherPlayers = allPlayers.filter(p => p.playerId !== player.playerId);
-  const randomOther = otherPlayers[Math.floor(Math.random() * otherPlayers.length)];
+  const otherPlayers = allPlayers.filter(p => 
+    p.playerId !== player.playerId && p.playerId !== randomOutsider.playerId
+  );
+  const randomOther = otherPlayers.length > 0
+    ? otherPlayers[Math.floor(Math.random() * otherPlayers.length)]
+    : randomOutsider;
   
   const chosenPlayers = Math.random() < 0.5 
     ? [randomOutsider.playerId, randomOther.playerId]
@@ -220,8 +228,12 @@ function processInvestigator(
   }
 
   const randomMinion = minions[Math.floor(Math.random() * minions.length)];
-  const otherPlayers = allPlayers.filter(p => p.playerId !== player.playerId);
-  const randomOther = otherPlayers[Math.floor(Math.random() * otherPlayers.length)];
+  const otherPlayers = allPlayers.filter(p => 
+    p.playerId !== player.playerId && p.playerId !== randomMinion.playerId
+  );
+  const randomOther = otherPlayers.length > 0
+    ? otherPlayers[Math.floor(Math.random() * otherPlayers.length)]
+    : randomMinion;
   
   const chosenPlayers = Math.random() < 0.5 
     ? [randomMinion.playerId, randomOther.playerId]
@@ -324,9 +336,12 @@ function processDreamer(player: GamePlayer, allPlayers: GamePlayer[]): SkillResu
 }
 
 function processMathematician(player: GamePlayer, allPlayers: GamePlayer[]): SkillResult {
-  // 计算异常玩家数量
+  // 计算异常玩家数量（使用英文标记）
   const abnormalCount = allPlayers.filter(p => 
-    p.reminders.includes('中毒') || p.reminders.includes('疯狂')
+    p.reminders.includes('Poisoned') || 
+    p.reminders.includes('Mad') ||
+    p.reminders.includes('Drunk') ||
+    p.reminders.includes('Protected')
   ).length;
   
   return {
@@ -620,11 +635,12 @@ function processPukka(action: NightAction, allPlayers: GamePlayer[]): SkillResul
     return { success: false, message: '普卡必须选择一个目标' };
   }
 
+  // Pukka的机制：每晚选择一名玩家中毒，前一夜被中毒的玩家死亡（延迟一回合）
+  // 延迟死亡在botcWorker的processPukkaDelayedDeath中处理
   return {
     success: true,
     effects: {
-      poisoned: targets,
-      killed: targets
+      poisoned: targets
     }
   };
 }

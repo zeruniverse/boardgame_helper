@@ -188,10 +188,13 @@ interface Props {
   currentUserId: string
   gamePlayersById?: Record<string, Player>
   playerSecret?: {
-    role: 'KILLER' | 'COP' | 'CIVILIAN'
+    role: 'KILLER' | 'COP' | 'DOCTOR' | 'CIVILIAN'
     team: 'RED' | 'BLUE'
     teammates?: string[]
   }
+  gameState?: any
+  operators?: string[]
+  voteResult?: Record<string, string>
 }
 
 const props = defineProps<Props>()
@@ -232,9 +235,12 @@ const canManagePlayer = (player: Player): boolean => {
   return isHost.value && player.id !== props.currentUserId
 }
 
-const isSpeaking = (_playerId: string): boolean => {
-  // 这里需要从游戏状态中获取当前发言的玩家
-  // 暂时返回false，实际实现需要从父组件传入游戏状态
+const isSpeaking = (playerId: string): boolean => {
+  if (!props.gameState) return false
+  // 检查当前操作者是否为该玩家（在发言阶段时）
+  if (props.operators && props.operators.length === 1) {
+    return props.operators[0] === playerId
+  }
   return false
 }
 
@@ -258,10 +264,10 @@ const isBlueTeamPlayer = (playerId: string): boolean => {
   return player?.team === 'BLUE' && shouldShowRole(playerId)
 }
 
-const hasVotedFor = (_playerId: string): boolean => {
-  // 这里需要从游戏状态中获取投票信息
-  // 暂时返回false，实际实现需要从父组件传入游戏状态
-  return false
+const hasVotedFor = (playerId: string): boolean => {
+  if (!props.voteResult) return false
+  // 检查是否有任何玩家投了这个人
+  return Object.values(props.voteResult).includes(playerId)
 }
 
 const getRoleName = (role: string | undefined): string => {

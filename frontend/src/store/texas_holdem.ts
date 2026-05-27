@@ -22,6 +22,7 @@ export const useTexasHoldemStore = defineStore('texas_holdem', {
     autoStart: false,
     distributionActive: false,
     roomLocked: false,
+    allowSystemDealing: true, // 是否系统发牌模式，影响线下分池UI显示
     // 游戏阶段：'idle'(未开始/已结束), 'playing'(游戏中), 'distribution'(分池中)
     stage: 'idle' as 'idle' | 'playing' | 'distribution'
   }),
@@ -66,7 +67,7 @@ export const useTexasHoldemStore = defineStore('texas_holdem', {
         bets: Record<string, number>; 
         round: number; 
         currentBet: number; 
-        currentTurn: number; 
+        currentTurn: number | string; 
         stage?: 'idle' | 'playing' | 'distribution' 
       }) => {
         this.communityCards = data.communityCards;
@@ -78,7 +79,10 @@ export const useTexasHoldemStore = defineStore('texas_holdem', {
         if (data.stage !== undefined) {
           this.stage = data.stage;
         }
-        // currentTurn由action_request事件更新，这里不处理
+        // currentTurn可能是number(索引)或string(playerId)
+        if (typeof data.currentTurn === 'string') {
+          this.currentTurn = data.currentTurn;
+        }
       });
 
       // 请求玩家行动
@@ -134,24 +138,32 @@ export const useTexasHoldemStore = defineStore('texas_holdem', {
         this.messages.push(data);
       });
 
-      // 错误消息
-      mainStore.socket.on('error', (msg: string) => {
-        this.messages.push({ message: `[系统] ${msg}` });
+      // 错误消息 - 支持字符串和对象两种格式
+      mainStore.socket.on('error', (msg: string | { message?: string }) => {
+        const text = typeof msg === 'string' ? msg : (msg.message || '未知错误');
+        this.messages.push({ message: `[系统] ${text}` });
       });
 
-      // 房间更新
+      // 房间更新 - 使用Room数据结构中的正确字段
       mainStore.socket.on('room_update', (data: any) => {
-        this.players = data.players;
-        this.pot = data.game?.pot;
-        // 同步游戏参与者列表
-        this.participants = data.participants || [];
-        // 同步房间的自动开始状态
-        if (data.autoStart !== undefined) {
-          this.autoStart = data.autoStart;
+        if (data.players) {
+          this.players = data.players;
         }
-        // 同步房间锁定状态
-        if (data.locked !== undefined) {
-          this.roomLocked = data.locked;
+        // participants在gameMetadata中
+        if (data.gameMetadata?.participants !== undefined) {
+          this.participants = data.gameMetadata.participants;
+        }
+        // 同步房间的自动开始状态
+        if (data.gameMetadata?.autoStart !== undefined) {
+          this.autoStart = data.gameMetadata.autoStart;
+        }
+        // 同步系统发牌模式配置
+        if (data.gameMetadata?.allowSystemDealing !== undefined) {
+          this.allowSystemDealing = data.gameMetadata.allowSystemDealing;
+        }
+        // 同步房间锁定状态 - 后端用private字段
+        if (data.private !== undefined) {
+          this.roomLocked = data.private;
         }
       });
 
@@ -179,7 +191,14 @@ export const useTexasHoldemStore = defineStore('texas_holdem', {
       mainStore.socket.on('room_ready', (data: any) => {
         console.log('房间准备完成', data);
         // 房间准备完成，可以开始游戏
-        // 这个事件会被TexasHoldemRoom组件监听来隐藏"正在准备"提示
+      });
+
+      // 监听加入房间成功事件，获取后端分配的playerId
+      mainStore.socket.on('room_joined', (data: { room: any; player: any; isHost: boolean }) => {
+        if (data.player && data.player.id) {
+          this.playerId = data.player.id;
+          localStorage.setItem('texas_playerId', data.player.id);
+        }
       });
     },
 
@@ -192,18 +211,17 @@ export const useTexasHoldemStore = defineStore('texas_holdem', {
       this.messages = [];
       this.resetGameState();
       
-      const playerId = nickname; // 简化: 使用昵称作为 playerId
       this.currentRoom = roomId;
       this.nickname = nickname;
-      this.playerId = playerId;
+      // playerId由后端在room_joined事件中分配，临时使用nickname
+      // 后端会用socket.id关联玩家
       localStorage.setItem('texas_nickname', nickname);
-      localStorage.setItem('texas_playerId', playerId);
       localStorage.setItem('texas_currentRoom', roomId);
       
       // 设置新加入标记，避免Room组件重复reconnect
       sessionStorage.setItem('texas_newJoin', 'true');
       
-      mainStore.socket.emit('join_room', { roomId, playerId, nickname });
+      mainStore.socket.emit('join_room', { roomId, nickname });
     },
     
     // 通过房间名加入房间
@@ -216,9 +234,7 @@ export const useTexasHoldemStore = defineStore('texas_holdem', {
       this.resetGameState();
       
       this.nickname = nickname;
-      this.playerId = nickname;
       localStorage.setItem('texas_nickname', nickname);
-      localStorage.setItem('texas_playerId', nickname);
       
       // 设置新加入标记，避免Room组件重复reconnect
       sessionStorage.setItem('texas_newJoin', 'true');
@@ -235,11 +251,15 @@ export const useTexasHoldemStore = defineStore('texas_holdem', {
       }, 1000);
     },
 
-    // 延长时间
+    // 延长时间 - 使用game_action统一格式
     extendTime() {
       const mainStore = useMainStore();
       if (mainStore.socket && this.currentRoom) {
-        mainStore.socket.emit('extend_time', { roomId: this.currentRoom });
+        mainStore.socket.emit('game_action', {
+          roomId: this.currentRoom,
+          actionType: 'extendTime',
+          actionData: {}
+        });
       }
     },
 
@@ -312,7 +332,7 @@ export const useTexasHoldemStore = defineStore('texas_holdem', {
     leaveRoom() {
       if (this.socket) {
         if (this.currentRoom) {
-          this.socket.emit('leave_room', { roomId: this.currentRoom });
+          this.socket.emit('leave_room', { roomId: this.currentRoom, playerId: this.playerId });
         }
         
         this.currentRoom = null;
@@ -339,4 +359,4 @@ export const useTexasHoldemStore = defineStore('texas_holdem', {
       localStorage.setItem('texas_currentRoom', roomId);
     }
   }
-}); 
+});

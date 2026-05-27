@@ -45,18 +45,28 @@ import { useTexasHoldemStore } from '../store';
 
 const store = useTexasHoldemStore();
 const raiseAmount = ref(0);
-const toCall = computed(() => store.currentBet - (store.bets[store.nickname] || 0));
-const ownPlayer = computed(() => store.players.find((p: any) => p.id === store.nickname));
-const canCall = computed(() => store.currentTurn === store.nickname && toCall.value > 0 && ownPlayer.value && ownPlayer.value.chips > toCall.value && isInGame.value);
+// 使用playerId而不是nickname来查找下注额
+const toCall = computed(() => store.currentBet - (store.bets[store.playerId] || 0));
+// 使用playerId查找自己的玩家信息，从gameMetadata中获取筹码
+const ownPlayer = computed(() => store.players.find((p: any) => p.id === store.playerId));
+// canCall: 筹码 >= 需要跟注金额即可call（等于时可以all-in call）
+const canCall = computed(() => store.currentTurn === store.playerId && toCall.value > 0 && ownPlayer.value && (ownPlayer.value.gameMetadata?.chips || 0) >= toCall.value && isInGame.value);
 const canCheck = computed(() => isMyTurn.value && toCall.value === 0);
-const isMyTurn = computed(() => store.currentTurn === store.nickname && isInGame.value);
-const isInGame = computed(() => store.participants.includes(store.nickname));
+// 使用playerId比较而不是nickname
+const isMyTurn = computed(() => store.currentTurn === store.playerId && isInGame.value);
+const isInGame = computed(() => store.participants.includes(store.playerId));
 
+// 使用game_action统一格式发送玩家操作
 function action(type: string) {
   if (!store.socket || !store.currentRoom || !store.gameActive || !isInGame.value) return;
-  store.socket.emit('action', { roomId: store.currentRoom, action: type });
+  store.socket.emit('game_action', {
+    roomId: store.currentRoom,
+    actionType: 'playerAction',
+    actionData: { action: type }
+  });
 }
 
+// Raise操作使用game_action统一格式
 function raise() {
   if (!store.socket || !store.currentRoom || !store.gameActive || !isInGame.value) return;
   const val = Math.floor(raiseAmount.value);
@@ -64,10 +74,15 @@ function raise() {
     alert('请输入合法的正整数加注金额');
     return;
   }
-  const currentBet = store.bets[store.nickname] || 0;
+  // 计算新总下注额 = 当前已下注 + 需要跟注 + 额外加注
+  const currentBet = store.bets[store.playerId] || 0;
   const callAmount = toCall.value;
   const totalRaiseAmount = currentBet + callAmount + val;
-  store.socket.emit('action', { roomId: store.currentRoom, action: 'raise', amount: totalRaiseAmount });
+  store.socket.emit('game_action', {
+    roomId: store.currentRoom,
+    actionType: 'playerAction',
+    actionData: { action: 'raise', amount: totalRaiseAmount }
+  });
 }
 
 function extendTime() {

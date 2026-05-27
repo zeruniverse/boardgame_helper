@@ -25,7 +25,7 @@
         <div class="player-info">
           <div class="player-avatar">
             <el-avatar :size="32" :src="getPlayerAvatar(player.id)">
-              {{ player.name.charAt(0) }}
+              {{ (player.name || '?').charAt(0) }}
             </el-avatar>
             <div class="player-status" :class="getStatusClass(player)"></div>
           </div>
@@ -37,43 +37,43 @@
               <el-tag v-if="isStoryteller && player.id === storytellerId" type="info" size="small">说书人</el-tag>
             </div>
             
-                         <!-- 游戏中的角色信息（只有说书人能看到） -->
-             <div class="player-role" v-if="isStoryteller && getGamePlayer(player.id) && getGamePlayer(player.id).role">
-               <span class="role-name" :class="getTeamClass(getGamePlayer(player.id).role.team)">
-                 {{ getGamePlayer(player.id).role.name }}
-               </span>
-               <el-tag 
-                 v-if="!getGamePlayer(player.id).isAlive" 
-                 type="danger" 
-                 size="small"
-               >
-                 已死亡
-               </el-tag>
-             </div>
-             
-             <!-- 存活状态 -->
-             <div class="player-game-status" v-else-if="getGamePlayer(player.id)">
-               <el-tag 
-                 :type="getGamePlayer(player.id).isAlive ? 'success' : 'danger'" 
-                 size="small"
-               >
-                 {{ getGamePlayer(player.id).isAlive ? '存活' : '已死亡' }}
-               </el-tag>
-               <el-tag 
-                 v-if="getGamePlayer(player.id).isDrunk"
-                 type="warning"
-                 size="small"
-               >
-                 醉酒
-               </el-tag>
-               <el-tag 
-                 v-if="getGamePlayer(player.id).isPoisoned"
-                 type="danger"
-                 size="small"
-               >
-                 中毒
-               </el-tag>
-             </div>
+            <!-- 游戏中的角色信息（只有说书人能看到） -->
+            <div class="player-role" v-if="isStoryteller && getGamePlayer(player.id) && getGamePlayer(player.id).role">
+              <span class="role-name" :class="getTeamClass(getGamePlayer(player.id).role.team)">
+                {{ getGamePlayer(player.id).role.name }}
+              </span>
+              <el-tag 
+                v-if="getGamePlayer(player.id).isDead" 
+                type="danger" 
+                size="small"
+              >
+                已死亡
+              </el-tag>
+            </div>
+            
+            <!-- 存活状态 -->
+            <div class="player-game-status" v-else-if="getGamePlayer(player.id)">
+              <el-tag 
+                :type="!getGamePlayer(player.id).isDead ? 'success' : 'danger'" 
+                size="small"
+              >
+                {{ !getGamePlayer(player.id).isDead ? '存活' : '已死亡' }}
+              </el-tag>
+              <el-tag 
+                v-if="getGamePlayer(player.id).reminders?.some((r: string) => r === 'Drunk' || r === '醉酒')"
+                type="warning"
+                size="small"
+              >
+                醉酒
+              </el-tag>
+              <el-tag 
+                v-if="getGamePlayer(player.id).reminders?.some((r: string) => r === 'Poisoned' || r === '中毒')"
+                type="danger"
+                size="small"
+              >
+                中毒
+              </el-tag>
+            </div>
           </div>
         </div>
 
@@ -95,17 +95,17 @@
 
           <!-- 房主操作 -->
           <template v-if="isHost && player.id !== currentUserId">
-                         <el-tooltip content="转移房主" placement="top">
-               <el-button 
-                 size="small"
-                 type="warning"
-                 plain
-                 circle
-                 @click="transferHost(player.id)"
-               >
-                 <el-icon><MoreFilled /></el-icon>
-               </el-button>
-             </el-tooltip>
+            <el-tooltip content="转移房主" placement="top">
+              <el-button 
+                size="small"
+                type="warning"
+                plain
+                circle
+                @click="transferHost(player.id)"
+              >
+                <el-icon><MoreFilled /></el-icon>
+              </el-button>
+            </el-tooltip>
             
             <el-tooltip content="踢出房间" placement="top">
               <el-button 
@@ -231,18 +231,19 @@ const isHost = computed(() => {
   return props.currentUserId === props.hostId
 })
 
+// 使用游戏阶段判断游戏是否已开始
 const gameStarted = computed(() => {
-  return props.gamePlayers && props.gamePlayers.length > 0
+  return props.gamePlayers && props.gamePlayers.length > 0 && 
+    props.gamePlayers.some((p: any) => p.role !== null)
 })
 
 const storytellerId = computed(() => {
-  // 从游戏配置中获取说书人ID
   return selectedStoryteller.value
 })
 
-// 获取玩家在游戏中的信息
+// 获取玩家在游戏中的信息 - 使用playerId匹配
 const getGamePlayer = (playerId: string) => {
-  return props.gamePlayers?.find(p => p.id === playerId) || null
+  return props.gamePlayers?.find(p => p.id === playerId || p.playerId === playerId) || null
 }
 
 // 获取玩家样式类
@@ -258,7 +259,7 @@ const getPlayerClass = (player: any) => {
   }
   
   const gamePlayer = getGamePlayer(player.id)
-  if (gamePlayer && !gamePlayer.isAlive) {
+  if (gamePlayer && gamePlayer.isDead) {
     classes.push('dead')
   }
   
@@ -273,11 +274,14 @@ const getStatusClass = (player: any) => {
     return 'status-waiting'
   }
   
-  if (!gamePlayer.isAlive) {
+  if (gamePlayer.isDead) {
     return 'status-dead'
   }
   
-  if (gamePlayer.isDrunk || gamePlayer.isPoisoned) {
+  const isDebuffed = gamePlayer.reminders?.some((r: string) => 
+    r === 'Drunk' || r === '醉酒' || r === 'Poisoned' || r === '中毒'
+  )
+  if (isDebuffed) {
     return 'status-debuffed'
   }
   
@@ -515,4 +519,4 @@ const handleStorytellerAction = (command: any) => {
   align-items: center;
   width: 100%;
 }
-</style> 
+</style>

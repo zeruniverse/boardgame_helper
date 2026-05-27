@@ -23,6 +23,7 @@ enum GameStatus {
 enum Role {
   KILLER = 'killer',     // 杀手
   COP = 'cop',           // 警察
+  DOCTOR = 'doctor',     // 医生
   CIVILIAN = 'civilian'  // 平民
 }
 
@@ -40,6 +41,7 @@ interface MafiaGameState {
   topSecret: {
     killer: string[];
     cop: string[];
+    doctor: string[];
     civilian: string[];
     copVersion: [string, boolean][];   // 警察验人记录 [被验者ID, 是否是杀手]
   };
@@ -53,13 +55,20 @@ interface MafiaGameState {
   systemVote: string[];               // 系统代投玩家列表
   inspect: Record<string, string>;    // 警察验人 {警察ID: 被验者ID}
   wantToKill: Record<string, string>; // 杀手杀人 {杀手ID: 被杀者ID}
+  wantToSave: Record<string, string>; // 医生救人 {医生ID: 被救者ID}
   personWillDie: string | null;       // 夜晚将死的人
+  personSaved: string | null;         // 夜晚被救的人
   killerActionLock: boolean;          // 杀手行动锁
   copActionLock: boolean;             // 警察行动锁
+  doctorActionLock: boolean;          // 医生行动锁
   lastWordCount: number;              // 剩余遗言次数
   winner?: Team;                      // 获胜方
   killerCount: number;                // 杀手数量
   copCount: number;                   // 警察数量
+  doctorCount: number;                // 医生数量
+  alivePlayersOrder: string[];        // 存活玩家发言顺序
+  speakingPlayerIndex: number;        // 当前发言玩家索引
+  deathQueue: Array<{playerId: string; deathReason: string; deathDay: number}>; // 死亡记录
 }
 
 interface MafiaPlayer {
@@ -94,21 +103,27 @@ interface GameTaskResponse {
   error?: string;
 }
 
-// 团队配置：[杀手数, 警察数, 平民数]
-const MAFIA_TEAM_CONFIG: Record<number, [number, number, number]> = {
-  8: [2, 2, 4],
-  9: [2, 2, 5],
-  10: [2, 2, 6],
-  11: [3, 3, 5],
-  12: [3, 3, 6],
-  13: [3, 3, 7],
-  14: [3, 3, 8],
-  15: [4, 4, 7],
-  16: [4, 4, 8]
+// 团队配置：[杀手数, 警察数, 医生数, 平民数]
+const MAFIA_TEAM_CONFIG: Record<number, [number, number, number, number]> = {
+  6: [1, 1, 1, 3],
+  7: [1, 1, 1, 4],
+  8: [2, 2, 1, 3],
+  9: [2, 2, 1, 4],
+  10: [2, 2, 1, 5],
+  11: [3, 2, 1, 5],
+  12: [3, 3, 1, 5],
+  13: [3, 3, 1, 6],
+  14: [3, 3, 1, 7],
+  15: [3, 3, 1, 8],
+  16: [4, 3, 1, 8],
+  17: [4, 4, 1, 8],
+  18: [4, 4, 1, 9],
+  19: [4, 4, 2, 9],
+  20: [4, 4, 2, 10]
 };
 
-const MAX_PLAYER_COUNT = 16;
-const MIN_PLAYER_COUNT = 8;
+const MAX_PLAYER_COUNT = 20;
+const MIN_PLAYER_COUNT = 6;
 
 class MafiaWorker extends BaseGameWorker {
   private config!: MafiaConfig;
@@ -127,6 +142,7 @@ class MafiaWorker extends BaseGameWorker {
       topSecret: {
         killer: [],
         cop: [],
+        doctor: [],
         civilian: [],
         copVersion: []
       },
@@ -140,12 +156,19 @@ class MafiaWorker extends BaseGameWorker {
       systemVote: [],
       inspect: {},
       wantToKill: {},
+      wantToSave: {},
       personWillDie: null,
+      personSaved: null,
       killerActionLock: true,
       copActionLock: true,
+      doctorActionLock: true,
       lastWordCount: 0,
       killerCount: 0,
-      copCount: 0
+      copCount: 0,
+      doctorCount: 0,
+      alivePlayersOrder: [],
+      speakingPlayerIndex: 0,
+      deathQueue: []
     } as MafiaGameState;
   }
 
@@ -229,6 +252,9 @@ class MafiaWorker extends BaseGameWorker {
         case 'kill_person':
           this.handleKillPerson(playerId, actionData.targetId);
           break;
+        case 'doctor_save':
+          this.handleDoctorSave(playerId, actionData.targetId);
+          break;
         case 'end_last_word':
           this.handleEndLastWord(playerId);
           break;
@@ -243,6 +269,9 @@ class MafiaWorker extends BaseGameWorker {
           break;
         case 'chat_message':
           this.handleChatMessage(playerId, actionData);
+          break;
+        case 'restart_game':
+          this.handleRestartGame(playerId);
           break;
         case 'heartbeat':
           this.handleHeartbeat(playerId);
@@ -308,8 +337,9 @@ class MafiaWorker extends BaseGameWorker {
         socketId,
         event: 'game_state_sync',
         data: {
-          gameInfo: this.getGameInfo(),
-          secret: this.getSecretForPlayer(playerId)
+          game: this.getGameInfo(),
+          secret: this.getSecretForPlayer(playerId),
+          currentUserId: playerId
         }
       }
     });
@@ -318,6 +348,24 @@ class MafiaWorker extends BaseGameWorker {
   private getGameInfo(): any {
     const gameState = this.gameState as MafiaGameState;
     const timeLeft = this.getTimeLeft();
+    
+    // 计算投票统计
+    const voteCounts: Record<string, number> = {};
+    Object.values(gameState.voteResult).forEach(target => {
+      voteCounts[target] = (voteCounts[target] || 0) + 1;
+    });
+    
+    // 确定当前发言者
+    let speakingPlayerIndex = -1;
+    if (gameState.operators.length === 1 && 
+        [GameStatus.SPEAK, GameStatus.PK, GameStatus.LAST_WORD, GameStatus.LAST_WORD_DAYTIME].includes(gameState.status)) {
+      const operatorId = gameState.operators[0];
+      speakingPlayerIndex = gameState.alivePlayersOrder.indexOf(operatorId);
+      if (speakingPlayerIndex === -1) {
+        // PK阶段或遗言阶段的发言者可能不在alivePlayersOrder中
+        speakingPlayerIndex = 0;
+      }
+    }
     
     return {
       status: gameState.status,
@@ -329,14 +377,26 @@ class MafiaWorker extends BaseGameWorker {
       pkSpeakedCount: gameState.pkSpeakedCount,
       pkPlayers: gameState.pkPlayers,
       voteResult: gameState.voteResult,
+      voteCounts,
       systemVote: gameState.systemVote,
       lastWordCount: gameState.lastWordCount,
+      lastWordPlayer: gameState.operators.length === 1 && 
+        [GameStatus.LAST_WORD, GameStatus.LAST_WORD_DAYTIME].includes(gameState.status) 
+        ? gameState.operators[0] : null,
       winner: gameState.winner,
       killerCount: gameState.killerCount,
       copCount: gameState.copCount,
+      doctorCount: gameState.doctorCount,
       timeLeft,
       statusMessage: this.getStatusMessage(),
-      muteList: this.getMuteList()
+      muteList: this.getMuteList(),
+      alivePlayersOrder: gameState.alivePlayersOrder,
+      speakingPlayerIndex,
+      deathQueue: gameState.deathQueue,
+      nightActions: {
+        killTargets: Object.values(gameState.wantToKill),
+        inspectTargets: Object.values(gameState.inspect)
+      }
     };
   }
 
@@ -345,28 +405,48 @@ class MafiaWorker extends BaseGameWorker {
     
     if (gameState.topSecret.killer.includes(playerId)) {
       return {
-        team: 'killer', 
-        teamates: gameState.topSecret.killer,
+        playerId,
+        role: 'KILLER',
+        team: 'RED',
+        teammates: gameState.topSecret.killer,
         actionLock: gameState.killerActionLock,
         wantToKill: gameState.wantToKill
       };
     } else if (gameState.topSecret.cop.includes(playerId)) {
       return {
-        team: 'cop',
-        teamates: gameState.topSecret.cop,
+        playerId,
+        role: 'COP',
+        team: 'BLUE',
+        teammates: gameState.topSecret.cop,
         actionLock: gameState.copActionLock,
-        copVersion: gameState.topSecret.copVersion,
+        inspectResults: gameState.topSecret.copVersion.map(([target, result]) => ({
+          target,
+          result: result ? 'RED' : 'BLUE',
+          day: gameState.day
+        })),
         inspect: gameState.inspect
+      };
+    } else if (gameState.topSecret.doctor.includes(playerId)) {
+      return {
+        playerId,
+        role: 'DOCTOR',
+        team: 'BLUE',
+        teammates: gameState.topSecret.doctor,
+        actionLock: gameState.doctorActionLock
       };
     } else if (gameState.topSecret.civilian.includes(playerId)) {
       return {
-        team: 'civilian',
-        teamates: []
+        playerId,
+        role: 'CIVILIAN',
+        team: 'BLUE',
+        teammates: []
       };
     } else {
       return {
-        team: 'guest',
-        teamates: []
+        playerId,
+        role: 'GUEST',
+        team: 'NONE',
+        teammates: []
       };
     }
   }
@@ -493,7 +573,7 @@ class MafiaWorker extends BaseGameWorker {
     
     if (readyCount < MIN_PLAYER_COUNT || readyCount > MAX_PLAYER_COUNT) {
       this.sendToPlayer(playerId, 'game_error', {
-        message: `准备人数要大于${MIN_PLAYER_COUNT}人, 小于${MAX_PLAYER_COUNT}人`
+        message: `准备人数要在${MIN_PLAYER_COUNT}人到${MAX_PLAYER_COUNT}人之间`
       });
       return;
     }
@@ -512,13 +592,14 @@ class MafiaWorker extends BaseGameWorker {
     const gameState = this.gameState as MafiaGameState;
     const playerCount = readyPlayers.length;
     
-    // 获取角色配置
-    const [killerCount, copCount, civilianCount] = MAFIA_TEAM_CONFIG[playerCount];
+    // 获取角色配置 [杀手数, 警察数, 医生数, 平民数]
+    const [killerCount, copCount, doctorCount, civilianCount] = MAFIA_TEAM_CONFIG[playerCount];
     
     // 分配角色
     const roles: Role[] = [
       ...Array(killerCount).fill(Role.KILLER),
       ...Array(copCount).fill(Role.COP),
+      ...Array(doctorCount).fill(Role.DOCTOR),
       ...Array(civilianCount).fill(Role.CIVILIAN)
     ];
     
@@ -532,8 +613,12 @@ class MafiaWorker extends BaseGameWorker {
     gameState.step = 1;
     gameState.killerCount = killerCount;
     gameState.copCount = copCount;
+    gameState.doctorCount = doctorCount;
     gameState.operators = shuffledPlayers.map(p => p.id);
     gameState.operateEndTime = new Date(Date.now() + this.config.nightTime * 1000);
+    gameState.alivePlayersOrder = shuffledPlayers.map(p => p.id);
+    gameState.speakingPlayerIndex = 0;
+    gameState.deathQueue = [];
     
     // 分配玩家信息和角色
     shuffledPlayers.forEach((player, index) => {
@@ -553,6 +638,9 @@ class MafiaWorker extends BaseGameWorker {
         case Role.COP:
           gameState.topSecret.cop.push(player.id);
           break;
+        case Role.DOCTOR:
+          gameState.topSecret.doctor.push(player.id);
+          break;
         case Role.CIVILIAN:
           gameState.topSecret.civilian.push(player.id);
           break;
@@ -564,17 +652,21 @@ class MafiaWorker extends BaseGameWorker {
       this.handleTimeout();
     });
 
-    const message = "游戏已开始, 请从玩家列表处查看自己身份\n天黑了, 警察、杀手都出来干活了";
-    this.sendToRoom('game_started', {
-      message,
-      gameInfo: this.getGameInfo()
-    });
-
-    // 发送角色信息给每个玩家
+    const message = "游戏已开始, 请从玩家列表处查看自己身份\n天黑了, 警察、杀手、医生都出来干活了";
+    
+    // 发送统一的游戏开始事件（包含游戏信息和角色信息）
     shuffledPlayers.forEach(player => {
-      this.sendToPlayer(player.id, 'role_assigned', {
+      this.sendToPlayer(player.id, 'game_started', {
+        message,
+        game: this.getGameInfo(),
         secret: this.getSecretForPlayer(player.id)
       });
+    });
+    
+    // 同时发送房间级别的事件用于系统消息
+    this.sendToRoom('game_started_broadcast', {
+      message,
+      gameInfo: this.getGameInfo()
     });
   }
 
@@ -613,13 +705,57 @@ class MafiaWorker extends BaseGameWorker {
       
       this.sendToRoom('inspect_result', { message });
 
-      // 检查是否可以结束夜晚
-      if (!gameState.copActionLock && !gameState.killerActionLock) {
+      // 检查是否可以结束夜晚（警察和杀手和医生都完成）
+      if (!gameState.copActionLock && !gameState.killerActionLock && !gameState.doctorActionLock) {
         this.endNight();
       }
     } else {
       this.sendToPlayer(playerId, 'inspect_pending', {
         message: '验人选择已记录，等待其他警察选择'
+      });
+    }
+  }
+
+  private handleDoctorSave(playerId: string, targetId: string): void {
+    const gameState = this.gameState as MafiaGameState;
+    
+    // 检查游戏状态和玩家身份
+    if (gameState.status !== GameStatus.NIGHT || 
+        !gameState.topSecret.doctor.includes(playerId) ||
+        !gameState.players[playerId]?.alive) {
+      return;
+    }
+
+    // 记录救人选择
+    gameState.wantToSave[playerId] = targetId;
+    
+    // 移除离线医生的选择
+    const aliveOfflineDoctors = this.getAliveOfflineDoctors();
+    aliveOfflineDoctors.forEach(docId => {
+      delete gameState.wantToSave[docId];
+    });
+
+    // 检查是否所有在线医生都做出了选择
+    const aliveOnlineDoctors = this.getAliveOnlineDoctors();
+    const allDoctorsChosen = aliveOnlineDoctors.every(docId => docId in gameState.wantToSave);
+    
+    if (allDoctorsChosen) {
+      // 执行救人（取第一个医生的选择）
+      const personSaved = Object.values(gameState.wantToSave)[0];
+      gameState.personSaved = personSaved;
+      gameState.doctorActionLock = false;
+      gameState.wantToSave = {};
+
+      const message = `你救了${this.getPlayerName(personSaved)}`;
+      this.sendToRoom('save_result', { message });
+
+      // 检查是否可以结束夜晚
+      if (!gameState.copActionLock && !gameState.killerActionLock && !gameState.doctorActionLock) {
+        this.endNight();
+      }
+    } else {
+      this.sendToPlayer(playerId, 'save_pending', {
+        message: '救人选择已记录，等待其他医生选择'
       });
     }
   }
@@ -665,8 +801,8 @@ class MafiaWorker extends BaseGameWorker {
         return;
       }
 
-      // 检查是否可以结束夜晚
-      if (!gameState.copActionLock && !gameState.killerActionLock) {
+      // 检查是否可以结束夜晚（所有角色都完成行动）
+      if (!gameState.copActionLock && !gameState.killerActionLock && !gameState.doctorActionLock) {
         this.endNight();
       }
     } else {
@@ -686,29 +822,55 @@ class MafiaWorker extends BaseGameWorker {
 
     if (gameState.status === GameStatus.LAST_WORD) {
       // 夜晚遗言结束，进入发言阶段
-      const nextSpeaker = this.getNextPlayer(playerId);
       gameState.players[playerId].alive = false;
+      gameState.deathQueue.push({
+        playerId,
+        deathReason: '被杀手杀害',
+        deathDay: gameState.day
+      });
+      gameState.personWillDie = null;
+      
+      // 更新发言顺序（移除死亡的玩家）
+      gameState.alivePlayersOrder = this.getAlivePlayers();
+      const nextSpeaker = gameState.alivePlayersOrder[0] || '';
       gameState.status = GameStatus.SPEAK;
       gameState.operators = [nextSpeaker];
+      gameState.speakingPlayerIndex = 0;
+      gameState.speakedCount = 0;
       gameState.step += 1;
       gameState.operateEndTime = new Date(Date.now() + this.config.speakTime * 1000);
 
       this.setTimer(this.config.speakTime * 1000, () => this.handleTimeout());
 
       const message = `请${this.getPlayerName(nextSpeaker)}发言`;
-      this.sendToRoom('speak_start', { message, gameInfo: this.getGameInfo() });
+      this.sendToRoom('day_start', { message, gameInfo: this.getGameInfo() });
     } else {
       // 白天遗言结束，进入夜晚
       gameState.players[playerId].alive = false;
+      gameState.deathQueue.push({
+        playerId,
+        deathReason: '被投票放逐',
+        deathDay: gameState.day
+      });
       gameState.status = GameStatus.NIGHT;
-      gameState.operators = Object.keys(gameState.players);
+      gameState.operators = Object.keys(gameState.players).filter(id => gameState.players[id].alive);
+      gameState.alivePlayersOrder = this.getAlivePlayers();
+      gameState.speakingPlayerIndex = -1;
       gameState.step += 1;
       gameState.day += 1;
+      gameState.personWillDie = null;
+      gameState.personSaved = null;
+      gameState.killerActionLock = true;
+      gameState.copActionLock = true;
+      gameState.doctorActionLock = true;
+      gameState.inspect = {};
+      gameState.wantToKill = {};
+      gameState.wantToSave = {};
       gameState.operateEndTime = new Date(Date.now() + this.config.nightTime * 1000);
 
       this.setTimer(this.config.nightTime * 1000, () => this.handleTimeout());
 
-      const message = "天又黑了, 警察、杀手都出来干活了";
+      const message = "天又黑了, 警察、杀手、医生都出来干活了";
       this.sendToRoom('night_start', { message, gameInfo: this.getGameInfo() });
     }
   }
@@ -723,12 +885,17 @@ class MafiaWorker extends BaseGameWorker {
 
     if (gameState.status === GameStatus.SPEAK) {
       const alivePlayers = this.getAlivePlayers();
-      if (this.config.speakTime === 0 || gameState.speakedCount + 1 === alivePlayers.length) {
+      gameState.speakedCount += 1;
+      
+      if (this.config.speakTime === 0 || gameState.speakedCount >= alivePlayers.length) {
         // 所有人都发过言了，进入投票阶段
         gameState.operators = alivePlayers;
         gameState.status = GameStatus.VOTE;
         gameState.speakedCount = 0;
+        gameState.speakingPlayerIndex = -1;
         gameState.step += 1;
+        gameState.voteResult = {};
+        gameState.systemVote = [];
         gameState.operateEndTime = new Date(Date.now() + this.config.actionTime * 1000);
 
         this.setTimer(this.config.actionTime * 1000, () => this.handleTimeout());
@@ -739,7 +906,7 @@ class MafiaWorker extends BaseGameWorker {
         // 下一个人发言
         const nextSpeaker = this.getNextPlayer(playerId);
         gameState.operators = [nextSpeaker];
-        gameState.speakedCount += 1;
+        gameState.speakingPlayerIndex = alivePlayers.indexOf(nextSpeaker);
         gameState.step += 1;
         gameState.operateEndTime = new Date(Date.now() + this.config.speakTime * 1000);
 
@@ -749,24 +916,28 @@ class MafiaWorker extends BaseGameWorker {
         this.sendToRoom('speak_continue', { message, gameInfo: this.getGameInfo() });
       }
     } else if (gameState.status === GameStatus.PK) {
-      if (this.config.speakTime === 0 || gameState.pkSpeakedCount + 1 === gameState.pkPlayers.length) {
-        // PK发言结束，进入投票
+      gameState.pkSpeakedCount += 1;
+      
+      if (this.config.speakTime === 0 || gameState.pkSpeakedCount >= gameState.pkPlayers.length) {
+        // PK发言结束，进入PK投票（只有PK玩家可以被投）
         gameState.operators = this.getAlivePlayers();
         gameState.status = GameStatus.VOTE;
         gameState.step += 1;
         gameState.pkSpeakedCount = 0;
+        gameState.speakingPlayerIndex = -1;
+        gameState.voteResult = {};
+        gameState.systemVote = [];
         gameState.operateEndTime = new Date(Date.now() + this.config.actionTime * 1000);
 
         this.setTimer(this.config.actionTime * 1000, () => this.handleTimeout());
 
-        const message = "请在PK玩家中投票选出您认为最像杀手的玩家, 得票最多者将被驱逐, 平票将进入PK阶段";
+        const message = "请在PK玩家中投票选出您认为最像杀手的玩家, 平票将直接进入夜晚";
         this.sendToRoom('pk_vote_start', { message, gameInfo: this.getGameInfo() });
       } else {
         // 下一个PK玩家发言
-        const nextSpeaker = gameState.pkPlayers[gameState.pkSpeakedCount + 1];
+        const nextSpeaker = gameState.pkPlayers[gameState.pkSpeakedCount];
         gameState.operators = [nextSpeaker];
         gameState.step += 1;
-        gameState.pkSpeakedCount += 1;
         gameState.operateEndTime = new Date(Date.now() + this.config.speakTime * 1000);
 
         this.setTimer(this.config.speakTime * 1000, () => this.handleTimeout());
@@ -887,28 +1058,42 @@ class MafiaWorker extends BaseGameWorker {
   private getAliveOnlineCops(): string[] {
     const gameState = this.gameState as MafiaGameState;
     return gameState.topSecret.cop.filter(id => 
-      gameState.players[id]?.alive && this.room.players.find(p => p.id === id)
+      gameState.players[id]?.alive && this.room.players.find(p => p.id === id)?.online
     );
   }
 
   private getAliveOfflineCops(): string[] {
     const gameState = this.gameState as MafiaGameState;
     return gameState.topSecret.cop.filter(id => 
-      gameState.players[id]?.alive && !this.room.players.find(p => p.id === id)
+      gameState.players[id]?.alive && !this.room.players.find(p => p.id === id)?.online
     );
   }
 
   private getAliveOnlineKillers(): string[] {
     const gameState = this.gameState as MafiaGameState;
     return gameState.topSecret.killer.filter(id => 
-      gameState.players[id]?.alive && this.room.players.find(p => p.id === id)
+      gameState.players[id]?.alive && this.room.players.find(p => p.id === id)?.online
     );
   }
 
   private getAliveOfflineKillers(): string[] {
     const gameState = this.gameState as MafiaGameState;
     return gameState.topSecret.killer.filter(id => 
-      gameState.players[id]?.alive && !this.room.players.find(p => p.id === id)
+      gameState.players[id]?.alive && !this.room.players.find(p => p.id === id)?.online
+    );
+  }
+
+  private getAliveOnlineDoctors(): string[] {
+    const gameState = this.gameState as MafiaGameState;
+    return gameState.topSecret.doctor.filter(id => 
+      gameState.players[id]?.alive && this.room.players.find(p => p.id === id)?.online
+    );
+  }
+
+  private getAliveOfflineDoctors(): string[] {
+    const gameState = this.gameState as MafiaGameState;
+    return gameState.topSecret.doctor.filter(id => 
+      gameState.players[id]?.alive && !this.room.players.find(p => p.id === id)?.online
     );
   }
 
@@ -960,22 +1145,38 @@ class MafiaWorker extends BaseGameWorker {
   private nightTimeout(): void {
     const gameState = this.gameState as MafiaGameState;
     
-    if (gameState.killerActionLock) {
-      // 平安夜
+    // 处理警察验人结果（如果已完成但未结束夜晚）
+    if (!gameState.copActionLock && gameState.topSecret.copVersion.length > 0) {
+      const lastInspect = gameState.topSecret.copVersion[gameState.topSecret.copVersion.length - 1];
+      const message = `经查证${this.getPlayerName(lastInspect[0])}是${lastInspect[1] ? '<span class="red text">坏人!</span>' : '<span class="blue text">好人!</span>'}`;
+      this.sendToRoom('inspect_result', { message });
+    }
+    
+    // 重置所有行动锁和状态
+    gameState.killerActionLock = true;
+    gameState.copActionLock = true;
+    gameState.doctorActionLock = true;
+    gameState.inspect = {};
+    gameState.wantToKill = {};
+    gameState.wantToSave = {};
+    
+    if (!gameState.personWillDie) {
+      // 平安夜（杀手没杀人或医生救了人）
       const firstPlayer = this.getAlivePlayers()[0];
-      gameState.killerActionLock = true;
-      gameState.copActionLock = true;
       gameState.step += 1;
-      gameState.inspect = {};
-      gameState.wantToKill = {};
       gameState.status = GameStatus.SPEAK;
       gameState.operators = [firstPlayer];
+      gameState.speakingPlayerIndex = 0;
+      gameState.speakedCount = 0;
+      gameState.personSaved = null;
       gameState.operateEndTime = new Date(Date.now() + this.config.speakTime * 1000);
 
       this.setTimer(this.config.speakTime * 1000, () => this.handleTimeout());
 
-      const message = `昨夜无人遇害, 请${this.getPlayerName(firstPlayer)}发言`;
-      this.sendToRoom('peaceful_night', { message, gameInfo: this.getGameInfo() });
+      const message = gameState.personSaved 
+        ? `昨夜${this.getPlayerName(gameState.personSaved)}被医生救下, 无人遇害, 请${this.getPlayerName(firstPlayer)}发言`
+        : `昨夜无人遇害, 请${this.getPlayerName(firstPlayer)}发言`;
+      this.sendToRoom('day_start', { message, gameInfo: this.getGameInfo() });
     } else {
       this.endNight();
     }
@@ -985,14 +1186,44 @@ class MafiaWorker extends BaseGameWorker {
     const gameState = this.gameState as MafiaGameState;
     
     if (!gameState.personWillDie) return;
-
-    const message = `昨夜${this.getPlayerName(gameState.personWillDie)}遇害`;
+    
+    // 检查医生是否救了被杀的人
+    const isSaved = gameState.personSaved === gameState.personWillDie;
     
     gameState.killerActionLock = true;
     gameState.copActionLock = true;
+    gameState.doctorActionLock = true;
     gameState.inspect = {};
     gameState.wantToKill = {};
+    gameState.wantToSave = {};
     gameState.step += 1;
+
+    if (isSaved) {
+      // 医生救活了被杀的人 - 平安夜
+      const firstPlayer = this.getAlivePlayers()[0];
+      const message = `昨夜${this.getPlayerName(gameState.personWillDie)}被医生救下, 无人遇害, 请${this.getPlayerName(firstPlayer)}发言`;
+      
+      gameState.personWillDie = null;
+      gameState.personSaved = null;
+      gameState.status = GameStatus.SPEAK;
+      gameState.operators = [firstPlayer];
+      gameState.speakingPlayerIndex = 0;
+      gameState.speakedCount = 0;
+      gameState.operateEndTime = new Date(Date.now() + this.config.speakTime * 1000);
+
+      this.setTimer(this.config.speakTime * 1000, () => this.handleTimeout());
+      this.sendToRoom('day_start', { message, gameInfo: this.getGameInfo() });
+      return;
+    }
+
+    const message = `昨夜${this.getPlayerName(gameState.personWillDie)}遇害`;
+    
+    // 记录死亡
+    gameState.deathQueue.push({
+      playerId: gameState.personWillDie,
+      deathReason: '被杀手杀害',
+      deathDay: gameState.day
+    });
 
     if (gameState.lastWordCount > 0) {
       // 遗言
@@ -1006,6 +1237,9 @@ class MafiaWorker extends BaseGameWorker {
       gameState.operators = [speaker];
       gameState.players[gameState.personWillDie].alive = false;
       gameState.personWillDie = null;
+      gameState.personSaved = null;
+      gameState.speakingPlayerIndex = 0;
+      gameState.speakedCount = 0;
       gameState.operateEndTime = new Date(Date.now() + this.config.speakTime * 1000);
 
       this.setTimer(this.config.speakTime * 1000, () => this.handleTimeout());
@@ -1019,25 +1253,22 @@ class MafiaWorker extends BaseGameWorker {
     const nextRoundAlivePlayers = this.getAlivePlayers().filter(id => id !== excludePlayerId);
     
     let killerCount = 0;
-    let copCount = 0;
-    let civilianCount = 0;
+    let goodCount = 0;
     
     nextRoundAlivePlayers.forEach(playerId => {
       if (gameState.topSecret.killer.includes(playerId)) {
         killerCount++;
-      } else if (gameState.topSecret.cop.includes(playerId)) {
-        copCount++;
       } else {
-        civilianCount++;
+        goodCount++;
       }
     });
 
     if (killerCount === 0) {
-      return Team.BLUE; // 好人获胜
-    } else if (copCount === 0 || civilianCount === 0) {
-      return Team.RED; // 杀手获胜
-    } else if (killerCount === copCount + civilianCount) {
-      return Team.RED; // 杀手获胜
+      return Team.BLUE; // 好人获胜（杀手全灭）
+    } else if (goodCount === 0) {
+      return Team.RED; // 杀手获胜（好人全灭）
+    } else if (killerCount >= goodCount) {
+      return Team.RED; // 杀手获胜（杀手数量大于等于好人）
     }
     
     return null; // 游戏继续
@@ -1060,8 +1291,14 @@ class MafiaWorker extends BaseGameWorker {
     
     const summary = this.getGameSummary();
     const message = `${baseMessage || ''}${winnerMessage}\n${summary}`;
+    const reason = winner === Team.BLUE ? '好人阵营消灭所有杀手' : '杀手阵营消灭所有好人';
 
-    this.sendToRoom('game_over', { message, gameInfo: this.getGameInfo() });
+    this.sendToRoom('game_over', { 
+      message, 
+      winner: winner === Team.BLUE ? 'blue' : 'red',
+      reason,
+      gameInfo: this.getGameInfo() 
+    });
   }
 
   private enterLastWord(playerId: string, baseMessage: string, status: GameStatus): void {
@@ -1108,21 +1345,128 @@ class MafiaWorker extends BaseGameWorker {
     const gameState = this.gameState as MafiaGameState;
     const voteSummary = this.getVoteSummary();
     
-    // 处理投票结果逻辑...
-    // 这里实现投票逻辑，类似于原始的 end_vote 方法
-    this.sendToRoom('vote_result', { 
-      summary: voteSummary, 
-      gameInfo: this.getGameInfo() 
+    // 统计票数（排除give_up）
+    const voteCounts: Record<string, number> = {};
+    Object.values(gameState.voteResult).forEach(target => {
+      if (target !== 'give_up') {
+        voteCounts[target] = (voteCounts[target] || 0) + 1;
+      }
     });
+
+    if (Object.keys(voteCounts).length === 0) {
+      // 所有人都放弃了，直接进入夜晚
+      const message = "所有人都放弃了投票, 直接进入夜晚";
+      this.enterNightFromVote(message);
+      return;
+    }
+
+    // 找出最高票数
+    const maxVotes = Math.max(...Object.values(voteCounts));
+    const maxVotedPlayers = Object.entries(voteCounts)
+      .filter(([, count]) => count === maxVotes)
+      .map(([playerId]) => playerId);
+
+    if (maxVotedPlayers.length > 1) {
+      // 平票 - 进入PK阶段
+      if (gameState.pkPlayers.length > 0) {
+        // 已经是PK投票了，再次平票则直接进入夜晚（不进行第二轮PK）
+        const message = `PK投票再次平票(${maxVotedPlayers.map(id => this.getPlayerName(id)).join('、')}各${maxVotes}票), 直接进入夜晚`;
+        this.enterNightFromVote(message);
+      } else {
+        // 首次平票，进入PK发言阶段
+        gameState.pkPlayers = maxVotedPlayers;
+        gameState.status = GameStatus.PK;
+        gameState.pkSpeakedCount = 0;
+        gameState.speakedCount = 0;
+        gameState.voteResult = {};
+        gameState.systemVote = [];
+        gameState.step += 1;
+        
+        const firstPkSpeaker = maxVotedPlayers[0];
+        gameState.operators = [firstPkSpeaker];
+        gameState.speakingPlayerIndex = 0;
+        gameState.operateEndTime = new Date(Date.now() + this.config.speakTime * 1000);
+
+        this.setTimer(this.config.speakTime * 1000, () => this.handleTimeout());
+
+        const message = `平票! ${maxVotedPlayers.map(id => this.getPlayerName(id)).join('、')}各${maxVotes}票, 进入PK阶段\n请${this.getPlayerName(firstPkSpeaker)}开始PK发言`;
+        this.sendToRoom('pk_start', { message, gameInfo: this.getGameInfo() });
+      }
+    } else {
+      // 有唯一最高票，放逐该玩家
+      const expelledPlayer = maxVotedPlayers[0];
+      const message = `${this.getPlayerName(expelledPlayer)}被投票放逐, 得票数: ${maxVotes}\n`;
+      
+      // 检查游戏是否结束
+      const gameResult = this.checkGameEnd(expelledPlayer);
+      if (gameResult) {
+        this.endGame(gameResult, expelledPlayer, message);
+        return;
+      }
+
+      // 游戏继续，检查是否有遗言
+      if (gameState.lastWordCount > 0) {
+        this.enterLastWord(expelledPlayer, message, GameStatus.LAST_WORD_DAYTIME);
+      } else {
+        // 没有遗言了，直接进入夜晚
+        gameState.players[expelledPlayer].alive = false;
+        gameState.deathQueue.push({
+          playerId: expelledPlayer,
+          deathReason: '被投票放逐',
+          deathDay: gameState.day
+        });
+        const nightMessage = `${message}本轮已没有遗言, 直接进入黑夜`;
+        this.enterNight(expelledPlayer, nightMessage);
+      }
+    }
+  }
+
+  private enterNightFromVote(message: string): void {
+    const gameState = this.gameState as MafiaGameState;
+    
+    gameState.status = GameStatus.NIGHT;
+    gameState.pkPlayers = [];
+    gameState.voteResult = {};
+    gameState.systemVote = [];
+    gameState.speakedCount = 0;
+    gameState.step += 1;
+    gameState.day += 1;
+    gameState.personWillDie = null;
+    gameState.personSaved = null;
+    gameState.killerActionLock = true;
+    gameState.copActionLock = true;
+    gameState.doctorActionLock = true;
+    gameState.inspect = {};
+    gameState.wantToKill = {};
+    gameState.wantToSave = {};
+    gameState.operators = this.getAlivePlayers();
+    gameState.operateEndTime = new Date(Date.now() + this.config.nightTime * 1000);
+
+    this.setTimer(this.config.nightTime * 1000, () => this.handleTimeout());
+
+    this.sendToRoom('night_start', { message, gameInfo: this.getGameInfo() });
   }
 
   private handleVoteTimeout(): void {
     const gameState = this.gameState as MafiaGameState;
+    const alivePlayers = this.getAlivePlayers();
     
     // 为未投票的玩家自动投票
     gameState.operators.forEach(playerId => {
-      const ticket = gameState.pkPlayers.length === 0 ? 'give_up' : 
-                    gameState.pkPlayers[Math.floor(Math.random() * gameState.pkPlayers.length)];
+      let ticket: string;
+      
+      if (gameState.pkPlayers.length > 0) {
+        // PK投票：随机选择一个PK玩家
+        ticket = gameState.pkPlayers[Math.floor(Math.random() * gameState.pkPlayers.length)];
+      } else {
+        // 普通投票：随机选择一个其他存活玩家（不能投自己）
+        const otherPlayers = alivePlayers.filter(id => id !== playerId);
+        if (otherPlayers.length > 0) {
+          ticket = otherPlayers[Math.floor(Math.random() * otherPlayers.length)];
+        } else {
+          ticket = 'give_up';
+        }
+      }
       
       gameState.voteResult[playerId] = ticket;
       gameState.systemVote.push(playerId);
@@ -1159,6 +1503,11 @@ class MafiaWorker extends BaseGameWorker {
       .map(id => this.getPlayerName(id))
       .join(', ');
     
+    const doctors = gameState.topSecret.doctor
+      .sort((a, b) => gameState.players[a].index - gameState.players[b].index)
+      .map(id => this.getPlayerName(id))
+      .join(', ');
+    
     const civilians = gameState.topSecret.civilian
       .sort((a, b) => gameState.players[a].index - gameState.players[b].index)
       .map(id => this.getPlayerName(id))
@@ -1171,12 +1520,39 @@ class MafiaWorker extends BaseGameWorker {
       })
       .join(', ');
 
-    return `警察: ${cops}\n杀手: ${killers}\n平民: ${civilians}\n警察验人记录: ${copVersion}`;
+    return `警察: ${cops}\n杀手: ${killers}\n医生: ${doctors}\n平民: ${civilians}\n警察验人记录: ${copVersion}`;
+  }
+
+  private handleRestartGame(playerId: string): void {
+    // 只有房主可以重新开始
+    if (playerId !== this.room.hostId) {
+      return;
+    }
+    
+    const gameState = this.gameState as MafiaGameState;
+    if (gameState.status !== GameStatus.OVER) {
+      return;
+    }
+    
+    this.resetGame();
   }
 
   private resetGame(): void {
+    const oldPlayers = this.room.players;
     this.initializeGameState();
-    this.sendToRoom('game_reset', { gameInfo: this.getGameInfo() });
+    
+    // 重置玩家准备状态
+    oldPlayers.forEach(player => {
+      player.gameMetadata = {
+        ready: false,
+        muted: false
+      };
+    });
+    
+    this.sendToRoom('game_reset', { 
+      message: '游戏已重置，请重新准备',
+      gameInfo: this.getGameInfo() 
+    });
   }
 }
 

@@ -13,8 +13,11 @@ export function splitPotSidePots(
   totalBets: Record<string, number>,
   activeIds: string[]
 ): SidePot[] {
-  // 获取所有投注额条目
-  const entries = Object.entries(totalBets).map(([pid, amt]) => ({ pid, amt }));
+  // 获取所有投注额条目，过滤掉0下注
+  const entries = Object.entries(totalBets)
+    .map(([pid, amt]) => ({ pid, amt }))
+    .filter(e => e.amt > 0);
+  if (entries.length === 0) return [];
   // 按投注额从小到大排序并去重
   const uniqueAmounts = Array.from(
     new Set(entries.map(e => e.amt))

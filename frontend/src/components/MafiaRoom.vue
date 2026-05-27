@@ -11,7 +11,7 @@
     </div>
 
     <!-- 头部导航 -->
-    <el-header v-else class="room-header">
+    <el-header v-else-if="!roomPreparing" class="room-header">
       <div class="header-left">
         <el-button @click="$router.push('/')" type="primary" plain>
           <el-icon><Back /></el-icon>
@@ -25,7 +25,7 @@
     </el-header>
 
     <!-- 主游戏区域 -->
-    <el-container v-else class="game-container">
+    <el-container v-if="!roomPreparing" class="game-container">
       <!-- 左侧游戏面板 -->
       <el-main class="game-main">
         <div class="game-content">
@@ -131,6 +131,9 @@
           :current-user-id="currentUserId"
           :game-players-by-id="gameState?.players"
           :player-secret="playerSecret || undefined"
+          :game-state="gameState"
+          :operators="gameState?.operators"
+          :vote-result="gameState?.voteResult"
           @transfer-host="handleTransferHost"
           @kick-player="handleKickPlayer"
         />
@@ -139,8 +142,8 @@
         <MafiaChat 
           :room-id="roomId"
           :messages="store.messages"
-          :nickname="currentUserId"
-          :socket="store.socket"
+          :nickname="getMyNickname()"
+          :current-user-id="currentUserId"
           :player-role="playerSecret?.role"
           :player-team="playerSecret?.team"
           :game-state="gameState"
@@ -264,6 +267,12 @@ const getPlayerName = (playerId: string): string => {
   if (!gameState.value) return playerId
   const player = gameState.value.players[playerId]
   return player?.name || playerId
+}
+
+const getMyNickname = (): string => {
+  if (!gameState.value || !currentUserId.value) return currentUserId.value
+  const player = gameState.value.players[currentUserId.value]
+  return player?.name || currentUserId.value
 }
 
 const handleGameAction = (actionType: string, actionData: any) => {

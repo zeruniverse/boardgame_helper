@@ -46,6 +46,10 @@ interface Props {
   gameState?: any      // 游戏状态
 }
 
+const emit = defineEmits<{
+  'send-message': [message: string, channel: string]
+}>()
+
 const props = withDefaults(defineProps<Props>(), {
   messages: () => [],
   roomId: '',
@@ -68,7 +72,7 @@ const isEvilPlayer = computed(() => {
 // 判断是否可以使用邪恶方聊天
 const canUseEvilChat = computed(() => {
   // 只有在游戏进行中且是邪恶方玩家（除了奥伯伦）才能使用邪恶方聊天
-  return props.gameState?.status !== 'waiting' && isEvilPlayer.value && props.playerRole !== 'oberon';
+  return props.gameState?.status !== 0 && isEvilPlayer.value && props.playerRole !== 'oberon';
 });
 
 // 检查是否可以发送消息
@@ -140,11 +144,19 @@ const getMessageColor = (type: string) => {
   }
 };
 
+// HTML转义防止XSS
+const escapeHtml = (text: string): string => {
+  if (!text) return '';
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
+};
+
 // 格式化消息内容，处理阿瓦隆特殊内容
 const formatMessage = (message: string): string => {
   if (!message) return '';
   
-  let formattedMessage = message;
+  let formattedMessage = escapeHtml(message);
 
   // 处理角色名称高亮
   const roleRegex = /(梅林|派西维尔|忠臣|莫甘娜|刺客|奥伯伦|莫德雷德|爪牙)/g;
@@ -205,13 +217,7 @@ watch(currentChannel, () => {
 
 function send() {
   if (canSend.value) {
-    const messageData = {
-      roomId: props.roomId,
-      message: `${props.nickname}: ${input.value}`,
-      channel: currentChannel.value
-    };
-    
-    props.socket.emit('chat_msg', messageData);
+    emit('send-message', input.value, currentChannel.value);
     input.value = '';
   }
 }

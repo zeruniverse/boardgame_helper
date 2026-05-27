@@ -4,14 +4,14 @@
       <div class="card-header">
         <span>玩家列表 ({{ players.length }}人)</span>
         <div v-if="gameState?.day" class="day-info">
-          第{{ gameState.day }}天
+          第{{ Math.ceil(gameState.day / 2) }}天
         </div>
       </div>
     </template>
 
     <div class="players-container">
-      <div 
-        v-for="player in sortedPlayers" 
+      <div
+        v-for="player in sortedPlayers"
         :key="player.id"
         class="player-item"
         :class="getPlayerClass(player)"
@@ -22,17 +22,17 @@
             {{ player.index }}
           </div>
           <div v-if="isHost(player.id)" class="host-badge">房主</div>
-          <div v-if="gameState?.sheriff === player.id" class="sheriff-badge">警长</div>
+          <div v-if="player.isSheriff || gameState?.sheriff === player.id" class="sheriff-badge">警长</div>
         </div>
 
         <!-- 玩家信息 -->
         <div class="player-info">
           <div class="player-name" :class="{ 'current-user': player.id === currentUserId }">
-            {{ player.name }}
+            {{ player.name || player.nickname }}
           </div>
-          
+
           <div class="player-status">
-            <span v-if="!player.alive" class="status-dead">已死亡</span>
+            <span v-if="!player.alive && !player.isAlive" class="status-dead">已死亡</span>
             <span v-else-if="player.ready && !gameStarted" class="status-ready">已准备</span>
             <span v-else-if="!player.ready && !gameStarted" class="status-waiting">未准备</span>
             <span v-else class="status-alive">存活</span>
@@ -40,9 +40,9 @@
 
           <!-- 角色信息（仅对自己或游戏结束时显示） -->
           <div v-if="shouldShowRole(player)" class="player-role">
-                         <span class="role-name" :class="getRoleClass(player.role)">
-               {{ formatRole(player.role || 'VILLAGER') }}
-             </span>
+            <span class="role-name" :class="getRoleClass(player.role || player.character)">
+              {{ formatRole(player.role || player.character || 'VILLAGER') }}
+            </span>
           </div>
 
           <!-- 投票信息 -->
@@ -57,18 +57,18 @@
         <!-- 玩家操作按钮 -->
         <div v-if="canManagePlayer(player)" class="player-actions">
           <el-dropdown trigger="click">
-            <el-button size="small" type="text">
+            <el-button size="small" type="info" text>
               <el-icon><More /></el-icon>
             </el-button>
             <template #dropdown>
               <el-dropdown-menu>
-                <el-dropdown-item 
+                <el-dropdown-item
                   v-if="canTransferHost(player)"
                   @click="handleTransferHost(player.id)"
                 >
                   转让房主
                 </el-dropdown-item>
-                <el-dropdown-item 
+                <el-dropdown-item
                   v-if="canKickPlayer(player)"
                   @click="handleKickPlayer(player.id)"
                 >
@@ -89,17 +89,20 @@
         <div class="role-config">
           <div v-for="(count, role) in roleConfig" :key="role" class="role-count">
             <span class="role-label">{{ formatRole(role) }}</span>
-            <el-input-number 
-              v-model="roleConfig[role]" 
+            <el-input-number
+              v-model="roleConfig[role]"
               :min="role === 'WEREWOLF' ? 1 : 0"
-              :max="5"
+              :max="6"
               size="small"
               @change="updateRoleConfig"
             />
           </div>
         </div>
+        <div class="config-summary">
+          总人数: {{ totalRoleCount }} (需6-18人)
+        </div>
       </div>
-      
+
       <div class="config-item">
         <label>时间设置:</label>
         <div class="time-config">
@@ -125,6 +128,7 @@
             <span>投票时间:</span>
             <el-select v-model="timeConfig.voteTime" size="small">
               <el-option label="30秒" :value="30" />
+              <el-option label="1分钟" :value="60" />
               <el-option label="3分钟" :value="180" />
               <el-option label="无限" :value="0" />
             </el-select>
@@ -139,14 +143,19 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import { More } from '@element-plus/icons-vue'
+import { ElIcon } from 'element-plus'
 
 interface Player {
   id: string
-  name: string
+  name?: string
+  nickname?: string
   index: number
   ready: boolean
-  alive: boolean
+  alive?: boolean
+  isAlive?: boolean
   role?: string
+  character?: string
+  isSheriff?: boolean
 }
 
 interface Props {
@@ -173,7 +182,7 @@ const emit = defineEmits<{
   updateConfig: [config: any]
 }>()
 
-// 角色配置
+// 角色配置（动态计算默认值）
 const roleConfig = ref<Record<string, number>>({
   WEREWOLF: 2,
   VILLAGER: 2,
@@ -183,16 +192,26 @@ const roleConfig = ref<Record<string, number>>({
   GUARD: 0
 })
 
+// 如果游戏已开始且知道角色配置，更新显示
+const totalRoleCount = computed(() => {
+  return Object.values(roleConfig.value).reduce((sum, count) => sum + count, 0)
+})
+
 // 时间配置
 const timeConfig = ref({
-  nightActionTime: 60,    // 夜晚行动时间
-  dayDiscussTime: 300,    // 白天发言时间
-  voteTime: 180          // 投票时间
+  nightActionTime: 60,
+  dayDiscussTime: 300,
+  voteTime: 180
 })
 
 // 计算属性
 const sortedPlayers = computed(() => {
-  return [...props.players].sort((a, b) => a.index - b.index)
+  return [...props.players].sort((a, b) => {
+    // 优先使用游戏内的index
+    const idxA = props.gamePlayersById?.[a.id]?.index || a.index || 0
+    const idxB = props.gamePlayersById?.[b.id]?.index || b.index || 0
+    return idxA - idxB
+  })
 })
 
 // 方法
@@ -213,49 +232,55 @@ const canKickPlayer = (player: Player) => {
 }
 
 const shouldShowRole = (player: Player) => {
-  // 显示角色的条件：1. 是自己 2. 游戏结束 3. 玩家已死亡（部分情况）
-  return player.id === props.currentUserId || 
-         props.gameState?.status === 'finished' ||
-         (!player.alive && props.gameState?.status !== 'preparing')
+  // 显示角色的条件：1. 是自己 2. 游戏结束 3. 玩家已死亡且不在准备中
+  const isSelf = player.id === props.currentUserId
+  const isFinished = props.gameState?.status === 'finished'
+  const isDead = !(player.alive ?? player.isAlive ?? true)
+  const notPreparing = props.gameState?.status !== 'preparing'
+
+  return isSelf || isFinished || (isDead && notPreparing)
 }
 
 const getPlayerClass = (player: Player) => {
-  const classes = []
-  
-  if (!player.alive) {
+  const classes: string[] = []
+
+  const isDead = !(player.alive ?? player.isAlive ?? true)
+  if (isDead) {
     classes.push('player-dead')
   } else {
     classes.push('player-alive')
   }
-  
+
   if (player.id === props.currentUserId) {
     classes.push('current-user')
   }
-  
+
+  // 检查是否是当前发言者
   if (props.gameState?.currentSpeaker === player.id) {
     classes.push('current-speaker')
   }
-  
+
   return classes
 }
 
 const getAvatarClass = (player: Player) => {
-  const classes = []
-  
-  if (!player.alive) {
+  const classes: string[] = []
+
+  const isDead = !(player.alive ?? player.isAlive ?? true)
+  if (isDead) {
     classes.push('avatar-dead')
   } else if (player.ready && !props.gameStarted) {
     classes.push('avatar-ready')
   } else if (props.gameStarted) {
     classes.push('avatar-alive')
   }
-  
+
   return classes
 }
 
 const getRoleClass = (role?: string) => {
   if (!role) return ''
-  
+
   switch (role) {
     case 'WEREWOLF':
       return 'role-werewolf'
@@ -263,7 +288,7 @@ const getRoleClass = (role?: string) => {
     case 'WITCH':
     case 'HUNTER':
     case 'GUARD':
-      return 'role-villager'
+      return 'role-special'
     default:
       return 'role-villager'
   }
@@ -276,14 +301,15 @@ const formatRole = (role: string) => {
     'SEER': '预言家',
     'WITCH': '女巫',
     'HUNTER': '猎人',
-    'GUARD': '守卫'
+    'GUARD': '守卫',
+    'CUPID': '丘比特'
   }
   return roleNames[role] || role
 }
 
 const getPlayerName = (playerId: string) => {
   const player = props.players.find(p => p.id === playerId)
-  return player?.name || `玩家${playerId}`
+  return player?.name || player?.nickname || `玩家${playerId}`
 }
 
 // 事件处理
@@ -296,23 +322,29 @@ const handleKickPlayer = (playerId: string) => {
 }
 
 const updateRoleConfig = () => {
-  emit('updateConfig', { roles: roleConfig.value })
+  // 构建角色列表
+  const characters: string[] = []
+  Object.entries(roleConfig.value).forEach(([role, count]) => {
+    for (let i = 0; i < count; i++) {
+      characters.push(role)
+    }
+  })
+  emit('updateConfig', { characters })
 }
 
 const updateTimeConfig = () => {
-  emit('updateConfig', { 
-    timeSettings: {
-      nightActionTime: timeConfig.value.nightActionTime,
-      dayDiscussTime: timeConfig.value.dayDiscussTime,
-      voteTime: timeConfig.value.voteTime
-    }
+  emit('updateConfig', {
+    nightTime: timeConfig.value.nightActionTime,
+    dayTime: timeConfig.value.dayDiscussTime,
+    voteTime: timeConfig.value.voteTime
   })
 }
 </script>
 
 <style scoped>
 .werewolf-player-list {
-  height: 100%;
+  height: auto;
+  max-height: 50%;
 }
 
 .card-header {
@@ -330,14 +362,14 @@ const updateTimeConfig = () => {
 }
 
 .players-container {
-  max-height: 400px;
+  max-height: 350px;
   overflow-y: auto;
 }
 
 .player-item {
   display: flex;
   align-items: center;
-  padding: 12px 8px;
+  padding: 10px 8px;
   border-bottom: 1px solid #f0f0f0;
   transition: all 0.2s;
 }
@@ -414,6 +446,7 @@ const updateTimeConfig = () => {
 .player-name {
   font-weight: bold;
   margin-bottom: 4px;
+  font-size: 14px;
 }
 
 .player-name.current-user {
@@ -457,9 +490,14 @@ const updateTimeConfig = () => {
   color: #dc2626;
 }
 
-.role-villager {
+.role-special {
   background: #eff6ff;
   color: #2563eb;
+}
+
+.role-villager {
+  background: #f0fdf4;
+  color: #16a34a;
 }
 
 .vote-info {
@@ -492,6 +530,7 @@ const updateTimeConfig = () => {
   font-weight: bold;
   margin-bottom: 8px;
   color: #333;
+  font-size: 13px;
 }
 
 .role-config {
@@ -532,4 +571,11 @@ const updateTimeConfig = () => {
 .time-setting span {
   color: #666;
 }
-</style> 
+
+.config-summary {
+  font-size: 12px;
+  color: #666;
+  text-align: right;
+  margin-top: 4px;
+}
+</style>

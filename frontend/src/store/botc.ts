@@ -18,6 +18,7 @@ export const useGameStore = defineStore('botc', () => {
   const playerRole = ref<any>(null)
   const nightInfo = ref<any>(null)
   const isStoryteller = ref<boolean>(false)
+  const chatMessages = ref<any[]>([])
 
   // 连接到服务器
   const connect = () => {
@@ -49,8 +50,8 @@ export const useGameStore = defineStore('botc', () => {
           reject(error)
         })
 
-        // 监听错误消息
-        socket.value.on('error', (data) => {
+        // 监听错误消息 - 后端使用actionError
+        socket.value.on('actionError', (data) => {
           console.error('血染钟楼: 服务器错误:', data)
           ElMessage.error(data.message || '发生未知错误')
         })
@@ -80,35 +81,170 @@ export const useGameStore = defineStore('botc', () => {
           room.value = data
         })
 
-        // 监听游戏事件
-        socket.value.on('game_state_sync', (data) => {
+        // 监听游戏状态同步 - 后端使用gameState
+        socket.value.on('gameState', (data) => {
           gameState.value = data.gameState
-          gameConfig.value = data.gameConfig
-          playerRole.value = data.playerRole
-          nightInfo.value = data.nightInfo
-          isStoryteller.value = data.isStoryteller
+          if (data.gameConfig) gameConfig.value = data.gameConfig
+          isStoryteller.value = data.isStoryteller || false
+        })
+
+        // 监听游戏更新
+        socket.value.on('gameStarted', (data) => {
+          gameState.value = data.gameState
         })
 
         socket.value.on('game_update', (data) => {
           gameState.value = data
         })
 
-        socket.value.on('role_assigned', (data) => {
+        // 监听角色分配 - 后端使用roleAssigned (camelCase)
+        socket.value.on('roleAssigned', (data) => {
           playerRole.value = data.role
           nightInfo.value = data.nightInfo
-          ElMessage.success(`你的角色是: ${data.role.name}`)
+          ElMessage.success(`你的角色是: ${data.role?.name || '未知'}`)
         })
 
-        socket.value.on('night_info', (data) => {
+        // 监听夜晚信息 - 后端使用nightActionConfirmed
+        socket.value.on('nightActionConfirmed', (data) => {
+          nightInfo.value = data.action
+        })
+
+        socket.value.on('nightInfo', (data) => {
           nightInfo.value = data
         })
 
-        socket.value.on('game_message', (data) => {
+        // 监听白天/夜晚开始
+        socket.value.on('dayStarted', (data) => {
+          if (gameState.value) {
+            gameState.value.phase = 'day'
+            gameState.value.day = data.day
+          }
+          ElMessage.info(`第${data.day}天开始`)
+        })
+
+        socket.value.on('nightStarted', (data) => {
+          if (gameState.value) {
+            gameState.value.phase = data.isFirstNight ? 'firstNight' : 'night'
+            gameState.value.nightOrder = data.nightOrder || []
+          }
+          ElMessage.info(data.isFirstNight ? '第一夜开始' : '夜晚开始')
+        })
+
+        // 监听提名和投票
+        socket.value.on('nominationCreated', (data) => {
+          if (gameState.value) {
+            if (!gameState.value.nominations) gameState.value.nominations = []
+            gameState.value.nominations.push({
+              ...data.nomination,
+              isOnTrial: true,
+              votes: [],
+              votesFor: 0,
+              votesAgainst: 0
+            })
+          }
+        })
+
+        socket.value.on('votingStarted', (data) => {
+          ElMessage.warning('投票开始！')
+        })
+
+        socket.value.on('voteSubmitted', (data) => {
+          if (gameState.value?.nominations) {
+            const activeNom = gameState.value.nominations.find((n: any) => n.isOnTrial)
+            if (activeNom) {
+              activeNom.votesFor = data.currentVotes?.for || 0
+              activeNom.votesAgainst = data.currentVotes?.against || 0
+              if (!activeNom.votes) activeNom.votes = []
+              activeNom.votes.push({
+                playerId: data.playerId,
+                vote: data.vote
+              })
+            }
+          }
+        })
+
+        socket.value.on('votingEnded', (data) => {
+          if (gameState.value?.nominations) {
+            const activeNom = gameState.value.nominations.find((n: any) => n.isOnTrial)
+            if (activeNom) {
+              activeNom.isOnTrial = false
+              activeNom.votesFor = data.votesFor
+              activeNom.votesAgainst = data.votesAgainst
+            }
+          }
+          ElMessage.info(data.shouldExecute ? '处决通过！' : '处决未通过')
+        })
+
+        socket.value.on('playerExecuted', (data) => {
+          ElMessage.error(`${data.playerName} 被处决！`)
+        })
+
+        socket.value.on('playerDied', (data) => {
+          if (gameState.value?.players) {
+            const player = gameState.value.players.find((p: any) => p.id === data.playerId)
+            if (player) {
+              player.isDead = true
+              player.isAlive = false
+            }
+          }
+          ElMessage.error(`${data.playerName} 死亡！原因: ${data.cause}`)
+        })
+
+        socket.value.on('playerRevived', (data) => {
+          if (gameState.value?.players) {
+            const player = gameState.value.players.find((p: any) => p.id === data.playerId)
+            if (player) {
+              player.isDead = false
+              player.isAlive = true
+            }
+          }
+          ElMessage.success(`${data.playerName} 复活！`)
+        })
+
+        // 监听游戏结束
+        socket.value.on('gameEnded', (data) => {
+          if (gameState.value) {
+            gameState.value.phase = 'ended'
+            gameState.value.winner = data.winner
+            gameState.value.finalPlayers = data.players
+          }
+          const winnerText = data.winner === 'good' ? '善良阵营获胜！' : '邪恶阵营获胜！'
+          ElMessage.success(`${winnerText} 原因: ${data.reason}`)
+        })
+
+        // 监听聊天消息 - 后端使用chatMessage (camelCase)
+        socket.value.on('chatMessage', (data) => {
+          chatMessages.value.push(data)
+        })
+
+        // 监听私聊消息
+        socket.value.on('privateMessage', (data) => {
+          chatMessages.value.push({
+            ...data,
+            channel: 'private',
+            to: currentUserId.value
+          })
+        })
+
+        socket.value.on('privateMessageSent', (data) => {
+          chatMessages.value.push({
+            ...data,
+            channel: 'private',
+            from: currentUserId.value
+          })
+        })
+
+        // 监听系统消息
+        socket.value.on('gameMessage', (data) => {
           ElMessage({
             message: data.message,
             type: data.type || 'info',
             duration: data.duration || 3000
           })
+        })
+
+        socket.value.on('gameConfigured', (data) => {
+          gameConfig.value = data.config
         })
 
       } catch (error) {
@@ -129,11 +265,12 @@ export const useGameStore = defineStore('botc', () => {
       room.value = null
       gameState.value = null
       playerRole.value = null
+      chatMessages.value = []
     }
   }
 
   // 连接到房间
-  const connectToRoom = async (roomId: string, gameType: string = 'botc') => {
+  const connectToRoom = async (roomId: string, gameType: string = 'blood-on-the-clocktower') => {
     try {
       if (!socket.value || !connected.value) {
         await connect()
@@ -177,6 +314,7 @@ export const useGameStore = defineStore('botc', () => {
       currentRoomId.value = ''
       gameState.value = null
       playerRole.value = null
+      chatMessages.value = []
     }
   }
 
@@ -190,8 +328,8 @@ export const useGameStore = defineStore('botc', () => {
     if (socket.value && currentRoomId.value) {
       socket.value.emit('game_action', {
         roomId: currentRoomId.value,
-        action,
-        data
+        actionType: action,
+        actionData: data
       })
     }
   }
@@ -199,11 +337,10 @@ export const useGameStore = defineStore('botc', () => {
   // 发送聊天消息
   const sendChatMessage = (message: string, channel: string = 'all', targetId?: string) => {
     if (socket.value && currentRoomId.value) {
-      socket.value.emit('chat_message', {
+      socket.value.emit('game_action', {
         roomId: currentRoomId.value,
-        message,
-        channel,
-        targetId
+        actionType: 'chat',
+        actionData: { message, channel, targetId }
       })
     }
   }
@@ -211,10 +348,10 @@ export const useGameStore = defineStore('botc', () => {
   // 发送私聊消息
   const sendPrivateMessage = (targetId: string, message: string) => {
     if (socket.value && currentRoomId.value) {
-      socket.value.emit('private_message', {
+      socket.value.emit('game_action', {
         roomId: currentRoomId.value,
-        targetId,
-        message
+        actionType: 'private_message',
+        actionData: { targetId, message }
       })
     }
   }
@@ -229,7 +366,7 @@ export const useGameStore = defineStore('botc', () => {
 
       socket.value.emit('create_room', {
         ...roomConfig,
-        gameType: 'botc'
+        gameType: 'blood-on-the-clocktower'
       }, (response: any) => {
         if (response.success) {
           resolve(response)
@@ -274,7 +411,6 @@ export const useGameStore = defineStore('botc', () => {
 
   // 获取角色信息
   const getRoleInfo = (roleId: string) => {
-    // 这里可以返回角色的详细信息
     return {
       id: roleId,
       name: roleId,
@@ -320,6 +456,7 @@ export const useGameStore = defineStore('botc', () => {
     playerRole,
     nightInfo,
     isStoryteller,
+    chatMessages,
 
     // 方法
     connect,
@@ -339,4 +476,4 @@ export const useGameStore = defineStore('botc', () => {
     getRoleInfo,
     getEditionInfo
   }
-}) 
+})

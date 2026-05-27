@@ -30,8 +30,9 @@
       <div v-for="(msg, idx) in filteredMessages" :key="idx"
            :class="getMessageClass(msg)"
            :style="{ color: getMessageColor(msg.type || msg.channel) }">
-        <span class="message-sender" v-if="msg.from">{{ getPlayerName(msg.from) }}: </span>
-        <span v-html="formatMessage(msg.message || msg)"></span>
+        <span class="message-sender" v-if="msg.from || msg.playerName">{{ msg.playerName || getPlayerName(msg.from) }}: </span>
+        <!-- 使用文本渲染而非v-html防止XSS -->
+        <span class="message-content">{{ msg.message || msg }}</span>
         <span class="message-time">{{ formatTime(msg.timestamp) }}</span>
       </div>
     </el-card>
@@ -106,7 +107,7 @@ const showPrivateSelector = ref(false);
 const canUseDeadChat = computed(() => {
   if (!props.gameState?.players) return false
   const myPlayer = props.gameState.players.find((p: any) => p.id === props.nickname)
-  return myPlayer && !myPlayer.isAlive
+  return myPlayer && myPlayer.isDead
 });
 
 // 可用的私聊目标
@@ -116,7 +117,7 @@ const availablePrivateTargets = computed(() => {
 
 // 检查是否可以发送消息
 const canSend = computed(() => {
-  if (!props.socket || !props.roomId || !props.nickname || !input.value.trim()) {
+  if (!input.value.trim()) {
     return false
   }
   
@@ -126,11 +127,16 @@ const canSend = computed(() => {
   }
   
   return true
-})
+});
 
 // 过滤消息 - 根据当前频道显示消息
 const filteredMessages = computed(() => {
   return props.messages.filter(msg => {
+    // 处理简单字符串消息
+    if (typeof msg === 'string') {
+      return currentChannel.value === 'all'
+    }
+    
     if (currentChannel.value === 'all') {
       // 全员频道显示公开消息和接收到的私聊消息
       return !msg.channel || msg.channel === 'all' || 
@@ -186,7 +192,9 @@ const scrollToBottom = () => {
     if (chatContainer.value) {
       const element = chatContainer.value as any;
       const scrollElement = element.$el || element;
-      scrollElement.scrollTop = scrollElement.scrollHeight;
+      if (scrollElement.scrollHeight) {
+        scrollElement.scrollTop = scrollElement.scrollHeight;
+      }
     }
   });
 };
@@ -195,19 +203,23 @@ const scrollToBottom = () => {
 const getMessageClass = (msg: any) => {
   const classes = ['chat-message'];
   
-  if (msg.channel === 'private') {
+  const channel = typeof msg === 'string' ? 'all' : (msg.channel || 'all')
+  const from = typeof msg === 'string' ? '' : (msg.from || '')
+  const type = typeof msg === 'string' ? '' : (msg.type || '')
+  
+  if (channel === 'private') {
     classes.push('private-message');
-  } else if (msg.channel === 'storyteller') {
+  } else if (channel === 'storyteller') {
     classes.push('storyteller-message');
-  } else if (msg.channel === 'dead') {
+  } else if (channel === 'dead') {
     classes.push('dead-message');
   }
   
-  if (msg.type === 'system') {
+  if (type === 'system') {
     classes.push('system-message');
   }
 
-  if (msg.from === props.nickname) {
+  if (from === props.nickname) {
     classes.push('own-message');
   }
   
@@ -218,91 +230,27 @@ const getMessageClass = (msg: any) => {
 const getMessageColor = (type: string) => {
   switch (type) {
     case 'private':
-      return '#7c3aed'; // 紫色 - 私聊消息
+      return '#7c3aed'
     case 'storyteller':
-      return '#dc2626'; // 红色 - 说书人消息
+      return '#dc2626'
     case 'dead':
-      return '#6b7280'; // 灰色 - 死者消息
+      return '#6b7280'
     case 'system':
-      return '#909399'; // 灰色 - 系统消息
+      return '#909399'
     case 'game':
-      return '#409eff'; // 蓝色 - 游戏消息
+      return '#409eff'
     case 'role':
-      return '#7c3aed'; // 紫色 - 角色相关消息
+      return '#7c3aed'
     case 'night':
-      return '#1f2937'; // 深色 - 夜晚消息
+      return '#1f2937'
     default:
-      return undefined; // 默认颜色
+      return undefined
   }
-};
-
-// 格式化消息内容，处理血染钟楼特殊内容
-const formatMessage = (message: string): string => {
-  if (!message) return '';
-  
-  let formattedMessage = message;
-
-  // 处理角色名称高亮
-  const roleRegex = /(洗衣妇|图书管理员|调查员|厨师|共情者|占卜师|殡仪师|僧侣|乌鸦守护者|处女|杀手|士兵|市长|管家|酒鬼|隐士|圣徒|投毒者|间谍|红夫人|男爵|小恶魔|祖母|水手|女仆|驱魔师|暴徒|疯子|教父|僵怯|普卡|钟表匠|梦想家|哲学家|笨手笨脚|甜心|邪恶双胞胎|女巫|方谷|活力死神|无名者|漩涡)/g;
-  formattedMessage = formattedMessage.replace(roleRegex, (role) => {
-    let color = '';
-    let bgColor = '';
-    
-    // 村民角色
-    if (['洗衣妇', '图书管理员', '调查员', '厨师', '共情者', '占卜师', '殡仪师', '僧侣', '乌鸦守护者', '处女', '杀手', '士兵', '市长', '祖母', '水手', '女仆', '驱魔师', '钟表匠', '梦想家', '哲学家'].includes(role)) {
-      color = '#1e40af';
-      bgColor = '#dbeafe';
-    } 
-    // 外来者角色
-    else if (['管家', '酒鬼', '隐士', '圣徒', '暴徒', '疯子', '笨手笨脚', '甜心'].includes(role)) {
-      color = '#d97706';
-      bgColor = '#fef3c7';
-    }
-    // 爪牙角色
-    else if (['投毒者', '间谍', '红夫人', '男爵', '教父', '邪恶双胞胎', '女巫'].includes(role)) {
-      color = '#dc2626';
-      bgColor = '#fef2f2';
-    }
-    // 恶魔角色
-    else if (['小恶魔', '僵怯', '普卡', '方谷', '活力死神', '无名者', '漩涡'].includes(role)) {
-      color = '#7c2d12';
-      bgColor = '#fef7ed';
-    }
-    
-    return `<span style="color: ${color}; background-color: ${bgColor}; padding: 1px 4px; border-radius: 3px; font-weight: bold;">${role}</span>`;
-  });
-
-  // 处理游戏阶段
-  const phaseRegex = /(第一夜|白天|夜晚|提名阶段|投票阶段|执行阶段)/g;
-  formattedMessage = formattedMessage.replace(phaseRegex, (phase) => {
-    const color = '#059669';
-    return `<span style="color: ${color}; font-weight: bold;">${phase}</span>`;
-  });
-
-  // 处理投票结果
-  const voteRegex = /(赞成|反对|弃权|执行|流放)/g;
-  formattedMessage = formattedMessage.replace(voteRegex, (vote) => {
-    const color = vote.includes('赞成') || vote.includes('执行') || vote.includes('流放') ? '#dc2626' : '#059669';
-    return `<span style="color: ${color}; font-weight: bold;">${vote}</span>`;
-  });
-
-  // 处理游戏状态
-  const statusRegex = /(存活|死亡|中毒|醉酒|疯狂)/g;
-  formattedMessage = formattedMessage.replace(statusRegex, (status) => {
-    let color = '';
-    if (status === '存活') color = '#059669';
-    else if (status === '死亡') color = '#dc2626';
-    else if (status === '中毒' || status === '醉酒') color = '#d97706';
-    else if (status === '疯狂') color = '#7c3aed';
-    
-    return `<span style="color: ${color}; font-weight: bold;">${status}</span>`;
-  });
-
-  return formattedMessage;
 };
 
 // 获取玩家名称
 const getPlayerName = (playerId: string) => {
+  if (!playerId) return ''
   const player = props.players.find(p => p.id === playerId)
   return player?.name || playerId
 }
@@ -313,7 +261,7 @@ const formatTime = (timestamp?: number) => {
   const date = new Date(timestamp)
   return date.toLocaleTimeString('zh-CN', { 
     hour: '2-digit', 
-    minute: '2-digit' 
+    minute: '2-digit'
   })
 }
 
@@ -331,12 +279,12 @@ const send = () => {
       message: message
     });
   } else {
-    // 发送普通消息
+    // 发送普通消息 - 通过socket直接发送
     if (props.socket) {
-      props.socket.emit('chat_message', {
+      props.socket.emit('game_action', {
         roomId: props.roomId,
-        message: message,
-        channel: currentChannel.value
+        actionType: 'chat',
+        actionData: { message, channel: currentChannel.value }
       });
     }
   }
@@ -459,6 +407,10 @@ defineExpose({
   margin-right: 4px;
 }
 
+.message-content {
+  word-break: break-word;
+}
+
 .message-time {
   font-size: 10px;
   color: #999;
@@ -489,4 +441,4 @@ defineExpose({
   gap: 4px;
   align-items: center;
 }
-</style> 
+</style>

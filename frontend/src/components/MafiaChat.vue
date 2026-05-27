@@ -15,13 +15,15 @@
 
 <script lang="ts" setup>
 import { ref, nextTick, watch, computed } from 'vue';
+import { useMafiaGameStore } from '../store/mafia';
 
 interface Props {
   messages: any[]
   roomId?: string
   nickname?: string
+  currentUserId?: string
   socket?: any
-  playerRole?: 'KILLER' | 'COP' | 'CIVILIAN'
+  playerRole?: 'KILLER' | 'COP' | 'DOCTOR' | 'CIVILIAN'
   playerTeam?: 'RED' | 'BLUE'
   gameState?: any
 }
@@ -30,11 +32,14 @@ const props = withDefaults(defineProps<Props>(), {
   messages: () => [],
   roomId: '',
   nickname: '',
+  currentUserId: '',
   socket: null,
   playerRole: undefined,
   playerTeam: undefined,
   gameState: null
 })
+
+const store = useMafiaGameStore();
 
 const input = ref('');
 const chatContainer = ref<HTMLElement>();
@@ -44,10 +49,10 @@ const canSend = computed(() => {
   return props.socket && props.roomId && props.nickname && input.value.trim()
 })
 
-// 检查玩家是否死亡
+// 检查玩家是否死亡 - 使用currentUserId而非nickname
 const isPlayerAlive = computed(() => {
-  if (!props.gameState || !props.nickname) return true
-  const player = Object.values(props.gameState.players || {}).find((p: any) => p.name === props.nickname) as any
+  if (!props.gameState || !props.currentUserId) return true
+  const player = props.gameState.players?.[props.currentUserId] as any
   return player ? player.alive !== false : true
 })
 
@@ -89,12 +94,20 @@ const getMessageClass = (msg: any) => {
   return classes.join(' ');
 };
 
+// HTML转义防止XSS
+const escapeHtml = (text: string): string => {
+  if (!text) return '';
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
+};
+
 // 格式化消息内容
 const formatMessage = (message: string): string => {
   if (!message) return '';
   
-  // 处理角色相关的高亮
-  let formattedMessage = message;
+  // 先转义HTML，再做角色高亮
+  let formattedMessage = escapeHtml(message);
   
   // 高亮角色名称
   formattedMessage = formattedMessage.replace(/杀手/g, '<span class="role-killer">杀手</span>');
@@ -116,28 +129,14 @@ watch(
 );
 
 function send() {
-  if (canSend.value) {
+  if (canSend.value && input.value.trim()) {
     // 检查死亡玩家是否能发言
     if (!isPlayerAlive.value && props.gameState?.status !== 'LAST_WORD' && props.gameState?.status !== 'LAST_WORD_DAYTIME') {
       return; // 死亡玩家在非遗言阶段不能发言
     }
     
-    const msg = `${props.nickname}: ${input.value}`;
-    
-    // 在夜晚阶段，杀手消息只发给杀手队伍
-    if (isNightPhase.value && props.playerRole === 'KILLER') {
-      props.socket.emit('chat_msg', { 
-        roomId: props.roomId, 
-        message: msg,
-        type: 'killer',
-        targetTeam: 'RED'
-      });
-    } else {
-      props.socket.emit('chat_msg', { 
-        roomId: props.roomId, 
-        message: msg 
-      });
-    }
+    // 使用store的统一消息发送方法
+    store.sendMessage(input.value.trim());
     
     input.value = '';
   }

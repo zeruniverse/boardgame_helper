@@ -25,7 +25,8 @@ import {
   onuCalculateWinner,
   onuIsPlayerWinner,
   onuCreateVision,
-  onuFormatTime
+  onuFormatTime,
+  onuGetRoleTeam
 } from '../utils/onuWerewolfUtils';
 
 import {
@@ -62,6 +63,7 @@ class OnuWerewolfWorker extends BaseGameWorker {
   private gameTimer: NodeJS.Timeout | null = null;
   private skillQueue: Array<{ player: OnuWerewolfPlayer; skill: OnuBaseSkill }> = [];
   private currentSkillIndex = 0;
+  private skillTimeout: NodeJS.Timeout | null = null;
 
   constructor() {
     super();
@@ -460,7 +462,7 @@ class OnuWerewolfWorker extends BaseGameWorker {
   private async startNightPhase(): Promise<void> {
     this.gameState.status = OnuWerewolfGameStatus.NIGHT;
     this.gameState.currentPhase = '夜间技能阶段';
-    this.gameState.timeLeft = this.config.nightTime * 1000;
+    this.gameState.timeLeft = this.config.nightTime;
 
     // 准备技能队列
     this.prepareSkillQueue();
@@ -486,9 +488,9 @@ class OnuWerewolfWorker extends BaseGameWorker {
     const playersWithSkills: Array<{ player: OnuWerewolfPlayer; skill: OnuBaseSkill }> = [];
 
     Object.values(this.gameState.players).forEach(player => {
-      if (OnuSkillFactory.hasSkill(player.actualRole)) {
+      if (OnuSkillFactory.hasSkill(player.initialRole)) {
         const skill = OnuSkillFactory.createSkill(
-          player.actualRole,
+          player.initialRole,
           player,
           this.gameState.players,
           this.gameState.centerCards
@@ -526,10 +528,21 @@ class OnuWerewolfWorker extends BaseGameWorker {
       timeLeft: this.gameState.timeLeft
     });
 
-    // 设置技能超时
-    setTimeout(() => {
-      if (!player.skillUsed) {
-        this.handleSkipSkill(player.id);
+    // 设置技能超时（清理上一个定时器）
+    if (this.skillTimeout) {
+      clearTimeout(this.skillTimeout);
+      this.skillTimeout = null;
+    }
+    this.skillTimeout = setTimeout(() => {
+      try {
+        if (!player.skillUsed) {
+          this.handleSkipSkill(player.id);
+        }
+      } catch (err) {
+        console.error('技能超时处理失败:', err);
+        // 强制推进队列防止卡住
+        this.currentSkillIndex++;
+        this.processNextSkill();
       }
     }, 30000); // 30秒超时
   }
@@ -571,6 +584,12 @@ class OnuWerewolfWorker extends BaseGameWorker {
     // 标记技能已使用
     player.skillUsed = true;
 
+    // 清理技能超时定时器
+    if (this.skillTimeout) {
+      clearTimeout(this.skillTimeout);
+      this.skillTimeout = null;
+    }
+
     // 发送技能结果给玩家
     this.sendToPlayer(playerId, 'onu_skill_result', {
       message: result.message,
@@ -579,6 +598,22 @@ class OnuWerewolfWorker extends BaseGameWorker {
 
     // 进入下一个技能
     this.currentSkillIndex++;
+
+    // 处理Doppelganger的后续技能：如果复制了有夜间技能的角色，在队列中插入该技能
+    if (result.skillData?.needsFollowUp) {
+      const copiedRole = result.skillData.copiedRole;
+      const followUpSkill = OnuSkillFactory.createSkill(
+        copiedRole,
+        player,
+        this.gameState.players,
+        this.gameState.centerCards
+      );
+      if (followUpSkill) {
+        this.skillQueue.splice(this.currentSkillIndex, 0, { player, skill: followUpSkill });
+        player.skillUsed = false; // 重置技能使用状态以便执行后续技能
+      }
+    }
+
     this.processNextSkill();
   }
 
@@ -597,6 +632,12 @@ class OnuWerewolfWorker extends BaseGameWorker {
 
     // 标记技能已使用（跳过）
     player.skillUsed = true;
+
+    // 清理技能超时定时器
+    if (this.skillTimeout) {
+      clearTimeout(this.skillTimeout);
+      this.skillTimeout = null;
+    }
 
     this.sendToPlayer(playerId, 'onu_skill_skipped', {
       message: '你跳过了技能使用'
@@ -655,10 +696,15 @@ class OnuWerewolfWorker extends BaseGameWorker {
 
   private async endNightPhase(): Promise<void> {
     this.clearTimer();
+    // 清理技能超时定时器
+    if (this.skillTimeout) {
+      clearTimeout(this.skillTimeout);
+      this.skillTimeout = null;
+    }
     
     this.gameState.status = OnuWerewolfGameStatus.VOTING;
     this.gameState.currentPhase = '讨论投票阶段';
-    this.gameState.timeLeft = (this.config.discussTime + this.config.votingTime) * 1000;
+    this.gameState.timeLeft = this.config.discussTime + this.config.votingTime;
 
     this.sendToRoom('onu_night_ended', {
       message: '天亮了！开始讨论和投票',
@@ -682,8 +728,8 @@ class OnuWerewolfWorker extends BaseGameWorker {
       throw new Error('你已经投过票了');
     }
 
-    const targetSeat = actionData.target;
-    if (!targetSeat || typeof targetSeat !== 'number') {
+    const targetSeat = actionData.target !== undefined ? Number(actionData.target) : undefined;
+    if (!targetSeat || isNaN(targetSeat) || targetSeat < 1) {
       throw new Error('无效的投票目标');
     }
 
@@ -795,7 +841,7 @@ class OnuWerewolfWorker extends BaseGameWorker {
       name: player.name,
       initialRole: player.initialRole,
       finalRole: player.actualRole,
-      team: OnuWerewolfTeam.Villager, // 这里需要根据最终角色确定
+      team: onuGetRoleTeam(player.actualRole),
       won: onuIsPlayerWinner(player, winner, lynched)
     }));
 
@@ -824,8 +870,9 @@ class OnuWerewolfWorker extends BaseGameWorker {
     const message = actionData.message;
     if (!message || typeof message !== 'string') return;
 
-    // 在投票阶段允许聊天
-    if (this.gameState.status === OnuWerewolfGameStatus.VOTING) {
+    // 在投票阶段和游戏结束阶段允许聊天
+    if (this.gameState.status === OnuWerewolfGameStatus.VOTING ||
+        this.gameState.status === OnuWerewolfGameStatus.COMPLETED) {
       this.sendToRoom('onu_chat_message', {
         playerId,
         playerName: player.nickname,
@@ -881,6 +928,10 @@ class OnuWerewolfWorker extends BaseGameWorker {
 
   private resetGame(): void {
     this.clearTimer();
+    if (this.skillTimeout) {
+      clearTimeout(this.skillTimeout);
+      this.skillTimeout = null;
+    }
     this.initializeGameState();
     
     // 重置房间玩家状态
@@ -944,4 +995,4 @@ parentPort?.on('message', async (task: GameTask) => {
     };
     parentPort?.postMessage(response);
   }
-}); 
+});

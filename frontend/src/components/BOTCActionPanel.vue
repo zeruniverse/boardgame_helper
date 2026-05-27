@@ -9,9 +9,16 @@
         <div class="setup-content">
           <p>等待所有玩家加入房间，房主配置游戏并开始游戏。</p>
           <div class="player-count-info">
-            <span>当前玩家数: {{ gameState.playersCount || 0 }}人</span>
+            <span>当前玩家数: {{ gameState.players?.length || gameState.playerCount || 0 }}人</span>
             <span>建议人数: 5-15人</span>
           </div>
+          <el-button 
+            v-if="isStoryteller && (gameState.players?.length >= 5 || gameState.playerCount >= 5)" 
+            type="primary"
+            @click="startGame"
+          >
+            开始游戏
+          </el-button>
         </div>
       </el-card>
     </div>
@@ -31,14 +38,15 @@
               v-for="player in nominationTargets"
               :key="player.id"
               @click="nominate(player.id)"
-              :disabled="!canNominate || player.hasBeenNominated"
+              :disabled="!canNominate || player.isDead"
               size="small"
-              :type="player.hasBeenNominated ? 'info' : 'default'"
+              :type="player.isDead ? 'info' : 'default'"
             >
               {{ player.name }}
-              <el-tag v-if="player.hasBeenNominated" size="small" type="warning">已提名</el-tag>
+              <el-tag v-if="player.isDead" size="small" type="danger">已死亡</el-tag>
             </el-button>
           </div>
+          <p v-if="!canNominate" class="hint-text">你今天已经提名过了</p>
         </div>
 
         <div v-else class="current-nomination">
@@ -46,7 +54,7 @@
             <strong>{{ getNominatorName() }}</strong> 提名了 <strong>{{ getNomineeName() }}</strong>
           </p>
           
-          <div v-if="votingPhase" class="voting-area">
+          <div class="voting-area">
             <p>请投票:</p>
             <div class="vote-buttons">
               <el-button 
@@ -54,14 +62,21 @@
                 @click="vote('for')"
                 :disabled="hasVoted"
               >
-                赞成处死 ({{ currentNomination.votesFor }})
+                赞成处死 ({{ currentNomination.votesFor || 0 }})
               </el-button>
               <el-button 
                 type="success" 
                 @click="vote('against')"
                 :disabled="hasVoted"
               >
-                反对处死 ({{ currentNomination.votesAgainst }})
+                反对处死 ({{ currentNomination.votesAgainst || 0 }})
+              </el-button>
+              <el-button 
+                type="info" 
+                @click="vote('abstain')"
+                :disabled="hasVoted"
+              >
+                弃权
               </el-button>
             </div>
             <p v-if="hasVoted" class="vote-status">你已投票</p>
@@ -95,39 +110,45 @@
 
         <!-- 普通玩家夜晚界面 -->
         <div v-if="!isStoryteller" class="player-night">
-          <div v-if="nightAction">
-            <h5>{{ nightAction.title }}</h5>
-            <p>{{ nightAction.description }}</p>
+          <div v-if="myNightAction">
+            <h5>{{ myNightAction.title || getRoleActionTitle() }}</h5>
+            <p>{{ myNightAction.description || getRoleActionDescription() }}</p>
             
             <!-- 需要选择目标的行动 -->
-            <div v-if="nightAction.needsTarget" class="night-targets">
+            <div v-if="needsTarget" class="night-targets">
               <el-button
-                v-for="target in nightAction.targets"
+                v-for="target in availableTargets"
                 :key="target.id"
                 @click="selectNightTarget(target.id)"
-                :disabled="nightAction.completed"
+                :disabled="nightActionCompleted"
                 size="small"
               >
                 {{ target.name }}
+                <el-tag v-if="target.isDead" size="small" type="danger">已死亡</el-tag>
               </el-button>
             </div>
             
             <!-- 信息展示 -->
-            <div v-if="nightAction.info" class="night-info">
-              <el-alert :title="nightAction.info" type="info" show-icon />
+            <div v-if="nightInfo" class="night-info">
+              <el-alert :title="formatNightInfo(nightInfo)" type="info" show-icon />
             </div>
             
             <el-button 
-              v-if="!nightAction.completed && !nightAction.needsTarget"
-              @click="completeNightAction"
+              v-if="!nightActionCompleted && !needsTarget"
+              @click="confirmNightAction"
               type="primary"
             >
               确认
             </el-button>
+            
+            <p v-if="nightActionCompleted" class="completed-status">行动已完成</p>
           </div>
           
           <div v-else class="waiting-night">
             <p>等待其他玩家完成夜晚行动...</p>
+            <div v-if="nightInfo" class="night-info">
+              <el-alert :title="formatNightInfo(nightInfo)" type="info" show-icon />
+            </div>
           </div>
         </div>
 
@@ -144,15 +165,7 @@
               >
                 <span class="order-number">{{ index + 1 }}</span>
                 <span class="role-name">{{ action.roleName }}</span>
-                <span class="action-name">{{ action.actionName }}</span>
-                <el-button 
-                  v-if="action.isActive"
-                  @click="completeStorytellerAction(action)"
-                  size="small"
-                  type="primary"
-                >
-                  完成
-                </el-button>
+                <span class="action-name">{{ action.playerName }}</span>
               </div>
             </div>
           </div>
@@ -178,14 +191,17 @@
             <h5>角色揭晓:</h5>
             <div class="role-reveals">
               <div 
-                v-for="player in gameState.players"
+                v-for="player in gameState.finalPlayers || gameState.players"
                 :key="player.id"
                 class="role-reveal"
               >
                 <span class="player-name">{{ player.name }}</span>
-                <span class="player-role" :class="getTeamClass(player.role.team)">
-                  {{ player.role.name }}
+                <span class="player-role" :class="getTeamClass(player.role?.team)">
+                  {{ player.role?.name || '未知' }}
                 </span>
+                <el-tag :type="player.isDead ? 'danger' : 'success'" size="small">
+                  {{ player.isDead ? '已死亡' : '存活' }}
+                </el-tag>
               </div>
             </div>
           </div>
@@ -196,13 +212,14 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 
 interface Props {
   gameState: any
   playerRole?: any
   roomId: string
   isStoryteller?: boolean
+  currentUserId?: string
 }
 
 interface Emits {
@@ -210,45 +227,108 @@ interface Emits {
 }
 
 const props = withDefaults(defineProps<Props>(), {
-  isStoryteller: false
+  isStoryteller: false,
+  currentUserId: ''
 })
 
 const emit = defineEmits<Emits>()
+
+const nightActionCompleted = ref(false)
 
 // 计算属性
 const currentNomination = computed(() => {
   return props.gameState?.nominations?.find((n: any) => n.isOnTrial)
 })
 
-const votingPhase = computed(() => {
-  return !!currentNomination.value && currentNomination.value.votingOpen
+const canNominate = computed(() => {
+  if (!props.currentUserId) return false
+  const myPlayer = props.gameState?.players?.find((p: any) => p.id === props.currentUserId)
+  if (!myPlayer) return false
+  // 存活玩家每天可以提名一次
+  if (!myPlayer.isDead && (myPlayer.nominations || 0) < 1) return true
+  // 死亡玩家如果有遗言票可以提名
+  if (myPlayer.isDead && myPlayer.canVote) return true
+  return false
 })
 
 const hasVoted = computed(() => {
   if (!currentNomination.value) return false
-  return currentNomination.value.votes?.includes(props.gameState.currentPlayerId)
-})
-
-const canNominate = computed(() => {
-  // 检查是否可以提名（存活、今天还没提名过等）
-  return true // 简化实现
+  if (!props.currentUserId) return false
+  return currentNomination.value.votes?.some((v: any) => v.playerId === props.currentUserId)
 })
 
 const nominationTargets = computed(() => {
   return props.gameState?.players?.filter((p: any) => 
-    p.isAlive && p.id !== props.gameState.currentPlayerId
+    p.id !== props.currentUserId
   ) || []
 })
 
-const nightAction = computed(() => {
-  return props.gameState?.nightAction || null
+const myNightAction = computed(() => {
+  if (!props.gameState?.nightOrder) return null
+  const myIndex = props.gameState.nightOrder.findIndex((p: any) => {
+    const pid = typeof p === 'string' ? p : p.playerId
+    return pid === props.currentUserId
+  })
+  if (myIndex === -1) return null
+  
+  const myOrder = props.gameState.nightOrder[myIndex]
+  return {
+    title: `${props.playerRole?.name || '你的角色'} 行动`,
+    description: getRoleActionDescription(),
+    ...myOrder
+  }
+})
+
+const needsTarget = computed(() => {
+  // 需要选择目标的角色
+  const targetRoles = [
+    'poisoner', 'monk', 'imp', 'butler', 'spy', 'sailor', 'exorcist',
+    'innkeeper', 'gambler', 'godfather', 'zombuul', 'pukka', 'witch',
+    'philosopher', 'fanggu', 'vigormortis', 'nodashii', 'vortox',
+    'washerwoman', 'librarian', 'investigator', 'empath', 'fortuneteller',
+    'grandmother', 'clockmaker', 'dreamer', 'seamstress', 'bureaucrat', 'thief'
+  ]
+  return targetRoles.includes(props.playerRole?.id)
+})
+
+const availableTargets = computed(() => {
+  return props.gameState?.players?.filter((p: any) => p.id !== props.currentUserId) || []
 })
 
 const nightOrderActions = computed(() => {
-  return props.gameState?.nightOrder || []
+  return props.gameState?.nightOrder?.map((item: any, index: number) => {
+    if (typeof item === 'string') {
+      const player = props.gameState?.players?.find((p: any) => p.id === item)
+      return {
+        playerId: item,
+        playerName: player?.name || item,
+        roleName: props.gameState?.players?.find((p: any) => p.id === item)?.role?.name || '未知',
+        isActive: false,
+        isCompleted: false
+      }
+    }
+    return {
+      playerId: item.playerId || '',
+      playerName: item.playerName || item.playerId || '未知',
+      roleName: item.roleName || '未知',
+      isActive: index === 0,
+      isCompleted: false
+    }
+  }) || []
+})
+
+const nightInfo = computed(() => {
+  return props.gameState?.nightInfo || null
 })
 
 // 方法
+const startGame = () => {
+  emit('game-action', {
+    type: 'ready',
+    data: {}
+  })
+}
+
 const nominate = (targetId: string) => {
   emit('game-action', {
     type: 'nominate',
@@ -256,7 +336,7 @@ const nominate = (targetId: string) => {
   })
 }
 
-const vote = (voteChoice: 'for' | 'against') => {
+const vote = (voteChoice: 'for' | 'against' | 'abstain') => {
   emit('game-action', {
     type: 'vote',
     data: { vote: voteChoice }
@@ -264,23 +344,24 @@ const vote = (voteChoice: 'for' | 'against') => {
 }
 
 const selectNightTarget = (targetId: string) => {
+  nightActionCompleted.value = true
   emit('game-action', {
     type: 'nightAction',
-    data: { targetId: targetId }
+    data: { 
+      actionType: 'ability',
+      targets: [targetId] 
+    }
   })
 }
 
-const completeNightAction = () => {
+const confirmNightAction = () => {
+  nightActionCompleted.value = true
   emit('game-action', {
-    type: 'completeNightAction',
-    data: {}
-  })
-}
-
-const completeStorytellerAction = (action: any) => {
-  emit('game-action', {
-    type: 'storytellerAction',
-    data: { actionType: 'complete', actionId: action.id }
+    type: 'nightAction',
+    data: { 
+      actionType: 'ability',
+      targets: []
+    }
   })
 }
 
@@ -294,7 +375,7 @@ const nextPhase = () => {
 const endGame = () => {
   emit('game-action', {
     type: 'storytellerAction',
-    data: { actionType: 'endGame' }
+    data: { actionType: 'endGame', winner: 'good', reason: '说书人结束游戏' }
   })
 }
 
@@ -302,13 +383,13 @@ const endGame = () => {
 const getNominatorName = () => {
   if (!currentNomination.value) return ''
   const player = props.gameState?.players?.find((p: any) => p.id === currentNomination.value.nominator)
-  return player?.name || ''
+  return player?.name || currentNomination.value.nominator
 }
 
 const getNomineeName = () => {
   if (!currentNomination.value) return ''
   const player = props.gameState?.players?.find((p: any) => p.id === currentNomination.value.nominee)
-  return player?.name || ''
+  return player?.name || currentNomination.value.nominee
 }
 
 const getWinnerTeam = () => {
@@ -320,6 +401,87 @@ const getWinnerTeam = () => {
 
 const getTeamClass = (team: string) => {
   return `team-${team?.toLowerCase() || 'unknown'}`
+}
+
+const getRoleActionTitle = () => {
+  return `${props.playerRole?.name || '你的角色'} 行动`
+}
+
+const getRoleActionDescription = () => {
+  const descriptions: Record<string, string> = {
+    'poisoner': '选择一个玩家使其中毒',
+    'monk': '选择一个玩家保护（不能是自己）',
+    'imp': '选择一个玩家杀死（选择自己会自杀转移）',
+    'butler': '选择一个主人（明天你只能跟随他投票）',
+    'spy': '查看魔典（查看所有玩家的真实状态）',
+    'sailor': '选择一个玩家：你或他醉酒',
+    'exorcist': '选择一个玩家：如果是恶魔，恶魔今晚不行动',
+    'innkeeper': '选择两个玩家：他们不能死亡，但一个醉酒',
+    'gambler': '选择一个玩家并猜测他的角色',
+    'godfather': '如果有外来者死亡，选择一个玩家杀死',
+    'zombuul': '如果白天没人死，选择一个玩家杀死',
+    'pukka': '选择一个玩家中毒（前一晚中毒的会死亡）',
+    'witch': '诅咒一个玩家：如果他明天提名就死亡',
+    'philosopher': '选择一个善良角色获得其能力',
+    'fanggu': '选择一个玩家杀死（第一次杀外来者会转移）',
+    'vigormortis': '选择一个玩家杀死',
+    'nodashii': '选择一个玩家杀死（邻座镇民中毒）',
+    'vortox': '选择一个玩家杀死（镇民信息全错）',
+    'washerwoman': '了解两个玩家中有一个是特定镇民',
+    'librarian': '了解两个玩家中有一个是特定外来者',
+    'investigator': '了解两个玩家中有一个是特定爪牙',
+    'empath': '了解你的两个邻居中有几个邪恶',
+    'fortuneteller': '选择两个玩家：了解是否有恶魔',
+    'grandmother': '了解一个善良玩家和他的角色',
+    'clockmaker': '了解恶魔距离最近爪牙的步数',
+    'dreamer': '选择一个玩家：了解一个正确和一个错误的角色',
+    'seamstress': '选择两个玩家：了解是否同阵营',
+    'bureaucrat': '选择一个玩家：他明天有3票',
+    'thief': '选择一个玩家：他明天的票算负票'
+  }
+  return descriptions[props.playerRole?.id] || '请执行你的角色能力'
+}
+
+const formatNightInfo = (info: any) => {
+  if (!info) return ''
+  
+  if (typeof info === 'string') return info
+  
+  if (info.message) return info.message
+  
+  if (info.information) {
+    const data = info.information
+    if (data.roleId) {
+      return `角色: ${data.roleName || data.roleId}, 玩家: ${(data.players || []).join(', ')}`
+    }
+    if (data.pairs !== undefined) {
+      return `相邻邪恶对数: ${data.pairs}`
+    }
+    if (data.evilCount !== undefined) {
+      return `邪恶邻居数: ${data.evilCount}`
+    }
+    if (data.grandchild) {
+      return `孙子: ${data.grandchild}, 角色: ${data.grandchildRole?.name || '未知'}`
+    }
+    if (data.distance !== undefined) {
+      return `恶魔最近距离: ${data.distance}`
+    }
+    if (data.isDemon !== undefined) {
+      return data.isDemon ? '是恶魔！' : '不是恶魔'
+    }
+    if (data.isCorrect !== undefined) {
+      return data.isCorrect ? '猜测正确！' : '猜测错误！'
+    }
+    if (data.playerId) {
+      return `${data.playerId} 的角色是: ${data.roleName || data.roleId || '未知'}`
+    }
+    if (data.abnormalCount !== undefined) {
+      return `异常玩家数: ${data.abnormalCount}`
+    }
+    return JSON.stringify(data)
+  }
+  
+  return JSON.stringify(info)
 }
 </script>
 
@@ -338,6 +500,13 @@ const getTeamClass = (team: string) => {
   justify-content: space-between;
   font-size: 14px;
   color: #6c757d;
+  margin-bottom: 12px;
+}
+
+.hint-text {
+  color: #f56c6c;
+  font-size: 12px;
+  margin-top: 8px;
 }
 
 .nomination-card {
@@ -401,10 +570,16 @@ const getTeamClass = (team: string) => {
 
 .waiting-night {
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
   min-height: 80px;
   color: #6c757d;
+}
+
+.completed-status {
+  color: #67c23a;
+  font-weight: bold;
 }
 
 .storyteller-night {
@@ -521,4 +696,4 @@ const getTeamClass = (team: string) => {
 .team-demon {
   color: #2d3436;
 }
-</style> 
+</style>

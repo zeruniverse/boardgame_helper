@@ -8,7 +8,7 @@ interface MafiaPlayer {
   index: number;
   ready: boolean;
   alive?: boolean;
-  role?: 'KILLER' | 'COP' | 'CIVILIAN';
+  role?: 'KILLER' | 'COP' | 'DOCTOR' | 'CIVILIAN';
   team?: 'RED' | 'BLUE';
 }
 
@@ -28,10 +28,14 @@ interface MafiaGameState {
   voteResult?: Record<string, string>;
   pkPlayers?: string[];
   lastWordPlayer?: string;
-  lastWordRound?: number;
+  lastWordCount?: number;
+  systemVote?: string[];
   timeLeft?: number;
   statusMessage?: string;
   winner?: 'red' | 'blue';
+  killerCount?: number;
+  copCount?: number;
+  doctorCount?: number;
   nightActions?: {
     killTargets?: string[];
     inspectTargets?: string[];
@@ -40,9 +44,10 @@ interface MafiaGameState {
 
 interface MafiaSecret {
   playerId: string;
-  role: 'KILLER' | 'COP' | 'CIVILIAN';
+  role: 'KILLER' | 'COP' | 'DOCTOR' | 'CIVILIAN';
   team: 'RED' | 'BLUE';
   teammates?: string[];
+  actionLock?: boolean;
   inspectResults?: Array<{
     target: string;
     result: 'RED' | 'BLUE';
@@ -125,6 +130,10 @@ export const useMafiaStore = defineStore('mafia', {
       return this.playerSecret?.role === 'COP';
     },
 
+    isDoctor(): boolean {
+      return this.playerSecret?.role === 'DOCTOR';
+    },
+
     isCivilian(): boolean {
       return this.playerSecret?.role === 'CIVILIAN';
     },
@@ -135,6 +144,10 @@ export const useMafiaStore = defineStore('mafia', {
 
     isBlueTeam(): boolean {
       return this.playerSecret?.team === 'BLUE';
+    },
+
+    isActionLocked(): boolean {
+      return this.playerSecret?.actionLock ?? true;
     },
   },
 
@@ -169,14 +182,109 @@ export const useMafiaStore = defineStore('mafia', {
       });
 
       // 游戏事件
-      this.socket.on('game_started', (data: { game: MafiaGameState; secret: MafiaSecret }) => {
+      this.socket.on('game_started', (data: { game: MafiaGameState; secret: MafiaSecret; message?: string }) => {
         this.gameState = data.game;
         this.playerSecret = data.secret;
         if (this.room) {
           this.room.gameStarted = true;
         }
+        if (data.message) {
+          this.addSystemMessage(data.message);
+        }
+        this.updateTimer();
       });
 
+      // 游戏广播事件（用于系统消息）
+      this.socket.on('game_started_broadcast', (data: { message?: string; gameInfo?: any }) => {
+        if (data.message) {
+          this.addSystemMessage(data.message);
+        }
+      });
+
+      // 阶段切换事件 - 统一处理为 game_update
+      this.socket.on('day_start', (data: { message?: string; gameInfo?: MafiaGameState }) => {
+        if (data.gameInfo) this.gameState = data.gameInfo;
+        if (data.message) this.addSystemMessage(data.message);
+        this.updateTimer();
+      });
+
+      this.socket.on('night_start', (data: { message?: string; gameInfo?: MafiaGameState }) => {
+        if (data.gameInfo) this.gameState = data.gameInfo;
+        if (data.message) this.addSystemMessage(data.message);
+        this.updateTimer();
+      });
+
+      this.socket.on('speak_start', (data: { message?: string; gameInfo?: MafiaGameState }) => {
+        if (data.gameInfo) this.gameState = data.gameInfo;
+        if (data.message) this.addSystemMessage(data.message);
+        this.updateTimer();
+      });
+
+      this.socket.on('speak_continue', (data: { message?: string; gameInfo?: MafiaGameState }) => {
+        if (data.gameInfo) this.gameState = data.gameInfo;
+        if (data.message) this.addSystemMessage(data.message);
+        this.updateTimer();
+      });
+
+      this.socket.on('vote_start', (data: { message?: string; gameInfo?: MafiaGameState }) => {
+        if (data.gameInfo) this.gameState = data.gameInfo;
+        if (data.message) this.addSystemMessage(data.message);
+        this.updateTimer();
+      });
+
+      this.socket.on('pk_start', (data: { message?: string; gameInfo?: MafiaGameState }) => {
+        if (data.gameInfo) this.gameState = data.gameInfo;
+        if (data.message) this.addSystemMessage(data.message);
+        this.updateTimer();
+      });
+
+      this.socket.on('pk_vote_start', (data: { message?: string; gameInfo?: MafiaGameState }) => {
+        if (data.gameInfo) this.gameState = data.gameInfo;
+        if (data.message) this.addSystemMessage(data.message);
+        this.updateTimer();
+      });
+
+      this.socket.on('pk_speak_continue', (data: { message?: string; gameInfo?: MafiaGameState }) => {
+        if (data.gameInfo) this.gameState = data.gameInfo;
+        if (data.message) this.addSystemMessage(data.message);
+        this.updateTimer();
+      });
+
+      this.socket.on('last_word_start', (data: { message?: string; gameInfo?: MafiaGameState }) => {
+        if (data.gameInfo) this.gameState = data.gameInfo;
+        if (data.message) this.addSystemMessage(data.message);
+        this.updateTimer();
+      });
+
+      this.socket.on('peaceful_night', (data: { message?: string; gameInfo?: MafiaGameState }) => {
+        if (data.gameInfo) this.gameState = data.gameInfo;
+        if (data.message) this.addSystemMessage(data.message);
+        this.updateTimer();
+      });
+
+      // 动作结果事件
+      this.socket.on('inspect_result', (data: { message?: string }) => {
+        if (data.message) this.addSystemMessage(data.message);
+      });
+
+      this.socket.on('kill_result', (data: { message?: string }) => {
+        if (data.message) this.addSystemMessage(data.message);
+      });
+
+      this.socket.on('save_result', (data: { message?: string }) => {
+        if (data.message) this.addSystemMessage(data.message);
+      });
+
+      this.socket.on('vote_received', (data: { playerId?: string; gameInfo?: MafiaGameState }) => {
+        if (data.gameInfo) this.gameState = data.gameInfo;
+      });
+
+      this.socket.on('vote_result', (data: { summary?: any; gameInfo?: MafiaGameState; message?: string }) => {
+        if (data.gameInfo) this.gameState = data.gameInfo;
+        if (data.message) this.addSystemMessage(data.message);
+      });
+
+      // 游戏更新（通用）
       this.socket.on('game_update', (gameState: MafiaGameState) => {
         this.gameState = gameState;
         this.updateTimer();
@@ -186,12 +294,22 @@ export const useMafiaStore = defineStore('mafia', {
         this.playerSecret = secret;
       });
 
-      this.socket.on('game_over', (data: { winner: 'red' | 'blue'; reason: string }) => {
+      this.socket.on('game_over', (data: { winner: 'red' | 'blue'; reason: string; message?: string; gameInfo?: MafiaGameState }) => {
+        if (data.gameInfo) this.gameState = data.gameInfo;
         if (this.gameState) {
           this.gameState.winner = data.winner;
           this.gameState.status = 'OVER';
         }
-        this.addSystemMessage(`游戏结束：${data.reason}`);
+        this.addSystemMessage(data.message || `游戏结束：${data.reason}`);
+      });
+
+      this.socket.on('game_reset', (data: { message?: string; gameInfo?: MafiaGameState }) => {
+        if (data.gameInfo) this.gameState = data.gameInfo;
+        this.playerSecret = null;
+        if (this.room) {
+          this.room.gameStarted = false;
+        }
+        if (data.message) this.addSystemMessage(data.message);
       });
 
       // 聊天事件
@@ -204,9 +322,11 @@ export const useMafiaStore = defineStore('mafia', {
       });
 
       // 错误事件
-      this.socket.on('error', (error: string) => {
-        this.errorMessage = error;
-        this.addSystemMessage(`错误：${error}`);
+      this.socket.on('game_error', (data: { message?: string }) => {
+        if (data.message) {
+          this.errorMessage = data.message;
+          this.addSystemMessage(`错误：${data.message}`);
+        }
       });
 
       // 时间同步
@@ -216,16 +336,16 @@ export const useMafiaStore = defineStore('mafia', {
 
       // 游戏状态同步（用于重连）
       this.socket.on('game_state_sync', (data: {
-        room: MafiaRoomState;
         game: MafiaGameState | null;
         secret: MafiaSecret | null;
         currentUserId: string;
       }) => {
-        this.room = data.room;
         this.gameState = data.game;
         this.playerSecret = data.secret;
         this.currentUserId = data.currentUserId;
-        this.currentRoomId = data.room.id;
+        if (data.game?.timeLeft !== undefined) {
+          this.timeLeft = typeof data.game.timeLeft === 'object' ? (data.game.timeLeft as any).left || 0 : data.game.timeLeft;
+        }
       });
     },
 
@@ -334,11 +454,19 @@ export const useMafiaStore = defineStore('mafia', {
     },
 
     inspectSuspect(targetId: string) {
-      this.sendGameAction('inspect_suspect', { targetId });
+      this.sendGameAction('inspect_suspect', { suspectId: targetId });
+    },
+
+    doctorSave(targetId: string) {
+      this.sendGameAction('doctor_save', { targetId });
     },
 
     vote(targetId: string) {
       this.sendGameAction('vote', { targetId });
+    },
+
+    endSpeak() {
+      this.sendGameAction('end_speak', {});
     },
 
     confess() {
@@ -364,8 +492,13 @@ export const useMafiaStore = defineStore('mafia', {
     },
 
     updateTimer() {
-      if (this.gameState?.timeLeft) {
-        this.timeLeft = this.gameState.timeLeft;
+      if (this.gameState?.timeLeft !== undefined) {
+        const tl = this.gameState.timeLeft;
+        if (typeof tl === 'object' && tl !== null) {
+          this.timeLeft = (tl as any).left || 0;
+        } else if (typeof tl === 'number') {
+          this.timeLeft = tl;
+        }
       }
     },
 

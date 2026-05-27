@@ -24,9 +24,13 @@ import {
   isEvilPlayer,
   countAdjacentEvilPairs,
   validatePlayerAction,
-  getRoleName
+  getRoleName,
+  handleSetupMarkers,
+  getAlivePlayers,
+  getDeadPlayersWithGhostVote
 } from '../utils/botcUtils';
 import { EDITIONS, getEditionById } from '../utils/botcData';
+import { processFirstNightInfo, processNightAction, processDeathAbility } from '../utils/botcSkills';
 
 /**
  * 血染钟楼游戏 Worker
@@ -38,6 +42,9 @@ export class BOTCWorker extends BaseGameWorker {
   private gamePlayers: Map<string, GamePlayer> = new Map();
   private nightActions: NightAction[] = [];
   private dayTimers: Map<string, NodeJS.Timeout> = new Map();
+  private privateChatMessages: Map<string, any[]> = new Map();
+  private nightRound: number = 0;
+  private previouslyPukkaTarget: string | null = null;
 
   /**
    * 获取玩家显示名称的辅助函数
@@ -52,16 +59,17 @@ export class BOTCWorker extends BaseGameWorker {
     this.gameConfig = {
       edition: config.edition || 'tb',
       storytellerId: config.storytellerId,
-      allowSpectators: config.allowSpectators || true,
+      allowSpectators: config.allowSpectators !== undefined ? config.allowSpectators : true,
       isPrivate: config.isPrivate || false,
       maxPlayers: config.maxPlayers || 15,
       enableTimers: config.enableTimers || false,
-      dayTimer: config.dayTimer || 300, // 5分钟
-      nightTimer: config.nightTimer || 180, // 3分钟
-      votingTimer: config.votingTimer || 60 // 1分钟
+      dayTimer: config.dayTimer || 300,
+      nightTimer: config.nightTimer || 180,
+      votingTimer: config.votingTimer || 60
     };
 
     this.gameState = initializeGameState(this.gameConfig.storytellerId);
+    this.gameState.grimoire.startTime = Date.now();
     
     this.sendToRoom('gameConfigured', {
       config: this.gameConfig,
@@ -125,6 +133,12 @@ export class BOTCWorker extends BaseGameWorker {
   }
 
   async gameAction(playerId: string, actionType: string, actionData: any): Promise<void> {
+    // 私聊消息特殊处理
+    if (actionType === 'private_message') {
+      await this.handlePrivateChat(playerId, actionData);
+      return;
+    }
+
     const action: BOTCGameAction = { type: actionType as any, data: actionData };
     
     const validation = validatePlayerAction(
@@ -195,6 +209,9 @@ export class BOTCWorker extends BaseGameWorker {
       const playerIds = this.room.players.map(p => p.id).filter(id => id !== this.gameConfig.storytellerId);
       const roleAssignments = assignRoles(playerIds, this.gameConfig.edition);
       
+      // 处理setup标记（Baron等角色的设置影响）
+      handleSetupMarkers(roleAssignments, this.gameConfig.edition);
+
       // 创建游戏玩家
       let seatIndex = 0;
       playerIds.forEach(playerId => {
@@ -218,7 +235,8 @@ export class BOTCWorker extends BaseGameWorker {
         this.sendToPlayer(playerId, 'roleAssigned', {
           role: gamePlayer.role,
           seat: gamePlayer.seat,
-          isEvil: isEvilPlayer(gamePlayer)
+          isEvil: isEvilPlayer(gamePlayer),
+          nightInfo: null
         });
       });
 
@@ -243,6 +261,19 @@ export class BOTCWorker extends BaseGameWorker {
     this.gameState.phase = isFirstNight ? GamePhase.FIRST_NIGHT : GamePhase.NIGHT;
     this.gameState.nightOrder = getNightOrder(Array.from(this.gamePlayers.values()), isFirstNight);
     this.nightActions = [];
+    this.nightRound++;
+
+    // 重置玩家夜间行动状态
+    this.gamePlayers.forEach(player => {
+      player.hasActed = false;
+    });
+
+    // 清除前一夜的临时保护效果（僧侣的保护在下一夜清除）
+    if (!isFirstNight) {
+      this.gamePlayers.forEach(player => {
+        player.isProtected = false;
+      });
+    }
 
     this.sendToRoom('nightStarted', {
       isFirstNight,
@@ -260,10 +291,74 @@ export class BOTCWorker extends BaseGameWorker {
       isFirstNight
     });
 
+    // 处理首夜信息类角色
+    if (isFirstNight) {
+      await this.processFirstNightInfo();
+    }
+
     // 如果没有夜晚行动，直接进入白天
     if (this.gameState.nightOrder.length === 0) {
       setTimeout(() => this.startDay(), 2000);
     }
+  }
+
+  /**
+   * 处理首夜信息
+   */
+  private async processFirstNightInfo(): Promise<void> {
+    const allPlayers = Array.from(this.gamePlayers.values());
+    
+    for (const playerId of this.gameState.nightOrder) {
+      const player = this.gamePlayers.get(playerId);
+      if (!player || !player.role) continue;
+
+      // 检查玩家是否中毒/醉酒（首夜时投毒者已行动后处理）
+      const isPoisoned = player.reminders.some(r => r === 'Poisoned' || r === '中毒');
+      const isDrunk = player.reminders.some(r => r === 'Drunk' || r === '醉酒');
+
+      try {
+        const result = processFirstNightInfo(player, allPlayers, this.gameConfig.edition);
+        
+        if (result.success && result.information) {
+          // 如果中毒或醉酒，可能提供错误信息
+          const finalInfo = (isPoisoned || isDrunk) 
+            ? this.corruptInfo(result.information, player.role.id)
+            : result.information;
+
+          this.sendToPlayer(playerId, 'nightInfo', {
+            role: player.role.id,
+            information: finalInfo,
+            isCorrupted: isPoisoned || isDrunk
+          });
+        }
+      } catch (error) {
+        console.error(`处理首夜信息失败 (${player.role.id}):`, error);
+      }
+    }
+  }
+
+  /**
+   * 污染信息（中毒/醉酒时）
+   */
+  private corruptInfo(information: any, roleId: string): any {
+    // 简单随机化信息
+    if (typeof information === 'object') {
+      const corrupted = { ...information };
+      if (information.pairs !== undefined) {
+        corrupted.pairs = Math.floor(Math.random() * 3);
+      }
+      if (information.evilCount !== undefined) {
+        corrupted.evilCount = Math.floor(Math.random() * 3);
+      }
+      if (information.grandchild !== undefined) {
+        // 随机替换孙子
+        const allPlayers = Array.from(this.gamePlayers.values());
+        const randomPlayer = allPlayers[Math.floor(Math.random() * allPlayers.length)];
+        corrupted.grandchild = randomPlayer?.playerId;
+      }
+      return corrupted;
+    }
+    return information;
   }
 
   /**
@@ -281,6 +376,10 @@ export class BOTCWorker extends BaseGameWorker {
     this.gamePlayers.forEach(player => {
       player.hasActed = false;
       player.nominations = 0;
+      // 恢复死亡玩家的投票权（遗言票）
+      if (player.isDead) {
+        player.canVote = true;
+      }
     });
 
     this.sendToRoom('dayStarted', {
@@ -332,15 +431,24 @@ export class BOTCWorker extends BaseGameWorker {
       return;
     }
 
-    if (nominator.isDead || nominee.isDead) {
-      this.sendToPlayer(playerId, 'actionError', { message: '死亡玩家无法参与提名' });
+    // BOTC规则：死亡玩家仍可提名（只要还有遗言票）
+    if (nominator.isDead && !nominator.canVote) {
+      this.sendToPlayer(playerId, 'actionError', { message: '你的遗言票已用完' });
       return;
     }
 
-    if (nominator.nominations >= 1) {
+    // 提名者存活时，每天只能提名一次
+    if (!nominator.isDead && nominator.nominations >= 1) {
       this.sendToPlayer(playerId, 'actionError', { message: '每天只能提名一次' });
       return;
     }
+
+    // 死亡玩家提名消耗遗言票
+    if (nominator.isDead) {
+      nominator.canVote = false;
+    }
+
+    // 被提名者可以是死亡或存活（BOTC中可以对死亡玩家提名）
 
     // 检查是否已经有提名在进行
     const activeNomination = this.gameState.nominations.find(n => n.isOnTrial);
@@ -361,7 +469,9 @@ export class BOTCWorker extends BaseGameWorker {
     };
 
     this.gameState.nominations.push(nomination);
-    nominator.nominations++;
+    if (!nominator.isDead) {
+      nominator.nominations++;
+    }
 
     this.sendToRoom('nominationCreated', {
       nomination: {
@@ -384,7 +494,9 @@ export class BOTCWorker extends BaseGameWorker {
    * 开始投票
    */
   private async startVoting(nomination: Nomination): Promise<void> {
-    const alivePlayers = Array.from(this.gamePlayers.values()).filter(p => !p.isDead && p.canVote);
+    // BOTC规则：存活玩家都可以投票，死亡玩家如果有遗言票也可以投票
+    const alivePlayers = Array.from(this.gamePlayers.values()).filter(p => !p.isDead);
+    const deadWithVotes = Array.from(this.gamePlayers.values()).filter(p => p.isDead && p.canVote);
     
     this.sendToRoom('votingStarted', {
       nomination: {
@@ -397,9 +509,10 @@ export class BOTCWorker extends BaseGameWorker {
           name: this.getPlayerName(nomination.nominee)
         }
       },
-      eligibleVoters: alivePlayers.map(p => ({
+      eligibleVoters: [...alivePlayers, ...deadWithVotes].map(p => ({
         id: p.playerId,
-        name: this.getPlayerName(p.playerId)
+        name: this.getPlayerName(p.playerId),
+        isDead: p.isDead
       }))
     });
 
@@ -423,8 +536,19 @@ export class BOTCWorker extends BaseGameWorker {
     }
 
     const voter = this.gamePlayers.get(playerId);
-    if (!voter || voter.isDead || !voter.canVote) {
-      this.sendToPlayer(playerId, 'actionError', { message: '无法投票' });
+    if (!voter) {
+      this.sendToPlayer(playerId, 'actionError', { message: '玩家不存在' });
+      return;
+    }
+
+    // BOTC规则：存活玩家可以投票，死亡玩家如果有遗言票也可以投票
+    if (!voter.isDead && !voter.canVote) {
+      this.sendToPlayer(playerId, 'actionError', { message: '你今天已经投过票了' });
+      return;
+    }
+
+    if (voter.isDead && !voter.canVote) {
+      this.sendToPlayer(playerId, 'actionError', { message: '你的遗言票已用完' });
       return;
     }
 
@@ -450,6 +574,11 @@ export class BOTCWorker extends BaseGameWorker {
     }
 
     voter.votesUsed++;
+    
+    // 死亡玩家投票后消耗遗言票
+    if (voter.isDead) {
+      voter.canVote = false;
+    }
 
     this.sendToRoom('voteSubmitted', {
       playerId,
@@ -462,9 +591,12 @@ export class BOTCWorker extends BaseGameWorker {
       }
     });
 
-    // 检查是否所有人都投票了
-    const alivePlayers = Array.from(this.gamePlayers.values()).filter(p => !p.isDead && p.canVote);
-    if (activeNomination.votes.length >= alivePlayers.length) {
+    // 检查是否所有人都投票了（存活+有遗言票的死亡玩家）
+    const eligibleVoters = Array.from(this.gamePlayers.values()).filter(p => {
+      return !p.isDead || (p.isDead && p.canVote) || activeNomination.votes.find(v => v.playerId === p.playerId);
+    });
+    
+    if (activeNomination.votes.length >= eligibleVoters.length) {
       this.endVoting(activeNomination);
     }
   }
@@ -508,9 +640,25 @@ export class BOTCWorker extends BaseGameWorker {
     const player = this.gamePlayers.get(playerId);
     if (!player) return;
 
+    // 处理圣徒被处决 - 善良阵营直接失败
+    if (player.role?.id === 'saint') {
+      await this.endGame('evil', '圣徒被处决，善良阵营失败');
+      return;
+    }
+
     player.isDead = true;
     player.deathCause = 'execution';
+    player.canVote = true; // 刚死亡的玩家获得遗言票
     this.gameState.livingPlayers--;
+
+    // 处理死亡时的能力
+    const deathResult = processDeathAbility(playerId, Array.from(this.gamePlayers.values()), 'execution');
+    if (deathResult.effects?.message) {
+      this.sendToRoom('gameMessage', { 
+        message: deathResult.effects.message,
+        type: 'warning'
+      });
+    }
 
     this.gameState.execution = {
       playerId,
@@ -555,8 +703,8 @@ export class BOTCWorker extends BaseGameWorker {
     const action: NightAction = {
       playerId,
       roleId: player.role?.id || '',
-      actionType: data.actionType,
-      targets: data.targets || [],
+      actionType: data.actionType || 'ability',
+      targets: data.targets || (data.targetId ? [data.targetId] : []),
       data: data.data || {},
       timestamp: Date.now()
     };
@@ -599,42 +747,90 @@ export class BOTCWorker extends BaseGameWorker {
       case 'startDay':
         await this.startDay();
         break;
+      case 'nextPhase':
+        // 根据当前阶段决定下一步
+        if (this.gameState.phase === GamePhase.DAY) {
+          await this.endDay();
+        } else if (this.gameState.phase === GamePhase.NIGHT || this.gameState.phase === GamePhase.FIRST_NIGHT) {
+          await this.processNightActions();
+        }
+        break;
       case 'killPlayer':
-        await this.killPlayer(data.playerId, data.cause || 'demon');
+        await this.killPlayer(data.playerId, data.cause || 'storyteller');
         break;
       case 'revivePlayer':
         await this.revivePlayer(data.playerId);
         break;
       case 'endGame':
-        await this.endGame(data.winner, data.reason);
+        await this.endGame(data.winner || 'good', data.reason || '说书人结束游戏');
         break;
       default:
-        this.sendToPlayer(playerId, 'actionError', { message: '未知说书人操作' });
+        this.sendToPlayer(playerId, 'actionError', { message: '未知说书人操作: ' + data.actionType });
     }
   }
 
   /**
-   * 处理夜晚行动结果
+   * 处理夜晚行动结果 - 完整实现
    */
   private async processNightActions(): Promise<void> {
-    // 这里处理各种夜晚行动的效果
-    // 简化版本，主要处理恶魔杀人
-    
-    const demonActions = this.nightActions.filter(action => {
-      const player = this.gamePlayers.get(action.playerId);
-      return player?.role?.team === Team.DEMON;
-    });
+    const allPlayers = Array.from(this.gamePlayers.values());
+    const processedActions: any[] = [];
 
-    for (const action of demonActions) {
-      if (action.targets && action.targets.length > 0) {
-        const targetId = action.targets[0];
-        await this.killPlayer(targetId, 'demon');
+    // 按夜晚顺序处理各个角色的行动
+    for (const action of this.nightActions) {
+      const player = this.gamePlayers.get(action.playerId);
+      if (!player || !player.role) continue;
+
+      // 检查玩家是否被保护或免疫
+      if (this.shouldSkipAction(player, action)) {
+        continue;
+      }
+
+      try {
+        const result = processNightAction(action, allPlayers, this.gameState.phase === GamePhase.FIRST_NIGHT);
+        
+        if (result.success) {
+          // 处理效果
+          await this.applyNightEffects(result.effects || {}, action);
+          
+          // 处理信息
+          if (result.information) {
+            const isPoisoned = player.reminders.some(r => r === 'Poisoned' || r === '中毒');
+            const isDrunk = player.reminders.some(r => r === 'Drunk' || r === '醉酒');
+            const finalInfo = (isPoisoned || isDrunk) 
+              ? this.corruptInfo(result.information, player.role.id)
+              : result.information;
+
+            this.sendToPlayer(action.playerId, 'nightInfo', {
+              role: player.role.id,
+              information: finalInfo,
+              isCorrupted: isPoisoned || isDrunk
+            });
+          }
+
+          processedActions.push({
+            playerId: action.playerId,
+            roleId: action.roleId,
+            result: result.success
+          });
+        }
+      } catch (error) {
+        console.error(`处理夜晚行动失败 (${action.roleId}):`, error);
       }
     }
 
+    // 处理Pukka的延迟死亡
+    await this.processPukkaDelayedDeath();
+
+    // 处理其他夜间被动效果
+    await this.processPassiveEffects();
+
+    // 清空夜晚行动数组
+    this.nightActions = [];
+
     this.sendToPlayer(this.gameConfig.storytellerId, 'nightProcessed', {
-      actions: this.nightActions,
-      summary: '夜晚行动已处理'
+      actions: processedActions,
+      summary: `处理了 ${processedActions.length} 个夜晚行动`
     });
 
     // 检查游戏是否结束
@@ -649,15 +845,147 @@ export class BOTCWorker extends BaseGameWorker {
   }
 
   /**
+   * 判断是否应该跳过该行动（被阻止等）
+   */
+  private shouldSkipAction(player: GamePlayer, action: NightAction): boolean {
+    // 检查是否被驱魔师阻止
+    const exorcistAction = this.nightActions.find(a => {
+      const aPlayer = this.gamePlayers.get(a.playerId);
+      return aPlayer?.role?.id === 'exorcist' && a.targets?.includes(action.playerId);
+    });
+    
+    if (exorcistAction && player.role?.team === Team.DEMON) {
+      return true;
+    }
+
+    // 检查是否被水手醉酒影响
+    if (player.reminders.some(r => r === 'Drunk' || r === '醉酒')) {
+      // 醉酒时某些行动仍然执行但信息可能错误
+    }
+
+    return false;
+  }
+
+  /**
+   * 应用夜晚效果
+   */
+  private async applyNightEffects(effects: any, action: NightAction): Promise<void> {
+    // 处理中毒
+    if (effects.poisoned) {
+      for (const playerId of effects.poisoned) {
+        const player = this.gamePlayers.get(playerId);
+        if (player) {
+          // 清除之前的中毒标记
+          player.reminders = player.reminders.filter(r => r !== 'Poisoned' && r !== '中毒');
+          player.reminders.push('Poisoned');
+        }
+      }
+    }
+
+    // 处理保护
+    if (effects.protected) {
+      for (const playerId of effects.protected) {
+        const player = this.gamePlayers.get(playerId);
+        if (player) {
+          player.isProtected = true;
+          player.reminders.push('Protected');
+        }
+      }
+    }
+
+    // 处理击杀
+    if (effects.killed) {
+      for (const playerId of effects.killed) {
+        await this.killPlayer(playerId, 'demon');
+      }
+    }
+
+    // 处理提醒标记
+    if (effects.reminders) {
+      for (const reminder of effects.reminders) {
+        const player = this.gamePlayers.get(reminder.playerId);
+        if (player) {
+          player.reminders.push(reminder.reminder);
+        }
+      }
+    }
+
+    // 处理醉酒
+    if (effects.drunk) {
+      for (const playerId of effects.drunk) {
+        const player = this.gamePlayers.get(playerId);
+        if (player) {
+          player.reminders.push('Drunk');
+        }
+      }
+    }
+  }
+
+  /**
+   * 处理Pukka的延迟死亡
+   */
+  private async processPukkaDelayedDeath(): Promise<void> {
+    // 找到上一夜被Pukka下毒的玩家，让他们死亡
+    const pukkaAction = this.nightActions.find(a => {
+      const player = this.gamePlayers.get(a.playerId);
+      return player?.role?.id === 'pukka';
+    });
+
+    if (pukkaAction && this.previouslyPukkaTarget) {
+      // 前一晚中毒的玩家今夜死亡
+      await this.killPlayer(this.previouslyPukkaTarget, 'pukka');
+    }
+
+    // 更新前一夜的中毒目标
+    if (pukkaAction && pukkaAction.targets && pukkaAction.targets.length > 0) {
+      this.previouslyPukkaTarget = pukkaAction.targets[0];
+      const target = this.gamePlayers.get(this.previouslyPukkaTarget);
+      if (target) {
+        target.reminders.push('Poisoned');
+      }
+    }
+  }
+
+  /**
+   * 处理被动效果
+   */
+  private async processPassiveEffects(): Promise<void> {
+    const allPlayers = Array.from(this.gamePlayers.values());
+
+    // 检查红颜（Scarlet Woman）- 恶魔死亡时成为恶魔
+    const aliveDemon = allPlayers.find(p => p.role?.team === Team.DEMON && !p.isDead);
+    if (!aliveDemon) {
+      const scarletWoman = allPlayers.find(p => p.role?.id === 'scarletwoman' && !p.isDead);
+      if (scarletWoman && allPlayers.filter(p => !p.isDead).length >= 5) {
+        // 红颜成为新的恶魔
+        const demonRole = allPlayers.find(p => p.role?.team === Team.DEMON && p.isDead)?.role;
+        if (demonRole) {
+          scarletWoman.role = demonRole;
+          scarletWoman.reminders.push('成为恶魔');
+          this.sendToPlayer(scarletWoman.playerId, 'nightInfo', {
+            role: scarletWoman.role.id,
+            information: { message: '你成为了新的恶魔！' }
+          });
+        }
+      }
+    }
+
+    // 处理士兵的免疫
+    const soldier = allPlayers.find(p => p.role?.id === 'soldier' && !p.isDead);
+    if (soldier) {
+      soldier.isProtected = true;
+    }
+  }
+
+  /**
    * 杀死玩家
    */
   private async killPlayer(playerId: string, cause: string): Promise<void> {
     const player = this.gamePlayers.get(playerId);
     if (!player || player.isDead) return;
 
-    // 检查保护效果
-    if (player.isProtected && cause === 'demon') {
-      player.isProtected = false; // 保护效果消失
+    // 检查保护效果（僧侣保护）
+    if (player.isProtected && (cause === 'demon' || cause === 'godfather' || cause === 'assassin')) {
       this.sendToPlayer(this.gameConfig.storytellerId, 'playerProtected', {
         playerId,
         playerName: this.getPlayerName(playerId)
@@ -665,8 +993,67 @@ export class BOTCWorker extends BaseGameWorker {
       return;
     }
 
+    // 检查士兵保护
+    if (player.role?.id === 'soldier' && cause === 'demon') {
+      this.sendToPlayer(this.gameConfig.storytellerId, 'playerProtected', {
+        playerId,
+        playerName: this.getPlayerName(playerId),
+        reason: '士兵免疫恶魔攻击'
+      });
+      return;
+    }
+
+    // 检查市长效果 - 如果市长夜间死亡，可能另一玩家代替死亡
+    if (player.role?.id === 'mayor' && cause === 'demon') {
+      const allPlayers = Array.from(this.gamePlayers.values());
+      const otherAlive = allPlayers.filter(p => !p.isDead && p.playerId !== playerId);
+      if (otherAlive.length === 2) {
+        // 只剩2个其他存活玩家时，市长可能 redirect 死亡
+        const redirectTarget = otherAlive[Math.floor(Math.random() * otherAlive.length)];
+        if (redirectTarget) {
+          player.isProtected = true;
+          await this.killPlayer(redirectTarget.playerId, cause);
+          return;
+        }
+      }
+    }
+
+    // 处理乌鸦饲养员的死亡能力
+    if (player.role?.id === 'ravenkeeper' && cause === 'demon') {
+      player.isDead = true;
+      player.deathCause = cause;
+      player.canVote = true; // 获得遗言票
+      this.gameState.livingPlayers--;
+
+      this.sendToRoom('playerDied', {
+        playerId,
+        playerName: this.getPlayerName(playerId),
+        cause,
+        hasDeathAbility: true
+      });
+
+      // 乌鸦饲养员可以选一名玩家学习其角色
+      const allPlayers = Array.from(this.gamePlayers.values());
+      const aliveOthers = allPlayers.filter(p => !p.isDead && p.playerId !== playerId);
+      if (aliveOthers.length > 0) {
+        const randomPlayer = aliveOthers[Math.floor(Math.random() * aliveOthers.length)];
+        this.sendToPlayer(playerId, 'nightInfo', {
+          role: 'ravenkeeper',
+          information: { 
+            playerId: randomPlayer.playerId,
+            playerName: this.getPlayerName(randomPlayer.playerId),
+            roleName: randomPlayer.role?.name,
+            roleId: randomPlayer.role?.id
+          },
+          isDeathAbility: true
+        });
+      }
+      return;
+    }
+
     player.isDead = true;
     player.deathCause = cause;
+    player.canVote = true; // 新死亡的玩家获得遗言票
     this.gameState.livingPlayers--;
 
     this.sendToRoom('playerDied', {
@@ -685,6 +1072,7 @@ export class BOTCWorker extends BaseGameWorker {
 
     player.isDead = false;
     player.deathCause = undefined;
+    player.canVote = true;
     this.gameState.livingPlayers++;
 
     this.sendToRoom('playerRevived', {
@@ -703,6 +1091,31 @@ export class BOTCWorker extends BaseGameWorker {
     this.sendToRoom('chatMessage', {
       playerId,
       playerName: this.getPlayerName(player.id),
+      message: data.message,
+      timestamp: Date.now()
+    });
+  }
+
+  /**
+   * 处理私聊
+   */
+  private async handlePrivateChat(playerId: string, data: { targetId: string; message: string }): Promise<void> {
+    const sender = this.room.players.find(p => p.id === playerId);
+    const target = this.room.players.find(p => p.id === data.targetId);
+    if (!sender || !target) return;
+
+    // 发送给目标玩家
+    this.sendToPlayer(data.targetId, 'privateMessage', {
+      from: playerId,
+      fromName: this.getPlayerName(playerId),
+      message: data.message,
+      timestamp: Date.now()
+    });
+
+    // 发送给发送者（确认消息已发送）
+    this.sendToPlayer(playerId, 'privateMessageSent', {
+      to: data.targetId,
+      toName: this.getPlayerName(data.targetId),
       message: data.message,
       timestamp: Date.now()
     });
@@ -737,20 +1150,29 @@ export class BOTCWorker extends BaseGameWorker {
    * 获取公开的游戏状态
    */
   private getPublicGameState(): any {
+    const allPlayers = Array.from(this.gamePlayers.values());
     return {
       phase: this.gameState.phase,
       day: this.gameState.day,
       isFirstDay: this.gameState.isFirstDay,
       livingPlayers: this.gameState.livingPlayers,
       nominations: this.gameState.nominations,
-      players: Array.from(this.gamePlayers.values()).map(p => ({
+      votes: this.gameState.votes,
+      execution: this.gameState.execution,
+      players: allPlayers.map(p => ({
         id: p.playerId,
         name: this.getPlayerName(p.playerId),
         isDead: p.isDead,
+        isAlive: !p.isDead,
         canVote: p.canVote,
         seat: p.seat,
-        hasActed: p.hasActed
-      }))
+        hasActed: p.hasActed,
+        role: p.role,
+        reminders: p.reminders,
+        nominations: p.nominations
+      })),
+      playerCount: this.room.players.length,
+      nightOrder: this.gameState.nightOrder
     };
   }
 
@@ -830,4 +1252,4 @@ if (parentPort) {
       }
     }
   });
-} 
+}

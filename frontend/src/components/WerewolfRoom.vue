@@ -1,7 +1,7 @@
 <template>
   <div class="werewolf-room">
-    <!-- 房间准备中的遮罩 -->
-    <div v-if="roomPreparing" class="room-loading-overlay">
+    <!-- 房间准备中的遮罩 - 只在真正没有gameState时显示 -->
+    <div v-if="!gameState && roomPreparing" class="room-loading-overlay">
       <div class="loading-content">
         <el-icon class="is-loading" size="48">
           <Loading />
@@ -21,11 +21,12 @@
       </div>
       <div class="header-right">
         <span class="room-id">房间ID: {{ roomId }}</span>
+        <span v-if="gameState?.day" class="day-badge">第{{ Math.ceil(gameState.day / 2) }}天</span>
       </div>
     </el-header>
 
     <!-- 主游戏区域 -->
-    <el-container v-else class="game-container">
+    <el-container v-if="gameState || !roomPreparing" class="game-container">
       <!-- 左侧游戏面板 -->
       <el-main class="game-main">
         <div class="game-content">
@@ -33,19 +34,11 @@
           <div class="game-status" v-if="gameState">
             <h3 class="status-title">{{ getStatusMessage() }}</h3>
             <div class="status-info">
-              <span v-if="gameState.day">第{{ gameState.day }}天</span>
-              <span v-if="timeLeft > 0">剩余时间: {{ timeLeft }}s</span>
-            </div>
-          </div>
-
-          <!-- 游戏历史记录 -->
-          <div class="game-history" v-if="gameState?.day && gameState.day > 1">
-            <h4>游戏记录</h4>
-            <div class="history-events">
-              <div v-for="(event, index) in gameHistory" :key="index" class="history-event">
-                <span class="event-day">第{{ event.day }}天</span>
-                <span class="event-description">{{ event.description }}</span>
-              </div>
+              <span v-if="gameState.day">第{{ Math.ceil(gameState.day / 2) }}天 {{ gameState.day % 2 === 1 ? '白天' : '夜晚' }}</span>
+              <span v-if="timeLeft > 0" class="time-left">剩余时间: {{ timeLeft }}s</span>
+              <span v-if="playerSecret" class="my-role-badge" :class="playerSecret.team">
+                {{ getRoleName(playerSecret.role) }}
+              </span>
             </div>
           </div>
 
@@ -56,23 +49,23 @@
               <div class="role-name">{{ getRoleName(playerSecret.role) }}</div>
               <div class="team-name">{{ getTeamName(playerSecret.team) }}</div>
             </div>
-            
+
             <!-- 狼人队友信息 -->
             <div class="companions" v-if="playerSecret.companions?.length">
               <h5>你的队友:</h5>
               <div class="companion-players">
-                <span 
-                  v-for="playerId in playerSecret.companions" 
+                <span
+                  v-for="playerId in playerSecret.companions"
                   :key="playerId"
                   class="companion-player"
                 >
-                  {{ getPlayerName(playerId) }}
+                  {{ getPlayerDisplayName(playerId) }}
                 </span>
               </div>
             </div>
 
             <!-- 女巫药剂信息 -->
-            <div class="potions" v-if="playerSecret.potions">
+            <div class="potions" v-if="playerSecret.role === 'WITCH' && playerSecret.potions">
               <h5>药剂状态:</h5>
               <div class="potion-status">
                 <span class="potion" :class="{ available: playerSecret.potions.antidote }">
@@ -86,23 +79,35 @@
           </div>
 
           <!-- 游戏操作区域 -->
-          <WerewolfActionPanel 
+          <WerewolfActionPanel
             v-if="gameState"
             :game-state="gameState"
             :player-secret="playerSecret"
             :room-id="roomId"
             :is-ready="isReady"
             :is-host="isHost"
+            :time-left="timeLeft"
             @game-action="handleGameAction"
           />
+
+          <!-- 游戏历史记录 -->
+          <div class="game-history" v-if="gameHistory.length > 0">
+            <h4>游戏记录</h4>
+            <div class="history-events">
+              <div v-for="(event, index) in gameHistory" :key="index" class="history-event">
+                <span class="event-day">第{{ event.day }}天</span>
+                <span class="event-description">{{ event.description }}</span>
+              </div>
+            </div>
+          </div>
         </div>
       </el-main>
 
       <!-- 右侧边栏 -->
-      <el-aside width="300px" class="game-sidebar">
+      <el-aside width="320px" class="game-sidebar">
         <!-- 玩家列表 -->
-        <WerewolfPlayerList 
-          :players="room?.players || []" 
+        <WerewolfPlayerList
+          :players="room?.players || []"
           :host-id="room?.hostId"
           :current-user-id="currentUserId"
           :game-players-by-id="gameState?.players"
@@ -114,10 +119,10 @@
         />
 
         <!-- 聊天区域 -->
-        <WerewolfChat 
+        <WerewolfChat
           :messages="messages"
           :room-id="roomId"
-          :nickname="currentUserId"
+          :nickname="currentUserNickname"
           :socket="store.socket"
           :player-role="playerSecret?.role"
           :player-team="playerSecret?.team"
@@ -131,7 +136,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, computed } from 'vue'
+import { ref, onMounted, onUnmounted, computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useWerewolfStore } from '../store/werewolf'
 import { Back, Loading } from '@element-plus/icons-vue'
@@ -144,61 +149,59 @@ const router = useRouter()
 const store = useWerewolfStore()
 
 const roomId = route.params.id as string
-const currentUserId = ref<string>('')
+const currentUserId = computed(() => store.currentUserId)
 
-// 游戏状态
-const room = ref<any>(null)
-const gameState = ref<any>(null)
-const playerSecret = ref<any>(null)
-const timeLeft = ref<number>(0)
-const messages = ref<any[]>([])
+// 游戏状态 - 直接从store获取，避免重复维护
+const room = computed(() => store.room)
+const gameState = computed(() => store.gameState)
+const playerSecret = computed(() => store.playerSecret)
+const timeLeft = computed(() => store.timeLeft)
+const messages = computed(() => store.messages)
+const isHost = computed(() => store.isHost)
+const isReady = computed(() => store.isReady)
+const isAlive = computed(() => store.isAlive)
+
+const currentUserNickname = computed(() => {
+  const player = room.value?.players.find((p: any) => p.id === currentUserId.value)
+  return player?.name || player?.nickname || currentUserId.value
+})
+
 const gameHistory = ref<any[]>([])
 
-let timerInterval: ReturnType<typeof setInterval> | null = null
-
-// 房间准备状态
+// 房间准备状态 - 修改为只要连接成功就不显示loading
 const roomPreparing = ref(true)
 let statusCheckInterval: number | null = null
-
-// 计算属性
-const isHost = computed(() => {
-  return room.value?.hostId === currentUserId.value
-})
-
-const isReady = computed(() => {
-  const player = room.value?.players.find((p: any) => p.id === currentUserId.value)
-  return player?.ready ?? false
-})
-
-const isAlive = computed(() => {
-  if (!gameState.value || !currentUserId.value) return true
-  return gameState.value.players[currentUserId.value]?.alive ?? true
-})
-
-// 检查房间状态的函数
-const checkRoomStatus = () => {
-  if (store.socket && roomId) {
-    console.log('检查狼人杀房间状态...')
-    store.socket.emit('room_status_check', { roomId: roomId })
-  }
-}
 
 // 获取状态消息
 const getStatusMessage = () => {
   if (!gameState.value) return '准备中'
-  
+  return gameState.value.statusMessage || getDefaultStatusMessage(gameState.value.status)
+}
+
+const getDefaultStatusMessage = (status: string): string => {
   const statusMessages: Record<string, string> = {
-    'preparing': '游戏准备中',
+    'preparing': '等待游戏开始',
     'WOLF_KILL': '狼人行动中...',
     'SEER_CHECK': '预言家验人中...',
     'WITCH_ACT': '女巫行动中...',
     'GUARD_PROTECT': '守卫保护中...',
+    'SHERIFF_ELECT': '警长竞选阶段',
+    'SHERIFF_SPEECH': '警长竞选发言',
+    'SHERIFF_VOTE': '投票选警长',
     'DAY_DISCUSS': '白天讨论阶段',
     'EXILE_VOTE': '投票放逐阶段',
-    'finished': '游戏结束'
+    'HUNTER_SHOOT': '猎人开枪阶段',
+    'SHERIFF_ASSIGN': '警长传递阶段',
+    'LEAVE_MSG': '遗言阶段',
+    'finished': '游戏结束',
+    'BEFORE_DAY_DISCUSS': '天亮结算中...',
+    'WOLF_KILL_CHECK': '确认狼人击杀',
+    'EXILE_VOTE_CHECK': '统计投票结果',
+    'SHERIFF_VOTE_CHECK': '统计警长投票',
+    'HUNTER_CHECK': '确认猎人开枪',
+    'SHERIFF_ASSIGN_CHECK': '确认警长传递'
   }
-  
-  return statusMessages[gameState.value.status] || '游戏进行中'
+  return statusMessages[status] || '游戏进行中'
 }
 
 // 获取角色名称
@@ -209,7 +212,8 @@ const getRoleName = (role: string) => {
     'SEER': '预言家',
     'WITCH': '女巫',
     'HUNTER': '猎人',
-    'GUARD': '守卫'
+    'GUARD': '守卫',
+    'CUPID': '丘比特'
   }
   return roleNames[role] || role
 }
@@ -219,10 +223,14 @@ const getTeamName = (team: string) => {
   return team === 'werewolf' ? '狼人阵营' : '村民阵营'
 }
 
-// 获取玩家名称
-const getPlayerName = (playerId: string) => {
-  const player = room.value?.players.find((p: any) => p.id === playerId)
-  return player?.name || `玩家${playerId}`
+// 获取玩家显示名称
+const getPlayerDisplayName = (playerId: string) => {
+  const player = gameState.value?.players[playerId]
+  if (player) {
+    return `${player.index}号${player.name}`
+  }
+  const roomPlayer = room.value?.players.find((p: any) => p.id === playerId)
+  return roomPlayer?.name || roomPlayer?.nickname || `玩家${playerId}`
 }
 
 // 事件处理
@@ -246,10 +254,10 @@ const handleSendMessage = (message: string, channel: string) => {
   store.sendMessage(message, channel)
 }
 
-// 更新计时器
-const updateTimeLeft = () => {
-  if (gameState.value?.timeLeft !== undefined) {
-    timeLeft.value = gameState.value.timeLeft
+// 检查房间状态
+const checkRoomStatus = () => {
+  if (store.socket && roomId) {
+    store.socket.emit('room_status_check', { roomId })
   }
 }
 
@@ -258,82 +266,21 @@ onMounted(() => {
     router.push('/')
     return
   }
-  
+
   // 连接到房间
   store.connectToRoom(roomId, 'werewolf')
-  
-  // 监听房间准备完成事件
-  store.socket?.on('room_ready', (data: any) => {
-    console.log('收到狼人杀房间room_ready事件 - 房间已准备好', data)
+
+  // 2秒后关闭loading遮罩（等待初始连接）
+  setTimeout(() => {
     roomPreparing.value = false
-    if (statusCheckInterval) {
-      clearInterval(statusCheckInterval)
-      statusCheckInterval = null
-    }
-  })
-  
-  // 监听游戏状态更新
-  store.socket?.on('game_state_sync', (data: any) => {
-    room.value = data.room
-    gameState.value = data.game
-    playerSecret.value = data.secret
-    currentUserId.value = data.currentUserId || store.currentUserId
-    messages.value = store.messages
-  })
-
-  store.socket?.on('game_update', (data: any) => {
-    gameState.value = data
-    updateTimeLeft()
-  })
-
-  store.socket?.on('room_update', (data: any) => {
-    room.value = data
-  })
-
-  store.socket?.on('game_started', (data: any) => {
-    gameState.value = data.game
-    playerSecret.value = data.secret
-    if (room.value) {
-      room.value.gameStarted = true
-    }
-  })
-
-  store.socket?.on('chat_message', (data: any) => {
-    messages.value.push(data)
-  })
-
-  store.socket?.on('system_message', (message: string) => {
-    messages.value.push({
-      type: 'system',
-      message,
-      timestamp: Date.now(),
-      channel: 'all'
-    })
-  })
-
-  store.socket?.on('game_event', (event: any) => {
-    // 添加到游戏历史记录
-    gameHistory.value.push({
-      day: gameState.value?.day || 1,
-      description: event.description,
-      timestamp: Date.now()
-    })
-    
-    // 也添加到聊天消息
-    messages.value.push({
-      type: 'game',
-      message: event.description,
-      timestamp: Date.now(),
-      channel: 'all'
-    })
-  })
+  }, 2000)
 
   // 定时检查房间状态
   statusCheckInterval = setInterval(() => {
-    if (roomPreparing.value) {
+    if (!gameState.value || !gameState.value.status || gameState.value.status === 'preparing') {
       checkRoomStatus()
     }
-  }, 2000) as unknown as number
+  }, 3000) as unknown as number
 
   // 立即检查一次
   setTimeout(checkRoomStatus, 500)
@@ -343,9 +290,6 @@ onUnmounted(() => {
   store.disconnectFromRoom()
   if (statusCheckInterval) {
     clearInterval(statusCheckInterval)
-  }
-  if (timerInterval) {
-    clearInterval(timerInterval)
   }
 })
 </script>
@@ -396,6 +340,12 @@ onUnmounted(() => {
   gap: 16px;
 }
 
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
 .room-name {
   font-size: 18px;
   font-weight: bold;
@@ -405,6 +355,14 @@ onUnmounted(() => {
 .room-id {
   font-size: 14px;
   color: #666;
+}
+
+.day-badge {
+  font-size: 12px;
+  color: white;
+  background: #1890ff;
+  padding: 2px 10px;
+  border-radius: 12px;
 }
 
 .game-container {
@@ -440,9 +398,34 @@ onUnmounted(() => {
 .status-info {
   display: flex;
   justify-content: center;
+  align-items: center;
   gap: 20px;
   color: #666;
   font-size: 14px;
+}
+
+.time-left {
+  color: #f56c6c;
+  font-weight: bold;
+}
+
+.my-role-badge {
+  font-size: 12px;
+  padding: 2px 10px;
+  border-radius: 12px;
+  font-weight: bold;
+}
+
+.my-role-badge.werewolf {
+  background: #fef2f2;
+  color: #dc2626;
+  border: 1px solid #fecaca;
+}
+
+.my-role-badge.villager {
+  background: #eff6ff;
+  color: #2563eb;
+  border: 1px solid #bfdbfe;
 }
 
 .game-history {
@@ -583,4 +566,4 @@ onUnmounted(() => {
   flex-direction: column;
   gap: 16px;
 }
-</style> 
+</style>

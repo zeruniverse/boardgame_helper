@@ -71,7 +71,7 @@
         </div>
         <div>公共牌: <span v-html="formatCards(store.communityCards)"></span></div>
         <div>底池: {{ store.pot }}</div>
-        <div>当前行动: {{ store.currentTurn === store.nickname ? '我' : store.currentTurn }}</div>
+        <div>当前行动: {{ currentTurnDisplay }}</div>
         <div>阶段: {{ roundText }}</div>
         <div>剩余时间: {{ store.timeLeft }}s</div>
       </el-card>
@@ -193,13 +193,13 @@ import TexasHoldemPlayerList from './TexasHoldemPlayerList.vue';
 import TexasHoldemActionBar from './TexasHoldemActionBar.vue';
 
 const store = useTexasHoldemStore();
-// 房间内玩家判断，用于控制预游戏按钮显示
+// 使用playerId而不是nickname来判断是否在房间
 const isInRoom = computed(() => store.players.some((p: { id: string }) => p.id === store.playerId));
 const { round } = storeToRefs(store);
 const router = useRouter();
 const route = useRoute();
 const roomId = route.params.id as string;
-const roundText = computed(() => ['翻前','翻后','转牌','河牌'][round.value] || '');
+const roundText = computed(() => ['翻前','翻牌','转牌','河牌'][round.value] || '');
 
 // 房间准备状态 - 使用ref来控制状态
 const roomPreparing = ref(true); // 默认显示准备中
@@ -265,6 +265,11 @@ onMounted(() => {
       return;
     }
     console.log('房间加入成功，类型匹配');
+    // 保存后端分配的playerId
+    if (data.player && data.player.id) {
+      store.playerId = data.player.id;
+      localStorage.setItem('texas_playerId', data.player.id);
+    }
     requestRoomState();
   };
   socket.on('room_joined', onRoomJoined);
@@ -285,14 +290,24 @@ onUnmounted(() => {
   }
 });
 
+// Cash In - 使用game_action统一格式
 function onCashIn() {
   if (confirm('确定要充值1000筹码吗？')) {
-    store.socket?.emit('cash_in', { roomId });
+    store.socket?.emit('game_action', {
+      roomId,
+      actionType: 'cashin',
+      actionData: { amount: 1000 }
+    });
   }
 }
+// Cash Out - 使用game_action统一格式
 function onCashOut() {
   if (confirm('确定要 Cash Out 并退出房间吗？')) {
-    store.socket?.emit('cash_out', { roomId });
+    store.socket?.emit('game_action', {
+      roomId,
+      actionType: 'cashout',
+      actionData: {}
+    });
     
     // 清理所有状态
     store.resetGameState();
@@ -303,37 +318,61 @@ function onCashOut() {
     router.push({ name: 'Lobby' });
   }
 }
+// 开始游戏 - 使用game_action统一格式
 function onStartGame() {
   if (store.socket && store.currentRoom) {
-    store.socket.emit('start_game', { roomId: store.currentRoom });
+    store.socket.emit('game_action', {
+      roomId: store.currentRoom,
+      actionType: 'startGame',
+      actionData: {}
+    });
   }
 }
 
-// 切换自动开始
+// 切换自动开始 - 使用game_action统一格式
 function toggleAutoStart() {
   if (store.socket && store.currentRoom) {
-    store.socket.emit('toggle_auto_start', { roomId: store.currentRoom });
+    store.socket.emit('game_action', {
+      roomId: store.currentRoom,
+      actionType: 'toggleAutoStart',
+      actionData: {}
+    });
   }
 }
 
-// 切换房间锁定
+// 切换房间锁定 - 使用game_action统一格式
 function toggleRoomLock() {
   if (store.socket && store.currentRoom) {
-    store.socket.emit('toggle_room_lock', { roomId: store.currentRoom });
+    store.socket.emit('game_action', {
+      roomId: store.currentRoom,
+      actionType: 'toggleRoomLock',
+      actionData: {}
+    });
   }
 }
 
 // 快捷操作计算属性和方法
-const isMyTurn = computed(() => store.currentTurn === store.nickname);
-const toCall = computed(() => store.currentBet - (store.bets[store.nickname] || 0));
-const ownPlayer = computed(() => store.players.find((p: any) => p.id === store.nickname));
+// 使用playerId比较，而不是nickname
+const isMyTurn = computed(() => store.currentTurn === store.playerId);
+const toCall = computed(() => store.currentBet - (store.bets[store.playerId] || 0));
+const ownPlayer = computed(() => store.players.find((p: any) => p.id === store.playerId));
 const canCheck = computed(() => isMyTurn.value && toCall.value === 0);
 const canStartGame = computed(() => {
-  const playersWithChips = store.players.filter(p => p.chips > 0 && p.inGame);
+  const playersWithChips = store.players.filter((p: any) => p.gameMetadata?.chips > 0 && store.participants.includes(p.id));
   return playersWithChips.length >= 2;
 });
+// 使用playerId判断是否在参与游戏中
 const isInGame = computed(() => {
-  return store.participants.includes(store.nickname);
+  return store.participants.includes(store.playerId);
+});
+
+// 当前行动玩家显示名称
+const currentTurnDisplay = computed(() => {
+  if (!store.currentTurn) return '-';
+  if (store.currentTurn === store.playerId) return '我';
+  // 查找玩家昵称
+  const player = store.players.find((p: any) => p.id === store.currentTurn);
+  return player?.nickname || store.currentTurn;
 });
 
 function extendTime() {
@@ -349,14 +388,14 @@ const secondQuickButtonText = computed(() => {
     // 玩家可以check的情况，显示 Bet X
     const betAmount = Math.floor(store.pot / 2);
     // 检查筹码是否足够下注这个金额
-    if (betAmount >= ownPlayer.value?.chips) {
+    if (betAmount >= (ownPlayer.value?.gameMetadata?.chips || 0)) {
       return 'All-in';
     }
     return `Bet ${betAmount}`;
   } else {
     // 玩家不能check的情况，显示 Call X
     const callAmount = toCall.value;
-    if (callAmount >= ownPlayer.value?.chips) {
+    if (callAmount >= (ownPlayer.value?.gameMetadata?.chips || 0)) {
       return 'All-in';
     }
     return `Call ${callAmount}`;
@@ -381,24 +420,43 @@ function handleSecondQuickButton() {
   if (canCheck.value) {
     // 玩家可以check的情况，执行 Bet X 或 All-in
     const betAmount = Math.floor(store.pot / 2);
-    if (betAmount >= ownPlayer.value?.chips) {
+    const chips = ownPlayer.value?.gameMetadata?.chips || 0;
+    if (betAmount >= chips) {
       // All-in
-      store.socket.emit('action', { roomId: store.currentRoom, action: 'allin' });
+      store.socket.emit('game_action', {
+        roomId: store.currentRoom,
+        actionType: 'playerAction',
+        actionData: { action: 'allin' }
+      });
     } else {
-      // Bet X - 本轮总下注为当前已下注 + betAmount
-      const currentBet = store.bets[store.nickname] || 0;
+      // Bet X - 使用raise，amount为新总下注额
+      // 在check情况下currentBet为0，所以总下注额就是betAmount
+      const currentBet = store.bets[store.playerId] || 0;
       const totalBetAmount = currentBet + betAmount;
-      store.socket.emit('action', { roomId: store.currentRoom, action: 'raise', amount: totalBetAmount });
+      store.socket.emit('game_action', {
+        roomId: store.currentRoom,
+        actionType: 'playerAction',
+        actionData: { action: 'raise', amount: totalBetAmount }
+      });
     }
   } else {
     // 玩家不能check的情况，执行 Call X 或 All-in
     const callAmount = toCall.value;
-    if (callAmount >= ownPlayer.value?.chips) {
+    const chips = ownPlayer.value?.gameMetadata?.chips || 0;
+    if (callAmount >= chips) {
       // All-in
-      store.socket.emit('action', { roomId: store.currentRoom, action: 'allin' });
+      store.socket.emit('game_action', {
+        roomId: store.currentRoom,
+        actionType: 'playerAction',
+        actionData: { action: 'allin' }
+      });
     } else {
       // Call
-      store.socket.emit('action', { roomId: store.currentRoom, action: 'call' });
+      store.socket.emit('game_action', {
+        roomId: store.currentRoom,
+        actionType: 'playerAction',
+        actionData: { action: 'call' }
+      });
     }
   }
 }
@@ -409,14 +467,22 @@ function handleThirdQuickButton() {
   
   if (canCheck.value) {
     // Check
-    store.socket.emit('action', { roomId: store.currentRoom, action: 'check' });
+    store.socket.emit('game_action', {
+      roomId: store.currentRoom,
+      actionType: 'playerAction',
+      actionData: { action: 'check' }
+    });
   } else {
     // Fold
-    store.socket.emit('action', { roomId: store.currentRoom, action: 'fold' });
+    store.socket.emit('game_action', {
+      roomId: store.currentRoom,
+      actionType: 'playerAction',
+      actionData: { action: 'fold' }
+    });
   }
 }
 
-// 线下 take 操作
+// 线下 take 操作 - 使用game_action统一格式
 const takeAmount = ref(0);
 function onTake() {
   if (store.socket && store.currentRoom) {
@@ -429,24 +495,40 @@ function onTake() {
       alert('Take金额不能超过奖池');
       return;
     }
-    store.socket.emit('take', { roomId, amount: val });
+    store.socket.emit('game_action', {
+      roomId: store.currentRoom,
+      actionType: 'take',
+      actionData: { amount: val }
+    });
     takeAmount.value = 0;
   }
 }
 function onTakeAll() {
   if (store.socket && store.currentRoom) {
-    store.socket.emit('take_all', { roomId });
+    store.socket.emit('game_action', {
+      roomId: store.currentRoom,
+      actionType: 'takeAll',
+      actionData: {}
+    });
   }
 }
 
-// 在德州扑克游戏中，默认使用在线模式（系统发牌）
-const online = computed(() => true);
+// online根据系统发牌配置动态判断（非系统发牌=线下模式）
+const online = computed(() => store.allowSystemDealing);
+
+// HTML转义函数，防止XSS
+function escapeHtml(text: string): string {
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
+}
 
 function formatCards(cards: string[]): string {
+  if (!cards || cards.length === 0) return '-';
   return cards.map(card => {
     // 使用正则表达式匹配扑克牌
     const match = card.match(/(10|[2-9JQKA])(♠|♥|♣|♦)/);
-    if (!match) return card; // 如果不匹配，返回原始字符串
+    if (!match) return escapeHtml(card); // 如果不匹配，返回转义后的原始字符串
     
     const [, value, suit] = match;
     let color = '';

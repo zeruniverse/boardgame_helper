@@ -70,14 +70,25 @@ const getMessageColor = (type: string) => {
   }
 };
 
+// HTML转义函数，防止XSS攻击
+const escapeHtml = (text: string): string => {
+  if (!text) return '';
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
+};
+
 // 格式化消息内容，处理德州扑克特殊内容
 const formatMessage = (message: string): string => {
   if (!message) return '';
   
+  // 首先对消息进行HTML转义，防止XSS
+  let formattedMessage = escapeHtml(message);
+  
   // 匹配扑克牌格式：数字(包括10)/字母 + 花色符号
   const cardRegex = /(10|[2-9JQKA])(♠|♥|♣|♦)/g;
   
-  let formattedMessage = message.replace(cardRegex, (_, value, suit) => {
+  formattedMessage = formattedMessage.replace(cardRegex, (_, value, suit) => {
     let color = '';
     let bgColor = '';
     if (suit === '♠' || suit === '♣') {
@@ -138,10 +149,15 @@ watch(
   }
 );
 
+// 使用game_action统一格式发送聊天消息
 function send() {
   if (canSend.value) {
     const msg = `${props.nickname}: ${input.value}`;
-    props.socket.emit('chat_msg', { roomId: props.roomId, message: msg });
+    props.socket.emit('game_action', {
+      roomId: props.roomId,
+      actionType: 'chat',
+      actionData: { message: msg }
+    });
     input.value = '';
   }
 }

@@ -129,6 +129,8 @@ interface Player {
   ready: boolean;
   voted: boolean;
   skillUsed: boolean;
+  initialRole?: number;
+  finalRole?: number;
 }
 
 interface GameState {
@@ -145,6 +147,13 @@ interface PlayerSecret {
     players?: Array<{
       seat: number;
       role: OnuWerewolfRole;
+    }>;
+  };
+  gameResult?: {
+    players?: Array<{
+      seat: number;
+      initialRole: OnuWerewolfRole;
+      finalRole: OnuWerewolfRole;
     }>;
   };
 }
@@ -224,8 +233,15 @@ const getPlayerInitialRole = (seat?: number) => {
 };
 
 const getPlayerFinalRole = (seat?: number) => {
-  // 在游戏结束时，显示最终角色
-  return getPlayerInitialRole(seat); // 简化处理，实际应该显示最终角色
+  // 使用gameResult数据获取最终角色
+  if (!seat) return OnuWerewolfRole.Unknown;
+  const gameResult = props.playerSecret?.gameResult;
+  if (gameResult?.players) {
+    const player = gameResult.players.find((p: any) => p.seat === seat);
+    if (player) return player.finalRole;
+  }
+  // 回退到vision数据
+  return getPlayerInitialRole(seat);
 };
 
 const formatTime = (seconds: number) => {

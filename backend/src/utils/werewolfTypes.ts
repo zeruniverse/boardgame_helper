@@ -1,21 +1,22 @@
 // 狼人杀游戏类型定义
 
-export type WerewolfCharacter = 
+export type WerewolfCharacter =
   | 'WEREWOLF'      // 狼人
   | 'VILLAGER'      // 村民
   | 'WITCH'         // 女巫
   | 'SEER'          // 预言家
   | 'HUNTER'        // 猎人
   | 'GUARD'         // 守卫
-  | '';
+  | 'CUPID';        // 丘比特
 
-export type SetableCharacters = 
+export type SetableCharacters =
   | 'WEREWOLF'
   | 'VILLAGER'
   | 'WITCH'
   | 'SEER'
   | 'HUNTER'
-  | 'GUARD';
+  | 'GUARD'
+  | 'CUPID';
 
 export type Potion = 'POISON' | 'MEDICINE';
 
@@ -34,6 +35,18 @@ export interface WerewolfGameState {
   isFinished: boolean;
   winner?: 'WEREWOLF' | 'VILLAGER';
   timer?: NodeJS.Timeout;
+  operators?: string[];  // 当前可操作玩家ID列表
+  nightActions?: {
+    wolfKillTarget?: number;   // 狼人击杀目标index
+    guardTarget?: number;      // 守卫保护目标index
+    witchSave?: boolean;       // 女巫是否使用解药
+    witchPoisonTarget?: number; // 女巫毒药目标index
+    seerCheckTarget?: number;  // 预言家查验目标index
+    seerResult?: boolean;      // 预言家查验结果
+  };
+  votes?: Record<string, string>;  // 投票记录 playerId -> targetId
+  speakOrder?: number[];  // 发言顺序（玩家index数组）
+  currentSpeakerIndex?: number;  // 当前发言者在speakOrder中的索引
 }
 
 export interface WerewolfPlayerState {
@@ -62,19 +75,20 @@ export interface CharacterStatus {
     day: number;
     player: number;
   };
-  
-  // 守卫状态  
+  hasUsedSkill?: boolean;  // 是否已经使用过技能
+
+  // 守卫状态
   protects?: number[];  // 保护记录，下标是天数
-  
+
   // 预言家状态
   checks?: {
     index: number;
     isWerewolf: boolean;
   }[];
-  
+
   // 狼人状态
   wantToKills?: number[];  // 击杀意向，下标是天数
-  
+
   // 女巫状态
   POISON?: {
     usedDay: number;
@@ -86,30 +100,55 @@ export interface CharacterStatus {
   };
 }
 
+// 游戏状态枚举 - 使用英文值以匹配前端
 export enum GameStatus {
-  WAITING = "等待开始",
-  WOLF_KILL = "狼人杀人",
-  WOLF_KILL_CHECK = "狼人查看投票结果",
-  SEER_CHECK = "预言家验人",
-  WITCH_ACT = "女巫用药",
-  GUARD_PROTECT = "守卫保人",
-  SHERIFF_ELECT = "上警",
-  SHERIFF_VOTE = "投票选警长",
-  SHERIFF_SPEECH = "警长竞选发言",
-  SHERIFF_VOTE_CHECK = "查看警长投票结果",
-  SHERIFF_ASSIGN = "指派警长",
-  SHERIFF_ASSIGN_CHECK = "检查指派警长的结果",
-  BEFORE_DAY_DISCUSS = "夜晚结算",
-  DAY_DISCUSS = "自由发言",
-  EXILE_VOTE = "票选狼人",
-  EXILE_VOTE_CHECK = "票选狼人结果",
-  HUNTER_SHOOT = "若你是猎人, 请选择是否开枪",
-  HUNTER_CHECK = "查看猎人开枪结果",
-  LEAVE_MSG = "留遗言",
-  OVER = "游戏结束"
+  WAITING = 'preparing',
+  WOLF_KILL = 'WOLF_KILL',
+  WOLF_KILL_CHECK = 'WOLF_KILL_CHECK',
+  SEER_CHECK = 'SEER_CHECK',
+  WITCH_ACT = 'WITCH_ACT',
+  GUARD_PROTECT = 'GUARD_PROTECT',
+  SHERIFF_ELECT = 'SHERIFF_ELECT',
+  SHERIFF_SPEECH = 'SHERIFF_SPEECH',
+  SHERIFF_VOTE = 'SHERIFF_VOTE',
+  SHERIFF_VOTE_CHECK = 'SHERIFF_VOTE_CHECK',
+  SHERIFF_ASSIGN = 'SHERIFF_ASSIGN',
+  SHERIFF_ASSIGN_CHECK = 'SHERIFF_ASSIGN_CHECK',
+  BEFORE_DAY_DISCUSS = 'BEFORE_DAY_DISCUSS',
+  DAY_DISCUSS = 'DAY_DISCUSS',
+  EXILE_VOTE = 'EXILE_VOTE',
+  EXILE_VOTE_CHECK = 'EXILE_VOTE_CHECK',
+  HUNTER_SHOOT = 'HUNTER_SHOOT',
+  HUNTER_CHECK = 'HUNTER_CHECK',
+  LEAVE_MSG = 'LEAVE_MSG',
+  OVER = 'finished'
 }
 
-export type StatusWithAction = 
+// 状态显示消息映射
+export const StatusDisplayMessages: Record<GameStatus, string> = {
+  [GameStatus.WAITING]: '等待开始',
+  [GameStatus.WOLF_KILL]: '狼人请睁眼，选择要杀死的玩家',
+  [GameStatus.WOLF_KILL_CHECK]: '狼人查看投票结果',
+  [GameStatus.SEER_CHECK]: '预言家请验人',
+  [GameStatus.WITCH_ACT]: '女巫请选择是否用药',
+  [GameStatus.GUARD_PROTECT]: '守卫请选择保护的玩家',
+  [GameStatus.SHERIFF_ELECT]: '警长竞选阶段，请选择是否上警',
+  [GameStatus.SHERIFF_SPEECH]: '警长竞选发言阶段',
+  [GameStatus.SHERIFF_VOTE]: '投票选警长',
+  [GameStatus.SHERIFF_VOTE_CHECK]: '查看警长投票结果',
+  [GameStatus.SHERIFF_ASSIGN]: '警长请选择继承人',
+  [GameStatus.SHERIFF_ASSIGN_CHECK]: '检查指派警长的结果',
+  [GameStatus.BEFORE_DAY_DISCUSS]: '夜晚结算中...',
+  [GameStatus.DAY_DISCUSS]: '白天自由发言阶段',
+  [GameStatus.EXILE_VOTE]: '投票驱逐狼人',
+  [GameStatus.EXILE_VOTE_CHECK]: '查看投票结果',
+  [GameStatus.HUNTER_SHOOT]: '猎人请选择是否开枪',
+  [GameStatus.HUNTER_CHECK]: '查看猎人开枪结果',
+  [GameStatus.LEAVE_MSG]: '留遗言阶段',
+  [GameStatus.OVER]: '游戏结束'
+};
+
+export type StatusWithAction =
   | GameStatus.WOLF_KILL
   | GameStatus.SEER_CHECK
   | GameStatus.WITCH_ACT
@@ -171,4 +210,4 @@ export interface GameEvent {
   character: WerewolfCharacter;
   at: number;
   deed: string;
-} 
+}

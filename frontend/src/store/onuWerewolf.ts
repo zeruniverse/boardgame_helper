@@ -250,14 +250,64 @@ export const useOnuWerewolfStore = defineStore('onuWerewolf', {
         }
       });
 
-      this.socket.on('onu_voting_started', (data: any) => {
+      // onu_night_ended replaces onu_voting_started (C7 fix)
+      this.socket.on('onu_night_ended', (data: any) => {
         if (this.gameState) {
           this.gameState.status = OnuWerewolfGameStatus.VOTING;
           this.gameState.currentPhase = data.message || '投票阶段';
+          this.gameState.timeLeft = data.timeLeft || 0;
           this.updateTimer();
         }
         this.skipDiscussionCount = 0;
         this.skipDiscussionTotal = this.room?.players.length || 0;
+      });
+
+      // Role assignment notification (C4 fix)
+      this.socket.on('onu_role_assigned', (data: any) => {
+        if (!this.playerSecret) this.playerSecret = {};
+        this.playerSecret.myRole = data.role;
+        this.playerSecret.mySeat = data.seat;
+        this.addSystemMessage(`你的角色是：${ONU_WEREWOLF_ROLE_NAMES[data.role] || '未知'}（座位${data.seat}）`);
+      });
+
+      // Skill ready notification (C4 fix)
+      this.socket.on('onu_skill_ready', (data: any) => {
+        if (!this.playerSecret) this.playerSecret = {};
+        this.playerSecret.canUseSkill = true;
+        this.addSystemMessage(data.message || '轮到你使用技能了');
+      });
+
+      // Skill result (C4 fix)
+      this.socket.on('onu_skill_result', (data: any) => {
+        if (!this.playerSecret) this.playerSecret = {};
+        this.playerSecret.canUseSkill = false;
+        this.playerSecret.skillUsed = true;
+        if (data.vision) {
+          this.playerSecret.vision = data.vision;
+        }
+        this.addSystemMessage(data.message || '技能使用完成');
+      });
+
+      // Skill skipped (C4 fix)
+      this.socket.on('onu_skill_skipped', (data: any) => {
+        if (!this.playerSecret) this.playerSecret = {};
+        this.playerSecret.canUseSkill = false;
+        this.playerSecret.skillUsed = true;
+        this.addSystemMessage(data.message || '你跳过了技能');
+      });
+
+      // Board info (C4 fix)
+      this.socket.on('onu_board_info', (data: any) => {
+        if (data.vision && this.playerSecret) {
+          this.playerSecret.vision = data.vision;
+        }
+      });
+
+      // Role info (C4 fix)
+      this.socket.on('onu_role_info', (data: any) => {
+        if (!this.playerSecret) this.playerSecret = {};
+        this.playerSecret.myRole = data.initialRole;
+        this.playerSecret.finalRole = data.finalRole;
       });
 
       this.socket.on('onu_voting_ended', (data: any) => {
@@ -379,7 +429,7 @@ export const useOnuWerewolfStore = defineStore('onuWerewolf', {
       });
     },
 
-    connectToRoom(roomId: string, gameType: string = 'onu-werewolf') {
+    connectToRoom(roomId: string, gameType: string = 'one-night-werewolf') {
       if (!this.socket) {
         this.initSocket();
       }
@@ -446,7 +496,7 @@ export const useOnuWerewolfStore = defineStore('onuWerewolf', {
       this.socket.emit('game_action', {
         roomId: this.currentRoomId,
         playerId: this.currentUserId,
-        gameType: 'onu-werewolf',
+        gameType: 'one-night-werewolf',
         actionType: actionType,
         actionData: actionData
       });
@@ -485,7 +535,7 @@ export const useOnuWerewolfStore = defineStore('onuWerewolf', {
     },
 
     changeConfig(config: any) {
-      this.sendGameAction('change_config', { config });
+      this.sendGameAction('change_config', config);
     },
 
     useSkill(actionData: any) {
@@ -496,8 +546,8 @@ export const useOnuWerewolfStore = defineStore('onuWerewolf', {
       this.sendGameAction('skip_skill');
     },
 
-    vote(targetId: string) {
-      this.sendGameAction('vote', { targetId });
+    vote(targetSeat: number) {
+      this.sendGameAction('vote', { target: targetSeat });
     },
 
     skipDiscussion() {

@@ -10,22 +10,23 @@
       </div>
     </div>
 
-    <!-- 头部导航 -->
-    <el-header v-else class="room-header">
-      <div class="header-left">
-        <el-button @click="$router.push('/')" type="primary" plain>
-          <el-icon><Back /></el-icon>
-          返回大厅
-        </el-button>
-        <span class="room-name">{{ room?.name || '阿瓦隆房间' }}</span>
-      </div>
-      <div class="header-right">
-        <span class="room-id">房间ID: {{ roomId }}</span>
-      </div>
-    </el-header>
-
     <!-- 主游戏区域 -->
-    <el-container v-else class="game-container">
+    <template v-else>
+      <!-- 头部导航 -->
+      <el-header class="room-header">
+        <div class="header-left">
+          <el-button @click="$router.push('/')" type="primary" plain>
+            <el-icon><Back /></el-icon>
+            返回大厅
+          </el-button>
+          <span class="room-name">{{ room?.name || '阿瓦隆房间' }}</span>
+        </div>
+        <div class="header-right">
+          <span class="room-id">房间ID: {{ roomId }}</span>
+        </div>
+      </el-header>
+
+      <el-container class="game-container">
       <!-- 左侧游戏面板 -->
       <el-main class="game-main">
         <div class="game-content">
@@ -112,22 +113,24 @@
         />
 
         <!-- 聊天区域 -->
-        <AvalonChat 
-          :messages="[]"
+        <AvalonChat
+          :messages="messages"
           :room-id="roomId"
-          :nickname="currentUserId"
+          :nickname="nickname"
           :socket="store.socket"
           :player-role="playerSecret?.role"
           :player-team="playerSecret?.team"
           :game-state="gameState"
+          @send-message="handleSendMessage"
         />
       </el-aside>
     </el-container>
+    </template>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, onMounted, onUnmounted, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useGameStore } from '../store/avalon'
 import { Back, Loading } from '@element-plus/icons-vue'
@@ -140,27 +143,34 @@ const router = useRouter()
 const store = useGameStore()
 
 const roomId = route.params.id as string
-const currentUserId = ref<string>('')
 
-// 游戏状态
-const room = ref<any>(null)
-const gameState = ref<any>(null)
-const playerSecret = ref<any>(null)
-const timeLeft = ref<number>(0)
+// 房间准备状态
+const roomPreparing = ref(true)
+
+// 从store同步数据
+const room = computed(() => store.room)
+const gameState = computed(() => store.gameState)
+const playerSecret = computed(() => store.playerSecret)
+const timeLeft = computed(() => store.timeLeft)
+const currentUserId = computed(() => store.currentUserId)
+const messages = computed(() => store.messages)
+const nickname = computed(() => {
+  // 从localStorage获取昵称，或使用store中的信息
+  const saved = localStorage.getItem('avalon_nickname')
+  if (saved) return saved
+  const player = room.value?.players?.find((p: any) => p.id === currentUserId.value)
+  return player?.name || currentUserId.value
+})
 
 let timerInterval: ReturnType<typeof setInterval> | null = null
 
-// 房间准备状态 - 使用ref来控制状态
-const roomPreparing = ref(true) // 默认显示准备中
-
 // 房间状态检查定时器
-let statusCheckInterval: number | null = null
+let statusCheckInterval: ReturnType<typeof setInterval> | null = null
 
 // 检查房间状态的函数
 const checkRoomStatus = () => {
   if (store.socket && roomId) {
-    console.log('检查阿瓦隆房间状态...')
-    store.socket.emit('room_status_check', { roomId: roomId })
+    store.socket.emit('room_status_check', { roomId })
   }
 }
 
@@ -169,71 +179,46 @@ onMounted(() => {
     router.push('/')
     return
   }
-  
+
   // 连接到房间
   store.connectToRoom(roomId, 'avalon')
-  
+
   // 监听房间准备完成事件
   store.socket?.on('room_ready', (data: any) => {
-    console.log('收到阿瓦隆房间room_ready事件 - 房间已准备好', data)
-    roomPreparing.value = false // 隐藏准备中提示
+    roomPreparing.value = false
     if (statusCheckInterval) {
-      clearInterval(statusCheckInterval) // 停止定时检查
+      clearInterval(statusCheckInterval)
       statusCheckInterval = null
     }
   })
-  
+
   // 监听游戏状态更新
   store.socket?.on('game_state_sync', (data: any) => {
-    room.value = data.room
-    gameState.value = data.game
-    playerSecret.value = data.secret
-    currentUserId.value = data.currentUserId || store.currentUserId
-  })
-
-  store.socket?.on('game_update', (data: any) => {
-    gameState.value = data
-    updateTimeLeft()
-  })
-
-  store.socket?.on('room_update', (data: any) => {
-    room.value = data
+    roomPreparing.value = false
   })
 
   // 开始定时检查房间状态
-  if (!statusCheckInterval) {
-    // 立即检查一次
-    setTimeout(checkRoomStatus, 500)
-    // 然后每3秒检查一次
-    statusCheckInterval = setInterval(checkRoomStatus, 3000)
-  }
+  statusCheckInterval = setInterval(checkRoomStatus, 3000)
+  setTimeout(checkRoomStatus, 500)
 
   // 启动计时器
   startTimer()
 })
 
 onUnmounted(() => {
-  // 清理定时器
-  if (timerInterval) {
-    clearInterval(timerInterval)
-  }
-  if (statusCheckInterval) {
-    clearInterval(statusCheckInterval)
-    statusCheckInterval = null
-  }
+  if (timerInterval) clearInterval(timerInterval)
+  if (statusCheckInterval) clearInterval(statusCheckInterval)
   store.disconnectFromRoom()
 })
 
 const startTimer = () => {
   timerInterval = setInterval(() => {
-    updateTimeLeft()
+    store.updateTimer()
   }, 1000)
 }
 
 const updateTimeLeft = () => {
-  if (gameState.value?.timeLeft) {
-    timeLeft.value = Math.max(0, gameState.value.timeLeft - 1)
-  }
+  store.updateTimer()
 }
 
 const getStatusMessage = (): string => {
@@ -286,7 +271,9 @@ const handleKickPlayer = (playerId: string) => {
   store.sendGameAction('kickPlayer', { playerId })
 }
 
-// handleSendMessage 函数已移除，现在聊天功能直接在AvalonChat组件中处理
+const handleSendMessage = (message: string, channel: string) => {
+  store.sendMessage(message, channel)
+}
 </script>
 
 <style scoped>

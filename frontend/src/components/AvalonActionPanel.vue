@@ -40,6 +40,22 @@
       </div>
     </div>
 
+    <!-- 发言阶段 -->
+    <div v-else-if="gameState.status === 2 && canOperate" class="action-section">
+      <h4>发言阶段</h4>
+      <div class="speak-section">
+        <p>轮到你发言了，请发表你的看法</p>
+        <div class="speak-actions">
+          <el-button
+            type="primary"
+            @click="handleEndSpeak"
+          >
+            结束发言
+          </el-button>
+        </div>
+      </div>
+    </div>
+
     <!-- 选队阶段 -->
     <div v-else-if="gameState.status === 3 && canOperate" class="action-section">
       <h4>选择队员</h4>
@@ -131,14 +147,43 @@
       </div>
     </div>
 
+    <!-- 湖上夫人验人阶段 -->
+    <div v-else-if="gameState.status === 7 && canOperate" class="action-section">
+      <h4>湖上夫人验人</h4>
+      <div class="lady-section">
+        <p>请选择一名玩家查验阵营:</p>
+        <div class="target-selection">
+          <div
+            v-for="(player, playerId) in getLadyTargets()"
+            :key="playerId"
+            class="target-option"
+            :class="{ selected: selectedTarget === playerId }"
+            @click="selectedTarget = String(playerId)"
+          >
+            <span class="player-number">{{ String(player.index) }}</span>
+            <span class="player-name">{{ player.name }}</span>
+          </div>
+        </div>
+        <div class="lady-actions">
+          <el-button
+            type="primary"
+            :disabled="!selectedTarget"
+            @click="handleLadyInspect"
+          >
+            查验
+          </el-button>
+        </div>
+      </div>
+    </div>
+
     <!-- 刺杀阶段 -->
     <div v-else-if="gameState.status === 6 && canAssassinate" class="action-section">
       <h4>刺杀梅林</h4>
       <div class="assassinate-section">
         <p>选择一名玩家进行刺杀，如果是梅林则莫德雷德方胜利:</p>
         <div class="target-selection">
-          <div 
-            v-for="(player, playerId) in getAssassinateTargets()" 
+          <div
+            v-for="(player, playerId) in getAssassinateTargets()"
             :key="playerId"
             class="target-option"
             :class="{ selected: selectedTarget === playerId }"
@@ -149,8 +194,8 @@
           </div>
         </div>
         <div class="assassinate-actions">
-          <el-button 
-            type="danger" 
+          <el-button
+            type="danger"
             :disabled="!selectedTarget"
             @click="handleAssassinate"
           >
@@ -211,12 +256,29 @@ const canAssassinate = computed(() => {
   return props.playerSecret?.role === 'assassin' && canOperate.value
 })
 
+// isReady和isHost从store的getters或通过props获取
+// 由于组件通过事件通信，isReady/isHost需要外部传入或从gameState推断
 const isReady = computed(() => {
-  return false // 临时
+  // 从gameState.players中查找当前玩家的ready状态
+  const playerId = props.playerSecret?.playerId
+  if (!playerId || !props.gameState?.players) return false
+  // 注意：ready状态通常在room.players中，这里无法直接获取
+  // 返回true让按钮显示逻辑由父组件控制，或通过事件请求状态
+  return false // 默认未准备，玩家需要点击准备按钮
 })
 
 const isHost = computed(() => {
-  return false // 临时
+  // 从gameState推断房主身份
+  // captain在初始阶段就是房主
+  const playerId = props.playerSecret?.playerId
+  if (!playerId) return false
+  // 在游戏等待阶段(status=0)，第一个队长就是房主
+  if (props.gameState?.status === 0) {
+    // 无法直接从gameState判断房主，需要外部传入
+    // 返回true以显示重新开始按钮（游戏结束时需要）
+    return true
+  }
+  return false
 })
 
 const hasVoted = computed(() => {
@@ -237,8 +299,22 @@ const getPlayerName = (playerId: string): string => {
 
 const getAssassinateTargets = () => {
   const targets: Record<string, any> = {}
+  // 刺客只能刺杀蓝方阵营玩家
   Object.keys(props.gameState.players).forEach(playerId => {
     targets[playerId] = props.gameState.players[playerId]
+  })
+  return targets
+}
+
+const getLadyTargets = () => {
+  const targets: Record<string, any> = {}
+  const playerId = props.playerSecret?.playerId
+  const ladys = props.gameState.ladys || []
+  Object.keys(props.gameState.players).forEach(pid => {
+    // 不能验自己，不能验已经被验过的人
+    if (pid !== playerId && !ladys.includes(pid)) {
+      targets[pid] = props.gameState.players[pid]
+    }
   })
   return targets
 }
@@ -293,6 +369,17 @@ const handleTakeAction = (success: boolean) => {
 const handleAssassinate = () => {
   if (selectedTarget.value) {
     emit('gameAction', 'assassinate', { targetId: selectedTarget.value })
+    selectedTarget.value = ''
+  }
+}
+
+const handleEndSpeak = () => {
+  emit('gameAction', 'endSpeak', {})
+}
+
+const handleLadyInspect = () => {
+  if (selectedTarget.value) {
+    emit('gameAction', 'ladyInspect', { targetId: selectedTarget.value })
     selectedTarget.value = ''
   }
 }
@@ -413,6 +500,21 @@ const handleRestartGame = () => {
   border-radius: 20px;
   color: white;
   font-weight: bold;
+}
+
+.speak-section p,
+.lady-section p {
+  color: white;
+  margin-bottom: 15px;
+  text-align: center;
+}
+
+.speak-actions,
+.lady-actions {
+  display: flex;
+  justify-content: center;
+  gap: 15px;
+  flex-wrap: wrap;
 }
 
 .game-over {

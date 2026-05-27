@@ -1,17 +1,7 @@
 <template>
   <div class="botc-room">
-    <!-- 房间准备中的遮罩 -->
-    <div v-if="roomPreparing" class="room-loading-overlay">
-      <div class="loading-content">
-        <el-icon class="is-loading" size="48">
-          <Loading />
-        </el-icon>
-        <p>房间正在准备中...</p>
-      </div>
-    </div>
-
     <!-- 头部导航 -->
-    <el-header v-else class="room-header">
+    <el-header class="room-header">
       <div class="header-left">
         <el-button @click="$router.push('/')" type="primary" plain>
           <el-icon><Back /></el-icon>
@@ -28,45 +18,45 @@
     </el-header>
 
     <!-- 主游戏区域 -->
-    <el-container v-else class="game-container">
+    <el-container class="game-container">
       <!-- 左侧游戏面板 -->
       <el-main class="game-main">
         <div class="game-content">
           <!-- 游戏状态显示 -->
-          <div class="game-status" v-if="gameState">
+          <div class="game-status" v-if="store.gameState">
             <h3 class="status-title">{{ getStatusMessage() }}</h3>
             <div class="status-info">
-              <span v-if="gameState.phase !== 'setup'">第{{ gameState.day }}天</span>
-              <span v-if="gameState.livingPlayers">存活: {{ gameState.livingPlayers }}人</span>
+              <span v-if="store.gameState.phase !== 'setup'">第{{ store.gameState.day }}天</span>
+              <span v-if="store.gameState.livingPlayers">存活: {{ store.gameState.livingPlayers }}人</span>
               <span v-if="timeLeft > 0">剩余时间: {{ timeLeft }}s</span>
             </div>
           </div>
 
           <!-- 版本信息 -->
-          <div class="edition-info-card" v-if="editionInfo && gameState?.phase === 'setup'">
+          <div class="edition-info-card" v-if="editionInfo && store.gameState?.phase === 'setup'">
             <h4>{{ editionInfo.name }}</h4>
             <p class="edition-description">{{ editionInfo.description }}</p>
             <div class="edition-level">难度: {{ editionInfo.level }}</div>
           </div>
 
           <!-- 角色信息 -->
-          <div class="role-info" v-if="playerRole">
+          <div class="role-info" v-if="store.playerRole">
             <h4>你的角色</h4>
-            <div class="my-role" :class="getTeamClass(playerRole.team)">
+            <div class="my-role" :class="getTeamClass(store.playerRole.team)">
               <div class="role-avatar">
-                <img :src="getRoleAvatar(playerRole.id)" :alt="playerRole.name" />
+                <img :src="getRoleAvatar(store.playerRole.id)" :alt="store.playerRole.name" />
               </div>
               <div class="role-details">
-                <div class="role-name">{{ playerRole.name }}</div>
-                <div class="team-name">{{ getTeamName(playerRole.team) }}</div>
-                <div class="role-ability">{{ playerRole.ability }}</div>
+                <div class="role-name">{{ store.playerRole.name }}</div>
+                <div class="team-name">{{ getTeamName(store.playerRole.team) }}</div>
+                <div class="role-ability">{{ store.playerRole.ability }}</div>
               </div>
             </div>
             
             <!-- 夜晚信息 -->
-            <div class="night-info" v-if="nightInfo">
+            <div class="night-info" v-if="store.nightInfo">
               <h5>夜晚信息:</h5>
-              <div class="info-content">{{ formatNightInfo(nightInfo) }}</div>
+              <div class="info-content">{{ formatNightInfo(store.nightInfo) }}</div>
             </div>
 
             <!-- 提醒标记 -->
@@ -86,7 +76,7 @@
           </div>
 
           <!-- 提名和投票区域 -->
-          <div class="nomination-area" v-if="gameState?.phase === 'day'">
+          <div class="nomination-area" v-if="store.gameState?.phase === 'day'">
             <div class="current-nomination" v-if="currentNomination">
               <h4>当前提名</h4>
               <div class="nomination-info">
@@ -94,8 +84,8 @@
               </div>
               <div class="vote-status" v-if="votingInProgress">
                 <div class="vote-counts">
-                  <span class="vote-for">赞成: {{ currentNomination.votesFor }}</span>
-                  <span class="vote-against">反对: {{ currentNomination.votesAgainst }}</span>
+                  <span class="vote-for">赞成: {{ currentNomination.votesFor || 0 }}</span>
+                  <span class="vote-against">反对: {{ currentNomination.votesAgainst || 0 }}</span>
                 </div>
                 <div class="vote-progress">
                   <el-progress 
@@ -104,17 +94,21 @@
                     :show-text="false"
                   />
                 </div>
+                <div class="vote-participants">
+                  已投票: {{ currentNomination.votes?.length || 0 }}/{{ getTotalVoters() }}
+                </div>
               </div>
             </div>
           </div>
 
           <!-- 游戏操作区域 -->
           <BOTCActionPanel 
-            v-if="gameState"
-            :game-state="gameState"
-            :player-role="playerRole"
+            v-if="store.gameState"
+            :game-state="store.gameState"
+            :player-role="store.playerRole"
             :room-id="roomId"
-            :is-storyteller="isStoryteller"
+            :is-storyteller="store.isStoryteller"
+            :current-user-id="store.currentUserId"
             @game-action="handleGameAction"
           />
         </div>
@@ -124,11 +118,11 @@
       <el-aside width="300px" class="game-sidebar">
         <!-- 玩家列表 -->
         <BOTCPlayerList 
-          :players="room?.players || []" 
-          :host-id="room?.hostId"
-          :current-user-id="currentUserId"
-          :game-players="gameState?.players || []"
-          :is-storyteller="isStoryteller"
+          :players="store.room?.players || []" 
+          :host-id="store.room?.hostId"
+          :current-user-id="store.currentUserId"
+          :game-players="store.gameState?.players || []"
+          :is-storyteller="store.isStoryteller"
           @transfer-host="handleTransferHost"
           @kick-player="handleKickPlayer"
           @start-private-chat="handleStartPrivateChat"
@@ -136,15 +130,16 @@
 
         <!-- 聊天区域 -->
         <BOTCChat 
-          :messages="chatMessages"
+          ref="chatComponentRef"
+          :messages="store.chatMessages"
           :room-id="roomId"
-          :nickname="currentUserId"
+          :nickname="store.currentUserId"
           :socket="store.socket"
-          :player-role="playerRole?.id"
-          :player-team="playerRole?.team"
-          :game-state="gameState"
-          :is-storyteller="isStoryteller"
-          :players="room?.players || []"
+          :player-role="store.playerRole?.id"
+          :player-team="store.playerRole?.team"
+          :game-state="store.gameState"
+          :is-storyteller="store.isStoryteller"
+          :players="store.room?.players || []"
           @private-message="handlePrivateMessage"
         />
       </el-aside>
@@ -153,10 +148,10 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, computed } from 'vue'
+import { ref, onMounted, onUnmounted, computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useGameStore } from '../store/botc'
-import { Back, Loading } from '@element-plus/icons-vue'
+import { Back } from '@element-plus/icons-vue'
 import BOTCActionPanel from './BOTCActionPanel.vue'
 import BOTCPlayerList from './BOTCPlayerList.vue'
 import BOTCChat from './BOTCChat.vue'
@@ -166,48 +161,30 @@ const router = useRouter()
 const store = useGameStore()
 
 const roomId = route.params.id as string
-const currentUserId = ref<string>('')
 
 // 游戏状态
-const room = ref<any>(null)
-const gameState = ref<any>(null)
-const gameConfig = ref<any>(null)
 const editionInfo = ref<any>(null)
-const playerRole = ref<any>(null)
-const nightInfo = ref<any>(null)
-const playerReminders = ref<string[]>([])
 const timeLeft = ref<number>(0)
-const chatMessages = ref<any[]>([])
+const playerReminders = ref<string[]>([])
+const chatComponentRef = ref<any>(null)
 
 let timerInterval: ReturnType<typeof setInterval> | null = null
 
-// 房间准备状态
-const roomPreparing = ref(true)
-
-// 说书人判断
-const isStoryteller = computed(() => {
-  return currentUserId.value === gameConfig.value?.storytellerId
-})
-
-// 当前提名
+// 计算属性
 const currentNomination = computed(() => {
-  return gameState.value?.nominations?.find((n: any) => n.isOnTrial)
+  return store.gameState?.nominations?.find((n: any) => n.isOnTrial)
 })
 
-// 投票进行中
 const votingInProgress = computed(() => {
   return !!currentNomination.value
 })
 
-// 房间状态检查定时器
-let statusCheckInterval: number | null = null
-
-const checkRoomStatus = () => {
-  if (store.socket && roomId) {
-    console.log('检查血染钟楼房间状态...')
-    store.socket.emit('room_status_check', { roomId: roomId })
+// 监视游戏配置变化
+watch(() => store.gameConfig, (config) => {
+  if (config?.edition) {
+    editionInfo.value = store.getEditionInfo(config.edition)
   }
-}
+}, { immediate: true })
 
 onMounted(() => {
   if (!roomId) {
@@ -216,68 +193,12 @@ onMounted(() => {
   }
   
   // 连接到房间
-  store.connectToRoom(roomId, 'botc')
-  
-  // 监听房间准备完成事件
-  store.socket?.on('room_ready', (data: any) => {
-    console.log('收到血染钟楼房间room_ready事件', data)
-    roomPreparing.value = false
-    if (statusCheckInterval) {
-      clearInterval(statusCheckInterval)
-      statusCheckInterval = null
-    }
-  })
-  
-  // 监听游戏状态更新
-  store.socket?.on('game_state_sync', (data: any) => {
-    room.value = data.room
-    gameState.value = data.game
-    gameConfig.value = data.config
-    editionInfo.value = data.editionInfo
-    playerRole.value = data.playerRole
-    nightInfo.value = data.nightInfo
-    playerReminders.value = data.reminders || []
-    currentUserId.value = data.currentUserId || store.currentUserId
-  })
-
-  store.socket?.on('game_update', (data: any) => {
-    gameState.value = data
-    updateTimeLeft()
-  })
-
-  store.socket?.on('room_update', (data: any) => {
-    room.value = data
-  })
-
-  store.socket?.on('role_assigned', (data: any) => {
-    playerRole.value = data.role
-    nightInfo.value = data.nightInfo
-  })
-
-  store.socket?.on('night_info', (data: any) => {
-    nightInfo.value = data
-  })
-
-  store.socket?.on('chat_message', (data: any) => {
-    chatMessages.value.push(data)
-  })
-
-  // 游戏时间相关事件
-  store.socket?.on('phase_timer', (data: any) => {
-    timeLeft.value = data.timeLeft
-    startTimer()
-  })
-
-  // 开始状态检查
-  statusCheckInterval = setInterval(checkRoomStatus, 1000)
+  store.connectToRoom(roomId, 'blood-on-the-clocktower')
 })
 
 onUnmounted(() => {
   if (timerInterval) {
     clearInterval(timerInterval)
-  }
-  if (statusCheckInterval) {
-    clearInterval(statusCheckInterval)
   }
   store.disconnectFromRoom()
 })
@@ -306,17 +227,17 @@ const startTimer = () => {
 
 // 获取状态信息
 const getStatusMessage = () => {
-  if (!gameState.value) return ''
+  if (!store.gameState) return ''
   
-  switch (gameState.value.phase) {
+  switch (store.gameState.phase) {
     case 'setup':
       return '等待游戏开始'
     case 'firstNight':
       return '第一夜'
     case 'day':
-      return `第${gameState.value.day}天 - 白天阶段`
+      return `第${store.gameState.day}天 - 白天阶段`
     case 'night':
-      return `第${gameState.value.day}天 - 夜晚阶段`
+      return `第${store.gameState.day}天 - 夜晚阶段`
     case 'ended':
       return '游戏结束'
     default:
@@ -358,7 +279,7 @@ const getRoleAvatar = (roleId: string) => {
 
 // 获取玩家名称
 const getPlayerName = (playerId: string) => {
-  const player = room.value?.players?.find((p: any) => p.id === playerId)
+  const player = store.room?.players?.find((p: any) => p.id === playerId)
   return player?.name || playerId
 }
 
@@ -370,15 +291,56 @@ const formatNightInfo = (info: any) => {
   
   if (info.message) return info.message
   
+  if (info.information) {
+    const data = info.information
+    if (data.roleId) {
+      return `角色: ${data.roleName || data.roleId}, 玩家: ${data.players?.map((p: string) => getPlayerName(p)).join(', ') || '未知'}`
+    }
+    if (data.pairs !== undefined) {
+      return `相邻邪恶对数: ${data.pairs}`
+    }
+    if (data.evilCount !== undefined) {
+      return `邪恶邻居数: ${data.evilCount}`
+    }
+    if (data.grandchild) {
+      return `孙子: ${getPlayerName(data.grandchild)}, 角色: ${data.grandchildRole?.name || '未知'}`
+    }
+    if (data.distance !== undefined) {
+      return `恶魔最近距离: ${data.distance}`
+    }
+    if (data.isDemon !== undefined) {
+      return data.isDemon ? '是恶魔！' : '不是恶魔'
+    }
+    if (data.isCorrect !== undefined) {
+      return data.isCorrect ? '猜测正确！' : '猜测错误！'
+    }
+    if (data.playerId) {
+      return `${getPlayerName(data.playerId)} 的角色是: ${data.roleName || data.roleId || '未知'}`
+    }
+    if (data.abnormalCount !== undefined) {
+      return `异常玩家数: ${data.abnormalCount}`
+    }
+    return JSON.stringify(data)
+  }
+  
   return JSON.stringify(info)
 }
 
 // 获取投票进度
 const getVoteProgress = () => {
   if (!currentNomination.value) return 0
-  const total = gameState.value?.livingPlayers || 1
-  const voted = currentNomination.value.votesFor + currentNomination.value.votesAgainst
-  return Math.min((voted / total) * 100, 100)
+  const totalVoters = getTotalVoters()
+  if (totalVoters === 0) return 0
+  const voted = currentNomination.value.votes?.length || 0
+  return Math.min((voted / totalVoters) * 100, 100)
+}
+
+// 获取总投票人数（存活+有遗言票的死亡玩家）
+const getTotalVoters = () => {
+  if (!store.gameState?.players) return 0
+  return store.gameState.players.filter((p: any) => {
+    return !p.isDead || p.canVote
+  }).length
 }
 
 // 获取投票进度颜色
@@ -389,15 +351,9 @@ const getVoteProgressColor = () => {
   return '#67c23a'
 }
 
-// 处理游戏操作
+// 处理游戏操作 - 使用store的方法
 const handleGameAction = (action: any) => {
-  if (store.socket) {
-    store.socket.emit('game_action', {
-      roomId: roomId,
-      action: action.type,
-      data: action.data
-    })
-  }
+  store.sendGameAction(action.type, action.data)
 }
 
 // 处理转移房主
@@ -420,27 +376,16 @@ const handleKickPlayer = (targetId: string) => {
   }
 }
 
-// 处理开始私聊
+// 处理开始私聊 - 使用ref代替DOM操作
 const handleStartPrivateChat = (targetId: string) => {
-  // 通知聊天组件开始私聊
-  const chatComponent = document.querySelector('.botc-chat') as any
-  if (chatComponent && chatComponent.__vueParentComponent) {
-    const chatVue = chatComponent.__vueParentComponent.exposed || chatComponent.__vueParentComponent.ctx
-    if (chatVue.startPrivateChat) {
-      chatVue.startPrivateChat(targetId)
-    }
+  if (chatComponentRef.value?.startPrivateChat) {
+    chatComponentRef.value.startPrivateChat(targetId)
   }
 }
 
 // 处理私聊消息
 const handlePrivateMessage = (data: any) => {
-  if (store.socket) {
-    store.socket.emit('private_message', {
-      roomId: roomId,
-      targetId: data.targetId,
-      message: data.message
-    })
-  }
+  store.sendPrivateMessage(data.targetId, data.message)
 }
 </script>
 
@@ -450,29 +395,6 @@ const handlePrivateMessage = (data: any) => {
   display: flex;
   flex-direction: column;
   background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-}
-
-.room-loading-overlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  background: rgba(0, 0, 0, 0.8);
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  z-index: 9999;
-}
-
-.loading-content {
-  text-align: center;
-  color: white;
-}
-
-.loading-content p {
-  margin-top: 16px;
-  font-size: 18px;
 }
 
 .room-header {
@@ -707,10 +629,17 @@ const handlePrivateMessage = (data: any) => {
   font-weight: bold;
 }
 
+.vote-participants {
+  font-size: 12px;
+  color: #6c757d;
+  text-align: right;
+  margin-top: 4px;
+}
+
 .game-sidebar {
   background: rgba(255, 255, 255, 0.95);
   border-left: 1px solid #e4e7ed;
   display: flex;
   flex-direction: column;
 }
-</style> 
+</style>

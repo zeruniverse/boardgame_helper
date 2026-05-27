@@ -8,6 +8,7 @@ import {
   OnuWerewolfRole, 
   OnuWerewolfTeam, 
   ONU_WEREWOLF_ROLE_TEAM, 
+  ONU_WEREWOLF_ROLE_NAMES,
   OnuWerewolfPlayer, 
   OnuWerewolfCenterCard, 
   OnuWerewolfVision, 
@@ -117,7 +118,7 @@ export function onuValidateGameConfig(roles: OnuWerewolfRole[]): {
   for (const uniqueRole of uniqueRoles) {
     const count = roles.filter(r => r === uniqueRole).length;
     if (count > 1) {
-      return { valid: false, error: `${uniqueRole} 角色只能有一个` };
+      return { valid: false, error: `${ONU_WEREWOLF_ROLE_NAMES[uniqueRole] || uniqueRole} 角色只能有一个` };
     }
   }
 
@@ -159,7 +160,7 @@ export function onuCreateVision(players?: OnuWerewolfPlayer[], cards?: OnuWerewo
   if (players && players.length > 0) {
     vision.players = players.map(player => ({
       seat: player.seat,
-      role: player.revealed ? player.actualRole : (player.actualRole || player.initialRole),
+      role: player.revealed ? player.actualRole : OnuWerewolfRole.Unknown,
       artifacts: player.artifacts.size > 0 ? Array.from(player.artifacts) : undefined,
       shielded: player.shielded || undefined
     }));

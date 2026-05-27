@@ -9,6 +9,8 @@ interface WerewolfPlayer {
   ready: boolean;
   alive: boolean;
   role?: string;
+  isSheriff?: boolean;
+  isDying?: boolean;
 }
 
 interface WerewolfGameState {
@@ -24,9 +26,10 @@ interface WerewolfGameState {
   currentSpeaker?: string;
   sheriff?: string;
   config?: {
-    dayDiscussTime: number;  // 白天发言时间（秒）
-    voteTime: number;        // 投票时间（秒）
-    nightActionTime: number; // 夜晚行动时间（秒）
+    dayDiscussTime: number;
+    voteTime: number;
+    nightActionTime: number;
+    speakTime: number;
   };
 }
 
@@ -34,11 +37,12 @@ interface WerewolfSecret {
   playerId: string;
   role: string;
   team: 'werewolf' | 'villager';
-  companions?: string[];  // 同伴（狼人队友）
+  companions?: string[];
   potions?: {
     poison: boolean;
     antidote: boolean;
   };
+  characterStatus?: any;
 }
 
 interface WerewolfRoomState {
@@ -73,7 +77,7 @@ export const useWerewolfStore = defineStore('werewolf', {
     isHost(): boolean {
       return this.room?.hostId === this.currentUserId;
     },
-    
+
     isReady(): boolean {
       const player = this.room?.players.find(p => p.id === this.currentUserId);
       return player?.ready ?? false;
@@ -82,7 +86,9 @@ export const useWerewolfStore = defineStore('werewolf', {
     canStartGame(): boolean {
       if (!this.isHost || !this.room) return false;
       const readyCount = this.room.players.filter(p => p.ready).length;
-      return readyCount >= 4 && readyCount === this.room.players.length;
+      // 统一为只需要达到角色配置所需人数即可开始
+      const needingCount = this.gameState?.config ? Object.values(this.gameState.config).filter(v => typeof v === 'number' && v > 0).length : 6;
+      return readyCount >= needingCount && readyCount >= 6;
     },
 
     canOperate(): boolean {
@@ -134,42 +140,93 @@ export const useWerewolfStore = defineStore('werewolf', {
         this.currentRoomId = data.room.id;
       });
 
-      this.socket.on('room_update', (room: WerewolfRoomState) => {
-        this.room = room;
+      this.socket.on('room_update', (data: any) => {
+        // 后端发送的是gameInfo格式，需要转换
+        if (data.gameInfo) {
+          this.updateGameStateFromGameInfo(data.gameInfo);
+        }
+        // 也可能直接发送room对象
+        if (data.room) {
+          this.room = data.room;
+        }
       });
 
       this.socket.on('room_ready', (data: any) => {
         console.log('收到狼人杀房间room_ready事件', data);
+        if (data.gameInfo) {
+          this.updateGameStateFromGameInfo(data.gameInfo);
+        }
       });
 
-      // 游戏事件
-      this.socket.on('game_started', (data: { game: WerewolfGameState; secret: WerewolfSecret }) => {
-        this.gameState = data.game;
-        this.playerSecret = data.secret;
+      // 游戏事件 - 后端发送 {message, gameInfo}
+      this.socket.on('game_started', (data: { message: string; gameInfo: any }) => {
+        console.log('游戏开始事件:', data);
+        if (data.gameInfo) {
+          this.updateGameStateFromGameInfo(data.gameInfo);
+        }
         if (this.room) {
           this.room.gameStarted = true;
         }
-        this.addSystemMessage('游戏开始！');
+        this.addSystemMessage(data.message || '游戏开始！');
         this.announceRole();
+        this.startTimerFromGameInfo(data.gameInfo);
       });
 
-      this.socket.on('game_update', (gameState: WerewolfGameState) => {
-        this.gameState = gameState;
-        this.updateTimer();
-        this.handleAutoAction();
+      // 角色分配事件 - 私发
+      this.socket.on('character_assigned', (data: { character: string; secret: WerewolfSecret }) => {
+        console.log('收到角色分配:', data.character);
+        if (data.secret) {
+          this.playerSecret = data.secret;
+        }
       });
 
+      // secret_update - 备用
       this.socket.on('secret_update', (secret: WerewolfSecret) => {
         this.playerSecret = secret;
       });
 
-      this.socket.on('game_over', (data: { winner: 'werewolf' | 'villager'; reason: string }) => {
+      // 状态变更 - 后端发送 {status, day, timeout, message, gameInfo}
+      this.socket.on('status_changed', (data: any) => {
+        console.log('状态变更:', data.status);
+        if (data.gameInfo) {
+          this.updateGameStateFromGameInfo(data.gameInfo);
+        } else if (data.status) {
+          // 直接更新状态
+          if (this.gameState) {
+            this.gameState.status = data.status;
+            this.gameState.day = data.day || this.gameState.day;
+          }
+        }
+        this.timeLeft = data.timeout || 0;
+        this.startTimer();
+        this.handleAutoAction();
+      });
+
+      // game_info - 游戏信息更新
+      this.socket.on('game_info', (data: any) => {
+        if (data.gameInfo) {
+          this.updateGameStateFromGameInfo(data.gameInfo);
+        }
+      });
+
+      // 游戏结束 - 后端发送 {winner, reason}
+      this.socket.on('game_end', (data: { winner: 'werewolf' | 'villager'; reason: string }) => {
+        console.log('游戏结束:', data);
         if (this.gameState) {
           this.gameState.winner = data.winner;
           this.gameState.status = 'finished';
         }
-        this.addSystemMessage(`游戏结束：${data.reason}`);
+        this.addSystemMessage(`游戏结束：${data.winner === 'werewolf' ? '狼人阵营胜利' : '村民阵营胜利'} - ${data.reason || ''}`);
         this.clearAutoActionTimer();
+        this.clearTimer();
+      });
+
+      // show_message - 系统消息展示
+      this.socket.on('show_message', (data: any) => {
+        const message = typeof data === 'string' ? data : (data.message || '');
+        if (message) {
+          this.addSystemMessage(message);
+        }
       });
 
       // 聊天事件
@@ -177,34 +234,85 @@ export const useWerewolfStore = defineStore('werewolf', {
         this.messages.push(message);
       });
 
-      this.socket.on('system_message', (message: string) => {
-        this.addSystemMessage(message);
+      // 系统消息
+      this.socket.on('system_message', (data: any) => {
+        const message = typeof data === 'string' ? data : (data.message || '');
+        if (message) {
+          this.addSystemMessage(message);
+        }
+      });
+
+      // 预言家验人结果 - 私发
+      this.socket.on('seer_result', (data: { target: number; isWerewolf: boolean; resultText: string }) => {
+        this.addSystemMessage(`验人结果：${data.target}号是${data.resultText}`);
       });
 
       // 错误事件
-      this.socket.on('error', (error: string) => {
-        this.errorMessage = error;
-        this.addSystemMessage(`错误：${error}`);
-      });
-
-      // 时间同步
-      this.socket.on('time_update', (data: { timeLeft: number }) => {
-        this.timeLeft = data.timeLeft;
+      this.socket.on('error', (error: any) => {
+        const msg = typeof error === 'string' ? error : (error.message || '未知错误');
+        this.errorMessage = msg;
+        this.addSystemMessage(`错误：${msg}`);
       });
 
       // 游戏状态同步（用于重连）
       this.socket.on('game_state_sync', (data: {
-        room: WerewolfRoomState;
-        game: WerewolfGameState | null;
-        secret: WerewolfSecret | null;
+        gameInfo: any;
+        secretInfo: WerewolfSecret | null;
+        playerInfo: any;
         currentUserId: string;
       }) => {
-        this.room = data.room;
-        this.gameState = data.game;
-        this.playerSecret = data.secret;
-        this.currentUserId = data.currentUserId;
-        this.currentRoomId = data.room.id;
+        if (data.gameInfo) {
+          this.updateGameStateFromGameInfo(data.gameInfo);
+        }
+        if (data.secretInfo) {
+          this.playerSecret = data.secretInfo;
+        }
+        if (data.currentUserId) {
+          this.currentUserId = data.currentUserId;
+        }
       });
+
+      // 心跳响应
+      this.socket.on('heartbeat_response', (data: any) => {
+        // 忽略
+      });
+    },
+
+    // 从后端的gameInfo格式更新前端gameState
+    updateGameStateFromGameInfo(gameInfo: any) {
+      if (!gameInfo) return;
+
+      if (!this.gameState) {
+        this.gameState = {
+          status: gameInfo.status || 'preparing',
+          day: gameInfo.day || 0,
+          players: gameInfo.players || {},
+          operators: gameInfo.operators || [],
+          votes: gameInfo.votes || {},
+          currentSpeaker: gameInfo.currentSpeaker,
+          config: gameInfo.config,
+          statusMessage: gameInfo.statusMessage,
+          winner: gameInfo.winner
+        };
+      } else {
+        this.gameState.status = gameInfo.status || this.gameState.status;
+        this.gameState.day = gameInfo.day !== undefined ? gameInfo.day : this.gameState.day;
+        if (gameInfo.players) this.gameState.players = gameInfo.players;
+        if (gameInfo.operators) this.gameState.operators = gameInfo.operators;
+        if (gameInfo.votes) this.gameState.votes = gameInfo.votes;
+        if (gameInfo.currentSpeaker !== undefined) this.gameState.currentSpeaker = gameInfo.currentSpeaker;
+        if (gameInfo.config) this.gameState.config = gameInfo.config;
+        if (gameInfo.statusMessage) this.gameState.statusMessage = gameInfo.statusMessage;
+        if (gameInfo.winner) this.gameState.winner = gameInfo.winner;
+      }
+    },
+
+    // 从gameInfo启动计时器
+    startTimerFromGameInfo(gameInfo: any) {
+      if (gameInfo?.timeLeft !== undefined) {
+        this.timeLeft = gameInfo.timeLeft;
+        this.startTimer();
+      }
     },
 
     connectToRoom(roomId: string, gameType: string = 'werewolf') {
@@ -260,9 +368,10 @@ export const useWerewolfStore = defineStore('werewolf', {
       this.connected = false;
     },
 
+    // 统一使用game_action发送，动作类型与后端匹配
     sendGameAction(actionType: string, actionData: any) {
       if (!this.socket) return;
-      
+
       this.socket.emit('game_action', {
         roomId: this.currentRoomId,
         actionType,
@@ -272,11 +381,14 @@ export const useWerewolfStore = defineStore('werewolf', {
 
     sendMessage(message: string, channel: string = 'all') {
       if (!this.socket || !message.trim()) return;
-      
-      this.socket.emit('chat_message', {
+
+      this.socket.emit('game_action', {
         roomId: this.currentRoomId,
-        message: message.trim(),
-        channel
+        actionType: 'chat_message',
+        actionData: {
+          message: message.trim(),
+          channel
+        }
       });
     },
 
@@ -300,16 +412,16 @@ export const useWerewolfStore = defineStore('werewolf', {
       this.sendGameAction('start_game', {});
     },
 
-    // 狼人杀特有动作
-    wolfKill(targetId: string) {
+    // 狼人杀特有动作 - 直接发送后端支持的动作类型
+    wolfKill(targetId: string | null) {
       this.sendGameAction('wolf_kill', { targetId });
     },
 
-    seerCheck(targetId: string) {
+    seerCheck(targetId: string | null) {
       this.sendGameAction('seer_check', { targetId });
     },
 
-    witchUsePotion(actionType: 'poison' | 'antidote', targetId?: string) {
+    witchUsePotion(actionType: 'poison' | 'antidote' | 'skip', targetId?: string) {
       this.sendGameAction('witch_action', { actionType, targetId });
     },
 
@@ -317,20 +429,24 @@ export const useWerewolfStore = defineStore('werewolf', {
       this.sendGameAction('witch_action', { actionType: 'skip' });
     },
 
-    guardProtect(targetId: string) {
+    guardProtect(targetId: string | null) {
       this.sendGameAction('guard_protect', { targetId });
     },
 
-    vote(targetId: string) {
+    hunterShoot(targetId: string | null) {
+      this.sendGameAction('hunter_shoot', { targetId });
+    },
+
+    sheriffAssign(targetId: string | null) {
+      this.sendGameAction('sheriff_assign', { targetId });
+    },
+
+    vote(targetId: string | null) {
       this.sendGameAction('vote', { targetId });
     },
 
     skipVote() {
       this.sendGameAction('vote', { targetId: null });
-    },
-
-    speak() {
-      this.sendGameAction('speak', {});
     },
 
     endSpeak() {
@@ -344,25 +460,29 @@ export const useWerewolfStore = defineStore('werewolf', {
     // 自动发身份
     announceRole() {
       if (!this.playerSecret) return;
-      
+
       const roleNames: Record<string, string> = {
         'WEREWOLF': '狼人',
         'VILLAGER': '村民',
         'SEER': '预言家',
         'WITCH': '女巫',
         'HUNTER': '猎人',
-        'GUARD': '守卫'
+        'GUARD': '守卫',
+        'CUPID': '丘比特'
       };
 
       const roleName = roleNames[this.playerSecret.role] || this.playerSecret.role;
       const teamName = this.playerSecret.team === 'werewolf' ? '狼人阵营' : '村民阵营';
-      
+
       this.addSystemMessage(`你的身份是：${roleName}（${teamName}）`);
 
       // 如果是狼人，显示队友信息
       if (this.isWerewolf && this.playerSecret.companions?.length) {
         const companionNames = this.playerSecret.companions
-          .map(id => this.gameState?.players[id]?.name || `玩家${id}`)
+          .map(id => {
+            const p = this.gameState?.players[id];
+            return p ? `${p.index}号${p.name}` : `玩家${id}`;
+          })
           .join('、');
         this.addSystemMessage(`你的狼人队友：${companionNames}`);
       }
@@ -372,26 +492,26 @@ export const useWerewolfStore = defineStore('werewolf', {
         const potions = [];
         if (this.playerSecret.potions.poison) potions.push('毒药');
         if (this.playerSecret.potions.antidote) potions.push('解药');
-        this.addSystemMessage(`你拥有的药剂：${potions.join('、')}`);
+        this.addSystemMessage(`你拥有的药剂：${potions.join('、') || '无（都已使用）'}`);
       }
     },
 
-    // 自动行动处理（防止玩家知道谁出局了）
+    // 自动行动处理
     handleAutoAction() {
       if (!this.gameState || !this.playerSecret) return;
 
       // 清除之前的自动行动定时器
       this.clearAutoActionTimer();
 
-      // 如果当前玩家不能操作，但是轮到他们的角色行动，设置随机延迟
+      const nightPhases = ['WOLF_KILL', 'SEER_CHECK', 'WITCH_ACT', 'GUARD_PROTECT'];
       const isMyTurn = this.canOperate;
-      const shouldAct = ['WOLF_KILL', 'SEER_CHECK', 'WITCH_ACT', 'GUARD_PROTECT'].includes(this.gameState.status);
-      
-      if (shouldAct && !isMyTurn && !this.isAlive) {
-        // 死亡玩家随机等待3-10秒后自动跳过
-        const delay = Math.random() * 7000 + 3000; // 3-10秒
+      const shouldAct = nightPhases.includes(this.gameState.status);
+
+      if (shouldAct && !isMyTurn) {
+        // 不是当前行动角色，随机等待模拟操作（防暴露）
+        const delay = Math.random() * 5000 + 2000; // 2-7秒
         this.autoActionTimer = setTimeout(() => {
-          // 这里不发送实际的动作，只是为了时间延迟
+          // 不发送实际动作，只是模拟延迟
         }, delay);
       } else if (shouldAct && isMyTurn && this.timeLeft && this.timeLeft <= 1) {
         // 时间到自动跳过/弃权
@@ -407,28 +527,28 @@ export const useWerewolfStore = defineStore('werewolf', {
 
       switch (this.gameState.status) {
         case 'WOLF_KILL':
-          // 狼人超时不杀人
-          this.sendGameAction('wolf_kill', { targetId: null });
+          this.wolfKill(null);
           break;
         case 'SEER_CHECK':
-          // 预言家超时不验人
-          this.sendGameAction('seer_check', { targetId: null });
+          this.seerCheck(null);
           break;
         case 'WITCH_ACT':
-          // 女巫超时跳过
           this.witchSkip();
           break;
         case 'GUARD_PROTECT':
-          // 守卫超时不保护
-          this.sendGameAction('guard_protect', { targetId: null });
+          this.guardProtect(null);
           break;
         case 'EXILE_VOTE':
-          // 投票超时弃权
           this.skipVote();
           break;
         case 'DAY_DISCUSS':
-          // 发言超时结束发言
           this.endSpeak();
+          break;
+        case 'HUNTER_SHOOT':
+          this.hunterShoot(null);
+          break;
+        case 'SHERIFF_ASSIGN':
+          this.sheriffAssign(null);
           break;
       }
     },
@@ -440,13 +560,6 @@ export const useWerewolfStore = defineStore('werewolf', {
         timestamp: Date.now(),
         channel: 'all'
       });
-    },
-
-    updateTimer() {
-      if (this.gameState?.timeLeft !== undefined) {
-        this.timeLeft = this.gameState.timeLeft;
-        this.startTimer();
-      }
     },
 
     startTimer() {
@@ -479,4 +592,4 @@ export const useWerewolfStore = defineStore('werewolf', {
 
 export function useGameStore() {
   return useWerewolfStore();
-} 
+}

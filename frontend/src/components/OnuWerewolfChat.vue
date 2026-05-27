@@ -95,8 +95,9 @@ const messagesContainer = ref<HTMLElement>();
 
 // 计算属性
 const canChat = computed(() => {
-  // 只有在投票阶段才能聊天
-  return props.gameState?.status === OnuWerewolfGameStatus.VOTING;
+  // 在投票阶段和游戏结束阶段才能聊天（H7 fix）
+  return props.gameState?.status === OnuWerewolfGameStatus.VOTING ||
+         props.gameState?.status === OnuWerewolfGameStatus.COMPLETED;
 });
 
 const canSendMessage = computed(() => {
@@ -152,7 +153,7 @@ const getDisabledReason = () => {
     case OnuWerewolfGameStatus.REVEALING:
       return '结果揭示中';
     case OnuWerewolfGameStatus.COMPLETED:
-      return '游戏已结束';
+      return '游戏已结束 - 可以聊天';
     default:
       return '当前阶段不能聊天';
   }
@@ -167,8 +168,9 @@ const scrollToBottom = () => {
   });
 };
 
-// 监听消息变化，自动滚动
-watch(() => props.messages, scrollToBottom, { flush: 'post' });
+// 监听消息变化，自动滚动（使用deep watcher因为数组是被push的）
+watch(() => props.messages.length, scrollToBottom, { flush: 'post' });
+watch(() => props.messages, scrollToBottom, { deep: true, flush: 'post' });
 </script>
 
 <style scoped>

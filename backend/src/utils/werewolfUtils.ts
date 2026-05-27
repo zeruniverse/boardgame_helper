@@ -1,9 +1,9 @@
 // 狼人杀工具函数
 
-import { 
-  Vote, 
-  VoteSituation, 
-  WerewolfPlayerState, 
+import {
+  Vote,
+  VoteSituation,
+  WerewolfPlayerState,
   WerewolfCharacter,
   GameStatus,
   StatusWithAction
@@ -15,9 +15,11 @@ import {
  * @returns 票数最多的玩家编号数组，全弃票返回null
  */
 export function getVoteResult(votes: Vote[]): number[] | null {
+  if (!votes || votes.length === 0) return null;
+
   const voteSituation = getVoteSituation(votes);
   const allTargets = Object.keys(voteSituation);
-  
+
   if (!allTargets.length || (allTargets.length === 1 && allTargets[0] === '0')) {
     return null; // 全员弃票
   }
@@ -27,7 +29,7 @@ export function getVoteResult(votes: Vote[]): number[] | null {
 
   Object.entries(voteSituation).forEach(([target, voters]) => {
     if (target === '0') return; // 不考虑弃票
-    
+
     if (voters.length < maxVoteCount) return;
     else if (voters.length === maxVoteCount) {
       maxVoteTargets.push(Number(target));
@@ -36,6 +38,9 @@ export function getVoteResult(votes: Vote[]): number[] | null {
       maxVoteTargets = [Number(target)];
     }
   });
+
+  // 如果没有有效投票（所有人都投给不同人），返回null
+  if (maxVoteTargets.length === 0 || maxVoteCount <= 0) return null;
 
   return maxVoteTargets;
 }
@@ -72,7 +77,7 @@ export function checkGameEnd(players: Record<string, WerewolfPlayerState>): 'WER
   if (aliveWerewolves.length === 0) {
     return 'VILLAGER'; // 村民胜利
   }
-  
+
   if (aliveWerewolves.length >= aliveVillagers.length) {
     return 'WEREWOLF'; // 狼人胜利
   }
@@ -94,21 +99,24 @@ export function validatePlayerAction(
   dyingPlayer?: WerewolfPlayerState,
   toFinishPlayers?: Set<number>
 ): { valid: boolean; reason?: string } {
-  
+
   // 特殊状态的验证
   switch (gameStatus) {
     case GameStatus.HUNTER_SHOOT:
       if (player.character !== 'HUNTER' || !dyingPlayer || dyingPlayer.id !== player.id) {
         return { valid: false, reason: '你不是猎人或不在开枪阶段' };
       }
-      break;
-      
-    case GameStatus.SHERIFF_ASSIGN:
-      if (!player.isSheriff || !dyingPlayer || dyingPlayer.id !== player.id) {
-        return { valid: false, reason: '你不是警长或不在指派警长阶段' };
+      if (player.characterStatus.shootAt && player.characterStatus.shootAt.day >= 0) {
+        return { valid: false, reason: '你已经使用过技能了' };
       }
       break;
-      
+
+    case GameStatus.SHERIFF_ASSIGN:
+      if (!player.isSheriff) {
+        return { valid: false, reason: '你不是警长' };
+      }
+      break;
+
     case GameStatus.LEAVE_MSG:
       if (!player.isDying || !dyingPlayer || dyingPlayer.id !== player.id) {
         return { valid: false, reason: '你不能发表遗言' };
@@ -117,9 +125,9 @@ export function validatePlayerAction(
   }
 
   // 死亡玩家的验证（除了特殊状态）
-  if (!player.isAlive && 
-      gameStatus !== GameStatus.HUNTER_SHOOT && 
-      gameStatus !== GameStatus.SHERIFF_ASSIGN && 
+  if (!player.isAlive &&
+      gameStatus !== GameStatus.HUNTER_SHOOT &&
+      gameStatus !== GameStatus.SHERIFF_ASSIGN &&
       gameStatus !== GameStatus.LEAVE_MSG) {
     return { valid: false, reason: '你已经死亡，无法操作' };
   }
@@ -131,41 +139,44 @@ export function validatePlayerAction(
         return { valid: false, reason: '你不是狼人' };
       }
       break;
-      
+
     case GameStatus.SEER_CHECK:
       if (player.character !== 'SEER') {
         return { valid: false, reason: '你不是预言家' };
       }
       break;
-      
+
     case GameStatus.WITCH_ACT:
       if (player.character !== 'WITCH') {
         return { valid: false, reason: '你不是女巫' };
       }
       break;
-      
+
     case GameStatus.GUARD_PROTECT:
       if (player.character !== 'GUARD') {
         return { valid: false, reason: '你不是守卫' };
       }
       break;
-      
+
     case GameStatus.DAY_DISCUSS:
       if (toFinishPlayers && !toFinishPlayers.has(player.index)) {
-        return { valid: false, reason: '你不能发言' };
+        return { valid: false, reason: '当前不是你的发言回合' };
       }
       break;
-      
+
     case GameStatus.SHERIFF_SPEECH:
       if (!player.canBeVoted) {
         return { valid: false, reason: '你不能发言' };
       }
       break;
-      
+
     case GameStatus.SHERIFF_ELECT:
     case GameStatus.EXILE_VOTE:
     case GameStatus.SHERIFF_VOTE:
       // 这些状态通常允许所有活着的玩家操作
+      if (!player.isAlive) {
+        return { valid: false, reason: '你已经死亡，无法操作' };
+      }
       break;
   }
 
@@ -178,16 +189,22 @@ export function validatePlayerAction(
  * @returns 是否合法
  */
 export function validateCharacterConfig(characters: WerewolfCharacter[]): boolean {
-  if (!characters.length) return false;
-  
+  if (!characters || characters.length === 0) return false;
+
+  // 最少需要6人
+  if (characters.length < 6) return false;
+
+  // 最多18人
+  if (characters.length > 18) return false;
+
   const charMap = characters.reduce((map, char) => {
     map[char] = (map[char] || 0) + 1;
     return map;
-  }, {} as Record<WerewolfCharacter, number>);
+  }, {} as Record<string, number>);
 
   // 必须有狼人
-  if (!charMap.WEREWOLF) return false;
-  
+  if (!charMap.WEREWOLF || charMap.WEREWOLF === 0) return false;
+
   // 狼人不能超过总数的一半
   if (charMap.WEREWOLF > characters.length / 2) return false;
 
@@ -202,28 +219,28 @@ export function validateCharacterConfig(characters: WerewolfCharacter[]): boolea
  */
 export function renderPlayersHTML(hint: string, players?: number[]): string {
   let playerHTML = '';
-  if (players) {
+  if (players && players.length > 0) {
     players.forEach(index => {
       playerHTML += `
-        <div class="die-player">
+        <div class="dead-player">
           <div class="player-index">${index}</div>号
         </div>
       `;
     });
   }
-  
+
   return `
     <style>
-      .die-player-wrapper {
+      .dead-player-wrapper {
         display: flex;
         margin-top: 10px;
       }
-      .die-player-wrapper .die-player {
+      .dead-player-wrapper .dead-player {
         display: flex;
         align-items: flex-end;
         margin: 5px;
       }
-      .die-player-wrapper .die-player .player-index {
+      .dead-player-wrapper .dead-player .player-index {
         width: 40px;
         height: 40px;
         line-height: 40px;
@@ -234,7 +251,7 @@ export function renderPlayersHTML(hint: string, players?: number[]): string {
       }
     </style>
     <div>${hint}</div>
-    <div class="die-player-wrapper">
+    <div class="dead-player-wrapper">
       ${playerHTML}
     </div>
   `;
@@ -275,63 +292,63 @@ export function getNextGameStatus(
   switch (currentStatus) {
     case GameStatus.WAITING:
       return GameStatus.WOLF_KILL;
-      
+
     case GameStatus.WOLF_KILL:
       return GameStatus.WOLF_KILL_CHECK;
-      
+
     case GameStatus.WOLF_KILL_CHECK:
       return context.hasCharacter('SEER') ? GameStatus.SEER_CHECK : GameStatus.WITCH_ACT;
-      
+
     case GameStatus.SEER_CHECK:
       return context.hasCharacter('WITCH') ? GameStatus.WITCH_ACT : GameStatus.GUARD_PROTECT;
-      
+
     case GameStatus.WITCH_ACT:
-      return context.hasCharacter('GUARD') ? GameStatus.GUARD_PROTECT : 
-             (context.currentDay === 0 ? GameStatus.SHERIFF_ELECT : GameStatus.BEFORE_DAY_DISCUSS);
-      
+      return context.hasCharacter('GUARD') ? GameStatus.GUARD_PROTECT :
+             (context.currentDay <= 1 ? GameStatus.SHERIFF_ELECT : GameStatus.BEFORE_DAY_DISCUSS);
+
     case GameStatus.GUARD_PROTECT:
-      return context.currentDay === 0 ? GameStatus.SHERIFF_ELECT : GameStatus.BEFORE_DAY_DISCUSS;
-      
+      return context.currentDay <= 1 ? GameStatus.SHERIFF_ELECT : GameStatus.BEFORE_DAY_DISCUSS;
+
     case GameStatus.SHERIFF_ELECT:
       return GameStatus.SHERIFF_SPEECH;
-      
+
     case GameStatus.SHERIFF_SPEECH:
       return GameStatus.SHERIFF_VOTE;
-      
+
     case GameStatus.SHERIFF_VOTE:
       return GameStatus.SHERIFF_VOTE_CHECK;
-      
+
     case GameStatus.SHERIFF_VOTE_CHECK:
       return GameStatus.BEFORE_DAY_DISCUSS;
-      
+
     case GameStatus.BEFORE_DAY_DISCUSS:
       return GameStatus.DAY_DISCUSS;
-      
+
     case GameStatus.DAY_DISCUSS:
       return GameStatus.EXILE_VOTE;
-      
+
     case GameStatus.EXILE_VOTE:
       return GameStatus.EXILE_VOTE_CHECK;
-      
+
     case GameStatus.EXILE_VOTE_CHECK:
       return GameStatus.LEAVE_MSG;
-      
+
     case GameStatus.LEAVE_MSG:
       return GameStatus.HUNTER_SHOOT;
-      
+
     case GameStatus.HUNTER_SHOOT:
       return GameStatus.HUNTER_CHECK;
-      
+
     case GameStatus.HUNTER_CHECK:
       return GameStatus.SHERIFF_ASSIGN;
-      
+
     case GameStatus.SHERIFF_ASSIGN:
       return GameStatus.SHERIFF_ASSIGN_CHECK;
-      
+
     case GameStatus.SHERIFF_ASSIGN_CHECK:
       return GameStatus.WOLF_KILL;
-      
+
     default:
       return GameStatus.OVER;
   }
-} 
+}

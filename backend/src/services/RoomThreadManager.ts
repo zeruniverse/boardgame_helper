@@ -60,11 +60,11 @@ export class RoomThreadManager {
       case 'mafia':
         return 'mafiaWorker';
       case 'one-night-werewolf':
-        return 'oneNightWerewolfWorker';
+        return 'onuWerewolfWorker';
       case 'avalon':
         return 'avalonWorker';
       case 'blood-on-the-clocktower':
-        return 'bloodOnTheClockTowerWorker';
+        return 'botcWorker';
       default:
         throw new Error(`不支持的游戏类型: ${gameType}`);
     }

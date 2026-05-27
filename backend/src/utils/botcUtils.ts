@@ -9,7 +9,7 @@ import {
   Nomination,
   Vote
 } from './botcTypes';
-import { ROLES, getRolesByTeam, NIGHT_ORDER } from './botcData';
+import { ROLES, getRolesByTeam, NIGHT_ORDER, getRoleById } from './botcData';
 
 /**
  * 血染钟楼游戏工具函数
@@ -76,6 +76,81 @@ export function assignRoles(playerIds: string[], editionId: string): Map<string,
 }
 
 /**
+ * 处理角色的setup标记
+ * Baron(+2外来者), Drunk(替换镇民), FangGu(+1外来者), Vigormortis(-1外来者)
+ */
+export function handleSetupMarkers(assignments: Map<string, Role>, editionId: string): Map<string, Role> {
+  let townsfolkCount = 0;
+  let outsiderCount = 0;
+  
+  // 统计当前配置
+  assignments.forEach(role => {
+    if (role.team === Team.TOWNSFOLK) townsfolkCount++;
+    if (role.team === Team.OUTSIDER) outsiderCount++;
+  });
+
+  // 检查是否有Baron（+2外来者）
+  const hasBaron = Array.from(assignments.values()).some(r => r.id === 'baron');
+  if (hasBaron) {
+    // 将2个镇民替换为外来者
+    const townsfolkInPlay = Array.from(assignments.entries())
+      .filter(([_, role]) => role.team === Team.TOWNSFOLK);
+    
+    const outsiders = getRolesByTeam(editionId, Team.OUTSIDER);
+    if (outsiders.length >= 2 && townsfolkInPlay.length >= 2) {
+      const shuffledOutsiders = shuffleArray(outsiders);
+      // 替换两个镇民
+      townsfolkInPlay.slice(0, 2).forEach(([playerId, _], idx) => {
+        assignments.set(playerId, shuffledOutsiders[idx]);
+      });
+    }
+  }
+
+  // 检查是否有FangGu（+1外来者）
+  const hasFangGu = Array.from(assignments.values()).some(r => r.id === 'fanggu');
+  if (hasFangGu) {
+    const townsfolkInPlay = Array.from(assignments.entries())
+      .filter(([_, role]) => role.team === Team.TOWNSFOLK);
+    const outsiders = getRolesByTeam(editionId, Team.OUTSIDER);
+    if (outsiders.length > 0 && townsfolkInPlay.length > 0) {
+      // 将一个镇民替换为外来者
+      const usedOutsiderIds = new Set(Array.from(assignments.values())
+        .filter(r => r.team === Team.OUTSIDER).map(r => r.id));
+      const availableOutsiders = outsiders.filter(r => !usedOutsiderIds.has(r.id));
+      if (availableOutsiders.length > 0) {
+        assignments.set(townsfolkInPlay[0][0], availableOutsiders[0]);
+      }
+    }
+  }
+
+  // 检查是否有Vigormortis（-1外来者）
+  const hasVigormortis = Array.from(assignments.values()).some(r => r.id === 'vigormortis');
+  if (hasVigormortis) {
+    const outsidersInPlay = Array.from(assignments.entries())
+      .filter(([_, role]) => role.team === Team.OUTSIDER);
+    const townsfolk = getRolesByTeam(editionId, Team.TOWNSFOLK);
+    if (outsidersInPlay.length > 0 && townsfolk.length > 0) {
+      // 将一个外来者替换为镇民
+      const usedTownsfolkIds = new Set(Array.from(assignments.values())
+        .filter(r => r.team === Team.TOWNSFOLK).map(r => r.id));
+      const availableTownsfolk = townsfolk.filter(r => !usedTownsfolkIds.has(r.id));
+      if (availableTownsfolk.length > 0) {
+        assignments.set(outsidersInPlay[0][0], availableTownsfolk[0]);
+      }
+    }
+  }
+
+  // 处理Drunk - 将一个镇民标记为酒鬼（他认为自己是那个镇民）
+  const hasDrunk = Array.from(assignments.values()).some(r => r.id === 'drunk');
+  if (hasDrunk) {
+    // 在BOTC中，酒鬼已经在角色池中，不需要额外替换
+    // 酒鬼的功能由说书人在游戏中处理
+  }
+
+  return assignments;
+}
+
+/**
  * 创建游戏玩家对象
  */
 export function createGamePlayer(playerId: string, role: Role | null, seat: number): GamePlayer {
@@ -113,18 +188,38 @@ export function initializeGameState(storytellerId: string): GameState {
 }
 
 /**
- * 获取夜晚行动顺序
+ * 获取夜晚行动顺序 - 优化版本
  */
 export function getNightOrder(gamePlayers: GamePlayer[], isFirstNight: boolean): string[] {
   const nightOrderIds = isFirstNight ? NIGHT_ORDER.first : NIGHT_ORDER.other;
   const order: string[] = [];
+  
+  // 构建角色ID到玩家的映射（优化查找）
+  const roleToPlayers: Map<string, GamePlayer[]> = new Map();
+  
+  gamePlayers.forEach(player => {
+    if (player.role) {
+      if (!roleToPlayers.has(player.role.id)) {
+        roleToPlayers.set(player.role.id, []);
+      }
+      roleToPlayers.get(player.role.id)!.push(player);
+    }
+  });
 
-  // 按照夜晚顺序添加存活的相关角色玩家
+  // 按照夜晚顺序添加相关角色玩家
   nightOrderIds.forEach(roleId => {
-    gamePlayers.forEach(player => {
-      if (!player.isDead && player.role && player.role.id === roleId) {
-        const nightAction = isFirstNight ? player.role.firstNight : player.role.otherNight;
-        if (nightAction > 0) {
+    const playersWithRole = roleToPlayers.get(roleId);
+    if (!playersWithRole) return;
+
+    playersWithRole.forEach(player => {
+      const nightAction = isFirstNight ? player.role!.firstNight : player.role!.otherNight;
+      if (nightAction > 0) {
+        // 存活玩家正常行动
+        if (!player.isDead) {
+          order.push(player.playerId);
+        }
+        // 某些角色（如Ravenkeeper）死亡后仍有能力
+        else if (player.isDead && shouldWakeWhenDead(player.role!.id, isFirstNight)) {
           order.push(player.playerId);
         }
       }
@@ -135,7 +230,15 @@ export function getNightOrder(gamePlayers: GamePlayer[], isFirstNight: boolean):
 }
 
 /**
- * 检查游戏是否结束
+ * 判断角色死亡后是否应该被唤醒
+ */
+function shouldWakeWhenDead(roleId: string, isFirstNight: boolean): boolean {
+  const wakesWhenDead = ['ravenkeeper', 'sage'];
+  return wakesWhenDead.includes(roleId);
+}
+
+/**
+ * 检查游戏是否结束 - 包含特殊胜利条件
  */
 export function checkGameEnd(gamePlayers: GamePlayer[]): { isEnded: boolean; winner?: 'good' | 'evil'; reason?: string } {
   const alivePlayers = gamePlayers.filter(p => !p.isDead);
@@ -145,17 +248,43 @@ export function checkGameEnd(gamePlayers: GamePlayer[]): { isEnded: boolean; win
 
   // 恶魔死亡，善良阵营获胜
   if (aliveDemon.length === 0) {
+    // 检查幕后黑手 - 如果恶魔被处决，游戏继续一天
+    const mastermind = gamePlayers.find(p => p.role?.id === 'mastermind' && !p.isDead);
+    if (mastermind) {
+      // 幕后黑手效果：游戏继续一天
+      return { isEnded: false };
+    }
     return { isEnded: true, winner: 'good', reason: '恶魔已死亡' };
   }
 
-  // 只剩下2名玩家且其中有恶魔，邪恶阵营获胜
-  if (alivePlayers.length === 2 && aliveDemon.length > 0) {
-    return { isEnded: true, winner: 'evil', reason: '只剩下2名玩家' };
+  // 邪恶玩家数量等于或超过善良玩家，邪恶阵营获胜
+  if (aliveEvil.length >= aliveGood.length && aliveGood.length > 0) {
+    return { isEnded: true, winner: 'evil', reason: '邪恶玩家数量占优' };
   }
 
-  // 邪恶玩家数量等于或超过善良玩家，邪恶阵营获胜
-  if (aliveEvil.length >= aliveGood.length) {
-    return { isEnded: true, winner: 'evil', reason: '邪恶玩家数量占优' };
+  // 镇长特殊胜利条件 - 只剩3名存活玩家且无执行
+  const mayor = alivePlayers.find(p => p.role?.id === 'mayor');
+  if (mayor && alivePlayers.length === 3) {
+    // 检查今天是否没有执行任何人
+    return { isEnded: false }; // 说书人需要判断，这里不自动结束
+  }
+
+  // 邪恶双子相关 - 如果双子都活着，善良不能获胜（需通过说书人判断）
+  const evilTwin = gamePlayers.find(p => p.role?.id === 'eviltwin' && !p.isDead);
+  if (evilTwin) {
+    // 如果邪恶双子活着，检查是否有善良的"双子"被执行
+    // 这需要游戏记录中的额外逻辑
+  }
+
+  // 只剩2名玩家且其中有恶魔，邪恶阵营获胜
+  if (alivePlayers.length <= 2 && aliveDemon.length > 0) {
+    return { isEnded: true, winner: 'evil', reason: '玩家数量过少' };
+  }
+
+  // Vortox特殊条件 - 如果白天没有人被处决，邪恶获胜
+  const vortox = alivePlayers.find(p => p.role?.id === 'vortox' && !p.isDead);
+  if (vortox && alivePlayers.length > 0) {
+    // 需要白天执行信息来判断，这里不自动结束
   }
 
   return { isEnded: false };
@@ -206,6 +335,20 @@ export function isGoodPlayer(player: GamePlayer): boolean {
 }
 
 /**
+ * 获取存活玩家
+ */
+export function getAlivePlayers(gamePlayers: GamePlayer[]): GamePlayer[] {
+  return gamePlayers.filter(p => !p.isDead);
+}
+
+/**
+ * 获取有遗言票的死亡玩家
+ */
+export function getDeadPlayersWithGhostVote(gamePlayers: GamePlayer[]): GamePlayer[] {
+  return gamePlayers.filter(p => p.isDead && p.canVote);
+}
+
+/**
  * 计算相邻邪恶玩家对的数量（厨师能力）
  */
 export function countAdjacentEvilPairs(gamePlayers: GamePlayer[]): number {
@@ -248,13 +391,63 @@ export function validatePlayerAction(
     return { valid: false, error: '玩家不存在' };
   }
 
-  if (player.isDead && actionType !== 'chat') {
-    return { valid: false, error: '死亡玩家无法执行此操作' };
+  // 聊天操作任何人都可执行
+  if (actionType === 'chat' || actionType === 'private_message') {
+    return { valid: true };
   }
 
+  // ready操作在SETUP阶段允许（说书人专用，在Worker中验证）
+  if (actionType === 'ready') {
+    if (gameState.phase !== GamePhase.SETUP) {
+      return { valid: false, error: '游戏已经开始' };
+    }
+    return { valid: true };
+  }
+
+  // setup阶段只允许ready和chat
   if (gameState.phase === GamePhase.SETUP) {
     return { valid: false, error: '游戏尚未开始' };
   }
 
+  // 死亡玩家的限制
+  if (player.isDead) {
+    // 死亡玩家可以投票（遗言票）和聊天
+    if (actionType === 'vote') {
+      if (!player.canVote) {
+        return { valid: false, error: '你的遗言票已用完' };
+      }
+      return { valid: true };
+    }
+    // 死亡玩家可以提名（消耗遗言票）
+    if (actionType === 'nominate') {
+      if (!player.canVote) {
+        return { valid: false, error: '你的遗言票已用完，无法提名' };
+      }
+      return { valid: true };
+    }
+    // 某些角色（如Ravenkeeper）死后仍有能力
+    if (actionType === 'nightAction' && 
+        (player.role?.id === 'ravenkeeper' || player.role?.id === 'sage')) {
+      return { valid: true };
+    }
+    return { valid: false, error: '死亡玩家无法执行此操作' };
+  }
+
+  // 阶段检查
+  if (actionType === 'nominate' && gameState.phase !== GamePhase.DAY) {
+    return { valid: false, error: '只能在白天提名' };
+  }
+  if (actionType === 'vote' && gameState.phase !== GamePhase.DAY) {
+    return { valid: false, error: '只能在白天投票' };
+  }
+  if (actionType === 'nightAction' && 
+      gameState.phase !== GamePhase.NIGHT && 
+      gameState.phase !== GamePhase.FIRST_NIGHT) {
+    return { valid: false, error: '只能在夜晚执行行动' };
+  }
+  if (actionType === 'storytellerAction' && gameState.phase === GamePhase.ENDED) {
+    return { valid: false, error: '游戏已结束' };
+  }
+
   return { valid: true };
-} 
+}

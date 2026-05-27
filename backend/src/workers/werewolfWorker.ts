@@ -9,7 +9,8 @@ import {
   WerewolfCharacter,
   GameStatus,
   TIMEOUT,
-  Vote
+  Vote,
+  StatusDisplayMessages
 } from '../utils/werewolfTypes';
 import {
   getVoteResult,
@@ -45,7 +46,6 @@ interface GameTaskResponse {
 
 class WerewolfWorker extends BaseGameWorker {
   private config!: WerewolfConfig;
-  private actionTimer: NodeJS.Timeout | null = null;
 
   constructor() {
     super();
@@ -64,7 +64,12 @@ class WerewolfWorker extends BaseGameWorker {
       operateEndTime: new Date(),
       step: 1,
       isFinished: false,
-      timer: undefined
+      timer: undefined,
+      operators: [],
+      nightActions: {},
+      votes: {},
+      speakOrder: [],
+      currentSpeakerIndex: 0
     } as WerewolfGameState;
   }
 
@@ -92,6 +97,13 @@ class WerewolfWorker extends BaseGameWorker {
         ready: false,
         muted: false
       };
+    });
+
+    // 发送房间准备完成事件
+    this.sendToRoom('room_ready', {
+      message: '狼人杀房间已准备好',
+      config: this.config,
+      gameInfo: this.getGameInfo()
     });
 
     this.sendToRoom('game_prepared', {
@@ -123,7 +135,7 @@ class WerewolfWorker extends BaseGameWorker {
     if (player) {
       const message = `${player.nickname}已重新连接`;
       this.sendToRoom('player_online', { message });
-      
+
       // 发送游戏状态给重连的玩家
       this.syncGameStateToPlayer(player.socketId!, playerId);
     }
@@ -160,14 +172,62 @@ class WerewolfWorker extends BaseGameWorker {
     }
   }
 
+  // 获取游戏公开信息
   private getGameInfo(): any {
+    const players = this.getPublicPlayerInfo();
+
+    // 将players数组转换为Record（适配前端期望的格式）
+    const playersRecord: Record<string, any> = {};
+    players.forEach(p => {
+      playersRecord[p.id] = {
+        id: p.id,
+        name: p.nickname,
+        index: p.index,
+        alive: p.isAlive,
+        role: undefined, // 不公开角色
+        ready: p.online,
+        isSheriff: p.isSheriff,
+        isDying: p.isDying
+      };
+    });
+
+    // 转换votes格式
+    const votesRecord: Record<string, string> = {};
+    if (this.gameState.votes) {
+      Object.entries(this.gameState.votes).forEach(([voterId, targetId]) => {
+        votesRecord[voterId] = targetId as string;
+      });
+    }
+
+    // 获取当前发言者
+    let currentSpeaker: string | undefined;
+    if (this.gameState.speakOrder && this.gameState.speakOrder.length > 0 &&
+        this.gameState.currentSpeakerIndex !== undefined &&
+        this.gameState.currentSpeakerIndex < this.gameState.speakOrder.length) {
+      const speakerIndex = this.gameState.speakOrder[this.gameState.currentSpeakerIndex];
+      const speaker = (Object.values(this.gameState.players) as WerewolfPlayerState[]).find(p => p.index === speakerIndex);
+      if (speaker) {
+        currentSpeaker = speaker.id;
+      }
+    }
+
     return {
       status: this.gameState.status,
       day: this.gameState.currentDay,
       timeLeft: this.getTimeLeft(),
-      statusMessage: this.getStatusMessage(),
-      players: this.getPublicPlayerInfo(),
-      needingCharacters: this.gameState.needingCharacters
+      statusMessage: (StatusDisplayMessages as any)[this.gameState.status] || this.gameState.status,
+      players: playersRecord,
+      needingCharacters: this.gameState.needingCharacters,
+      operators: this.gameState.operators || [],
+      votes: votesRecord,
+      currentSpeaker,
+      speakOrder: this.gameState.speakOrder,
+      config: {
+        dayDiscussTime: this.config?.dayTime || 120,
+        voteTime: this.config?.voteTime || 60,
+        nightActionTime: this.config?.actionTime || 60,
+        speakTime: this.config?.speakTime || 60
+      }
     };
   }
 
@@ -177,26 +237,7 @@ class WerewolfWorker extends BaseGameWorker {
   }
 
   private getStatusMessage(): string {
-    switch (this.gameState.status) {
-      case GameStatus.WAITING:
-        return '等待游戏开始';
-      case GameStatus.WOLF_KILL:
-        return '狼人请睁眼，选择要杀死的玩家';
-      case GameStatus.SEER_CHECK:
-        return '预言家请验人';
-      case GameStatus.WITCH_ACT:
-        return '女巫请选择是否用药';
-      case GameStatus.GUARD_PROTECT:
-        return '守卫请选择保护的玩家';
-      case GameStatus.SHERIFF_ELECT:
-        return '警长竞选阶段';
-      case GameStatus.DAY_DISCUSS:
-        return '白天自由发言';
-      case GameStatus.EXILE_VOTE:
-        return '投票驱逐狼人';
-      default:
-        return this.gameState.status;
-    }
+    return (StatusDisplayMessages as any)[this.gameState.status] || this.gameState.status;
   }
 
   private getPublicPlayerInfo(): any[] {
@@ -217,11 +258,12 @@ class WerewolfWorker extends BaseGameWorker {
   private syncGameStateToPlayer(socketId: string, playerId: string): void {
     const gamePlayer = this.gameState.players[playerId];
     const secretInfo = this.getSecretForPlayer(playerId);
-    
+
     this.sendToPlayer(playerId, 'game_state_sync', {
       gameInfo: this.getGameInfo(),
       secretInfo,
-      playerInfo: gamePlayer
+      playerInfo: gamePlayer,
+      currentUserId: playerId
     });
   }
 
@@ -229,16 +271,29 @@ class WerewolfWorker extends BaseGameWorker {
     const gamePlayer = this.gameState.players[playerId];
     if (!gamePlayer) return {};
 
+    // 返回前端期望格式的secret
     const secret: any = {
-      character: gamePlayer.character,
+      playerId: playerId,
+      role: gamePlayer.character,
+      team: gamePlayer.character === 'WEREWOLF' ? 'werewolf' : 'villager',
       characterStatus: gamePlayer.characterStatus
     };
 
     // 狼人可以看到队友
     if (gamePlayer.character === 'WEREWOLF') {
-      secret.teammates = Object.values(this.gameState.players)
+      const teammates = (Object.values(this.gameState.players) as WerewolfPlayerState[])
         .filter((p: any) => p.character === 'WEREWOLF' && p.id !== playerId)
-        .map((p: any) => ({ id: p.id, index: p.index, name: p.name }));
+        .map((p: any) => p.id);
+      secret.companions = teammates;
+    }
+
+    // 女巫显示药剂信息
+    if (gamePlayer.character === 'WITCH') {
+      const witchStatus = gamePlayer.characterStatus;
+      secret.potions = {
+        poison: !witchStatus.POISON || witchStatus.POISON.usedDay < 0,
+        antidote: !witchStatus.MEDICINE || witchStatus.MEDICINE.usedDay < 0
+      };
     }
 
     return secret;
@@ -262,6 +317,23 @@ class WerewolfWorker extends BaseGameWorker {
         case 'start_game':
           this.handleStartGame(playerId);
           break;
+        // 角色直接动作类型（前端发送的）
+        case 'wolf_kill':
+          this.handleWolfKill(playerId, actionData);
+          break;
+        case 'seer_check':
+          this.handleSeerCheck(playerId, actionData);
+          break;
+        case 'witch_action':
+          this.handleWitchAct(playerId, actionData);
+          break;
+        case 'guard_protect':
+          this.handleGuardProtect(playerId, actionData);
+          break;
+        case 'hunter_shoot':
+          this.handleHunterShoot(playerId, actionData);
+          break;
+        // 通用character_action（备用）
         case 'character_action':
           this.handleCharacterAction(playerId, actionData);
           break;
@@ -274,6 +346,12 @@ class WerewolfWorker extends BaseGameWorker {
         case 'sheriff_elect':
           this.handleSheriffElect(playerId);
           break;
+        case 'sheriff_assign':
+          this.handleSheriffAssign(playerId, actionData);
+          break;
+        case 'leave_msg':
+          this.handleLeaveMsg(playerId, actionData);
+          break;
         case 'chat_message':
           this.handleChatMessage(playerId, actionData);
           break;
@@ -282,9 +360,11 @@ class WerewolfWorker extends BaseGameWorker {
           break;
         default:
           console.warn(`未知的行动类型: ${actionType}`);
+          this.sendToPlayer(playerId, 'error', { message: `未知的行动类型: ${actionType}` });
       }
     } catch (error) {
       console.error(`处理玩家 ${playerId} 的行动 ${actionType} 时出错:`, error);
+      this.sendToPlayer(playerId, 'error', { message: '操作处理失败' });
     }
   }
 
@@ -302,22 +382,24 @@ class WerewolfWorker extends BaseGameWorker {
     delete this.gameState.players[targetId];
 
     const message = `${targetPlayer.nickname} 已被踢出房间`;
-    this.sendToRoom('player_kicked', { 
+    this.sendToRoom('player_kicked', {
       message,
       gameInfo: this.getGameInfo()
     });
 
     // 检查游戏是否可以继续
     if (this.gameState.status !== GameStatus.WAITING) {
-      this.checkGameEnd();
+      this.checkGameEndAndBroadcast();
     }
   }
+
+  // ==================== 核心动作处理方法 ====================
 
   private handleReady(playerId: string): void {
     const player = this.room.players.find(p => p.id === playerId);
     if (player && player.gameMetadata) {
       player.gameMetadata.ready = true;
-      
+
       this.sendToRoom('player_ready', {
         playerId,
         nickname: player.nickname,
@@ -330,7 +412,7 @@ class WerewolfWorker extends BaseGameWorker {
     const player = this.room.players.find(p => p.id === playerId);
     if (player && player.gameMetadata) {
       player.gameMetadata.ready = false;
-      
+
       this.sendToRoom('player_unready', {
         playerId,
         nickname: player.nickname,
@@ -352,10 +434,10 @@ class WerewolfWorker extends BaseGameWorker {
     }
 
     const readyPlayers = this.room.players.filter(p => p.gameMetadata?.ready);
-    
+
     if (readyPlayers.length < this.gameState.needingCharacters.length) {
-      this.sendToPlayer(playerId, 'error', { 
-        message: `需要 ${this.gameState.needingCharacters.length} 名玩家，当前只有 ${readyPlayers.length} 名玩家准备就绪` 
+      this.sendToPlayer(playerId, 'error', {
+        message: `需要 ${this.gameState.needingCharacters.length} 名玩家，当前只有 ${readyPlayers.length} 名玩家准备就绪`
       });
       return;
     }
@@ -366,7 +448,7 @@ class WerewolfWorker extends BaseGameWorker {
   private startGame(readyPlayers: Player[]): void {
     // 分配角色
     const characters = shuffleArray([...this.gameState.needingCharacters]);
-    
+
     readyPlayers.forEach((player, index) => {
       const character = characters[index];
       const gamePlayer: WerewolfPlayerState = {
@@ -382,7 +464,7 @@ class WerewolfWorker extends BaseGameWorker {
         sheriffVotes: [],
         characterStatus: this.initCharacterStatus(character)
       };
-      
+
       this.gameState.players[player.id] = gamePlayer;
     });
 
@@ -391,6 +473,13 @@ class WerewolfWorker extends BaseGameWorker {
     this.gameState.currentDay = 0;
     this.gameState.gameStatus = [GameStatus.WOLF_KILL];
     this.gameState.isFinished = false;
+    this.gameState.votes = {};
+    this.gameState.speakOrder = [];
+    this.gameState.currentSpeakerIndex = 0;
+    this.gameState.nightActions = {};
+
+    // 创建上下文对象
+    const context = this.createContext();
 
     this.sendToRoom('game_started', {
       message: '游戏开始！第一夜，天黑请闭眼',
@@ -398,27 +487,28 @@ class WerewolfWorker extends BaseGameWorker {
     });
 
     // 给每个玩家发送私密信息
-    Object.values(this.gameState.players).forEach((gamePlayer: any) => {
+    (Object.values(this.gameState.players) as WerewolfPlayerState[]).forEach((gamePlayer: any) => {
+      const secret = this.getSecretForPlayer(gamePlayer.id);
       this.sendToPlayer(gamePlayer.id, 'character_assigned', {
         character: gamePlayer.character,
-        secret: this.getSecretForPlayer(gamePlayer.id)
+        secret
       });
+
+      // 也发送secret_update事件（前端监听了这个）
+      this.sendToPlayer(gamePlayer.id, 'secret_update', secret);
     });
 
-    // 创建上下文对象
-    const context = {
-      sendToRoom: this.sendToRoom.bind(this),
-      sendToPlayer: this.sendToPlayer.bind(this),
-      getGameInfo: this.getGameInfo.bind(this)
-    };
-
-    stateHandlers[GameStatus.WOLF_KILL].startOfState(this.gameState, context);
+    // 启动第一个状态
+    stateHandlers[GameStatus.WOLF_KILL].startOfState(this.gameState, context, true);
   }
 
   private initCharacterStatus(character: WerewolfCharacter): any {
     switch (character) {
       case 'HUNTER':
-        return { shootAt: { day: -1, player: -1 } };
+        return {
+          shootAt: { day: -1, player: -1 },
+          hasUsedSkill: false
+        };
       case 'GUARD':
         return { protects: [] };
       case 'SEER':
@@ -434,6 +524,16 @@ class WerewolfWorker extends BaseGameWorker {
         return {};
     }
   }
+
+  private createContext(): any {
+    return {
+      sendToRoom: this.sendToRoom.bind(this),
+      sendToPlayer: this.sendToPlayer.bind(this),
+      getGameInfo: this.getGameInfo.bind(this)
+    };
+  }
+
+  // ==================== 角色行动处理 ====================
 
   private handleCharacterAction(playerId: string, actionData: any): void {
     const gamePlayer = this.gameState.players[playerId];
@@ -452,91 +552,763 @@ class WerewolfWorker extends BaseGameWorker {
       return;
     }
 
-    const target = actionData.target;
-
+    // 根据当前状态分发到对应的处理函数
     switch (this.gameState.status) {
       case GameStatus.WOLF_KILL:
-        this.handleWolfKill(playerId, target);
+        this.handleWolfKill(playerId, actionData);
         break;
       case GameStatus.SEER_CHECK:
-        this.handleSeerCheck(playerId, target);
+        this.handleSeerCheck(playerId, actionData);
         break;
       case GameStatus.WITCH_ACT:
-        this.handleWitchAct(playerId, target);
+        this.handleWitchAct(playerId, actionData);
         break;
       case GameStatus.GUARD_PROTECT:
-        this.handleGuardProtect(playerId, target);
+        this.handleGuardProtect(playerId, actionData);
         break;
       case GameStatus.HUNTER_SHOOT:
-        this.handleHunterShoot(playerId, target);
+        this.handleHunterShoot(playerId, actionData);
         break;
       case GameStatus.SHERIFF_ASSIGN:
-        this.handleSheriffAssign(playerId, target);
+        this.handleSheriffAssign(playerId, actionData);
         break;
       case GameStatus.LEAVE_MSG:
-        this.handleLeaveMsg(playerId);
+        this.handleLeaveMsg(playerId, actionData);
         break;
       default:
         this.sendToPlayer(playerId, 'error', { message: '当前状态不支持此操作' });
     }
   }
 
-  // 添加缺失的方法
+  // ==================== 狼人杀人 ====================
+  private handleWolfKill(playerId: string, actionData: any): void {
+    const gamePlayer = this.gameState.players[playerId];
+    if (!gamePlayer || gamePlayer.character !== 'WEREWOLF') {
+      this.sendToPlayer(playerId, 'error', { message: '你不是狼人' });
+      return;
+    }
+
+    if (this.gameState.status !== GameStatus.WOLF_KILL) {
+      this.sendToPlayer(playerId, 'error', { message: '当前不是狼人行动阶段' });
+      return;
+    }
+
+    // 解析目标（支持targetId或target）
+    let targetIndex = 0; // 0表示放弃
+    if (actionData) {
+      if (actionData.targetId !== null && actionData.targetId !== undefined) {
+        const targetId = String(actionData.targetId);
+        const target = this.gameState.players[targetId];
+        if (target) {
+          targetIndex = target.index;
+        }
+      } else if (actionData.target !== null && actionData.target !== undefined) {
+        targetIndex = Number(actionData.target) || 0;
+      }
+    }
+
+    // 记录杀人意向
+    if (!gamePlayer.characterStatus.wantToKills) {
+      gamePlayer.characterStatus.wantToKills = [];
+    }
+    gamePlayer.characterStatus.wantToKills[this.gameState.currentDay] = targetIndex;
+
+    // 通知该狼人操作已记录
+    if (targetIndex > 0) {
+      const target = (Object.values(this.gameState.players) as WerewolfPlayerState[]).find(p => p.index === targetIndex);
+      this.sendToPlayer(playerId, 'system_message', {
+        message: `你选择击杀 ${targetIndex}号${target ? '（' + target.name + '）' : ''}`
+      });
+    } else {
+      this.sendToPlayer(playerId, 'system_message', {
+        message: '你选择放弃击杀'
+      });
+    }
+
+    // 广播狼人投票给所有狼人
+    const allWerewolves = (Object.values(this.gameState.players) as WerewolfPlayerState[]).filter(p => p.character === 'WEREWOLF');
+    const votedCount = allWerewolves.filter(w =>
+      w.characterStatus.wantToKills && w.characterStatus.wantToKills[this.gameState.currentDay] !== undefined
+    ).length;
+
+    if (votedCount >= allWerewolves.length) {
+      // 所有狼人都已投票，提前结束状态
+      this.sendToRoom('system_message', {
+        message: '所有狼人已完成选择'
+      });
+
+      // 延迟进入下一状态
+      setTimeout(() => {
+        const context = this.createContext();
+        stateHandlers[GameStatus.WOLF_KILL].endOfState(this.gameState, context);
+      }, 2000);
+    }
+  }
+
+  // ==================== 预言家验人 ====================
+  private handleSeerCheck(playerId: string, actionData: any): void {
+    const gamePlayer = this.gameState.players[playerId];
+    if (!gamePlayer || gamePlayer.character !== 'SEER') {
+      this.sendToPlayer(playerId, 'error', { message: '你不是预言家' });
+      return;
+    }
+
+    if (this.gameState.status !== GameStatus.SEER_CHECK) {
+      this.sendToPlayer(playerId, 'error', { message: '当前不是预言家验人阶段' });
+      return;
+    }
+
+    // 解析目标
+    let targetIndex = 0;
+    if (actionData) {
+      if (actionData.targetId !== null && actionData.targetId !== undefined) {
+        const targetId = String(actionData.targetId);
+        const target = this.gameState.players[targetId];
+        if (target) {
+          targetIndex = target.index;
+        }
+      } else if (actionData.target !== null && actionData.target !== undefined) {
+        targetIndex = Number(actionData.target) || 0;
+      }
+    }
+
+    if (targetIndex <= 0) {
+      this.sendToPlayer(playerId, 'system_message', { message: '你选择放弃验人' });
+      // 结束预言家阶段
+      setTimeout(() => {
+        const context = this.createContext();
+        stateHandlers[GameStatus.SEER_CHECK].endOfState(this.gameState, context);
+      }, 1000);
+      return;
+    }
+
+    const target = (Object.values(this.gameState.players) as WerewolfPlayerState[]).find(p => p.index === targetIndex);
+    if (!target) {
+      this.sendToPlayer(playerId, 'error', { message: '目标玩家不存在' });
+      return;
+    }
+
+    const isWerewolf = target.character === 'WEREWOLF';
+
+    // 记录查验结果
+    if (!gamePlayer.characterStatus.checks) {
+      gamePlayer.characterStatus.checks = [];
+    }
+    gamePlayer.characterStatus.checks.push({ index: targetIndex, isWerewolf });
+
+    // 记录夜间行动
+    if (!this.gameState.nightActions) this.gameState.nightActions = {};
+    this.gameState.nightActions.seerCheckTarget = targetIndex;
+    this.gameState.nightActions.seerResult = isWerewolf;
+
+    // 私发验人结果
+    this.sendToPlayer(playerId, 'seer_result', {
+      target: targetIndex,
+      targetName: target.name,
+      isWerewolf,
+      resultText: isWerewolf ? '狼人' : '好人'
+    });
+
+    this.sendToPlayer(playerId, 'system_message', {
+      message: `你查验了 ${targetIndex}号 ${target.name}，结果是：${isWerewolf ? '狼人' : '好人'}`
+    });
+
+    // 结束预言家阶段
+    setTimeout(() => {
+      const context = this.createContext();
+      stateHandlers[GameStatus.SEER_CHECK].endOfState(this.gameState, context);
+    }, 2000);
+  }
+
+  // ==================== 女巫用药 ====================
+  private handleWitchAct(playerId: string, actionData: any): void {
+    const gamePlayer = this.gameState.players[playerId];
+    if (!gamePlayer || gamePlayer.character !== 'WITCH') {
+      this.sendToPlayer(playerId, 'error', { message: '你不是女巫' });
+      return;
+    }
+
+    if (this.gameState.status !== GameStatus.WITCH_ACT) {
+      this.sendToPlayer(playerId, 'error', { message: '当前不是女巫行动阶段' });
+      return;
+    }
+
+    const witchStatus = gamePlayer.characterStatus;
+    if (!this.gameState.nightActions) this.gameState.nightActions = {};
+
+    // 前端发送格式: {actionType: 'antidote'|'poison'|'skip', targetId?}
+    const actionType = actionData?.actionType || actionData?.type;
+
+    if (actionType === 'skip' || actionType === 'pass') {
+      this.sendToPlayer(playerId, 'system_message', { message: '你选择跳过' });
+      // 结束女巫阶段
+      setTimeout(() => {
+        const context = this.createContext();
+        stateHandlers[GameStatus.WITCH_ACT].endOfState(this.gameState, context);
+      }, 1000);
+      return;
+    }
+
+    if (actionType === 'antidote' || actionType === 'save') {
+      // 使用解药
+      const medicineUsed = witchStatus.MEDICINE && witchStatus.MEDICINE.usedDay >= 0;
+      if (medicineUsed) {
+        this.sendToPlayer(playerId, 'error', { message: '你已经使用过解药了' });
+        return;
+      }
+
+      const killTarget = this.gameState.nightActions?.wolfKillTarget;
+      if (!killTarget) {
+        this.sendToPlayer(playerId, 'error', { message: '昨晚没有人被狼人杀，无法使用解药' });
+        return;
+      }
+
+      // 记录使用解药
+      witchStatus.MEDICINE = { usedDay: this.gameState.currentDay, usedAt: 0 };
+      this.gameState.nightActions.witchSave = true;
+
+      this.sendToPlayer(playerId, 'system_message', {
+        message: `你使用解药救了 ${killTarget}号玩家`
+      });
+
+      // 结束女巫阶段
+      setTimeout(() => {
+        const context = this.createContext();
+        stateHandlers[GameStatus.WITCH_ACT].endOfState(this.gameState, context);
+      }, 2000);
+      return;
+    }
+
+    if (actionType === 'poison') {
+      // 使用毒药
+      const poisonUsed = witchStatus.POISON && witchStatus.POISON.usedDay >= 0;
+      if (poisonUsed) {
+        this.sendToPlayer(playerId, 'error', { message: '你已经使用过毒药了' });
+        return;
+      }
+
+      // 解析目标
+      let targetIndex = 0;
+      if (actionData.targetId !== null && actionData.targetId !== undefined) {
+        const targetId = String(actionData.targetId);
+        const target = this.gameState.players[targetId];
+        if (target) {
+          targetIndex = target.index;
+        }
+      } else if (actionData.target !== null && actionData.target !== undefined) {
+        targetIndex = Number(actionData.target) || 0;
+      }
+
+      if (targetIndex <= 0) {
+        this.sendToPlayer(playerId, 'error', { message: '请选择毒药目标' });
+        return;
+      }
+
+      const target = (Object.values(this.gameState.players) as WerewolfPlayerState[]).find(p => p.index === targetIndex);
+      if (!target) {
+        this.sendToPlayer(playerId, 'error', { message: '目标玩家不存在' });
+        return;
+      }
+
+      // 不能毒自己
+      if (target.id === playerId) {
+        this.sendToPlayer(playerId, 'error', { message: '不能对自己使用毒药' });
+        return;
+      }
+
+      // 记录使用毒药
+      witchStatus.POISON = { usedDay: this.gameState.currentDay, usedAt: targetIndex };
+      this.gameState.nightActions.witchPoisonTarget = targetIndex;
+
+      this.sendToPlayer(playerId, 'system_message', {
+        message: `你使用毒药毒了 ${targetIndex}号 ${target.name}`
+      });
+
+      // 结束女巫阶段
+      setTimeout(() => {
+        const context = this.createContext();
+        stateHandlers[GameStatus.WITCH_ACT].endOfState(this.gameState, context);
+      }, 2000);
+      return;
+    }
+
+    // 未知操作类型，视为跳过
+    this.sendToPlayer(playerId, 'system_message', { message: '未知操作，视为跳过' });
+    setTimeout(() => {
+      const context = this.createContext();
+      stateHandlers[GameStatus.WITCH_ACT].endOfState(this.gameState, context);
+    }, 1000);
+  }
+
+  // ==================== 守卫保护 ====================
+  private handleGuardProtect(playerId: string, actionData: any): void {
+    const gamePlayer = this.gameState.players[playerId];
+    if (!gamePlayer || gamePlayer.character !== 'GUARD') {
+      this.sendToPlayer(playerId, 'error', { message: '你不是守卫' });
+      return;
+    }
+
+    if (this.gameState.status !== GameStatus.GUARD_PROTECT) {
+      this.sendToPlayer(playerId, 'error', { message: '当前不是守卫保护阶段' });
+      return;
+    }
+
+    // 解析目标
+    let targetIndex = 0;
+    if (actionData) {
+      if (actionData.targetId !== null && actionData.targetId !== undefined) {
+        const targetId = String(actionData.targetId);
+        const target = this.gameState.players[targetId];
+        if (target) {
+          targetIndex = target.index;
+        }
+      } else if (actionData.target !== null && actionData.target !== undefined) {
+        targetIndex = Number(actionData.target) || 0;
+      }
+    }
+
+    if (targetIndex <= 0) {
+      this.sendToPlayer(playerId, 'system_message', { message: '你选择放弃保护' });
+    } else {
+      // 不能连续两晚守护同一个人
+      const lastProtect = gamePlayer.characterStatus.protects?.[this.gameState.currentDay - 2];
+      if (lastProtect === targetIndex) {
+        this.sendToPlayer(playerId, 'error', { message: '不能连续两晚守护同一个人' });
+        return;
+      }
+
+      const target = (Object.values(this.gameState.players) as WerewolfPlayerState[]).find(p => p.index === targetIndex);
+
+      // 记录保护
+      if (!gamePlayer.characterStatus.protects) {
+        gamePlayer.characterStatus.protects = [];
+      }
+      gamePlayer.characterStatus.protects[this.gameState.currentDay] = targetIndex;
+
+      // 记录夜间行动
+      if (!this.gameState.nightActions) this.gameState.nightActions = {};
+      this.gameState.nightActions.guardTarget = targetIndex;
+
+      this.sendToPlayer(playerId, 'system_message', {
+        message: `你选择保护 ${targetIndex}号${target ? '（' + target.name + '）' : ''}`
+      });
+    }
+
+    // 结束守卫阶段
+    setTimeout(() => {
+      const context = this.createContext();
+      stateHandlers[GameStatus.GUARD_PROTECT].endOfState(this.gameState, context);
+    }, 2000);
+  }
+
+  // ==================== 猎人开枪 ====================
+  private handleHunterShoot(playerId: string, actionData: any): void {
+    const gamePlayer = this.gameState.players[playerId];
+    if (!gamePlayer || gamePlayer.character !== 'HUNTER') {
+      this.sendToPlayer(playerId, 'error', { message: '你不是猎人' });
+      return;
+    }
+
+    if (this.gameState.status !== GameStatus.HUNTER_SHOOT) {
+      this.sendToPlayer(playerId, 'error', { message: '当前不是猎人开枪阶段' });
+      return;
+    }
+
+    // 解析目标
+    let targetIndex = 0; // 0表示不开枪
+    if (actionData) {
+      if (actionData.targetId !== null && actionData.targetId !== undefined) {
+        if (actionData.targetId === null || actionData.targetId === '' || actionData.targetId === '0') {
+          targetIndex = 0;
+        } else {
+          const targetId = String(actionData.targetId);
+          const target = this.gameState.players[targetId];
+          if (target) {
+            targetIndex = target.index;
+          }
+        }
+      } else if (actionData.target !== null && actionData.target !== undefined) {
+        targetIndex = Number(actionData.target) || 0;
+      }
+    }
+
+    // 记录开枪目标
+    gamePlayer.characterStatus.shootAt = {
+      day: this.gameState.currentDay,
+      player: targetIndex
+    };
+
+    if (targetIndex > 0) {
+      const target = (Object.values(this.gameState.players) as WerewolfPlayerState[]).find(p => p.index === targetIndex);
+      this.sendToPlayer(playerId, 'system_message', {
+        message: `你选择开枪带走 ${targetIndex}号${target ? '（' + target.name + '）' : ''}`
+      });
+      this.sendToRoom('system_message', {
+        message: `${gamePlayer.index}号猎人选择开枪`
+      });
+    } else {
+      this.sendToPlayer(playerId, 'system_message', { message: '你选择不开枪' });
+      this.sendToRoom('system_message', {
+        message: `${gamePlayer.index}号猎人选择不开枪`
+      });
+    }
+
+    // 结束猎人开枪阶段
+    setTimeout(() => {
+      const context = this.createContext();
+      stateHandlers[GameStatus.HUNTER_SHOOT].endOfState(this.gameState, context);
+    }, 2000);
+  }
+
+  // ==================== 投票 ====================
   private handleVote(playerId: string, actionData: any): void {
-    // TODO: 实现投票逻辑
+    const gamePlayer = this.gameState.players[playerId];
+    if (!gamePlayer || !gamePlayer.isAlive) {
+      this.sendToPlayer(playerId, 'error', { message: '你不能投票' });
+      return;
+    }
+
+    // 检查当前状态是否允许投票
+    const voteStatuses = [GameStatus.EXILE_VOTE, GameStatus.SHERIFF_VOTE];
+    if (!voteStatuses.includes(this.gameState.status)) {
+      this.sendToPlayer(playerId, 'error', { message: '当前不是投票阶段' });
+      return;
+    }
+
+    // 解析投票目标
+    let targetIndex = 0; // 0表示弃票
+    if (actionData) {
+      if (actionData.targetId !== null && actionData.targetId !== undefined && actionData.targetId !== '') {
+        const targetId = String(actionData.targetId);
+        const target = this.gameState.players[targetId];
+        if (target) {
+          targetIndex = target.index;
+        }
+      } else if (actionData.target !== null && actionData.target !== undefined) {
+        targetIndex = Number(actionData.target) || 0;
+      }
+    }
+
+    // 记录投票
+    if (this.gameState.status === GameStatus.EXILE_VOTE) {
+      gamePlayer.hasVotedAt[this.gameState.currentDay] = targetIndex;
+    } else if (this.gameState.status === GameStatus.SHERIFF_VOTE) {
+      gamePlayer.sheriffVotes[this.gameState.currentDay] = targetIndex;
+    }
+
+    // 更新votes记录
+    if (!this.gameState.votes) this.gameState.votes = {};
+    if (targetIndex > 0) {
+      const target = (Object.values(this.gameState.players) as WerewolfPlayerState[]).find(p => p.index === targetIndex);
+      if (target) {
+        this.gameState.votes[playerId] = target.id;
+      }
+    }
+
+    if (targetIndex > 0) {
+      const target = (Object.values(this.gameState.players) as WerewolfPlayerState[]).find(p => p.index === targetIndex);
+      this.sendToPlayer(playerId, 'system_message', {
+        message: `你投票给了 ${targetIndex}号${target ? '（' + target.name + '）' : ''}`
+      });
+    } else {
+      this.sendToPlayer(playerId, 'system_message', { message: '你选择弃票' });
+    }
+
+    // 广播投票更新
+    this.sendToRoom('game_info', {
+      gameInfo: this.getGameInfo()
+    });
+
+    // 检查是否所有人都已投票
+    const alivePlayers = (Object.values(this.gameState.players) as WerewolfPlayerState[]).filter(p => p.isAlive);
+    const allVoted = alivePlayers.every(p =>
+      (this.gameState.status === GameStatus.EXILE_VOTE && p.hasVotedAt[this.gameState.currentDay] !== undefined) ||
+      (this.gameState.status === GameStatus.SHERIFF_VOTE && p.sheriffVotes[this.gameState.currentDay] !== undefined)
+    );
+
+    if (allVoted) {
+      this.sendToRoom('system_message', { message: '所有人都已投票' });
+      setTimeout(() => {
+        const context = this.createContext();
+        if (this.gameState.status === GameStatus.EXILE_VOTE) {
+          stateHandlers[GameStatus.EXILE_VOTE].endOfState(this.gameState, context);
+        } else if (this.gameState.status === GameStatus.SHERIFF_VOTE) {
+          stateHandlers[GameStatus.SHERIFF_VOTE].endOfState(this.gameState, context);
+        }
+      }, 2000);
+    }
   }
 
+  // ==================== 结束发言 ====================
   private handleEndSpeak(playerId: string): void {
-    // TODO: 实现结束发言逻辑
+    const gamePlayer = this.gameState.players[playerId];
+    if (!gamePlayer) return;
+
+    if (this.gameState.status === GameStatus.DAY_DISCUSS) {
+      // 检查是否是当前发言者
+      const currentSpeakerIdx = this.gameState.speakOrder?.[this.gameState.currentSpeakerIndex || 0];
+      if (currentSpeakerIdx !== gamePlayer.index) {
+        this.sendToPlayer(playerId, 'error', { message: '当前不是你发言' });
+        return;
+      }
+
+      this.sendToRoom('system_message', {
+        message: `${gamePlayer.index}号 ${gamePlayer.name} 结束发言`
+      });
+
+      // 推进到下一个发言者
+      setTimeout(() => {
+        const context = this.createContext();
+        stateHandlers[GameStatus.DAY_DISCUSS].endOfState(this.gameState, context);
+      }, 1000);
+    } else if (this.gameState.status === GameStatus.SHERIFF_SPEECH) {
+      // 警长竞选发言结束
+      setTimeout(() => {
+        const context = this.createContext();
+        stateHandlers[GameStatus.SHERIFF_SPEECH].endOfState(this.gameState, context);
+      }, 1000);
+    }
   }
 
+  // ==================== 警长竞选 ====================
   private handleSheriffElect(playerId: string): void {
-    // TODO: 实现警长竞选逻辑
+    const gamePlayer = this.gameState.players[playerId];
+    if (!gamePlayer || !gamePlayer.isAlive) {
+      this.sendToPlayer(playerId, 'error', { message: '你不能参与警长竞选' });
+      return;
+    }
+
+    if (this.gameState.status !== GameStatus.SHERIFF_ELECT) {
+      this.sendToPlayer(playerId, 'error', { message: '当前不是警长竞选阶段' });
+      return;
+    }
+
+    gamePlayer.canBeVoted = true;
+    this.sendToPlayer(playerId, 'system_message', { message: '你选择上警' });
+    this.sendToRoom('system_message', {
+      message: `${gamePlayer.index}号 ${gamePlayer.name} 选择上警`
+    });
   }
 
+  // ==================== 警长指派 ====================
+  private handleSheriffAssign(playerId: string, actionData: any): void {
+    const gamePlayer = this.gameState.players[playerId];
+    if (!gamePlayer || !gamePlayer.isSheriff) {
+      this.sendToPlayer(playerId, 'error', { message: '你不是警长' });
+      return;
+    }
+
+    if (this.gameState.status !== GameStatus.SHERIFF_ASSIGN) {
+      this.sendToPlayer(playerId, 'error', { message: '当前不是警长指派阶段' });
+      return;
+    }
+
+    // 解析目标
+    let targetIndex = 0;
+    if (actionData) {
+      if (actionData.targetId !== null && actionData.targetId !== undefined) {
+        const targetId = String(actionData.targetId);
+        const target = this.gameState.players[targetId];
+        if (target) {
+          targetIndex = target.index;
+        }
+      } else if (actionData.target !== null && actionData.target !== undefined) {
+        targetIndex = Number(actionData.target) || 0;
+      }
+    }
+
+    // 清除所有警长标记
+    (Object.values(this.gameState.players) as WerewolfPlayerState[]).forEach(p => {
+      p.isSheriff = false;
+    });
+
+    if (targetIndex > 0) {
+      const target = (Object.values(this.gameState.players) as WerewolfPlayerState[]).find(p => p.index === targetIndex);
+      if (target && target.isAlive) {
+        target.isSheriff = true;
+        this.sendToPlayer(playerId, 'system_message', {
+          message: `你将警徽传给了 ${targetIndex}号 ${target.name}`
+        });
+        this.sendToRoom('system_message', {
+          message: `${gamePlayer.index}号警长将警徽传给了 ${targetIndex}号 ${target.name}`
+        });
+      } else {
+        this.sendToRoom('system_message', { message: '指定的继承人已死亡，警徽被销毁' });
+      }
+    } else {
+      this.sendToRoom('system_message', { message: `${gamePlayer.index}号警长撕毁警徽` });
+    }
+
+    // 结束警长指派阶段
+    setTimeout(() => {
+      const context = this.createContext();
+      stateHandlers[GameStatus.SHERIFF_ASSIGN].endOfState(this.gameState, context);
+    }, 2000);
+  }
+
+  // ==================== 遗言 ====================
+  private handleLeaveMsg(playerId: string, actionData: any): void {
+    const gamePlayer = this.gameState.players[playerId];
+    if (!gamePlayer) return;
+
+    if (this.gameState.status !== GameStatus.LEAVE_MSG) {
+      this.sendToPlayer(playerId, 'error', { message: '当前不是遗言阶段' });
+      return;
+    }
+
+    const message = actionData?.message || '（该玩家没有留下遗言）';
+
+    this.sendToRoom('show_message', {
+      message: `${gamePlayer.index}号 ${gamePlayer.name} 的遗言：${message}`,
+      showTime: 5
+    });
+
+    // 结束遗言阶段
+    setTimeout(() => {
+      const context = this.createContext();
+      stateHandlers[GameStatus.LEAVE_MSG].endOfState(this.gameState, context);
+    }, 3000);
+  }
+
+  // ==================== 聊天消息 ====================
   private handleChatMessage(playerId: string, actionData: any): void {
-    // TODO: 实现聊天消息逻辑
+    const player = this.room.players.find(p => p.id === playerId);
+    if (!player) return;
+
+    const gamePlayer = this.gameState.players[playerId];
+
+    const message = actionData?.message || '';
+    const channel = actionData?.channel || 'all';
+
+    if (!message.trim()) return;
+
+    // 构建聊天消息
+    const chatMsg = {
+      sender: player.nickname,
+      senderId: playerId,
+      playerIndex: gamePlayer?.index || 0,
+      message: message.trim(),
+      channel: channel,
+      timestamp: Date.now(),
+      type: 'chat'
+    };
+
+    if (channel === 'werewolf') {
+      // 狼人频道：只发送给狼人
+      if (gamePlayer && gamePlayer.character === 'WEREWOLF') {
+        const werewolfIds = (Object.values(this.gameState.players) as WerewolfPlayerState[])
+          .filter(p => p.character === 'WEREWOLF')
+          .map(p => p.id);
+
+        werewolfIds.forEach(wid => {
+          this.sendToPlayer(wid, 'chat_message', chatMsg);
+        });
+      } else {
+        this.sendToPlayer(playerId, 'error', { message: '你不是狼人，无法使用狼人频道' });
+      }
+    } else {
+      // 全员频道：发送给所有人
+      this.sendToRoom('chat_message', chatMsg);
+    }
   }
 
   private handleHeartbeat(playerId: string): void {
-    // 心跳处理
     this.sendToPlayer(playerId, 'heartbeat_response', { timestamp: Date.now() });
   }
 
-  private checkGameEnd(): void {
-    // TODO: 实现游戏结束检查逻辑
-  }
+  // ==================== 游戏结束检查 ====================
+  private checkGameEndAndBroadcast(): void {
+    if (this.gameState.isFinished) return;
 
-  private startCurrentState(status: GameStatus, showCloseEye: boolean): void {
-    // TODO: 实现状态开始逻辑
-  }
+    const winner = checkGameEnd(this.gameState.players);
+    if (winner) {
+      this.gameState.winner = winner;
+      this.gameState.status = GameStatus.OVER;
+      this.gameState.isFinished = true;
+      this.gameState.operators = [];
 
-  // 添加缺失的角色行动处理方法
-  private handleWolfKill(playerId: string, target: number): void {
-    // TODO: 实现狼人杀人逻辑
-  }
+      // 清理定时器
+      if (this.gameState.timer) {
+        clearTimeout(this.gameState.timer);
+        this.gameState.timer = undefined;
+      }
 
-  private handleSeerCheck(playerId: string, target: number): void {
-    // TODO: 实现预言家验人逻辑
+      this.sendToRoom('game_end', {
+        winner: winner === 'WEREWOLF' ? 'werewolf' : 'villager',
+        reason: winner === 'WEREWOLF' ? '狼人数量大于或等于好人数量' : '所有狼人已死亡'
+      });
+    }
   }
+}
 
-  private handleWitchAct(playerId: string, target: number): void {
-    // TODO: 实现女巫用药逻辑
-  }
+// 创建Worker实例
+const worker = new WerewolfWorker();
 
-  private handleGuardProtect(playerId: string, target: number): void {
-    // TODO: 实现守卫保护逻辑
-  }
+// 监听主线程消息
+if (parentPort) {
+  parentPort.on('message', async (task: GameTask) => {
+    try {
+      let response: GameTaskResponse;
 
-  private handleHunterShoot(playerId: string, target: number): void {
-    // TODO: 实现猎人开枪逻辑
-  }
+      switch (task.type) {
+        case 'prepare_room':
+          await worker.prepareRoom(task.data.room, task.data.config);
+          response = { taskId: task.id, success: true };
+          break;
 
-  private handleSheriffAssign(playerId: string, target: number): void {
-    // TODO: 实现警长指派逻辑
-  }
+        case 'change_config':
+          await worker.changeConfig(task.data.config);
+          response = { taskId: task.id, success: true };
+          break;
 
-  private handleLeaveMsg(playerId: string): void {
-    // TODO: 实现留遗言逻辑
-  }
-} 
+        case 'join_room':
+          await worker.joinRoom(task.data.player);
+          response = { taskId: task.id, success: true };
+          break;
+
+        case 'player_online':
+          await worker.playerOnline(task.data.playerId);
+          response = { taskId: task.id, success: true };
+          break;
+
+        case 'player_offline':
+          await worker.playerOffline(task.data.playerId);
+          response = { taskId: task.id, success: true };
+          break;
+
+        case 'game_action':
+          await worker.gameAction(
+            task.playerId!,
+            task.data.actionType,
+            task.data.actionData
+          );
+          response = { taskId: task.id, success: true };
+          break;
+
+        case 'kick_out_player':
+          await worker.kickOutPlayer(task.data.targetId);
+          response = { taskId: task.id, success: true };
+          break;
+
+        default:
+          response = {
+            taskId: task.id,
+            success: false,
+            error: `未知任务类型: ${task.type}`
+          };
+      }
+
+      parentPort!.postMessage({
+        type: 'task_response',
+        ...response
+      });
+    } catch (error: any) {
+      parentPort!.postMessage({
+        type: 'task_response',
+        taskId: task.id,
+        success: false,
+        error: error.message || '未知错误'
+      });
+    }
+  });
+}

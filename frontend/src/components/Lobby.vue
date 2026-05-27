@@ -513,8 +513,8 @@
             <el-col :span="8">
               <el-card 
                 class="game-card"
-                :class="{ 'selected': createRoomForm.gameType === 'botc' }"
-                @click="selectGame('botc')"
+                :class="{ 'selected': createRoomForm.gameType === 'blood-on-the-clocktower' }"
+                @click="selectGame('blood-on-the-clocktower')"
                 shadow="hover"
               >
                 <div class="game-info">
@@ -700,7 +700,7 @@
             </template>
 
             <!-- 血染钟楼特有设置 -->
-            <template v-if="createRoomForm.gameType === 'botc'">
+            <template v-if="createRoomForm.gameType === 'blood-on-the-clocktower'">
               <el-divider content-position="left">血染钟楼设置</el-divider>
               <el-form-item label="最大人数">
                 <el-select v-model="createRoomForm.maxPlayers" placeholder="选择最大人数">
@@ -848,7 +848,7 @@ onMounted(() => {
         router.push({ name: 'WerewolfRoom', params: { id: data.room.id } });
       } else if (data.room.type === 'one-night-werewolf') {
         router.push({ name: 'OnuWerewolfRoom', params: { id: data.room.id } });
-      } else if (data.room.type === 'blood-on-the-clocktower' || data.room.type === 'botc') {
+      } else if (data.room.type === 'blood-on-the-clocktower') {
         router.push({ name: 'BOTCRoom', params: { id: data.room.id } });
       } else {
         // 其他游戏类型的处理
@@ -878,7 +878,7 @@ function enter(roomId: string) {
       } else if (room.type === 'one-night-werewolf') {
         // 一夜狼人游戏使用独立的连接方式
         router.push({ name: 'OnuWerewolfRoom', params: { id: roomId } });
-      } else if (room.type === 'blood-on-the-clocktower' || room.type === 'botc') {
+      } else if (room.type === 'blood-on-the-clocktower') {
         // 血染钟楼游戏使用独立的连接方式
         router.push({ name: 'BOTCRoom', params: { id: roomId } });
       } else {
@@ -961,7 +961,7 @@ async function confirmCreateRoom() {
     if (createRoomForm.value.gameType === 'avalon') {
       gameConfig.enableLady = createRoomForm.value.enableLady;
       gameConfig.playerCount = createRoomForm.value.maxPlayers;
-    } else if (createRoomForm.value.gameType === 'botc') {
+    } else if (createRoomForm.value.gameType === 'blood-on-the-clocktower') {
       gameConfig.edition = createRoomForm.value.edition;
       gameConfig.playerCount = createRoomForm.value.maxPlayers;
       gameConfig.dayTime = createRoomForm.value.dayTime;
