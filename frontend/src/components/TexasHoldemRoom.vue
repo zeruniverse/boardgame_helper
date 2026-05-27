@@ -62,6 +62,7 @@
     <el-main class="game-main">
       <!-- 游戏信息展示 -->
       <el-card class="game-info">
+        <div>房间号: <strong>{{ displayRoomName }}</strong></div>
         <div>我的底牌: <span v-if="store.stage === 'playing' && !isInGame">未参与游戏</span>
           <span v-else-if="online">
             <span v-if="store.hand.length > 0" v-html="formatCards(store.hand)"></span>
@@ -203,6 +204,10 @@ const roundText = computed(() => ['翻前','翻牌','转牌','河牌'][round.val
 
 // 房间准备状态 - 使用ref来控制状态
 const roomPreparing = ref(true); // 默认显示准备中
+// 房间名称（从服务器获取的实际房间名）
+const roomName = ref('');
+// 显示的房间号（优先使用服务器返回的名称，否则使用URL中的ID）
+const displayRoomName = computed(() => roomName.value || roomId);
 
 // 房间状态检查定时器
 let statusCheckInterval: number | null = null;
@@ -249,6 +254,10 @@ onMounted(() => {
     if (data && data.id === roomId) {
       console.log('收到 room_update 事件，房间已准备好', data);
       roomPreparing.value = false; // 隐藏准备中提示
+      // 保存房间名称
+      if (data.name) {
+        roomName.value = data.name;
+      }
       if (statusCheckInterval) {
         clearInterval(statusCheckInterval);
         statusCheckInterval = null;
@@ -269,6 +278,10 @@ onMounted(() => {
     if (data.player && data.player.id) {
       store.playerId = data.player.id;
       localStorage.setItem('texas_playerId', data.player.id);
+    }
+    // 保存房间名称
+    if (data.room.name) {
+      roomName.value = data.room.name;
     }
     requestRoomState();
   };

@@ -15,10 +15,10 @@ const hostKickVotes: Map<string, {
   timer: NodeJS.Timeout;
 }> = new Map();
 
-// 广播大厅更新给所有客户端
-function broadcastLobbyUpdate() {
-  broadcastLobbyUpdate();
-}
+// 广播大厅更新函数，将在 roomController 中被赋值
+let broadcastLobbyUpdate: () => void = () => {
+  console.warn('广播函数尚未初始化');
+};
 
 // 生成随机房间名（6位数字+大写字母）
 function generateRoomName(): string {
@@ -97,6 +97,11 @@ export function roomController(io: Server) {
 
   // 将重置函数注册到HTTP接口
   setResetServerFunction(resetServer);
+
+  // 初始化广播大厅更新函数
+  broadcastLobbyUpdate = () => {
+    io.emit('lobby_update', { rooms: getPublicRooms() });
+  };
 
   // 处理来自worker线程的消息
   async function handleThreadMessage(data: any) {
