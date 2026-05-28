@@ -1062,10 +1062,14 @@ async function confirmCreateRoom() {
         gameType: createRoomForm.value.gameType,
         gameConfig,
         isPrivate: createRoomForm.value.isPrivate
+      }, (response: any) => {
+        if (!response?.success) {
+          ElMessage.error(response?.error || '创建房间失败');
+          return;
+        }
+        ElMessage.success('房间创建成功');
+        createRoomDialogVisible.value = false;
       });
-      
-      ElMessage.success('房间创建请求已发送');
-      createRoomDialogVisible.value = false;
     } else {
       ElMessage.error('连接未建立，请刷新页面重试');
     }

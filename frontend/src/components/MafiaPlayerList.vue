@@ -67,7 +67,7 @@
         >
           <div class="player-info">
             <div class="player-avatar">
-              <span class="player-index">{{ player.index + 1 }}</span>
+              <span class="player-index">{{ player.index }}</span>
             </div>
             
             <div class="player-details">
@@ -157,6 +157,9 @@
               <el-tag type="primary" size="small">
                 警察 {{ config.cops }}人
               </el-tag>
+              <el-tag type="success" size="small">
+                医生 {{ config.doctors }}人
+              </el-tag>
               <el-tag type="info" size="small">
                 平民 {{ config.civilians }}人
               </el-tag>
@@ -210,16 +213,19 @@ const maxPlayers = 16
 
 // 角色配置
 const roleConfigs = {
-  8: { killers: 2, cops: 2, civilians: 4 },
-  9: { killers: 2, cops: 2, civilians: 5 },
-  10: { killers: 2, cops: 2, civilians: 6 },
-  11: { killers: 3, cops: 3, civilians: 5 },
-  12: { killers: 3, cops: 3, civilians: 6 },
-  13: { killers: 3, cops: 3, civilians: 7 },
-  14: { killers: 3, cops: 3, civilians: 8 },
-  15: { killers: 4, cops: 4, civilians: 7 },
-  16: { killers: 4, cops: 4, civilians: 8 }
+  6: { killers: 1, cops: 1, doctors: 1, civilians: 3 },
+  7: { killers: 1, cops: 1, doctors: 1, civilians: 4 },
+  8: { killers: 2, cops: 2, doctors: 1, civilians: 3 },
+  9: { killers: 2, cops: 2, doctors: 1, civilians: 4 },
+  10: { killers: 2, cops: 2, doctors: 1, civilians: 5 },
+  11: { killers: 3, cops: 2, doctors: 1, civilians: 5 },
+  12: { killers: 3, cops: 3, doctors: 1, civilians: 5 },
+  13: { killers: 3, cops: 3, doctors: 1, civilians: 6 },
+  14: { killers: 3, cops: 3, doctors: 1, civilians: 7 },
+  15: { killers: 3, cops: 3, doctors: 1, civilians: 8 },
+  16: { killers: 4, cops: 3, doctors: 1, civilians: 8 }
 }
+
 
 // 计算属性
 const isHost = computed(() => props.hostId === props.currentUserId)

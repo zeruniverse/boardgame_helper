@@ -23,7 +23,7 @@ roomController(io);
 
 // 健康检查接口
 app.get('/', (_req: Request, res: Response) => {
-  res.send('Texas Holdem Server running');
+  res.send('Boardgame Helper Server running');
 });
 
 // 重置服务器接口（HTTP POST）

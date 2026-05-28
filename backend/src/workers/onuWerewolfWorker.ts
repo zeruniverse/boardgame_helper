@@ -357,6 +357,7 @@ class OnuWerewolfWorker extends BaseGameWorker {
       readyCount: this.gameState.readyPlayers.size,
       playerCount: this.room.players.length
     });
+    this.sendToRoom('room_update', this.room);
   }
 
   private async handleUnready(playerId: string): Promise<void> {
@@ -375,6 +376,7 @@ class OnuWerewolfWorker extends BaseGameWorker {
       readyCount: this.gameState.readyPlayers.size,
       playerCount: this.room.players.length
     });
+    this.sendToRoom('room_update', this.room);
   }
 
   private async handleStartGame(playerId: string): Promise<void> {

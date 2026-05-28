@@ -354,6 +354,17 @@ class MafiaWorker extends BaseGameWorker {
     });
   }
 
+  private statusToClientStatus(status: GameStatus): string {
+    return GameStatus[status] || 'WAITING';
+  }
+
+  private getClientPlayers(): Record<string, any> {
+    const gameState = this.gameState as MafiaGameState;
+    return Object.fromEntries(
+      Object.entries(gameState.players).map(([id, player]) => [id, { id, ...player }])
+    );
+  }
+
   private getGameInfo(): any {
     const gameState = this.gameState as MafiaGameState;
     const timeLeft = this.getTimeLeft();
@@ -377,8 +388,8 @@ class MafiaWorker extends BaseGameWorker {
     }
     
     return {
-      status: gameState.status,
-      players: gameState.players,
+      status: this.statusToClientStatus(gameState.status),
+      players: this.getClientPlayers(),
       day: gameState.day,
       operators: gameState.operators,
       step: gameState.step,
@@ -547,6 +558,7 @@ class MafiaWorker extends BaseGameWorker {
         playerId, 
         gameInfo: this.getGameInfo() 
       });
+      this.sendToRoom('room_update', this.room);
     }
   }
 
@@ -560,6 +572,7 @@ class MafiaWorker extends BaseGameWorker {
         playerId, 
         gameInfo: this.getGameInfo() 
       });
+      this.sendToRoom('room_update', this.room);
     }
   }
 
@@ -1570,6 +1583,7 @@ class MafiaWorker extends BaseGameWorker {
       message: '游戏已重置，请重新准备',
       gameInfo: this.getGameInfo() 
     });
+    this.sendToRoom('room_update', this.room);
   }
 }
 

@@ -425,13 +425,7 @@ export const useMafiaStore = defineStore('mafia', {
 
     // 聊天
     sendMessage(message: string) {
-      if (!this.socket || !this.currentRoomId) return;
-
-      this.socket.emit('chat_message', {
-        roomId: this.currentRoomId,
-        userId: this.currentUserId,
-        message
-      });
+      this.sendGameAction('chat_message', { message });
     },
 
     // 房间管理

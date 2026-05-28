@@ -168,18 +168,35 @@ export class RoomThreadManager {
       room.threadId = uuidv4();
       room.lastActiveTime = Date.now();
 
-      // 发送准备房间任务
+      // 发送准备房间任务。这里必须检查 prepare_room 的响应，否则 worker 初始化失败时
+      // 主线程仍会把房间当作创建成功，前端会进入一个无法使用的坏房间。
       console.log(`发送prepare_room任务到房间 ${room.id}`);
-      await this.sendTask(room.id, {
+      const prepareResponse = await this.sendTask(room.id, {
         type: 'prepare_room',
         roomId: room.id,
         data: { room, config }
       });
 
+      if (!prepareResponse.success) {
+        throw new Error(prepareResponse.error || `房间 ${room.id} prepare_room 失败`);
+      }
+
       console.log(`房间 ${room.id} (${room.type}) 线程启动成功`);
       return room;
     } catch (error) {
       console.error(`启动房间 ${room.id} 线程失败:`, error);
+      const worker = this.workers.get(room.id);
+      if (worker) {
+        try {
+          await worker.terminate();
+        } catch (terminateError) {
+          console.error(`终止失败的房间 ${room.id} 线程时出错:`, terminateError);
+        }
+      }
+      this.workers.delete(room.id);
+      this.roomData.delete(room.id);
+      room.threadStatus = 'idle';
+      room.threadId = undefined;
       return null;
     }
   }

@@ -321,26 +321,22 @@ class WerewolfWorker extends BaseGameWorker {
     const player = this.room.players.find(p => p.id === playerId);
     if (!player) return;
 
-    // toggleRoomLock是房间管理操作，不需要玩家在游戏中
+    // toggleRoomLock / 准备 / 开始游戏都是开局前房间操作，玩家还没有分配角色，
+    // 不能依赖 gameState.players[playerId]，否则新加入玩家无法准备。
     if (actionType === 'toggleRoomLock') {
       this.toggleRoomLock(playerId);
       return;
     }
+
+    if (actionType === 'ready') { this.handleReady(playerId); return; }
+    if (actionType === 'unready') { this.handleUnready(playerId); return; }
+    if (actionType === 'start_game') { this.handleStartGame(playerId); return; }
 
     const gamePlayer = this.gameState.players[playerId];
     if (!gamePlayer) return;
 
     try {
       switch (actionType) {
-        case 'ready':
-          this.handleReady(playerId);
-          break;
-        case 'unready':
-          this.handleUnready(playerId);
-          break;
-        case 'start_game':
-          this.handleStartGame(playerId);
-          break;
         // 角色直接动作类型（前端发送的）
         case 'wolf_kill':
           this.handleWolfKill(playerId, actionData);
@@ -431,6 +427,7 @@ class WerewolfWorker extends BaseGameWorker {
         nickname: player.nickname,
         gameInfo: this.getGameInfo()
       });
+      this.sendToRoom('room_update', this.room);
     }
   }
 
@@ -444,6 +441,7 @@ class WerewolfWorker extends BaseGameWorker {
         nickname: player.nickname,
         gameInfo: this.getGameInfo()
       });
+      this.sendToRoom('room_update', this.room);
     }
   }
 

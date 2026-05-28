@@ -26,6 +26,7 @@ interface WerewolfGameState {
   votes?: Record<string, string>;
   currentSpeaker?: string;
   sheriff?: string;
+  needingCharacters?: string[];
   config?: {
     dayDiscussTime: number;
     voteTime: number;
@@ -88,9 +89,8 @@ export const useWerewolfStore = defineStore('werewolf', {
     canStartGame(): boolean {
       if (!this.isHost || !this.room) return false;
       const readyCount = this.room.players.filter(p => p.ready).length;
-      // 统一为只需要达到角色配置所需人数即可开始
-      const needingCount = this.gameState?.config ? Object.values(this.gameState.config).filter(v => typeof v === 'number' && v > 0).length : 6;
-      return readyCount >= needingCount && readyCount >= 6;
+      const requiredCount = this.gameState?.needingCharacters?.length || this.room.config?.playerCount || 6;
+      return readyCount >= requiredCount;
     },
 
     canOperate(): boolean {
@@ -297,6 +297,7 @@ export const useWerewolfStore = defineStore('werewolf', {
           votes: gameInfo.votes || {},
           currentSpeaker: gameInfo.currentSpeaker,
           config: gameInfo.config,
+          needingCharacters: gameInfo.needingCharacters,
           statusMessage: gameInfo.statusMessage,
           winner: gameInfo.winner
         };
@@ -308,6 +309,7 @@ export const useWerewolfStore = defineStore('werewolf', {
         if (gameInfo.votes) this.gameState.votes = gameInfo.votes;
         if (gameInfo.currentSpeaker !== undefined) this.gameState.currentSpeaker = gameInfo.currentSpeaker;
         if (gameInfo.config) this.gameState.config = gameInfo.config;
+        if (gameInfo.needingCharacters) this.gameState.needingCharacters = gameInfo.needingCharacters;
         if (gameInfo.statusMessage) this.gameState.statusMessage = gameInfo.statusMessage;
         if (gameInfo.winner) this.gameState.winner = gameInfo.winner;
       }
