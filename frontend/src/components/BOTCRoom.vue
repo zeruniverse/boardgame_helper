@@ -161,6 +161,8 @@ const router = useRouter()
 const store = useGameStore()
 
 const roomId = route.params.id as string
+const room = computed(() => store.room)
+const gameConfig = computed(() => store.gameConfig)
 
 // 游戏状态
 const editionInfo = ref<any>(null)

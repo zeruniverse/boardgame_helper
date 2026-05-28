@@ -127,12 +127,21 @@ export class BOTCWorker extends BaseGameWorker {
     this.sendToRoom('playerOffline', { playerId });
   }
 
-  async kickOutPlayer(targetId: string): Promise<void> {
+  async kickOutPlayer(targetId: string): Promise<{ kicked: boolean; reason?: string }> {
     if (this.gameState.phase !== GamePhase.SETUP) {
-      return; // 游戏中不允许踢出玩家
+      return { kicked: false, reason: '游戏进行中，无法踢出玩家' };
     }
 
+    const targetPlayer = this.room.players.find(p => p.id === targetId);
+    if (!targetPlayer) {
+      return { kicked: false, reason: '目标玩家不存在' };
+    }
+
+    this.room.players = this.room.players.filter(p => p.id !== targetId);
+    this.gamePlayers.delete(targetId);
     this.sendToRoom('playerKicked', { playerId: targetId });
+    this.sendToRoom('room_update', this.room);
+    return { kicked: true };
   }
 
   async gameAction(playerId: string, actionType: string, actionData: any): Promise<void> {
@@ -144,7 +153,7 @@ export class BOTCWorker extends BaseGameWorker {
 
     // 房间锁定切换特殊处理（不需要游戏进行中）
     if (actionType === 'toggleRoomLock') {
-      this.toggleRoomLock();
+      this.toggleRoomLock(playerId);
       return;
     }
 
@@ -1321,6 +1330,7 @@ if (parentPort) {
 
   parentPort.on('message', async (task: any) => {
     try {
+      let responseData: any;
       switch (task.type) {
         case 'prepare_room':
         case 'prepareRoom':
@@ -1352,13 +1362,13 @@ if (parentPort) {
         case 'kick_player':
         case 'kick_out_player':
         case 'kickOutPlayer':
-          await worker.kickOutPlayer(task.data?.targetId || task.targetId);
+          responseData = await worker.kickOutPlayer(task.data?.targetId || task.targetId);
           break;
         default:
           parentPort!.postMessage({ taskId: task.id, success: false, error: `未知任务类型: ${task.type}` });
           return;
       }
-      parentPort!.postMessage({ taskId: task.id, success: true });
+      parentPort!.postMessage({ taskId: task.id, success: true, data: responseData });
     } catch (error) {
       parentPort!.postMessage({
         taskId: task.id,

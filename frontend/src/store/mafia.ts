@@ -5,6 +5,7 @@ import { SOCKET_URL } from '../config';
 interface MafiaPlayer {
   id: string;
   name: string;
+  nickname?: string;
   index: number;
   ready: boolean;
   alive?: boolean;
@@ -58,6 +59,7 @@ interface MafiaSecret {
 interface MafiaRoomState {
   id: string;
   name: string;
+  locked?: boolean;
   players: MafiaPlayer[];
   hostId: string;
   gameStarted: boolean;

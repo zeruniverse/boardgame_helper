@@ -180,7 +180,7 @@ class OnuWerewolfWorker extends BaseGameWorker {
     try {
       switch (actionType) {
         case 'toggleRoomLock':
-          this.toggleRoomLock();
+          this.toggleRoomLock(playerId);
           break;
         case 'ready':
           await this.handleReady(playerId);
@@ -223,12 +223,12 @@ class OnuWerewolfWorker extends BaseGameWorker {
     }
   }
 
-  async kickOutPlayer(targetId: string): Promise<void> {
+  async kickOutPlayer(targetId: string): Promise<{ kicked: boolean; reason?: string }> {
     const target = this.room.players.find(p => p.id === targetId);
-    if (!target) return;
+    if (!target) return { kicked: false, reason: '目标玩家不存在' };
 
     if (this.gameState.status !== OnuWerewolfGameStatus.WAITING) {
-      throw new Error('游戏进行中，无法踢出玩家');
+      return { kicked: false, reason: '游戏进行中，无法踢出玩家' };
     }
 
     // 从房间中移除玩家
@@ -237,6 +237,8 @@ class OnuWerewolfWorker extends BaseGameWorker {
 
     const message = `${target.nickname} 已被踢出房间`;
     this.sendToRoom('onu_player_kicked', { message, playerId: targetId });
+    this.sendToRoom('room_update', this.room);
+    return { kicked: true };
   }
 
   protected sendToRoom(event: string, data: any): void {
@@ -1007,7 +1009,7 @@ parentPort?.on('message', async (task: GameTask) => {
         break;
       case 'kick_player':
       case 'kick_out_player':
-        await worker.kickOutPlayer(task.data.targetId);
+        response.data = await worker.kickOutPlayer(task.data.targetId);
         break;
       default:
         response.success = false;

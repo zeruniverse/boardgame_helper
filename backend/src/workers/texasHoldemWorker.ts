@@ -311,41 +311,44 @@ class TexasHoldemWorker extends BaseGameWorker {
     }
   }
 
-  async kickOutPlayer(targetId: string): Promise<void> {
+  async kickOutPlayer(targetId: string): Promise<{ kicked: boolean; reason?: string }> {
     const targetPlayer = this.room.players.find(p => p.id === targetId);
     if (!targetPlayer) {
-      return;
+      return { kicked: false, reason: '目标玩家不存在' };
     }
 
     // 如果游戏正在进行中，不允许踢出玩家
     if (this.gameState.stage === 'playing') {
-      this.sendToRoom('chat_broadcast', {
-        message: '游戏进行中，无法踢出玩家'
-      });
-      return;
+      const reason = '游戏进行中，无法踢出玩家';
+      this.sendToRoom('chat_broadcast', { message: reason, type: 'system' });
+      return { kicked: false, reason };
     }
 
     // 移除玩家
     const playerIndex = this.room.players.findIndex(p => p.id === targetId);
-    if (playerIndex !== -1) {
-      this.room.players.splice(playerIndex, 1);
-
-      // 从参与者列表中移除
-      const participantIndex = this.participants.indexOf(targetId);
-      if (participantIndex !== -1) {
-        this.participants.splice(participantIndex, 1);
-      }
-
-      // 修复Bug 1.4: 参考handleCashOut逻辑，在移除玩家后调整currentTurn
-      if (this.gameState.currentTurn >= this.participants.length) {
-        this.gameState.currentTurn = 0;
-      }
-
-      this.sendToRoom('chat_broadcast', {
-        message: `${targetPlayer.nickname} 被踢出房间`
-      });
-      this.sendToRoom('room_update', this.room);
+    if (playerIndex === -1) {
+      return { kicked: false, reason: '目标玩家不存在' };
     }
+
+    this.room.players.splice(playerIndex, 1);
+
+    // 从参与者列表中移除
+    const participantIndex = this.participants.indexOf(targetId);
+    if (participantIndex !== -1) {
+      this.participants.splice(participantIndex, 1);
+    }
+
+    // 修复Bug 1.4: 参考handleCashOut逻辑，在移除玩家后调整currentTurn
+    if (this.gameState.currentTurn >= this.participants.length) {
+      this.gameState.currentTurn = 0;
+    }
+
+    this.sendToRoom('chat_broadcast', {
+      message: `${targetPlayer.nickname} 被踢出房间`,
+      type: 'system'
+    });
+    this.sendToRoom('room_update', this.room);
+    return { kicked: true };
   }
 
   // 重写父类的发送消息方法
@@ -1168,17 +1171,7 @@ class TexasHoldemWorker extends BaseGameWorker {
   }
 
   private handleToggleRoomLock(playerId: string) {
-    const player = this.room.players.find(p => p.id === playerId);
-
-    if (!player || this.room.hostId !== playerId) {
-      return;
-    }
-
-    this.room.private = !this.room.private;
-    const status = this.room.private ? '锁定' : '解锁';
-
-    this.sendToRoom('chat_broadcast', { message: `[玩家${player.nickname} ${status}了房间]`, type: 'system' });
-    this.sendToRoom('room_update', this.room);
+    this.toggleRoomLock(playerId);
   }
 
   private handleTake(playerId: string, data: any) {

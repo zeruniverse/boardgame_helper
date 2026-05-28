@@ -18,8 +18,10 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm ci --production && npm cache clean --force
 
-# 从构建阶段复制编译后的代码
+# 从构建阶段复制编译后的代码和运行时配置
 COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/config.json ./config.json
+COPY --from=builder /app/config.example.json ./config.example.json
 
 # 创建非root用户
 RUN addgroup -g 1001 -S nodejs

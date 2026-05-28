@@ -11,7 +11,7 @@
         <span class="room-id">房间号: {{ roomId }}</span>
       </div>
       <div class="header-actions">
-        <el-button size="small" @click="toggleRoomLock" :type="room?.locked ? 'danger' : 'success'">
+        <el-button v-if="isHost" size="small" @click="toggleRoomLock" :type="room?.locked ? 'danger' : 'success'">
           {{ room?.locked ? '解锁房间' : '锁定房间' }}
         </el-button>
         <div class="connection-status" :class="{ connected: connected }">
@@ -74,7 +74,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue';
+import { computed, onMounted, onUnmounted } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useOnuWerewolfStore } from '../store/onuWerewolf';
 import { Back } from '@element-plus/icons-vue';

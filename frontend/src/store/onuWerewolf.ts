@@ -84,6 +84,7 @@ export const ONU_WEREWOLF_ROLE_NAMES: Record<OnuWerewolfRole, string> = {
 interface OnuWerewolfPlayer {
   id: string;
   name: string;
+  nickname?: string;
   seat: number;
   ready: boolean;
   voted: boolean;
@@ -115,11 +116,13 @@ interface OnuWerewolfSecret {
   finalRole?: OnuWerewolfRole;
   vision?: any;
   gameResult?: any;
+  skillUsed?: boolean;
 }
 
 interface OnuWerewolfRoomState {
   id: string;
   name: string;
+  locked?: boolean;
   players: OnuWerewolfPlayer[];
   hostId: string;
   gameStarted: boolean;
@@ -269,7 +272,8 @@ export const useOnuWerewolfStore = defineStore('onuWerewolf', {
         if (!this.playerSecret) this.playerSecret = {};
         this.playerSecret.myRole = data.role;
         this.playerSecret.mySeat = data.seat;
-        this.addSystemMessage(`你的角色是：${ONU_WEREWOLF_ROLE_NAMES[data.role] || '未知'}（座位${data.seat}）`);
+        const assignedRole = data.role as OnuWerewolfRole;
+        this.addSystemMessage(`你的角色是：${ONU_WEREWOLF_ROLE_NAMES[assignedRole] || '未知'}（座位${data.seat}）`);
       });
 
       // Skill ready notification (C4 fix)

@@ -22,6 +22,7 @@ export const useTexasHoldemStore = defineStore('texas_holdem', {
     autoStart: false,
     distributionActive: false,
     roomLocked: false,
+    hostId: '',
     allowSystemDealing: true, // 是否系统发牌模式，影响线下分池UI显示
     // 游戏阶段：'idle'(未开始/已结束), 'playing'(游戏中), 'distribution'(分池中)
     stage: 'idle' as 'idle' | 'playing' | 'distribution'
@@ -42,6 +43,10 @@ export const useTexasHoldemStore = defineStore('texas_holdem', {
     // 是否在分池阶段
     isDistributionActive(): boolean {
       return this.distributionActive;
+    },
+
+    isHost(): boolean {
+      return !!this.playerId && this.hostId === this.playerId;
     }
   },
 
@@ -161,9 +166,12 @@ export const useTexasHoldemStore = defineStore('texas_holdem', {
         if (data.gameMetadata?.allowSystemDealing !== undefined) {
           this.allowSystemDealing = data.gameMetadata.allowSystemDealing;
         }
-        // 同步房间锁定状态 - 后端用private字段
-        if (data.private !== undefined) {
-          this.roomLocked = data.private;
+        if (data.hostId !== undefined) {
+          this.hostId = data.hostId;
+        }
+        // 同步房间锁定状态；locked 只控制能否加入，private 只控制大厅是否展示
+        if (data.locked !== undefined) {
+          this.roomLocked = data.locked === true;
         }
       });
 
@@ -198,6 +206,12 @@ export const useTexasHoldemStore = defineStore('texas_holdem', {
         if (data.player && data.player.id) {
           this.playerId = data.player.id;
           localStorage.setItem('texas_playerId', data.player.id);
+        }
+        if (data.room?.hostId !== undefined) {
+          this.hostId = data.room.hostId;
+        }
+        if (data.room?.locked !== undefined) {
+          this.roomLocked = data.room.locked === true;
         }
       });
     },
@@ -280,6 +294,7 @@ export const useTexasHoldemStore = defineStore('texas_holdem', {
       this.autoStart = false;
       this.distributionActive = false;
       this.roomLocked = false;
+      this.hostId = '';
       this.stage = 'idle';
       
       // 清除游戏定时器

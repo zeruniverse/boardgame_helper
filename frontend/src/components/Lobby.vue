@@ -6,9 +6,11 @@
         <el-col v-for="room in rooms" :key="room.id" :xs="24" :sm="24" :md="8">
           <el-card>
             <h3>{{ room.name }}</h3>
-            <p>人数: {{ room.playerCount }} / {{ room.maxPlayers }}{{ room.private ? ' 🔒' : '' }}</p>
+            <p>人数: {{ room.playerCount }} / {{ room.maxPlayers }}{{ room.locked ? ' 🔒' : '' }}</p>
             <p>类型: {{ room.displayName }}</p>
-            <el-button type="primary" @click="enter(room.id)">进入</el-button>
+            <el-button :type="room.locked ? 'info' : 'primary'" :disabled="room.locked" @click="enter(room.id)">
+              {{ room.locked ? '已锁定' : '进入' }}
+            </el-button>
           </el-card>
         </el-col>
       </el-row>
@@ -908,6 +910,10 @@ function enter(roomId: string) {
 
   const room = rooms.value.find(r => r.id === roomId);
   if (!room) return;
+  if (room.locked) {
+    ElMessage.warning('房间已锁定，不允许新成员加入');
+    return;
+  }
 
   const playerId = ensureLocalPlayer(room.type, nickname, roomId);
   

@@ -323,7 +323,7 @@ class WerewolfWorker extends BaseGameWorker {
 
     // toggleRoomLock是房间管理操作，不需要玩家在游戏中
     if (actionType === 'toggleRoomLock') {
-      this.toggleRoomLock();
+      this.toggleRoomLock(playerId);
       return;
     }
 
@@ -392,9 +392,9 @@ class WerewolfWorker extends BaseGameWorker {
     }
   }
 
-  async kickOutPlayer(targetId: string): Promise<void> {
+  async kickOutPlayer(targetId: string): Promise<{ kicked: boolean; reason?: string }> {
     const targetPlayer = this.room.players.find(p => p.id === targetId);
-    if (!targetPlayer) return;
+    if (!targetPlayer) return { kicked: false, reason: '目标玩家不存在' };
 
     // 从房间中移除玩家
     const index = this.room.players.indexOf(targetPlayer);
@@ -410,11 +410,13 @@ class WerewolfWorker extends BaseGameWorker {
       message,
       gameInfo: this.getGameInfo()
     });
+    this.sendToRoom('room_update', this.room);
 
     // 检查游戏是否可以继续
     if (this.gameState.status !== GameStatus.WAITING) {
       this.checkGameEndAndBroadcast();
     }
+    return { kicked: true };
   }
 
   // ==================== 核心动作处理方法 ====================
@@ -1316,10 +1318,11 @@ if (parentPort) {
           break;
 
         case 'kick_player':
-        case 'kick_out_player':
-          await worker.kickOutPlayer(task.data.targetId);
-          response = { taskId: task.id, success: true };
+        case 'kick_out_player': {
+          const result = await worker.kickOutPlayer(task.data.targetId);
+          response = { taskId: task.id, success: true, data: result };
           break;
+        }
 
         default:
           response = {

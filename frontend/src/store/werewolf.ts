@@ -5,6 +5,7 @@ import { SOCKET_URL } from '../config';
 interface WerewolfPlayer {
   id: string;
   name: string;
+  nickname?: string;
   index: number;
   ready: boolean;
   alive: boolean;
@@ -48,6 +49,7 @@ interface WerewolfSecret {
 interface WerewolfRoomState {
   id: string;
   name: string;
+  locked?: boolean;
   players: WerewolfPlayer[];
   hostId: string;
   gameStarted: boolean;

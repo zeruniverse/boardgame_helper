@@ -644,7 +644,8 @@ const skipDiscussion = () => {
 };
 
 // 辅助方法
-const getRoleName = (role: OnuWerewolfRole) => {
+const getRoleName = (role: OnuWerewolfRole | null | undefined) => {
+  if (role === null || role === undefined) return '未知';
   return ONU_WEREWOLF_ROLE_NAMES[role] || '未知';
 };
 
@@ -654,7 +655,7 @@ const getSkillDescription = (role: OnuWerewolfRole | null) => {
   return roleInfo?.description || '';
 };
 
-const getAutoSkillText = (role: OnuWerewolfRole) => {
+const getAutoSkillText = (role: OnuWerewolfRole | null | undefined) => {
   switch (role) {
     case OnuWerewolfRole.Werewolf: return '你将自动查看其他狼人同伴（如果没有同伴则查看一张中心卡）';
     case OnuWerewolfRole.Minion: return '你将自动查看狼人的位置';

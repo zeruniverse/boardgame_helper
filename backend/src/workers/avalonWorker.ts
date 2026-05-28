@@ -291,7 +291,7 @@ class AvalonWorker extends BaseGameWorker {
     try {
       switch (actionType) {
         case 'toggleRoomLock':
-          this.toggleRoomLock();
+          this.toggleRoomLock(playerId);
           break;
         case 'ready':
           this.handleReady(playerId);
@@ -352,9 +352,9 @@ class AvalonWorker extends BaseGameWorker {
     }
   }
 
-  async kickOutPlayer(targetId: string): Promise<void> {
+  async kickOutPlayer(targetId: string): Promise<{ kicked: boolean; reason?: string }> {
     const targetPlayer = this.room.players.find(p => p.id === targetId);
-    if (!targetPlayer) return;
+    if (!targetPlayer) return { kicked: false, reason: '目标玩家不存在' };
 
     // 从房间中移除玩家
     this.room.players = this.room.players.filter(p => p.id !== targetId);
@@ -370,6 +370,7 @@ class AvalonWorker extends BaseGameWorker {
     });
     
     this.sendToRoom('room_update', this.room);
+    return { kicked: true };
   }
 
   protected sendToRoom(event: string, data: any): void {
@@ -1479,10 +1480,11 @@ parentPort.on('message', async (task: GameTask) => {
         break;
 
       case 'kick_player':
-      case 'kick_out_player':
-        await worker.kickOutPlayer(task.data.targetId);
-        response = { taskId: task.id, success: true };
+      case 'kick_out_player': {
+        const result = await worker.kickOutPlayer(task.data.targetId);
+        response = { taskId: task.id, success: true, data: result };
         break;
+      }
 
       default:
         response = { taskId: task.id, success: false, error: `未知任务类型: ${task.type}` };

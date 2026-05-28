@@ -14,7 +14,7 @@
     <div v-else class="floating-header">
       <!-- 返回大厅按钮 - 始终显示 -->
       <el-button type="info" @click="goToLobby" :class="{ 'colored-border': true }">
-        <el-icon><Home /></el-icon>
+        <el-icon><House /></el-icon>
         返回大厅
       </el-button>
       <!-- 只有在未开始游戏且已在房间的玩家显示开始/CashIn/CashOut -->
@@ -108,7 +108,7 @@
           <template v-else-if="store.stage === 'playing' && isInGame">
             <TexasHoldemActionBar />
           </template>
-          <div class="control-buttons">
+          <div v-if="isHost" class="control-buttons">
             <el-button size="small" @click="toggleAutoStart"
                        :type="store.autoStart ? 'warning' : 'info'"
                        :class="{ 'colored-border': true }">
@@ -159,7 +159,7 @@
           <template v-else-if="store.stage === 'playing' && isInGame">
             <TexasHoldemActionBar />
           </template>
-          <div class="control-buttons-mobile">
+          <div v-if="isHost" class="control-buttons-mobile">
             <el-button size="small" @click="toggleAutoStart"
                        :type="store.autoStart ? 'warning' : 'info'"
                        :class="{ 'colored-border': true }">
@@ -193,7 +193,7 @@ import { onMounted, computed, ref, onUnmounted } from 'vue';
 import { useTexasHoldemStore, useMainStore } from '../store';
 import { storeToRefs } from 'pinia';
 import { useRouter, useRoute } from 'vue-router';
-import { Loading, Home } from '@element-plus/icons-vue';
+import { Loading, House } from '@element-plus/icons-vue';
 import TexasHoldemChat from './TexasHoldemChat.vue';
 import TexasHoldemPlayerList from './TexasHoldemPlayerList.vue';
 import TexasHoldemActionBar from './TexasHoldemActionBar.vue';
@@ -213,6 +213,7 @@ const roomPreparing = ref(true); // 默认显示准备中
 const roomName = ref('');
 // 显示的房间号（优先使用服务器返回的名称，否则使用URL中的ID）
 const displayRoomName = computed(() => roomName.value || roomId);
+const isHost = computed(() => store.isHost);
 
 // 房间状态检查定时器
 let statusCheckInterval: number | null = null;

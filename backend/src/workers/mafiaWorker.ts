@@ -240,7 +240,7 @@ class MafiaWorker extends BaseGameWorker {
     try {
       switch (actionType) {
         case 'toggleRoomLock':
-          this.toggleRoomLock();
+          this.toggleRoomLock(playerId);
           break;
         case 'ready':
           this.handleReady(playerId);
@@ -289,22 +289,26 @@ class MafiaWorker extends BaseGameWorker {
     }
   }
 
-  async kickOutPlayer(targetId: string): Promise<void> {
+  async kickOutPlayer(targetId: string): Promise<{ kicked: boolean; reason?: string }> {
     const gameState = this.gameState as MafiaGameState;
     
     // 游戏进行中不允许踢出玩家
     if (gameState.status !== GameStatus.WAITING) {
-      return;
+      return { kicked: false, reason: '游戏进行中，无法踢出玩家' };
     }
 
     const targetPlayer = this.room.players.find(p => p.id === targetId);
-    if (targetPlayer) {
-      // 从房间中移除玩家
-      this.room.players = this.room.players.filter(p => p.id !== targetId);
-      
-      const message = `${targetPlayer.nickname}被踢出房间`;
-      this.sendToRoom('player_kicked', { message, targetId });
+    if (!targetPlayer) {
+      return { kicked: false, reason: '目标玩家不存在' };
     }
+
+    // 从房间中移除玩家
+    this.room.players = this.room.players.filter(p => p.id !== targetId);
+    
+    const message = `${targetPlayer.nickname}被踢出房间`;
+    this.sendToRoom('player_kicked', { message, targetId });
+    this.sendToRoom('room_update', this.room);
+    return { kicked: true };
   }
 
   protected sendToRoom(event: string, data: any): void {
@@ -1607,10 +1611,11 @@ parentPort.on('message', async (task: GameTask) => {
         response = { taskId: task.id, success: true };
         break;
       case 'kick_player':
-      case 'kick_out_player':
-        await worker.kickOutPlayer(task.data.targetId);
-        response = { taskId: task.id, success: true };
+      case 'kick_out_player': {
+        const result = await worker.kickOutPlayer(task.data.targetId);
+        response = { taskId: task.id, success: true, data: result };
         break;
+      }
       default:
         response = { taskId: task.id, success: false, error: `未知的任务类型: ${task.type}` };
     }

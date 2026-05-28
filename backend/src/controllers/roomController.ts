@@ -50,7 +50,8 @@ function getPublicRooms() {
       displayName: config.games[room.type]?.displayName || room.type,
       playerCount: room.players.filter(p => p.online).length,
       maxPlayers: room.maxPlayers,
-      private: room.private === true
+      private: room.private === true,
+      locked: room.locked === true
     }));
 }
 
@@ -169,6 +170,63 @@ export function roomController(io: Server) {
       console.error(`向房间 ${roomId} 发送任务失败:`, error);
       throw error;
     }
+  }
+
+  function readKickResult(response: any): { kicked: boolean; reason?: string } {
+    const result = response?.data;
+    if (result && typeof result === 'object' && 'kicked' in result) {
+      return {
+        kicked: result.kicked !== false,
+        reason: typeof result.reason === 'string' ? result.reason : undefined
+      };
+    }
+
+    // 兼容旧 worker：任务成功但没有返回结果时，按允许踢出处理。
+    return { kicked: true };
+  }
+
+  async function finalizeKickedPlayer(roomId: string, targetPlayer: Player, message: string): Promise<Room | undefined> {
+    const latestRoom = rooms.get(roomId);
+    if (!latestRoom) return undefined;
+
+    const targetIndex = latestRoom.players.findIndex(p => p.id === targetPlayer.id);
+    if (targetIndex !== -1) {
+      latestRoom.players.splice(targetIndex, 1);
+    }
+
+    if (latestRoom.hostId === targetPlayer.id) {
+      const nextHost = latestRoom.players.find(p => p.online) || latestRoom.players[0];
+      latestRoom.hostId = nextHost?.id || '';
+      if (nextHost) {
+        io.to(latestRoom.id).emit('chat_broadcast', {
+          message: `${nextHost.nickname} 成为新的房主`,
+          type: 'system'
+        });
+      }
+    }
+
+    latestRoom.lastActiveTime = Date.now();
+
+    io.to(targetPlayer.socketId).emit('kicked_out', { message });
+    const kickedSocket = io.sockets.sockets.get(targetPlayer.socketId);
+    if (kickedSocket) {
+      await kickedSocket.leave(latestRoom.id);
+    }
+
+    rooms.set(latestRoom.id, latestRoom);
+    threadManager.updateRoomData(latestRoom.id, latestRoom);
+    try {
+      await sendTaskToRoom(latestRoom.id, 'update_room_data', { room: latestRoom });
+    } catch (error) {
+      console.error(`同步踢人后的房间状态失败: ${latestRoom.id}`, error);
+    }
+
+    io.to(latestRoom.id).emit('room_update', latestRoom);
+    if (!latestRoom.private) {
+      broadcastLobbyUpdate();
+    }
+
+    return latestRoom;
   }
 
   // Socket连接处理
@@ -688,25 +746,16 @@ export function roomController(io: Server) {
 
         // 如果是房主踢出其他人
         if (room.hostId === player.id && data.targetId !== player.id) {
-          // 房主可以直接踢出其他玩家
-          await sendTaskToRoom(room.id, 'kick_out_player', { targetId: data.targetId });
-          
-          // 从房间中移除玩家
-          const targetIndex = room.players.findIndex(p => p.id === data.targetId);
-          if (targetIndex !== -1) {
-            room.players.splice(targetIndex, 1);
-            room.lastActiveTime = Date.now();
-            
-            // 通知被踢的玩家
-            io.to(targetPlayer.socketId).emit('kicked_out', { 
-              message: `您被房主${player.nickname}踢出房间` 
-            });
-            
-            // 更新房间信息
-            threadManager.updateRoomData(room.id, room);
-            
-            console.log(`房主 ${player.nickname} 踢出了玩家 ${targetPlayer.nickname}`);
+          // 房主可以直接踢出其他玩家；最终是否允许由具体游戏 worker 决定。
+          const kickResponse = await sendTaskToRoom(room.id, 'kick_out_player', { targetId: data.targetId });
+          const kickResult = readKickResult(kickResponse);
+          if (!kickResult.kicked) {
+            socket.emit('error', { message: kickResult.reason || '当前状态不允许踢出该玩家' });
+            return;
           }
+
+          await finalizeKickedPlayer(room.id, targetPlayer, `您被房主${player.nickname}踢出房间`);
+          console.log(`房主 ${player.nickname} 踢出了玩家 ${targetPlayer.nickname}`);
         } 
         // 如果是其他人想踢出房主
         else if (data.targetId === room.hostId && player.id !== room.hostId) {
@@ -744,43 +793,25 @@ export function roomController(io: Server) {
             clearTimeout(voteData.timer);
             hostKickVotes.delete(room.id);
             
-            await sendTaskToRoom(room.id, 'kick_out_player', { targetId: room.hostId });
-            
-            // 从房间中移除房主
-            const hostIndex = room.players.findIndex(p => p.id === room.hostId);
-            if (hostIndex !== -1) {
-              const oldHost = room.players[hostIndex];
-              room.players.splice(hostIndex, 1);
-              
-              // 指定新房主
-              const onlinePlayers = room.players.filter(p => p.online);
-              if (onlinePlayers.length > 0) {
-                room.hostId = onlinePlayers[0].id;
-                io.to(room.id).emit('chat_broadcast', { 
-                  message: `${onlinePlayers[0].nickname} 成为新的房主`, 
-                  type: 'system' 
-                });
-              } else {
-                room.hostId = '';
-              }
-              
-              room.lastActiveTime = Date.now();
-              
-              // 通知被踢的房主
-              io.to(oldHost.socketId).emit('kicked_out', { 
-                message: '您被投票踢出房间' 
-              });
-              
-              // 更新房间信息
-              threadManager.updateRoomData(room.id, room);
-              
+            const oldHost = targetPlayer;
+            const kickResponse = await sendTaskToRoom(room.id, 'kick_out_player', { targetId: oldHost.id });
+            const kickResult = readKickResult(kickResponse);
+            if (!kickResult.kicked) {
               io.to(room.id).emit('chat_broadcast', { 
-                message: `房主 ${oldHost.nickname} 被投票踢出房间`, 
+                message: kickResult.reason || '当前状态不允许踢出房主', 
                 type: 'system' 
               });
-              
-              console.log(`房主 ${oldHost.nickname} 被投票踢出`);
+              return;
             }
+
+            await finalizeKickedPlayer(room.id, oldHost, '您被投票踢出房间');
+            
+            io.to(room.id).emit('chat_broadcast', { 
+              message: `房主 ${oldHost.nickname} 被投票踢出房间`, 
+              type: 'system' 
+            });
+            
+            console.log(`房主 ${oldHost.nickname} 被投票踢出`);
           } else {
             io.to(room.id).emit('chat_broadcast', { 
               message: `当前投票数: ${voteData.voters.size}/${requiredVotes}`, 

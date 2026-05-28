@@ -21,7 +21,7 @@
       </div>
       <div class="header-right">
         <span class="room-id">房间ID: {{ roomId }}</span>
-        <el-button size="small" @click="toggleRoomLock" :type="room?.locked ? 'danger' : 'success'">
+        <el-button v-if="isHost" size="small" @click="toggleRoomLock" :type="room?.locked ? 'danger' : 'success'">
           {{ room?.locked ? '解锁房间' : '锁定房间' }}
         </el-button>
       </div>
@@ -177,6 +177,7 @@ const gameState = computed(() => store.gameState)
 const playerSecret = computed(() => store.playerSecret)
 const currentUserId = computed(() => store.currentUserId)
 const timeLeft = computed(() => store.timeLeft)
+const isHost = computed(() => store.isHost)
 
 // 房间准备状态 - 使用ref来控制状态
 const roomPreparing = ref(true) // 默认显示准备中
@@ -240,7 +241,7 @@ onUnmounted(() => {
 const getStatusMessage = (): string => {
   if (!gameState.value) return '等待开始'
   
-  const statusMessages = {
+  const statusMessages: Record<string, string> = {
     'WAITING': '等待开始',
     'NIGHT': '夜晚 - 杀手行动',
     'SPEAK': '白天 - 发言阶段',
@@ -258,6 +259,7 @@ const getRoleName = (role: string): string => {
   const roleNames = {
     'KILLER': '杀手',
     'COP': '警察',
+    'DOCTOR': '医生',
     'CIVILIAN': '平民'
   }
   return roleNames[role as keyof typeof roleNames] || role

@@ -5,6 +5,7 @@ import { SOCKET_URL } from '../config';
 interface AvalonPlayer {
   id: string;
   name: string;
+  nickname?: string;
   index: number;
   ready: boolean;
 }
@@ -39,6 +40,7 @@ interface AvalonSecret {
 interface AvalonRoomState {
   id: string;
   name: string;
+  locked?: boolean;
   players: AvalonPlayer[];
   hostId: string;
   gameStarted: boolean;

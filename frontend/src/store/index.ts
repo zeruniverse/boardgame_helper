@@ -43,6 +43,7 @@ interface RoomInfo {
   playerCount: number;
   maxPlayers: number;
   private: boolean;
+  locked?: boolean;
 }
 
 export const useMainStore = defineStore('main', {

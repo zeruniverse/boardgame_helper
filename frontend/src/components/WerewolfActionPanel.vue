@@ -452,15 +452,15 @@ const canStartGame = computed(() => {
 })
 
 // 获取存活的玩家列表
-const getAlivePlayers = () => {
+const getAlivePlayers = (): any[] => {
   if (!props.gameState.players) return []
-  return Object.values(props.gameState.players).filter((p: any) => p.alive)
+  return (Object.values(props.gameState.players) as any[]).filter((p: any) => p.alive)
 }
 
 // 获取存活的其他玩家（排除自己）
-const getAliveOtherPlayers = () => {
+const getAliveOtherPlayers = (): any[] => {
   if (!props.gameState.players || !props.playerSecret?.playerId) return []
-  return Object.values(props.gameState.players).filter((p: any) =>
+  return (Object.values(props.gameState.players) as any[]).filter((p: any) =>
     p.alive && p.id !== props.playerSecret.playerId
   )
 }

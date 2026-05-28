@@ -12,7 +12,7 @@
       <div class="header-right">
         <span class="room-id">房间ID: {{ roomId }}</span>
         <span v-if="gameState?.day" class="day-badge">第{{ Math.ceil(gameState.day / 2) }}天</span>
-        <el-button size="small" @click="toggleRoomLock" :type="roomLocked ? 'danger' : 'success'">
+        <el-button v-if="isHost" size="small" @click="toggleRoomLock" :type="roomLocked ? 'danger' : 'success'">
           {{ roomLocked ? '解锁房间' : '锁定房间' }}
         </el-button>
       </div>

@@ -63,7 +63,7 @@ export abstract class BaseGameWorker {
    * 由框架向游戏线程发出。请注意，框架不会把玩家踢出房间，只有游戏线程会，这个会给游戏线程更多可控性（比如游戏中时不允许踢出玩家）
    * @param targetId 目标玩家ID
    */
-  abstract kickOutPlayer(targetId: string): Promise<void>;
+  abstract kickOutPlayer(targetId: string): Promise<{ kicked: boolean; reason?: string } | void>;
 
   /**
    * 获取当前房间引用
@@ -124,8 +124,16 @@ export abstract class BaseGameWorker {
    * 切换房间锁定状态
    * 锁定后不允许新成员加入房间（不影响房间是否公开，且房间可以解锁）
    */
-  public toggleRoomLock(): void {
+  public toggleRoomLock(playerId?: string): void {
     if (!this.room) return;
+
+    if (playerId && this.room.hostId !== playerId) {
+      const errorPayload = { message: '只有房主可以锁定或解锁房间' };
+      this.sendToPlayer(playerId, 'actionError', errorPayload);
+      this.sendToPlayer(playerId, 'error', errorPayload);
+      return;
+    }
+
     this.room.locked = !this.room.locked;
     this.sendToRoom('room_update', this.room);
     this.sendToRoom('chat_broadcast', {

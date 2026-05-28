@@ -11,7 +11,7 @@
       </div>
       <div class="header-right">
         <span class="room-id">房间ID: {{ roomId }}</span>
-        <el-button size="small" @click="toggleRoomLock" :type="room?.locked ? 'danger' : 'success'">
+        <el-button v-if="isHost" size="small" @click="toggleRoomLock" :type="room?.locked ? 'danger' : 'success'">
           {{ room?.locked ? '解锁房间' : '锁定房间' }}
         </el-button>
       </div>
@@ -73,7 +73,7 @@
             </div>
             
             <!-- 特殊视野 -->
-            <div class="visions" v-if="playerSecret.visions?.length > 0">
+            <div class="visions" v-if="(playerSecret.visions?.length || 0) > 0">
               <h5>你可以看到:</h5>
               <div class="vision-players">
                 <span 
@@ -87,9 +87,17 @@
             </div>
 
             <!-- 湖上夫人视野 -->
-            <div class="lady-vision" v-if="playerSecret.ladyVision?.length > 0">
+            <div class="lady-vision" v-if="(playerSecret.ladyVision?.length || 0) > 0">
               <h5>湖上夫人视野:</h5>
-              <span>{{ getPlayerName(playerSecret.ladyVision[0]) }} 是 {{ getTeamName(playerSecret.ladyVision[1]) }}</span>
+              <div class="vision-players">
+                <span
+                  v-for="([targetId, team], index) in playerSecret.ladyVision"
+                  :key="`${targetId}-${index}`"
+                  class="vision-player"
+                >
+                  {{ getPlayerName(targetId) }} 是 {{ getTeamName(team) }}
+                </span>
+              </div>
             </div>
           </div>
 
@@ -162,6 +170,7 @@ const gameState = computed(() => store.gameState)
 const playerSecret = computed(() => store.playerSecret)
 const timeLeft = computed(() => store.timeLeft)
 const currentUserId = computed(() => store.currentUserId)
+const isHost = computed(() => store.isHost)
 const messages = computed(() => store.messages)
 const nickname = computed(() => {
   // 从localStorage获取昵称，或使用store中的信息

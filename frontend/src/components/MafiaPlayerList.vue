@@ -178,7 +178,7 @@ interface Player {
   index: number
   ready: boolean
   alive?: boolean
-  role?: 'KILLER' | 'COP' | 'CIVILIAN'
+  role?: 'KILLER' | 'COP' | 'DOCTOR' | 'CIVILIAN'
   team?: 'RED' | 'BLUE'
 }
 
@@ -275,6 +275,7 @@ const getRoleName = (role: string | undefined): string => {
   const roleNames = {
     'KILLER': '杀手',
     'COP': '警察',
+    'DOCTOR': '医生',
     'CIVILIAN': '平民'
   }
   return roleNames[role as keyof typeof roleNames] || role
@@ -285,6 +286,7 @@ const getRoleTagType = (role: string | undefined): string => {
   const roleTypes = {
     'KILLER': 'danger',
     'COP': 'primary', 
+    'DOCTOR': 'success',
     'CIVILIAN': 'info'
   }
   return roleTypes[role as keyof typeof roleTypes] || 'default'
