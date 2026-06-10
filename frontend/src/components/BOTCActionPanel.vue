@@ -683,4 +683,5 @@ const formatNightInfo = (info: any) => {
 .player-name {
   font-weight: bold;
 }
+</style>
 

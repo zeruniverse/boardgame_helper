@@ -880,10 +880,10 @@ class MafiaWorker extends BaseGameWorker {
         deathDay: gameState.day
       });
       gameState.status = GameStatus.NIGHT;
-      const alivePlayers = Object.values(gameState.players).filter(p => p.alive);
-      const aliveKillers = alivePlayers.filter(p => p.role === 'killer').map(p => p.id);
-      const aliveCops = alivePlayers.filter(p => p.role === 'cop').map(p => p.id);
-      const aliveDoctors = alivePlayers.filter(p => p.role === 'doctor').map(p => p.id);
+      const alivePlayerIds = this.getAlivePlayers();
+      const aliveKillers = alivePlayerIds.filter(id => gameState.topSecret.killer.includes(id));
+      const aliveCops = alivePlayerIds.filter(id => gameState.topSecret.cop.includes(id));
+      const aliveDoctors = alivePlayerIds.filter(id => gameState.topSecret.doctor.includes(id));
       gameState.operators = [...aliveKillers, ...aliveCops, ...aliveDoctors];
       gameState.alivePlayersOrder = this.getAlivePlayers();
       gameState.speakingPlayerIndex = -1;
@@ -1594,6 +1594,45 @@ class MafiaWorker extends BaseGameWorker {
       gameInfo: this.getGameInfo() 
     });
     this.sendToRoom('room_update', this.room);
+  }
+
+  private handleTransferHost(playerId: string, targetId?: string): void {
+    if (playerId !== this.room.hostId) {
+      this.sendToPlayer(playerId, 'action_error', { message: '只有房主可以转让房主' });
+      return;
+    }
+    if (!targetId) {
+      this.sendToPlayer(playerId, 'action_error', { message: '请选择要转让房主的玩家' });
+      return;
+    }
+    const targetPlayer = this.room.players.find(p => p.id === targetId);
+    if (!targetPlayer) {
+      this.sendToPlayer(playerId, 'action_error', { message: '目标玩家不存在' });
+      return;
+    }
+    if (!targetPlayer.online) {
+      this.sendToPlayer(playerId, 'action_error', { message: '不能转让给离线玩家' });
+      return;
+    }
+    this.room.hostId = targetId;
+    this.sendToRoom('chat_broadcast', { message: `${targetPlayer.nickname} 成为新的房主`, type: 'system' });
+    this.sendToRoom('room_update', this.room);
+  }
+
+  private handleKickPlayer(playerId: string, targetId?: string): void {
+    if (playerId !== this.room.hostId) {
+      this.sendToPlayer(playerId, 'action_error', { message: '只有房主可以踢出玩家' });
+      return;
+    }
+    if (!targetId) {
+      this.sendToPlayer(playerId, 'action_error', { message: '请选择要踢出的玩家' });
+      return;
+    }
+    const gameState = this.gameState as MafiaGameState;
+    if (gameState.status !== GameStatus.WAITING) {
+      this.sendToPlayer(playerId, 'action_error', { message: '游戏进行中，无法踢出玩家' });
+      return;
+    }
   }
 
   dispose(): void {
