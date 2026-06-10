@@ -642,7 +642,13 @@ class MafiaWorker extends BaseGameWorker {
     gameState.killerCount = killerCount;
     gameState.copCount = copCount;
     gameState.doctorCount = doctorCount;
-    gameState.operators = shuffledPlayers.map(p => p.id);
+    // 夜晚阶段只有特殊角色可以操作（杀手、警察、医生）
+    const specialRoleIds = [
+      ...gameState.topSecret.killer,
+      ...gameState.topSecret.cop,
+      ...gameState.topSecret.doctor
+    ];
+    gameState.operators = specialRoleIds;
     gameState.operateEndTime = new Date(Date.now() + this.config.nightTime * 1000);
     gameState.alivePlayersOrder = shuffledPlayers.map(p => p.id);
     gameState.speakingPlayerIndex = 0;
@@ -1193,7 +1199,16 @@ class MafiaWorker extends BaseGameWorker {
     
     if (!gameState.personWillDie) {
       // 平安夜（杀手没杀人或医生救了人）
-      const firstPlayer = this.getAlivePlayers()[0];
+      const alivePlayers = this.getAlivePlayers();
+      const firstPlayer = alivePlayers[0];
+      if (!firstPlayer) {
+        // 所有玩家都已死亡，游戏结束
+        const gameResult = this.checkGameEnd();
+        if (gameResult) {
+          this.endGame(gameResult);
+        }
+        return;
+      }
       gameState.step += 1;
       gameState.status = GameStatus.SPEAK;
       gameState.operators = [firstPlayer];
@@ -1240,7 +1255,15 @@ class MafiaWorker extends BaseGameWorker {
 
     if (isSaved) {
       // 医生救活了被杀的人 - 平安夜
-      const firstPlayer = this.getAlivePlayers()[0];
+      const alivePlayers = this.getAlivePlayers();
+      const firstPlayer = alivePlayers[0];
+      if (!firstPlayer) {
+        const gameResult = this.checkGameEnd();
+        if (gameResult) {
+          this.endGame(gameResult);
+        }
+        return;
+      }
       const message = `昨夜${this.getPlayerName(gameState.personWillDie)}被医生救下, 无人遇害, 请${this.getPlayerName(firstPlayer)}发言`;
       
       gameState.personWillDie = null;
@@ -1364,9 +1387,14 @@ class MafiaWorker extends BaseGameWorker {
 
   private enterNight(playerId: string, baseMessage: string): void {
     const gameState = this.gameState as MafiaGameState;
-    
+
     gameState.status = GameStatus.NIGHT;
-    gameState.operators = Object.keys(gameState.players);
+    // 夜晚阶段只有特殊角色可以操作（杀手、警察、医生）
+    const alivePlayers = this.getAlivePlayers();
+    const aliveKillers = alivePlayers.filter(id => gameState.topSecret.killer.includes(id));
+    const aliveCops = alivePlayers.filter(id => gameState.topSecret.cop.includes(id));
+    const aliveDoctors = alivePlayers.filter(id => gameState.topSecret.doctor.includes(id));
+    gameState.operators = [...aliveKillers, ...aliveCops, ...aliveDoctors];
     gameState.pkPlayers = [];
     gameState.operateEndTime = new Date(Date.now() + this.config.nightTime * 1000);
     gameState.voteResult = {};
@@ -1633,6 +1661,17 @@ class MafiaWorker extends BaseGameWorker {
       this.sendToPlayer(playerId, 'action_error', { message: '游戏进行中，无法踢出玩家' });
       return;
     }
+    // 实际执行踢出玩家操作
+    const targetPlayer = this.room.players.find(p => p.id === targetId);
+    if (!targetPlayer) {
+      this.sendToPlayer(playerId, 'action_error', { message: '目标玩家不存在' });
+      return;
+    }
+    if (targetId === playerId) {
+      this.sendToPlayer(playerId, 'action_error', { message: '不能踢出自己' });
+      return;
+    }
+    this.kickOutPlayer(targetId);
   }
 
   dispose(): void {

@@ -270,7 +270,7 @@ onMounted(() => {
       }
     }
   };
-  socket.on('room_update', onRoomUpdate);
+  socket.on('room_update', onRoomUpdateHandler);
 
   // 监听房间加入成功事件（用于验证房间类型）
   onRoomJoinedHandler = (data: { room: any; player: any; isHost: boolean }) => {
@@ -291,7 +291,7 @@ onMounted(() => {
     }
     requestRoomState();
   };
-  socket.on('room_joined', onRoomJoined);
+  socket.on('room_joined', onRoomJoinedHandler);
 
   // 立即请求一次，并设置定时器
   requestRoomState();
@@ -392,7 +392,8 @@ const toCall = computed(() => store.currentBet - (store.bets[store.playerId] || 
 const ownPlayer = computed(() => store.players.find((p: any) => p.id === store.playerId));
 const canCheck = computed(() => isMyTurn.value && toCall.value === 0);
 const canStartGame = computed(() => {
-  const playersWithChips = store.players.filter((p: any) => p.gameMetadata?.chips > 0 && store.participants.includes(p.id));
+  // 修复：游戏开始前participants为空，应直接检查有多少玩家有筹码
+  const playersWithChips = store.players.filter((p: any) => p.gameMetadata?.chips > 0);
   return playersWithChips.length >= 2;
 });
 // 使用playerId判断是否在参与游戏中

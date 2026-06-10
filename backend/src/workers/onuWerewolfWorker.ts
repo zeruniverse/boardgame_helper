@@ -484,8 +484,11 @@ class OnuWerewolfWorker extends BaseGameWorker {
       gameInfo: this.getGameInfo()
     });
 
-    // 设置夜间阶段计时器
-    this.setTimer(this.config.nightTime * 1000, () => this.endNightPhase());
+    // 设置夜间阶段计时器（仅当 nightTime > 0 时）
+    // 当 nightTime 为 0（不限时）时，等所有技能处理完毕后自动结束
+    if (this.config.nightTime > 0) {
+      this.setTimer(this.config.nightTime * 1000, () => this.endNightPhase());
+    }
 
     // 开始技能阶段
     this.processNextSkill();
@@ -526,7 +529,11 @@ class OnuWerewolfWorker extends BaseGameWorker {
 
   private processNextSkill(): void {
     if (this.currentSkillIndex >= this.skillQueue.length) {
-      // 所有技能处理完毕
+      // 所有技能处理完毕，如果 nightTime 为 0（不限时），自动结束夜间阶段
+      if (this.config.nightTime === 0) {
+        // 给一个短暂的延迟让玩家看到最后结果
+        setTimeout(() => this.endNightPhase(), 2000);
+      }
       return;
     }
 

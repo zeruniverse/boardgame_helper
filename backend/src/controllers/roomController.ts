@@ -923,76 +923,92 @@ export function roomController(io: Server) {
           const kickResult = readKickResult(kickResponse);
           if (!kickResult.kicked) {
             socket.emit('error', { message: kickResult.reason || '当前状态不允许踢出该玩家' });
+            ack?.({ success: false, error: kickResult.reason || '当前状态不允许踢出该玩家' });
             return;
           }
 
           await finalizeKickedPlayer(room.id, targetPlayer, `您被房主${player.nickname}踢出房间`);
+          ack?.({ success: true });
           console.log(`房主 ${player.nickname} 踢出了玩家 ${targetPlayer.nickname}`);
-        } 
+          return;
+        }
+
         // 如果是其他人想踢出房主
-        else if (data.targetId === room.hostId && player.id !== room.hostId) {
+        if (data.targetId === room.hostId && player.id !== room.hostId) {
           // 投票踢出房主
           let voteData = hostKickVotes.get(room.id);
-          
+
           if (!voteData) {
             // 创建新的投票
             voteData = {
               voters: new Set([player.id]),
               timer: setTimeout(() => {
                 hostKickVotes.delete(room.id);
-                io.to(room.id).emit('chat_broadcast', { 
-                  message: '踢出房主投票超时，投票已重置', 
-                  type: 'system' 
+                io.to(room.id).emit('chat_broadcast', {
+                  message: '踢出房主投票超时，投票已重置',
+                  type: 'system'
                 });
               }, 15000) // 15秒超时
             };
             hostKickVotes.set(room.id, voteData);
-            
-            io.to(room.id).emit('chat_broadcast', { 
-              message: `${player.nickname} 发起踢出房主投票，需要${Math.ceil(room.players.filter(p => p.online).length / 2)}票`, 
-              type: 'system' 
+
+            io.to(room.id).emit('chat_broadcast', {
+              message: `${player.nickname} 发起踢出房主投票，需要${Math.ceil(room.players.filter(p => p.online).length / 2)}票`,
+              type: 'system'
             });
           } else {
+            // 检查玩家是否已经投过票
+            if (voteData.voters.has(player.id)) {
+              socket.emit('error', { message: '您已经投过票了' });
+              ack?.({ success: false, error: '您已经投过票了' });
+              return;
+            }
             // 添加投票
             voteData.voters.add(player.id);
           }
-          
+
           const onlinePlayerCount = room.players.filter(p => p.online).length;
           const requiredVotes = Math.ceil(onlinePlayerCount / 2);
-          
+
           if (voteData.voters.size >= requiredVotes) {
             // 投票通过，踢出房主
             clearTimeout(voteData.timer);
             hostKickVotes.delete(room.id);
-            
+
             const oldHost = targetPlayer;
             const kickResponse = await sendTaskToRoom(room.id, 'kick_out_player', { targetId: oldHost.id });
             const kickResult = readKickResult(kickResponse);
             if (!kickResult.kicked) {
-              io.to(room.id).emit('chat_broadcast', { 
-                message: kickResult.reason || '当前状态不允许踢出房主', 
-                type: 'system' 
+              io.to(room.id).emit('chat_broadcast', {
+                message: kickResult.reason || '当前状态不允许踢出房主',
+                type: 'system'
               });
+              ack?.({ success: false, error: kickResult.reason || '当前状态不允许踢出房主' });
               return;
             }
 
             await finalizeKickedPlayer(room.id, oldHost, '您被投票踢出房间');
-            
-            io.to(room.id).emit('chat_broadcast', { 
-              message: `房主 ${oldHost.nickname} 被投票踢出房间`, 
-              type: 'system' 
+            ack?.({ success: true });
+
+            io.to(room.id).emit('chat_broadcast', {
+              message: `房主 ${oldHost.nickname} 被投票踢出房间`,
+              type: 'system'
             });
-            
+
             console.log(`房主 ${oldHost.nickname} 被投票踢出`);
+            return;
           } else {
-            io.to(room.id).emit('chat_broadcast', { 
-              message: `当前投票数: ${voteData.voters.size}/${requiredVotes}`, 
-              type: 'system' 
+            ack?.({ success: true, message: `投票已记录，当前投票数: ${voteData.voters.size}/${requiredVotes}` });
+            io.to(room.id).emit('chat_broadcast', {
+              message: `当前投票数: ${voteData.voters.size}/${requiredVotes}`,
+              type: 'system'
             });
+            return;
           }
-        } else {
-          socket.emit('error', { message: '无法踢出自己' });
         }
+
+        socket.emit('error', { message: '无法踢出自己' });
+        ack?.({ success: false, error: '无法踢出自己' });
       } catch (error) {
         console.error('踢出玩家失败:', error);
         socket.emit('error', { message: '踢出玩家失败' });
@@ -1056,10 +1072,19 @@ export function roomController(io: Server) {
 
           currentRoom.cleanupTimer = setTimeout(() => {
             console.log(`清理空房间: ${roomId}`);
-            threadManager.stopRoomThread(roomId);
+            // 再次检查房间是否仍然存在（防止在定时器等待期间房间已被清理）
+            const roomToClean = rooms.get(roomId);
+            if (!roomToClean) return;
+            // 再次检查是否确实没有在线玩家
+            const stillOnline = roomToClean.players.filter(p => p.online);
+            if (stillOnline.length > 0) return;
+
+            threadManager.stopRoomThread(roomId).catch(err => {
+              console.error(`清理空房间时停止线程失败: ${roomId}`, err);
+            });
             rooms.delete(roomId);
             hostKickVotes.delete(roomId);
-            
+
             // 更新大厅
             broadcastLobbyUpdate();
           }, config.server.roomCleanupTimeout || 60000);
@@ -1084,18 +1109,35 @@ export function roomController(io: Server) {
     const now = Date.now();
     const idleThreshold = 300000; // 5分钟空闲时间
 
+    const roomsToDelete: string[] = [];
     for (const [roomId, room] of rooms.entries()) {
-      if (room.players.length === 0 || 
-          (now - room.lastActiveTime > idleThreshold && 
+      if (room.players.length === 0 ||
+          (now - room.lastActiveTime > idleThreshold &&
            room.players.every(p => !p.online))) {
-        console.log(`清理空闲房间: ${room.name}`);
+        roomsToDelete.push(roomId);
+      }
+    }
+
+    for (const roomId of roomsToDelete) {
+      const room = rooms.get(roomId);
+      if (!room) continue;
+      // 再次检查条件，防止在之前的异步操作期间状态已改变
+      const onlinePlayers = room.players.filter(p => p.online);
+      if (room.players.length > 0 && onlinePlayers.length > 0) continue;
+      if (room.players.length > 0 && (now - room.lastActiveTime <= idleThreshold)) continue;
+
+      console.log(`清理空闲房间: ${room.name}`);
+      try {
         await threadManager.cleanupIdleRoom(roomId);
-        rooms.delete(roomId);
-        
-        // 更新大厅
-        if (!room.private) {
-          broadcastLobbyUpdate();
-        }
+      } catch (err) {
+        console.error(`清理空闲房间 ${roomId} 时出错:`, err);
+      }
+      rooms.delete(roomId);
+      hostKickVotes.delete(roomId);
+
+      // 更新大厅
+      if (!room.private) {
+        broadcastLobbyUpdate();
       }
     }
   }, 60000); // 每分钟检查一次

@@ -4,7 +4,7 @@ import cors from 'cors';
 import { Server as SocketIOServer } from 'socket.io';
 import { roomController } from './controllers/roomController';
 import { config } from './config';
-import { setResetServerFunction, callResetServer } from './services/resetService';
+import { callResetServer } from './services/resetService';
 
 const app = express();
 app.use(cors());

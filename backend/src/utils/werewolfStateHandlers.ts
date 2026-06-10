@@ -20,6 +20,42 @@ export interface StateHandler {
   endOfState: (gameState: WerewolfGameState, context: any, ...extra: any[]) => void;
 }
 
+// 工具函数 - 根据状态获取配置超时（支持房间配置覆盖和不限时模式）
+function getTimeoutForStatus(handler: StateHandler, context: any): number {
+  const baseTimeout = TIMEOUT[handler.status];
+
+  // 如果有房间配置，优先使用配置值
+  if (context?.config) {
+    const config = context.config;
+    switch (handler.status) {
+      case GameStatus.WOLF_KILL:
+      case GameStatus.SEER_CHECK:
+      case GameStatus.WITCH_ACT:
+      case GameStatus.GUARD_PROTECT:
+      case GameStatus.HUNTER_SHOOT:
+      case GameStatus.SHERIFF_ASSIGN:
+        // 使用 actionTime 或 nightTime，0 表示不限时
+        return config.actionTime !== undefined ? config.actionTime : baseTimeout;
+      case GameStatus.DAY_DISCUSS:
+      case GameStatus.SHERIFF_SPEECH:
+        // 使用 dayTime 或 speakTime，0 表示不限时
+        return config.dayTime !== undefined ? config.dayTime : baseTimeout;
+      case GameStatus.EXILE_VOTE:
+      case GameStatus.SHERIFF_VOTE:
+      case GameStatus.SHERIFF_ELECT:
+        // 使用 voteTime，0 表示不限时
+        return config.voteTime !== undefined ? config.voteTime : baseTimeout;
+      case GameStatus.LEAVE_MSG:
+        // 遗言阶段使用 speakTime 或固定60秒，0 表示不限时
+        return config.speakTime !== undefined ? config.speakTime : baseTimeout;
+      default:
+        return baseTimeout;
+    }
+  }
+
+  return baseTimeout;
+}
+
 // 工具函数 - 开始当前状态
 export function startCurrentState(
   handler: StateHandler,
@@ -31,7 +67,7 @@ export function startCurrentState(
     gameState.status = handler.status;
   }
 
-  const timeout = TIMEOUT[handler.status];
+  const timeout = getTimeoutForStatus(handler, context);
 
   // 清理之前的定时器
   if (gameState.timer) {
@@ -39,7 +75,7 @@ export function startCurrentState(
     gameState.timer = undefined;
   }
 
-  // 只有超时时间大于0才设置定时器
+  // 只有超时时间大于0才设置定时器（支持不限时模式）
   if (timeout > 0) {
     gameState.timer = setTimeout(() => {
       try {
@@ -50,7 +86,7 @@ export function startCurrentState(
     }, timeout * 1000);
   }
 
-  gameState.operateEndTime = new Date(Date.now() + timeout * 1000);
+  gameState.operateEndTime = new Date(Date.now() + (timeout > 0 ? timeout : 0) * 1000);
 
   // 更新operators字段
   updateOperators(gameState);
@@ -193,7 +229,7 @@ function checkAndHandleGameEnd(gameState: WerewolfGameState, context: any): bool
   return false;
 }
 
-// 工具函数 - 处理死亡玩家链（猎人开枪、遗言、警长传递）
+// 工具函数 - 处理死亡玩家队列中的下一个玩家（支持多死亡玩家依次处理）
 const MAX_DEATH_CHAIN_DEPTH = 10;
 
 function processDeathChain(gameState: WerewolfGameState, context: any, dyingPlayer: WerewolfPlayerState): void {
@@ -202,6 +238,7 @@ function processDeathChain(gameState: WerewolfGameState, context: any, dyingPlay
   if (currentDepth >= MAX_DEATH_CHAIN_DEPTH) {
     console.error(`死亡链递归深度超过最大值 ${MAX_DEATH_CHAIN_DEPTH}，强制终止`);
     gameState.curDyingPlayer = undefined;
+    gameState.pendingDeaths = undefined;
     continueToNightOrDay(gameState, context);
     return;
   }
@@ -238,11 +275,65 @@ function processDeathChain(gameState: WerewolfGameState, context: any, dyingPlay
   continueToNightOrDay(gameState, context);
 }
 
+// 工具函数 - 处理完一个死亡玩家后，检查是否还有更多待处理
+function processNextPendingDeath(gameState: WerewolfGameState, context: any): void {
+  // 将当前死亡玩家从队列中移除
+  if (gameState.pendingDeaths && gameState.pendingDeaths.length > 0) {
+    // 移除已处理的玩家（队列头部）
+    gameState.pendingDeaths.shift();
+  }
+  // 清除当前死亡玩家标记
+  gameState.curDyingPlayer = undefined;
+
+  // 检查是否还有待处理的死亡玩家
+  if (gameState.pendingDeaths && gameState.pendingDeaths.length > 0) {
+    const nextDyingPlayer = gameState.pendingDeaths[0];
+    processDeathChain(gameState, context, nextDyingPlayer);
+  } else {
+    // 所有死亡玩家处理完毕
+    gameState.pendingDeaths = undefined;
+    if (!checkAndHandleGameEnd(gameState, context)) {
+      // 进入白天讨论阶段
+      Object.values(gameState.players).forEach(p => {
+        p.canBeVoted = p.isAlive;
+      });
+
+      // 设置发言顺序：警长优先（如果有），然后按编号
+      const alivePlayers = Object.values(gameState.players)
+        .filter(p => p.isAlive)
+        .sort((a, b) => a.index - b.index);
+
+      const sheriff = alivePlayers.find(p => p.isSheriff);
+      const others = alivePlayers.filter(p => p !== sheriff);
+
+      gameState.speakOrder = [
+        ...(sheriff ? [sheriff.index] : []),
+        ...others.map(p => p.index)
+      ];
+      gameState.currentSpeakerIndex = 0;
+
+      DayDiscussHandler.startOfState(gameState, context);
+    }
+  }
+}
+
 // 工具函数 - 从死亡链继续到下一个正常状态
 function continueToNightOrDay(gameState: WerewolfGameState, context: any): void {
-  gameState.curDyingPlayer = undefined;
   // 重置死亡链深度
   (gameState as any).deathChainDepth = 0;
+
+  // 检查是否还有待处理的死亡玩家
+  if (gameState.pendingDeaths && gameState.pendingDeaths.length > 0) {
+    gameState.pendingDeaths.shift(); // 移除已处理的
+    if (gameState.pendingDeaths.length > 0) {
+      const nextDyingPlayer = gameState.pendingDeaths[0];
+      processDeathChain(gameState, context, nextDyingPlayer);
+      return;
+    }
+  }
+
+  gameState.curDyingPlayer = undefined;
+  gameState.pendingDeaths = undefined;
 
   if (checkAndHandleGameEnd(gameState, context)) {
     return;
@@ -700,12 +791,15 @@ export const BeforeDayDiscussHandler: StateHandler = {
         showTime: TIMEOUT[GameStatus.BEFORE_DAY_DISCUSS]
       });
 
-      // 处理死亡链
+      // 设置待处理死亡队列并处理第一个死亡玩家
       if (dyingPlayers.length > 0) {
-        // 延迟处理第一个死亡玩家
+        gameState.pendingDeaths = [...dyingPlayers]; // 复制队列
+        const timeoutMs = TIMEOUT[GameStatus.BEFORE_DAY_DISCUSS] > 0
+          ? TIMEOUT[GameStatus.BEFORE_DAY_DISCUSS] * 1000
+          : 3000; // 不限时模式下使用默认3秒
         setTimeout(() => {
-          processDeathChain(gameState, context, dyingPlayers[0]);
-        }, TIMEOUT[GameStatus.BEFORE_DAY_DISCUSS] * 1000);
+          processDeathChain(gameState, context, gameState.pendingDeaths![0]);
+        }, timeoutMs);
         return; // 提前返回，死亡链会继续处理
       }
     }
@@ -735,9 +829,12 @@ export const BeforeDayDiscussHandler: StateHandler = {
     gameState.currentSpeakerIndex = 0;
 
     // 延迟进入讨论阶段
+    const discussTimeoutMs = TIMEOUT[GameStatus.BEFORE_DAY_DISCUSS] > 0
+      ? TIMEOUT[GameStatus.BEFORE_DAY_DISCUSS] * 1000
+      : 3000;
     setTimeout(() => {
       DayDiscussHandler.startOfState(gameState, context);
-    }, TIMEOUT[GameStatus.BEFORE_DAY_DISCUSS] * 1000);
+    }, discussTimeoutMs);
   },
 
   endOfState(gameState, context) {
@@ -989,6 +1086,8 @@ export const HunterShootHandler: StateHandler = {
     }
 
     const hunter = gameState.curDyingPlayer;
+    let shotNewDying = false;
+
     if (hunter) {
       const shootAt = hunter.characterStatus.shootAt;
       if (shootAt && shootAt.day === gameState.currentDay && shootAt.player > 0) {
@@ -1004,13 +1103,13 @@ export const HunterShootHandler: StateHandler = {
             message: `${hunter.index}号猎人开枪带走了${target.index}号 ${target.name}`
           });
 
-          // 被带走的如果是猎人，递归处理
+          // 被带走的如果是猎人，加入死亡队列头部优先处理
           if (target.character === 'HUNTER') {
-            setTimeout(() => {
-              gameState.curDyingPlayer = target;
-              processDeathChain(gameState, context, target);
-            }, 3000);
-            return;
+            if (!gameState.pendingDeaths) {
+              gameState.pendingDeaths = [];
+            }
+            gameState.pendingDeaths.unshift(target);
+            shotNewDying = true;
           }
         }
       } else {
@@ -1020,6 +1119,14 @@ export const HunterShootHandler: StateHandler = {
       }
 
       hunter.characterStatus.hasUsedSkill = true;
+    }
+
+    // 如果猎人开枪带走了另一个猎人，优先处理那个猎人
+    if (shotNewDying) {
+      setTimeout(() => {
+        processDeathChain(gameState, context, gameState.pendingDeaths![0]);
+      }, 3000);
+      return;
     }
 
     // 检查警长传递
@@ -1039,11 +1146,8 @@ export const HunterShootHandler: StateHandler = {
       return;
     }
 
-    // 继续正常流程
-    gameState.curDyingPlayer = undefined;
-    if (!checkAndHandleGameEnd(gameState, context)) {
-      WolfKillHandler.startOfState(gameState, context, true);
-    }
+    // 继续处理队列中的下一个死亡玩家，或进入正常流程
+    continueToNightOrDay(gameState, context);
   }
 };
 
@@ -1107,6 +1211,11 @@ export const LeaveMsgHandler: StateHandler = {
 
     const dyingPlayer = gameState.curDyingPlayer;
 
+    // 标记当前死亡玩家为已处理（设置isDying为false）
+    if (dyingPlayer) {
+      dyingPlayer.isDying = false;
+    }
+
     // 如果是警长死亡，传递警徽
     if (dyingPlayer && dyingPlayer.isSheriff) {
       setTimeout(() => {
@@ -1115,12 +1224,8 @@ export const LeaveMsgHandler: StateHandler = {
       return;
     }
 
-    gameState.curDyingPlayer = undefined;
-
-    // 继续到夜晚或检查游戏结束
-    if (!checkAndHandleGameEnd(gameState, context)) {
-      WolfKillHandler.startOfState(gameState, context, true);
-    }
+    // 继续处理队列中的下一个死亡玩家，或进入正常流程
+    continueToNightOrDay(gameState, context);
   }
 };
 
@@ -1167,12 +1272,13 @@ export const SheriffAssignHandler: StateHandler = {
       });
     }
 
-    gameState.curDyingPlayer = undefined;
-
-    // 继续到夜晚
-    if (!checkAndHandleGameEnd(gameState, context)) {
-      WolfKillHandler.startOfState(gameState, context, true);
+    // 标记当前死亡玩家为已处理
+    if (gameState.curDyingPlayer) {
+      gameState.curDyingPlayer.isDying = false;
     }
+
+    // 继续处理队列中的下一个死亡玩家，或进入正常流程
+    continueToNightOrDay(gameState, context);
   }
 };
 

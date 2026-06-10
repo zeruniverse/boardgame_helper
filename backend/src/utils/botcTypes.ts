@@ -147,6 +147,6 @@ export const PLAYER_COUNTS: { [key: number]: PlayerSetup } = {
 };
 
 export interface BOTCGameAction {
-  type: 'nominate' | 'vote' | 'nightAction' | 'storytellerAction' | 'chat' | 'ready';
+  type: 'nominate' | 'vote' | 'nightAction' | 'storytellerAction' | 'chat' | 'ready' | 'private_message';
   data: any;
 } 

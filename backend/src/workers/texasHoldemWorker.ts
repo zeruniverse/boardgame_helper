@@ -340,6 +340,12 @@ class TexasHoldemWorker extends BaseGameWorker {
       this.gameState.currentTurn = 0;
     }
 
+    // 修复：同步参与者到room.gameMetadata
+    if (!this.room.gameMetadata) {
+      this.room.gameMetadata = {};
+    }
+    this.room.gameMetadata.participants = [...this.participants];
+
     this.sendToRoom('chat_broadcast', {
       message: `${targetPlayer.nickname} 被踢出房间`,
       type: 'system'
@@ -414,7 +420,8 @@ class TexasHoldemWorker extends BaseGameWorker {
       });
     }
 
-    // 发送游戏状态
+    // 发送游戏状态（将currentTurn从索引转换为playerId）
+    const syncCurrentTurnPlayerId = gs.currentTurn >= 0 && gs.currentTurn < this.room.players.length ? this.room.players[gs.currentTurn]?.id || '' : '';
     parentPort!.postMessage({
       taskId: 'emit',
       success: true,
@@ -426,7 +433,7 @@ class TexasHoldemWorker extends BaseGameWorker {
           communityCards: gs.communityCards,
           pot: gs.pot,
           bets: gs.bets,
-          currentTurn: gs.currentTurn,
+          currentTurn: syncCurrentTurnPlayerId,
           dealerIndex: gs.dealerIndex,
           round: gs.round,
           currentBet: gs.currentBet,
@@ -514,6 +521,12 @@ class TexasHoldemWorker extends BaseGameWorker {
     const removedIndex = playerIndex;
     this.room.players.splice(playerIndex, 1);
 
+    // 修复：从参与者列表中移除
+    const participantIdx = this.participants.indexOf(playerId);
+    if (participantIdx !== -1) {
+      this.participants.splice(participantIdx, 1);
+    }
+
     // 修复：调整currentTurn，因为splice改变了players数组的索引
     if (gs.currentTurn > removedIndex) {
       gs.currentTurn--;
@@ -522,6 +535,12 @@ class TexasHoldemWorker extends BaseGameWorker {
     if (gs.currentTurn >= this.room.players.length) {
       gs.currentTurn = this.room.players.length > 0 ? 0 : -1;
     }
+
+    // 修复：同步参与者到room.gameMetadata
+    if (!this.room.gameMetadata) {
+      this.room.gameMetadata = {};
+    }
+    this.room.gameMetadata.participants = [...this.participants];
 
     this.sendToRoom('chat_broadcast', { message: `${player.nickname} cash out 并退出房间`, type: 'cashout' });
     this.sendToRoom('room_update', this.room);
@@ -593,14 +612,22 @@ class TexasHoldemWorker extends BaseGameWorker {
     const nextPlayer = participatingPlayers[nextPlayerIndex];
     gs.currentTurn = this.room.players.findIndex(p => p.id === nextPlayer.id);
 
+    // 修复：将参与者列表同步到room.gameMetadata，确保前端能获取
+    if (!this.room.gameMetadata) {
+      this.room.gameMetadata = {};
+    }
+    this.room.gameMetadata.participants = [...this.participants];
+
     // 同步状态
     this.sendToRoom('room_update', this.room);
     this.sendToRoom('game_started', {});
+    // 修复：将currentTurn从索引转换为playerId
+    const startGameTurnPlayerId = this.room.players[gs.currentTurn]?.id || '';
     this.sendToRoom('game_state', {
       communityCards: gs.communityCards,
       pot: gs.pot,
       bets: gs.bets,
-      currentTurn: gs.currentTurn,
+      currentTurn: startGameTurnPlayerId,
       dealerIndex: gs.dealerIndex,
       round: gs.round,
       currentBet: gs.currentBet,
@@ -713,8 +740,14 @@ class TexasHoldemWorker extends BaseGameWorker {
     }
 
     // 修复Bug 1.6: 检查玩家是否已fold或已行动，避免重复处理
-    if (gs.folded.includes(player.id) || gs.acted.includes(player.id)) {
+    // 修复：已全下(chips===0)的玩家自动跳过，视为已行动
+    if (gs.folded.includes(player.id) || gs.acted.includes(player.id) || player.gameMetadata.chips === 0) {
       this.clearActionTimer();
+      // 如果是全下玩家，确保他们被标记为已行动并继续游戏
+      if (player.gameMetadata.chips === 0 && !gs.acted.includes(player.id) && !gs.folded.includes(player.id)) {
+        gs.acted.push(player.id);
+        this.continueToNextPlayer();
+      }
       return;
     }
 
@@ -763,7 +796,8 @@ class TexasHoldemWorker extends BaseGameWorker {
       let allActed = true;
       let allBetsEqual = true;
       for (const player of activePlayers) {
-        if (!gs.acted.includes(player.id)) {
+        // 修复：已全下(chips===0)的玩家自动视为已行动，因为他们无法再做任何行动
+        if (player.gameMetadata.chips > 0 && !gs.acted.includes(player.id)) {
           allActed = false;
           break;
         }
@@ -803,11 +837,12 @@ class TexasHoldemWorker extends BaseGameWorker {
     }
 
     if (attempts >= participatingPlayers.length) {
+      const currentTurnPlayerId = gs.currentTurn >= 0 && gs.currentTurn < this.room.players.length ? this.room.players[gs.currentTurn]?.id || '' : '';
       this.sendToRoom('game_state', {
         communityCards: gs.communityCards,
         pot: gs.pot,
         bets: gs.bets,
-        currentTurn: gs.currentTurn,
+        currentTurn: currentTurnPlayerId,
         dealerIndex: gs.dealerIndex,
         round: gs.round,
         currentBet: gs.currentBet,
@@ -826,11 +861,13 @@ class TexasHoldemWorker extends BaseGameWorker {
     gs.currentTurn = nextGlobalIdx;
 
     // 广播游戏状态更新并请求下一个玩家行动
+    // 修复：将currentTurn从索引转换为playerId，确保前端能正确识别当前行动玩家
+    const currentTurnPlayerId = this.room.players[gs.currentTurn]?.id || '';
     this.sendToRoom('game_state', {
       communityCards: gs.communityCards,
       pot: gs.pot,
       bets: gs.bets,
-      currentTurn: gs.currentTurn,
+      currentTurn: currentTurnPlayerId,
       dealerIndex: gs.dealerIndex,
       round: gs.round,
       currentBet: gs.currentBet,
@@ -864,16 +901,24 @@ class TexasHoldemWorker extends BaseGameWorker {
 
     // 同步最终的游戏状态（包括完整的公共牌）
     const gs = this.gameState as TexasHoldemGameState;
+    // 修复：currentTurn为-1时发送空字符串，确保前端类型一致性
+    const gameOverTurnPlayerId = gs.currentTurn >= 0 && gs.currentTurn < this.room.players.length ? this.room.players[gs.currentTurn]?.id || '' : '';
     this.sendToRoom('game_state', {
       communityCards: gs.communityCards,
       pot: gs.pot,
       bets: gs.bets,
-      currentTurn: gs.currentTurn,
+      currentTurn: gameOverTurnPlayerId,
       dealerIndex: gs.dealerIndex,
       round: gs.round,
       currentBet: gs.currentBet,
       stage: gs.stage
     });
+
+    // 修复：同步清空的参与者列表到room.gameMetadata
+    if (!this.room.gameMetadata) {
+      this.room.gameMetadata = {};
+    }
+    this.room.gameMetadata.participants = [...this.participants];
 
     // 立即同步房间状态
     this.sendToRoom('room_update', this.room);
@@ -1209,11 +1254,12 @@ class TexasHoldemWorker extends BaseGameWorker {
 
     this.sendToRoom('chat_broadcast', { message: `[玩家${player.nickname} take ${takeAmt}]` });
     this.sendToRoom('room_update', this.room);
+    const takeTurnPlayerId = gs.currentTurn >= 0 && gs.currentTurn < this.room.players.length ? this.room.players[gs.currentTurn]?.id || '' : '';
     this.sendToRoom('game_state', {
       communityCards: gs.communityCards,
       pot: gs.pot,
       bets: gs.bets,
-      currentTurn: gs.currentTurn,
+      currentTurn: takeTurnPlayerId,
       dealerIndex: gs.dealerIndex,
       round: gs.round,
       currentBet: gs.currentBet,
@@ -1246,11 +1292,12 @@ class TexasHoldemWorker extends BaseGameWorker {
 
     this.sendToRoom('chat_broadcast', { message: `[玩家${player.nickname} take all ${takeAmt}]` });
     this.sendToRoom('room_update', this.room);
+    const takeAllTurnPlayerId = gs.currentTurn >= 0 && gs.currentTurn < this.room.players.length ? this.room.players[gs.currentTurn]?.id || '' : '';
     this.sendToRoom('game_state', {
       communityCards: gs.communityCards,
       pot: gs.pot,
       bets: gs.bets,
-      currentTurn: gs.currentTurn,
+      currentTurn: takeAllTurnPlayerId,
       dealerIndex: gs.dealerIndex,
       round: gs.round,
       currentBet: gs.currentBet,
@@ -1423,7 +1470,8 @@ class TexasHoldemWorker extends BaseGameWorker {
     let allBetsEqual = true;
 
     for (const player of activePlayers) {
-      if (!gs.acted.includes(player.id)) {
+      // 修复：已全下(chips===0)的玩家自动视为已行动，因为他们无法再做任何行动
+      if (player.gameMetadata.chips > 0 && !gs.acted.includes(player.id)) {
         allActed = false;
         break;
       }
@@ -1530,12 +1578,13 @@ class TexasHoldemWorker extends BaseGameWorker {
       }
     }
 
-    // 广播游戏状态
+    // 广播游戏状态（将currentTurn从索引转换为playerId）
+    const currentTurnPlayerId = gs.currentTurn >= 0 && gs.currentTurn < this.room.players.length ? this.room.players[gs.currentTurn]?.id || '' : '';
     this.sendToRoom('game_state', {
       communityCards: gs.communityCards,
       pot: gs.pot,
       bets: gs.bets,
-      currentTurn: gs.currentTurn,
+      currentTurn: currentTurnPlayerId,
       dealerIndex: gs.dealerIndex,
       round: gs.round,
       currentBet: gs.currentBet,

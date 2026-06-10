@@ -123,6 +123,8 @@
           :current-user-id="store.currentUserId"
           :game-players="store.gameState?.players || []"
           :is-storyteller="store.isStoryteller"
+          :storyteller-id="store.gameConfig?.storytellerId"
+          :game-config="store.gameConfig"
           @transfer-host="handleTransferHost"
           @kick-player="handleKickPlayer"
           @start-private-chat="handleStartPrivateChat"
@@ -384,7 +386,12 @@ const handlePrivateMessage = (data: any) => {
 
 // 处理开始游戏
 const handleStartGame = (config: any) => {
-  store.sendGameAction('startGame', config)
+  // 设置游戏配置（说书人ID、剧本等）
+  if (config) {
+    store.gameConfig = { ...store.gameConfig, ...config }
+  }
+  // 后端使用 'ready' 动作来开始游戏
+  store.sendGameAction('ready', config || {})
 }
 </script>
 

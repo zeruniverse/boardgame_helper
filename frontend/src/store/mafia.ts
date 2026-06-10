@@ -101,7 +101,8 @@ export const useMafiaStore = defineStore('mafia', {
     canStartGame(): boolean {
       if (!this.isHost || !this.room) return false;
       const readyCount = this.room.players.filter(p => p.ready).length;
-      return readyCount >= 8 && readyCount <= 16 && readyCount === this.room.players.length;
+      // 与后端 MAFIA_TEAM_CONFIG 一致：支持 6-20 人
+      return readyCount >= 6 && readyCount <= 20 && readyCount === this.room.players.length;
     },
 
     canOperate(): boolean {

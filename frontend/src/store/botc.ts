@@ -19,6 +19,7 @@ export const useBOTCGameStore = defineStore('botc', () => {
   const nightInfo = ref<any>(null)
   const isStoryteller = ref<boolean>(false)
   const chatMessages = ref<any[]>([])
+  const timeLeft = ref<number>(0)
   const socketListeners = ref<Array<[string, (...args: any[]) => void]>>([])
 
   // 辅助函数：追踪监听器
@@ -107,9 +108,9 @@ export const useBOTCGameStore = defineStore('botc', () => {
           if (data && data.locked !== undefined) {
             room.value.locked = data.locked
           }
-          // 更新说书人状态
+          // 更新说书人状态 - 只有被指定的说书人才有说书人权限
           if (data && gameConfig.value) {
-            isStoryteller.value = currentUserId.value === gameConfig.value.storytellerId || currentUserId.value === data.hostId
+            isStoryteller.value = currentUserId.value === gameConfig.value.storytellerId
           }
         })
 
@@ -277,6 +278,24 @@ export const useBOTCGameStore = defineStore('botc', () => {
 
         on('gameConfigured', (data) => {
           gameConfig.value = data.config
+        })
+
+        on('configUpdated', (data) => {
+          if (data.config) {
+            gameConfig.value = { ...gameConfig.value, ...data.config }
+          }
+        })
+
+        // 监听说书人信息（包含所有玩家的角色）
+        on('storytellerInfo', (data) => {
+          if (isStoryteller.value && data.players) {
+            // 说书人收到所有玩家角色信息，可以显示在UI上
+            ElMessage.info(`你是说书人，已收到${data.players.length}名玩家的角色信息`)
+            // 存储到游戏状态中供说书人面板使用
+            if (gameState.value) {
+              gameState.value.storytellerView = data.players
+            }
+          }
         })
 
       } catch (error) {
@@ -487,6 +506,7 @@ export const useBOTCGameStore = defineStore('botc', () => {
     nightInfo,
     isStoryteller,
     chatMessages,
+    timeLeft,
 
     // 方法
     connect,

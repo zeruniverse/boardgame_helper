@@ -125,6 +125,8 @@ const AVALON_TEAM_CONFIG: Record<number, [Role[], Role[]]> = {
 
 // 湖上夫人模式的角色配置
 const AVALON_LADY_TEAM_CONFIG: Record<number, [Role[], Role[]]> = {
+  5: [[Role.MERLIN, Role.PERCIVAL, Role.GOOD], [Role.MORGANA, Role.ASSASSIN]],
+  6: [[Role.MERLIN, Role.PERCIVAL, Role.GOOD, Role.GOOD], [Role.MORGANA, Role.ASSASSIN, Role.BAD]],
   7: [[Role.MERLIN, Role.PERCIVAL, Role.GOOD, Role.GOOD], [Role.MORGANA, Role.ASSASSIN, Role.BAD]],
   8: [[Role.MERLIN, Role.PERCIVAL, Role.GOOD, Role.GOOD, Role.GOOD], [Role.MORGANA, Role.ASSASSIN, Role.MORDRED]],
   9: [[Role.MERLIN, Role.PERCIVAL, Role.PERCIVAL, Role.GOOD, Role.GOOD], [Role.MORGANA, Role.ASSASSIN, Role.MORDRED, Role.OBERON]],

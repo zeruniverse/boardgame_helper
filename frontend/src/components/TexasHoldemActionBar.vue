@@ -49,8 +49,8 @@ const raiseAmount = ref(0);
 const toCall = computed(() => store.currentBet - (store.bets[store.playerId] || 0));
 // 使用playerId查找自己的玩家信息，从gameMetadata中获取筹码
 const ownPlayer = computed(() => store.players.find((p: any) => p.id === store.playerId));
-// canCall: 筹码 >= 需要跟注金额即可call（等于时可以all-in call）
-const canCall = computed(() => store.currentTurn === store.playerId && toCall.value > 0 && ownPlayer.value && (ownPlayer.value.gameMetadata?.chips || 0) >= toCall.value && isInGame.value);
+// canCall: 需要跟注金额 > 0 且有筹码即可call（筹码不足时自动转为all-in call）
+const canCall = computed(() => store.currentTurn === store.playerId && toCall.value > 0 && ownPlayer.value && (ownPlayer.value.gameMetadata?.chips || 0) > 0 && isInGame.value);
 const canCheck = computed(() => isMyTurn.value && toCall.value === 0);
 // 使用playerId比较而不是nickname
 const isMyTurn = computed(() => store.currentTurn === store.playerId && isInGame.value);

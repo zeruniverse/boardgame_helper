@@ -554,7 +554,8 @@ class WerewolfWorker extends BaseGameWorker {
     return {
       sendToRoom: this.sendToRoom.bind(this),
       sendToPlayer: this.sendToPlayer.bind(this),
-      getGameInfo: this.getGameInfo.bind(this)
+      getGameInfo: this.getGameInfo.bind(this),
+      config: this.config
     };
   }
 
@@ -896,7 +897,8 @@ class WerewolfWorker extends BaseGameWorker {
       this.sendToPlayer(playerId, 'system_message', { message: '你选择放弃保护' });
     } else {
       // 不能连续两晚守护同一个人
-      const lastProtect = gamePlayer.characterStatus.protects?.[this.gameState.currentDay - 2];
+      // currentDay 在 WolfKillHandler.startOfState 中递增，前一晚的守护记录在当前索引减1的位置
+      const lastProtect = gamePlayer.characterStatus.protects?.[this.gameState.currentDay - 1];
       if (lastProtect === targetIndex) {
         this.sendToPlayer(playerId, 'error', { message: '不能连续两晚守护同一个人' });
         return;

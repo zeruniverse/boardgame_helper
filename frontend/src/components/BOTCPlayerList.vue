@@ -197,6 +197,8 @@ interface Props {
   currentUserId?: string
   gamePlayers?: any[]
   isStoryteller?: boolean
+  storytellerId?: string
+  gameConfig?: any
 }
 
 interface Emits {
@@ -238,7 +240,8 @@ const gameStarted = computed(() => {
 })
 
 const storytellerId = computed(() => {
-  return selectedStoryteller.value
+  // 优先使用props传入的说书人ID，其次是游戏配置中的说书人ID
+  return props.storytellerId || props.gameConfig?.storytellerId || selectedStoryteller.value || ''
 })
 
 // 获取玩家在游戏中的信息 - 使用playerId匹配

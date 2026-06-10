@@ -95,10 +95,13 @@ export const useTexasHoldemStore = defineStore('texas_holdem', {
         if (data.stage !== undefined) {
           this.stage = data.stage;
         }
-        // currentTurn可能是number(索引)或string(playerId)
-        if (typeof data.currentTurn === 'string') {
+        // 修复：currentTurn可能是number(索引)或string(playerId)
+        // 如果是number类型（来自后端worker的内部索引），需要忽略，等待action_request获取正确的playerId
+        // 如果是string类型（playerId），直接使用
+        if (typeof data.currentTurn === 'string' && data.currentTurn) {
           this.currentTurn = data.currentTurn;
         }
+        // 如果currentTurn为空字符串，说明游戏处于过渡状态或已结束
       });
 
       // 请求玩家行动

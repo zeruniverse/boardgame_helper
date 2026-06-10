@@ -36,6 +36,7 @@ export interface WerewolfGameState {
   winner?: 'WEREWOLF' | 'VILLAGER';
   timer?: NodeJS.Timeout;
   operators?: string[];  // 当前可操作玩家ID列表
+  pendingDeaths?: WerewolfPlayerState[];  // 待处理的死亡玩家队列（支持多死亡玩家依次处理）
   nightActions?: {
     wolfKillTarget?: number;   // 狼人击杀目标index
     guardTarget?: number;      // 守卫保护目标index

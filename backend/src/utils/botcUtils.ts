@@ -251,13 +251,19 @@ function shouldWakeWhenDead(roleId: string, isFirstNight: boolean): boolean {
 /**
  * 检查游戏是否结束 - 包含特殊胜利条件
  */
-export function checkGameEnd(gamePlayers: GamePlayer[], checkEvilWin: boolean = true): { isEnded: boolean; winner?: 'good' | 'evil'; reason?: string } {
+export function checkGameEnd(gamePlayers: GamePlayer[], checkEvilWin: boolean = true, mastermindTriggered: boolean = false): { isEnded: boolean; winner?: 'good' | 'evil'; reason?: string } {
   const alivePlayers = gamePlayers.filter(p => !p.isDead);
   const aliveEvil = alivePlayers.filter(p => p.role && (p.role.team === Team.DEMON || p.role.team === Team.MINION));
   const aliveGood = alivePlayers.filter(p => p.role && (p.role.team === Team.TOWNSFOLK || p.role.team === Team.OUTSIDER));
   const aliveDemon = alivePlayers.filter(p => p.role && p.role.team === Team.DEMON);
 
-  // 恶魔死亡，善良阵营获胜（Mastermind检查由调用方在处决路径中处理）
+  // 幕后黑手生效中：恶魔被处决但游戏继续一天，此时不判定好人胜利
+  if (aliveDemon.length === 0 && mastermindTriggered) {
+    // 幕后黑手效果持续一天，之后如果恶魔仍未复活则好人胜利
+    return { isEnded: false };
+  }
+
+  // 恶魔死亡，善良阵营获胜
   if (aliveDemon.length === 0) {
     return { isEnded: true, winner: 'good', reason: '恶魔已死亡' };
   }
@@ -355,15 +361,18 @@ export function getDeadPlayersWithGhostVote(gamePlayers: GamePlayer[]): GamePlay
 
 /**
  * 计算相邻邪恶玩家对的数量（厨师能力）
+ * 根据官方规则，基于座位顺序的所有玩家（包括死亡玩家）计算
  */
 export function countAdjacentEvilPairs(gamePlayers: GamePlayer[]): number {
-  const alivePlayers = gamePlayers.filter(p => !p.isDead).sort((a, b) => a.seat - b.seat);
+  // 按座位顺序排序所有玩家（包括死亡玩家）
+  const allPlayersBySeat = [...gamePlayers].sort((a, b) => a.seat - b.seat);
   let pairs = 0;
 
-  for (let i = 0; i < alivePlayers.length; i++) {
-    const current = alivePlayers[i];
-    const next = alivePlayers[(i + 1) % alivePlayers.length];
+  for (let i = 0; i < allPlayersBySeat.length; i++) {
+    const current = allPlayersBySeat[i];
+    const next = allPlayersBySeat[(i + 1) % allPlayersBySeat.length];
     
+    // 厨师看到邪恶/善良基于角色的真实阵营，包括死亡玩家
     if (isEvilPlayer(current) && isEvilPlayer(next)) {
       pairs++;
     }
@@ -452,6 +461,11 @@ export function validatePlayerAction(
   }
   if (actionType === 'storytellerAction' && gameState.phase === GamePhase.ENDED) {
     return { valid: false, error: '游戏已结束' };
+  }
+
+  // 说书人操作只能由说书人执行（由Worker层面验证身份）
+  if (actionType === 'storytellerAction' && (gameState.phase as string) === GamePhase.SETUP) {
+    return { valid: false, error: '游戏尚未开始' };
   }
 
   return { valid: true };

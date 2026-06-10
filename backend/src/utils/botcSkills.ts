@@ -152,10 +152,23 @@ function processWasherwoman(
   const otherPlayers = allPlayers.filter(p => 
     p.playerId !== player.playerId && p.playerId !== randomTownsfolk.playerId
   );
+  // 确保选择两个不同的玩家
   const randomOther = otherPlayers.length > 0 
     ? otherPlayers[Math.floor(Math.random() * otherPlayers.length)]
-    : randomTownsfolk;
+    : null;
   
+  if (!randomOther) {
+    // 场上只有一个镇民（除去洗衣妇自己），返回该信息
+    return {
+      success: true,
+      information: {
+        roleId: randomTownsfolk.role?.id,
+        roleName: randomTownsfolk.role?.name,
+        players: [randomTownsfolk.playerId]
+      }
+    };
+  }
+
   const chosenPlayers = Math.random() < 0.5 
     ? [randomTownsfolk.playerId, randomOther.playerId]
     : [randomOther.playerId, randomTownsfolk.playerId];
@@ -192,10 +205,22 @@ function processLibrarian(
   const otherPlayers = allPlayers.filter(p => 
     p.playerId !== player.playerId && p.playerId !== randomOutsider.playerId
   );
+  // 确保选择两个不同的玩家
   const randomOther = otherPlayers.length > 0
     ? otherPlayers[Math.floor(Math.random() * otherPlayers.length)]
-    : randomOutsider;
+    : null;
   
+  if (!randomOther) {
+    return {
+      success: true,
+      information: {
+        roleId: randomOutsider.role?.id,
+        roleName: randomOutsider.role?.name,
+        players: [randomOutsider.playerId]
+      }
+    };
+  }
+
   const chosenPlayers = Math.random() < 0.5 
     ? [randomOutsider.playerId, randomOther.playerId]
     : [randomOther.playerId, randomOutsider.playerId];
@@ -231,10 +256,22 @@ function processInvestigator(
   const otherPlayers = allPlayers.filter(p => 
     p.playerId !== player.playerId && p.playerId !== randomMinion.playerId
   );
+  // 确保选择两个不同的玩家
   const randomOther = otherPlayers.length > 0
     ? otherPlayers[Math.floor(Math.random() * otherPlayers.length)]
-    : randomMinion;
+    : null;
   
+  if (!randomOther) {
+    return {
+      success: true,
+      information: {
+        roleId: randomMinion.role?.id,
+        roleName: randomMinion.role?.name,
+        players: [randomMinion.playerId]
+      }
+    };
+  }
+
   const chosenPlayers = Math.random() < 0.5 
     ? [randomMinion.playerId, randomOther.playerId]
     : [randomOther.playerId, randomMinion.playerId];
@@ -884,7 +921,8 @@ export function processDeathAbility(
 
   switch (player.role.id) {
     case 'ravenkeeper':
-      if (deathCause === 'demon') {
+      // 乌鸦饲养员在任何夜间死亡时都能触发（不仅限于恶魔击杀）
+      if (deathCause !== 'execution') {
         return { success: true, information: { canChoosePlayer: true } };
       }
       break;
@@ -896,6 +934,21 @@ export function processDeathAbility(
     case 'mayor':
       if (deathCause === 'demon') {
         return { success: true, information: { canRedirect: true } };
+      }
+      break;
+    case 'sweetheart':
+      // 甜心死亡时，一名玩家醉酒（由Worker的processPassiveEffects处理）
+      return { success: true, effects: { message: '甜心死亡，一名玩家将醉酒' } };
+    case 'barber':
+      // 理发师死亡时，恶魔可以交换两个玩家的角色
+      return { success: true, information: { canSwapCharacters: true }, effects: { message: '理发师死亡，恶魔可以交换角色' } };
+    case 'klutz':
+      // 笨蛋死亡时，公开选择一名玩家，如果邪恶则善良失败
+      return { success: true, information: { mustChoosePublicly: true }, effects: { message: '笨蛋死亡，需要公开选择一名玩家' } };
+    case 'moonchild':
+      // 月之子死亡时，选择一名玩家，如果善良则该玩家今夜死亡
+      if (deathCause === 'execution') {
+        return { success: true, information: { canChoosePlayer: true, killIfGood: true }, effects: { message: '月之子被处决，需要选择一名玩家' } };
       }
       break;
   }

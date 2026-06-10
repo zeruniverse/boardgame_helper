@@ -29,7 +29,7 @@ import {
   getAlivePlayers,
   getDeadPlayersWithGhostVote
 } from '../utils/botcUtils';
-import { EDITIONS, getEditionById } from '../utils/botcData';
+import { EDITIONS, getEditionById, getRoleById } from '../utils/botcData';
 import { processFirstNightInfo, processNightAction, processDeathAbility } from '../utils/botcSkills';
 
 /**
@@ -174,7 +174,7 @@ export class BOTCWorker extends BaseGameWorker {
 
     switch (action.type) {
       case 'ready':
-        await this.handlePlayerReady(playerId);
+        await this.handlePlayerReady(playerId, action.data);
         break;
       case 'nominate':
         await this.handleNomination(playerId, action.data);
@@ -197,11 +197,23 @@ export class BOTCWorker extends BaseGameWorker {
   }
 
   /**
-   * 处理玩家准备
+   * 处理玩家准备（开始游戏）
+   * 可以接收配置更新（如说书人ID、剧本选择等）
    */
-  private async handlePlayerReady(playerId: string): Promise<void> {
+  private async handlePlayerReady(playerId: string, config?: any): Promise<void> {
     if (this.gameState.phase !== GamePhase.SETUP) {
       return;
+    }
+
+    // 如果传入了配置，更新游戏配置
+    if (config) {
+      if (config.storytellerId) {
+        this.gameConfig.storytellerId = config.storytellerId;
+        this.gameState.storyteller = config.storytellerId;
+      }
+      if (config.edition) {
+        this.gameConfig.edition = config.edition;
+      }
     }
 
     // 允许房主或说书人开始游戏
@@ -213,9 +225,16 @@ export class BOTCWorker extends BaseGameWorker {
       return;
     }
 
-    const playerCount = this.room.players.length;
-    if (playerCount < 5) {
-      this.sendToPlayer(playerId, 'actionError', { message: '至少需要5名玩家才能开始游戏' });
+    // 验证说书人已设置
+    if (!this.gameConfig.storytellerId) {
+      this.sendToPlayer(playerId, 'actionError', { message: '请先设置说书人' });
+      return;
+    }
+
+    // 排除说书人后计算参与游戏的玩家数
+    const gamePlayerCount = this.room.players.filter(p => p.id !== this.gameConfig.storytellerId).length;
+    if (gamePlayerCount < 5) {
+      this.sendToPlayer(playerId, 'actionError', { message: `排除说书人后至少需要5名玩家才能开始游戏，当前只有${gamePlayerCount}名` });
       return;
     }
 
@@ -227,14 +246,21 @@ export class BOTCWorker extends BaseGameWorker {
    */
   private async startGame(): Promise<void> {
     try {
-      // 分配角色
-      const playerIds = this.room.players.map(p => p.id).filter(id => id !== this.gameConfig.storytellerId);
+      // 分配角色 - 排除说书人（说书人作为观察者/主持人，不参与游戏）
+      const storytellerId = this.gameConfig.storytellerId;
+      const playerIds = this.room.players.map(p => p.id).filter(id => id !== storytellerId);
+      
+      if (playerIds.length < 5) {
+        this.sendToRoom('gameError', { message: `需要至少5名非说书人玩家才能开始游戏，当前只有${playerIds.length}名` });
+        return;
+      }
+      
       const roleAssignments = assignRoles(playerIds, this.gameConfig.edition);
       
       // 处理setup标记（Baron等角色的设置影响）
       handleSetupMarkers(roleAssignments, this.gameConfig.edition);
 
-      // 创建游戏玩家
+      // 创建游戏玩家（不包括说书人）
       let seatIndex = 0;
       playerIds.forEach(playerId => {
         const role = roleAssignments.get(playerId) || null;
@@ -252,7 +278,7 @@ export class BOTCWorker extends BaseGameWorker {
         .filter(p => !isEvilPlayer(p))
         .map(p => p.playerId);
 
-      // 发送角色信息给玩家
+      // 发送角色信息给参与游戏的玩家
       this.gamePlayers.forEach((gamePlayer, playerId) => {
         this.sendToPlayer(playerId, 'roleAssigned', {
           role: gamePlayer.role,
@@ -260,6 +286,17 @@ export class BOTCWorker extends BaseGameWorker {
           isEvil: isEvilPlayer(gamePlayer),
           nightInfo: null
         });
+      });
+
+      // 发送说书人信息（包含所有玩家的角色）
+      this.sendToPlayer(storytellerId, 'storytellerInfo', {
+        players: Array.from(this.gamePlayers.values()).map(p => ({
+          playerId: p.playerId,
+          playerName: this.getPlayerName(p.playerId),
+          role: p.role,
+          seat: p.seat,
+          team: p.role?.team
+        }))
       });
 
       // 发送游戏开始信息
@@ -402,10 +439,11 @@ export class BOTCWorker extends BaseGameWorker {
     this.gamePlayers.forEach(player => {
       player.hasActed = false;
       player.nominations = 0;
-      // 恢复死亡玩家的投票权（遗言票）
-      if (player.isDead) {
+      // 存活玩家恢复投票权
+      if (!player.isDead) {
         player.canVote = true;
       }
+      // 注意：死亡玩家的遗言票一生只能用一次，在killPlayer中给予，投票后消耗，这里不恢复
     });
 
     this.sendToRoom('dayStarted', {
@@ -429,8 +467,12 @@ export class BOTCWorker extends BaseGameWorker {
   private async endDay(): Promise<void> {
     this.clearTimers();
     
-    // 检查游戏是否结束
-    const gameEnd = checkGameEnd(Array.from(this.gamePlayers.values()));
+    // 检查游戏是否结束（白天结束时检查邪恶胜利条件）
+    const gameEnd = checkGameEnd(
+      Array.from(this.gamePlayers.values()),
+      true,
+      !!this.gameState.grimoire.mastermindTriggered
+    );
     if (gameEnd.isEnded) {
       await this.endGame(gameEnd.winner!, gameEnd.reason!);
       return;
@@ -601,10 +643,9 @@ export class BOTCWorker extends BaseGameWorker {
 
     voter.votesUsed++;
     
-    // 死亡玩家投票后消耗遗言票
-    if (voter.isDead) {
-      voter.canVote = false;
-    }
+    // 所有玩家投票后消耗投票权
+    // 存活玩家每天只能投票一次，死亡玩家使用遗言票（一生一次）
+    voter.canVote = false;
 
     this.sendToRoom('voteSubmitted', {
       playerId,
@@ -699,25 +740,26 @@ export class BOTCWorker extends BaseGameWorker {
       executedBy: this.getPlayerName(executedBy)
     });
 
-    // 检查幕后黑手 - 如果恶魔被处决且幕后黑手存活，游戏继续一天
+    // 检查幕后黑手 - 如果恶魔被处决且幕后黑手存活，游戏继续一天（不立即结束）
     if (player.role?.team === 'demon') {
       const mastermind = Array.from(this.gamePlayers.values()).find(p => p.role?.id === 'mastermind' && !p.isDead);
       if (mastermind) {
+        this.gameState.grimoire.mastermindTriggered = true;
         this.sendToRoom('gameMessage', {
           message: '幕后黑手生效，游戏继续一天',
           type: 'info'
         });
-        // 确保游戏继续推进，不直接return
-        const gameEnd = checkGameEnd(Array.from(this.gamePlayers.values()));
-        if (gameEnd.isEnded) {
-          await this.endGame(gameEnd.winner!, gameEnd.reason!);
-        }
+        // 幕后黑手生效时不检查游戏结束，继续推进游戏流程
         return;
       }
     }
 
-    // 检查游戏是否结束
-    const gameEnd = checkGameEnd(Array.from(this.gamePlayers.values()));
+    // 检查游戏是否结束（传递幕后黑手状态）
+    const gameEnd = checkGameEnd(
+      Array.from(this.gamePlayers.values()),
+      true,
+      !!this.gameState.grimoire.mastermindTriggered
+    );
     if (gameEnd.isEnded) {
       await this.endGame(gameEnd.winner!, gameEnd.reason!);
     }
@@ -878,7 +920,11 @@ export class BOTCWorker extends BaseGameWorker {
     });
 
     // 检查游戏是否结束（夜晚只检查善良胜利条件，邪恶胜利在白天结束时检查）
-    const gameEnd = checkGameEnd(Array.from(this.gamePlayers.values()), false);
+    const gameEnd = checkGameEnd(
+      Array.from(this.gamePlayers.values()),
+      false,
+      !!this.gameState.grimoire.mastermindTriggered
+    );
     if (gameEnd.isEnded) {
       await this.endGame(gameEnd.winner!, gameEnd.reason!);
       return;
@@ -992,33 +1038,93 @@ export class BOTCWorker extends BaseGameWorker {
   }
 
   /**
-   * 处理被动效果
+   * 处理被动效果 - 在夜晚结束时调用
    */
   private async processPassiveEffects(): Promise<void> {
     const allPlayers = Array.from(this.gamePlayers.values());
+    const alivePlayers = allPlayers.filter(p => !p.isDead);
 
     // 检查红颜（Scarlet Woman）- 恶魔死亡时成为恶魔
-    const aliveDemon = allPlayers.find(p => p.role?.team === Team.DEMON && !p.isDead);
+    const aliveDemon = alivePlayers.find(p => p.role?.team === Team.DEMON);
     if (!aliveDemon) {
-      const scarletWoman = allPlayers.find(p => p.role?.id === 'scarletwoman' && !p.isDead);
-      if (scarletWoman && allPlayers.filter(p => !p.isDead).length >= 5) {
-        // 红颜成为新的恶魔
-        const demonRole = allPlayers.find(p => p.role?.team === Team.DEMON && p.isDead)?.role;
-        if (demonRole) {
-          scarletWoman.role = demonRole;
+      const scarletWoman = alivePlayers.find(p => p.role?.id === 'scarletwoman');
+      // 红颜触发条件：5+存活非旅行者玩家
+      const aliveNonTravelerCount = alivePlayers.filter(p => p.role?.team !== Team.TRAVELER).length;
+      if (scarletWoman && aliveNonTravelerCount >= 5) {
+        // 红颜成为新的恶魔 - 使用当前剧本的恶魔角色
+        const edition = getEditionById(this.gameConfig.edition);
+        const demonRoleId = edition?.roles.find(r => {
+          const role = getRoleById(r);
+          return role?.team === Team.DEMON;
+        });
+        const newDemonRole = demonRoleId ? getRoleById(demonRoleId) : null;
+        if (newDemonRole) {
+          scarletWoman.role = { ...newDemonRole };
           scarletWoman.reminders.push('成为恶魔');
           this.sendToPlayer(scarletWoman.playerId, 'nightInfo', {
             role: scarletWoman.role.id,
             information: { message: '你成为了新的恶魔！' }
           });
+          this.sendToRoom('gameMessage', {
+            message: '红颜成为了新的恶魔',
+            type: 'warning'
+          });
         }
       }
     }
 
-    // 处理士兵的免疫
-    const soldier = allPlayers.find(p => p.role?.id === 'soldier' && !p.isDead);
+    // 处理士兵的免疫（士兵始终免疫恶魔攻击）
+    const soldier = alivePlayers.find(p => p.role?.id === 'soldier');
     if (soldier) {
       soldier.isProtected = true;
+    }
+
+    // 诺达希（No Dashii）的被动效果：邻座镇民中毒
+    const nodashii = alivePlayers.find(p => p.role?.id === 'nodashii');
+    if (nodashii) {
+      const nodashiiNeighbors = getNeighbors(nodashii.playerId, allPlayers);
+      for (const neighbor of nodashiiNeighbors) {
+        if (neighbor.role?.team === Team.TOWNSFOLK && !neighbor.isDead) {
+          // 清除之前的中毒标记避免重复
+          neighbor.reminders = neighbor.reminders.filter(r => r !== 'Poisoned');
+          neighbor.reminders.push('Poisoned');
+        }
+      }
+    }
+
+    // 维格莫提斯（Vigormortis）杀死的爪牙保留能力并毒化邻座镇民
+    // 此效果在applyNightEffects中通过reminders处理
+
+    // 处理甜心（Sweetheart）死亡效果：随机一名玩家醉酒
+    const deadSweetheart = allPlayers.find(p => p.role?.id === 'sweetheart' && p.isDead);
+    if (deadSweetheart && !deadSweetheart.reminders.includes(' sweetheartProcessed')) {
+      deadSweetheart.reminders.push('sweetheartProcessed');
+      const randomAlive = alivePlayers[Math.floor(Math.random() * alivePlayers.length)];
+      if (randomAlive) {
+        randomAlive.reminders.push('Drunk');
+        this.sendToPlayer(this.gameConfig.storytellerId, 'sweetheartEffect', {
+          targetId: randomAlive.playerId,
+          targetName: this.getPlayerName(randomAlive.playerId)
+        });
+      }
+    }
+
+    // 处理Tea Lady效果：如果两个邻座都是好人，他们不能死亡
+    const teaLady = alivePlayers.find(p => p.role?.id === 'tealady');
+    if (teaLady) {
+      const neighbors = getNeighbors(teaLady.playerId, allPlayers);
+      if (neighbors.length === 2 && neighbors.every(n => !isEvilPlayer(n))) {
+        for (const neighbor of neighbors) {
+          neighbor.isProtected = true;
+          neighbor.reminders.push('Protected');
+        }
+      }
+    }
+
+    // 处理Fool（愚者）的免死效果 - 标记为已使用
+    const fool = alivePlayers.find(p => p.role?.id === 'fool');
+    if (fool && fool.reminders.includes('Protected') && !fool.reminders.includes('foolUsed')) {
+      fool.reminders.push('foolUsed');
     }
   }
 
@@ -1063,8 +1169,59 @@ export class BOTCWorker extends BaseGameWorker {
       }
     }
 
-    // 处理乌鸦饲养员的死亡能力（任何死亡原因都触发）
-    if (player.role?.id === 'ravenkeeper') {
+    // 处理智者（Sage）的死亡能力 - 被恶魔杀死时看到两名玩家中的一名是恶魔
+    if (player.role?.id === 'sage' && cause === 'demon') {
+      player.isDead = true;
+      player.deathCause = cause;
+      player.canVote = true;
+      this.gameState.livingPlayers--;
+
+      this.sendToRoom('playerDied', {
+        playerId,
+        playerName: this.getPlayerName(playerId),
+        cause,
+        hasDeathAbility: true
+      });
+
+      const allPlayers = Array.from(this.gamePlayers.values());
+      const aliveEvil = allPlayers.filter(p => !p.isDead && isEvilPlayer(p) && p.playerId !== playerId);
+      const aliveGood = allPlayers.filter(p => !p.isDead && !isEvilPlayer(p) && p.playerId !== playerId);
+      
+      if (aliveEvil.length > 0 && aliveGood.length > 0) {
+        const randomEvil = aliveEvil[Math.floor(Math.random() * aliveEvil.length)];
+        const randomGood = aliveGood[Math.floor(Math.random() * aliveGood.length)];
+        const isComputerStoryteller = this.gameConfig.storytellerId?.startsWith('computer_') || false;
+        
+        if (isComputerStoryteller) {
+          // AI模式下随机排序并返回
+          const pair = Math.random() < 0.5 ? [randomEvil, randomGood] : [randomGood, randomEvil];
+          this.sendToPlayer(playerId, 'nightInfo', {
+            role: 'sage',
+            information: {
+              players: pair.map(p => ({
+                playerId: p.playerId,
+                playerName: this.getPlayerName(p.playerId)
+              })),
+              message: '恶魔是这两名玩家之一'
+            },
+            isDeathAbility: true
+          });
+        } else {
+          // 玩家模式下发送提示
+          this.sendToPlayer(playerId, 'deathAbilityPrompt', {
+            role: 'sage',
+            message: '你是智者，你被恶魔杀死了。恶魔是以下两名玩家之一。',
+            information: {
+              players: [randomEvil.playerId, randomGood.playerId].sort(() => Math.random() - 0.5)
+            }
+          });
+        }
+      }
+      return;
+    }
+
+    // 处理乌鸦饲养员的死亡能力（任何夜间死亡都触发）
+    if (player.role?.id === 'ravenkeeper' && cause !== 'execution') {
       player.isDead = true;
       player.deathCause = cause;
       player.canVote = true; // 获得遗言票
@@ -1081,17 +1238,32 @@ export class BOTCWorker extends BaseGameWorker {
       const allPlayers = Array.from(this.gamePlayers.values());
       const aliveOthers = allPlayers.filter(p => !p.isDead && p.playerId !== playerId);
       if (aliveOthers.length > 0) {
-        const randomPlayer = aliveOthers[Math.floor(Math.random() * aliveOthers.length)];
-        this.sendToPlayer(playerId, 'nightInfo', {
-          role: 'ravenkeeper',
-          information: { 
-            playerId: randomPlayer.playerId,
-            playerName: this.getPlayerName(randomPlayer.playerId),
-            roleName: randomPlayer.role?.name,
-            roleId: randomPlayer.role?.id
-          },
-          isDeathAbility: true
-        });
+        // 检查是否是AI说书人模式
+        const isComputerStoryteller = this.gameConfig.storytellerId?.startsWith('computer_') || false;
+        if (isComputerStoryteller) {
+          // AI模式下随机选择
+          const randomPlayer = aliveOthers[Math.floor(Math.random() * aliveOthers.length)];
+          this.sendToPlayer(playerId, 'nightInfo', {
+            role: 'ravenkeeper',
+            information: { 
+              playerId: randomPlayer.playerId,
+              playerName: this.getPlayerName(randomPlayer.playerId),
+              roleName: randomPlayer.role?.name,
+              roleId: randomPlayer.role?.id
+            },
+            isDeathAbility: true
+          });
+        } else {
+          // 玩家模式下，提示玩家选择目标
+          this.sendToPlayer(playerId, 'deathAbilityPrompt', {
+            role: 'ravenkeeper',
+            message: '你是乌鸦饲养员，你死了。请选择一名玩家来学习他的角色。',
+            availableTargets: aliveOthers.map(p => ({
+              playerId: p.playerId,
+              playerName: this.getPlayerName(p.playerId)
+            }))
+          });
+        }
       }
       return;
     }
@@ -1149,10 +1321,14 @@ export class BOTCWorker extends BaseGameWorker {
     const target = this.room.players.find(p => p.id === data.targetId);
     if (!sender || !target) return;
 
-    // 验证不能发给自己，且双方都在游戏中（游戏未开始时跳过gamePlayers检查）
+    // 验证不能发给自己
     if (playerId === data.targetId) return;
-    if (this.gameState.phase !== GamePhase.SETUP && 
-        (!this.gamePlayers.has(playerId) || !this.gamePlayers.has(data.targetId))) return;
+    // 游戏进行中时，验证发送者和接收者都在游戏中（或者说书人）
+    if (this.gameState.phase !== GamePhase.SETUP) {
+      const isSenderValid = this.gamePlayers.has(playerId) || playerId === this.gameConfig.storytellerId;
+      const isTargetValid = this.gamePlayers.has(data.targetId) || data.targetId === this.gameConfig.storytellerId;
+      if (!isSenderValid || !isTargetValid) return;
+    }
 
     // 发送给目标玩家
     this.sendToPlayer(data.targetId, 'privateMessage', {
@@ -1173,66 +1349,38 @@ export class BOTCWorker extends BaseGameWorker {
 
   /**
    * 电脑说书人自动处理夜晚阶段
-   * 当说书人是电脑时，自动推进游戏进程，模拟随机事件
+   * 支持三种模式：维持平衡、偏向好人、偏向坏人
+   * AI说书人不会选择严重破坏游戏平衡的选项
    */
   private autoStorytellerProcess(): void {
     // 检查是否配置了电脑说书人
     const isComputerStoryteller = this.gameConfig.storytellerId?.startsWith('computer_') || false;
     if (!isComputerStoryteller) return;
 
-    const delay = 5000 + Math.random() * 5000; // 5-10秒随机延迟
+    const delay = 3000 + Math.random() * 3000; // 3-6秒随机延迟
 
     const timer = setTimeout(async () => {
       // 如果游戏不在夜晚阶段，不处理
       if (this.gameState.phase !== GamePhase.FIRST_NIGHT && 
           this.gameState.phase !== GamePhase.NIGHT) return;
 
-      const nightActions: Array<{playerId: string; action: string; targetId: string; data: any}> = [];
-      
+      const allPlayers = Array.from(this.gamePlayers.values());
+      const aiBias = this.gameConfig.storytellerId?.includes('good') ? 'good' : 
+                     this.gameConfig.storytellerId?.includes('evil') ? 'evil' : 'neutral';
+
+      // 批量处理夜晚行动
       for (const playerId of this.gameState.nightOrder) {
         const player = this.gamePlayers.get(playerId);
         if (!player || player.isDead) continue;
 
-        // 电脑随机选择目标
-        const validTargets = Array.from(this.gamePlayers.values())
-          .filter(p => !p.isDead)
-          .map(p => p.playerId);
-        
-        if (validTargets.length === 0) continue;
-
-        const targetId = validTargets[Math.floor(Math.random() * validTargets.length)];
         const role = player.role;
-        
         if (!role) continue;
 
-        // 根据角色类型执行不同行动
-        let action = 'night_action';
-        const actionData: any = { targetId };
-
-        if (['slayer', 'sage', 'investigator', 'chef', 'empath', 'fortune_teller', 'undertaker', 'monk', 'ravenkeeper', 'virgin', 'soldier', 'mayor'].includes(role.id)) {
-          // 信息类角色：随机选择目标获取信息
-          actionData.roleId = role.id;
-        } else if (['poisoner', 'scarlet_woman', 'spy', 'baron'].includes(role.id)) {
-          // 邪恶角色：随机选择目标干扰
-          actionData.roleId = role.id;
-        } else if (role.id === 'washerwoman' || role.id === 'librarian') {
-          // 首夜信息角色：随机选择两个目标
-          const target2 = validTargets[Math.floor(Math.random() * validTargets.length)];
-          actionData.targetId2 = target2;
-        }
-
-        nightActions.push({
-          playerId,
-          action,
-          targetId,
-          data: actionData
-        });
-      }
-
-      // 批量处理夜晚行动
-      for (const na of nightActions) {
+        // AI智能选择目标
+        const actionData = this.selectAITarget(player, allPlayers, aiBias);
+        
         try {
-          await this.handleNightAction(na.playerId, na.data);
+          await this.handleNightAction(playerId, actionData);
         } catch (e) {
           // 忽略个别行动错误，继续处理下一个
         }
@@ -1242,6 +1390,248 @@ export class BOTCWorker extends BaseGameWorker {
       await this.processNightActions();
     }, delay);
     this.dayTimers.set('autoStoryteller', timer);
+  }
+
+  /**
+   * AI说书人智能选择目标
+   * 根据当前游戏平衡状态选择有利于弱势方的选项
+   */
+  private selectAITarget(player: GamePlayer, allPlayers: GamePlayer[], aiBias: string): any {
+    const alivePlayers = allPlayers.filter(p => !p.isDead);
+    const aliveGood = alivePlayers.filter(p => !isEvilPlayer(p));
+    const aliveEvil = alivePlayers.filter(p => isEvilPlayer(p));
+    
+    // 计算当前阵营优劣势
+    const goodAdvantage = aliveGood.length - aliveEvil.length;
+    const isGoodStrong = goodAdvantage > 1;
+    const isEvilStrong = goodAdvantage < 0;
+
+    const roleId = player.role?.id || '';
+    const actionData: any = { actionType: 'ability' };
+
+    // 根据角色和AI策略选择目标
+    switch (roleId) {
+      // 邪恶角色：根据策略选择目标
+      case 'poisoner':
+        actionData.targets = [this.selectPoisonerTarget(allPlayers, aiBias, isGoodStrong, isEvilStrong)];
+        break;
+      case 'imp':
+        actionData.targets = [this.selectDemonTarget(allPlayers, aiBias, isGoodStrong, isEvilStrong, 'imp')];
+        break;
+      case 'zombuul':
+        actionData.targets = [this.selectDemonTarget(allPlayers, aiBias, isGoodStrong, isEvilStrong, 'zombuul')];
+        break;
+      case 'pukka':
+        actionData.targets = [this.selectDemonTarget(allPlayers, aiBias, isGoodStrong, isEvilStrong, 'pukka')];
+        break;
+      case 'shabaloth':
+        { const targets = this.selectShabalothTargets(allPlayers, aiBias, isGoodStrong, isEvilStrong);
+          actionData.targets = targets; }
+        break;
+      case 'po':
+        actionData.targets = this.selectPoTargets(allPlayers, aiBias, isGoodStrong, isEvilStrong);
+        break;
+      case 'fanggu':
+        actionData.targets = [this.selectDemonTarget(allPlayers, aiBias, isGoodStrong, isEvilStrong, 'fanggu')];
+        break;
+      case 'nodashii':
+        actionData.targets = [this.selectDemonTarget(allPlayers, aiBias, isGoodStrong, isEvilStrong, 'nodashii')];
+        break;
+      case 'vortox':
+        actionData.targets = [this.selectDemonTarget(allPlayers, aiBias, isGoodStrong, isEvilStrong, 'vortox')];
+        break;
+      case 'vigormortis':
+        actionData.targets = [this.selectDemonTarget(allPlayers, aiBias, isGoodStrong, isEvilStrong, 'vigormortis')];
+        break;
+      case 'godfather':
+        actionData.targets = [this.selectDemonTarget(allPlayers, aiBias, isGoodStrong, isEvilStrong, 'godfather')];
+        break;
+      case 'assassin':
+        actionData.targets = [this.selectDemonTarget(allPlayers, aiBias, isGoodStrong, isEvilStrong, 'assassin')];
+        break;
+      case 'witch':
+        actionData.targets = [this.selectWitchTarget(allPlayers, aiBias, isGoodStrong, isEvilStrong)];
+        break;
+      case 'pithag':
+        { const pithagTarget = this.selectPitHagTarget(allPlayers, aiBias, isGoodStrong, isEvilStrong);
+          actionData.targets = [pithagTarget];
+          // AI说书人：如果场上已有存活恶魔，绝不变出第二个恶魔
+          const hasAliveDemon = allPlayers.some(p => p.role?.team === Team.DEMON && !p.isDead);
+          const safeOutsiderRoles = ['drunk', 'recluse', 'saint', 'tinker', 'moonchild', 'goon', 'mutant', 'sweetheart', 'barber', 'klutz'];
+          actionData.data = { 
+            character: hasAliveDemon 
+              ? safeOutsiderRoles[Math.floor(Math.random() * safeOutsiderRoles.length)]
+              : 'imp' // 如果恶魔已死，变出新恶魔保持游戏进行
+          }; }
+        break;
+      // 善良保护角色
+      case 'monk':
+        actionData.targets = [this.selectProtectTarget(allPlayers, aiBias, isGoodStrong, isEvilStrong)];
+        break;
+      case 'sailor':
+        actionData.targets = [this.selectProtectTarget(allPlayers, aiBias, isGoodStrong, isEvilStrong)];
+        break;
+      case 'innkeeper':
+        { const targets = this.selectInnkeeperTargets(allPlayers, aiBias, isGoodStrong, isEvilStrong);
+          actionData.targets = targets; }
+        break;
+      // 善良信息角色：随机选择（信息由技能处理器正确计算）
+      case 'empath':
+      case 'fortuneteller':
+      case 'washerwoman':
+      case 'librarian':
+      case 'investigator':
+      case 'chef':
+      case 'grandmother':
+      case 'clockmaker':
+      case 'dreamer':
+      case 'seamstress':
+      case 'chambermaid':
+      case 'mathematician':
+        { const randomTarget = this.getRandomAlivePlayer(allPlayers, player.playerId);
+          actionData.targets = randomTarget ? [randomTarget] : []; }
+        break;
+      // 默认：随机选择目标
+      default:
+        { const randomTarget = this.getRandomAlivePlayer(allPlayers, player.playerId);
+          actionData.targets = randomTarget ? [randomTarget] : []; }
+    }
+
+    return actionData;
+  }
+
+  /**
+   * 获取随机存活玩家（排除指定玩家）
+   */
+  private getRandomAlivePlayer(allPlayers: GamePlayer[], excludeId?: string): string | null {
+    const candidates = allPlayers.filter(p => !p.isDead && p.playerId !== excludeId);
+    if (candidates.length === 0) return null;
+    return candidates[Math.floor(Math.random() * candidates.length)].playerId;
+  }
+
+  /**
+   * AI选择投毒者目标
+   */
+  private selectPoisonerTarget(allPlayers: GamePlayer[], aiBias: string, isGoodStrong: boolean, isEvilStrong: boolean): string {
+    const aliveGood = allPlayers.filter(p => !p.isDead && !isEvilPlayer(p));
+    // 偏向坏人或平衡模式且好人强势：毒强势好人信息角色
+    if (aiBias === 'evil' || (aiBias === 'neutral' && isGoodStrong)) {
+      const priorityRoles = ['empath', 'fortuneteller', 'investigator', 'monk', 'slayer', 'ravenkeeper'];
+      const target = aliveGood.find(p => priorityRoles.includes(p.role?.id || ''));
+      if (target) return target.playerId;
+    }
+    return this.getRandomAlivePlayer(allPlayers) || aliveGood[0]?.playerId || '';
+  }
+
+  /**
+   * AI选择恶魔击杀目标
+   */
+  private selectDemonTarget(allPlayers: GamePlayer[], aiBias: string, isGoodStrong: boolean, isEvilStrong: boolean, demonType: string): string {
+    const aliveGood = allPlayers.filter(p => !p.isDead && !isEvilPlayer(p));
+    const aliveEvil = allPlayers.filter(p => !p.isDead && isEvilPlayer(p));
+    
+    // 偏向好人模式：避免击杀关键信息角色，优先击杀威胁较小的
+    if (aiBias === 'good') {
+      const lowPriority = aliveGood.filter(p => !['empath', 'fortuneteller', 'slayer', 'ravenkeeper'].includes(p.role?.id || ''));
+      if (lowPriority.length > 0) {
+        return lowPriority[Math.floor(Math.random() * lowPriority.length)].playerId;
+      }
+    }
+    
+    // 偏向坏人或平衡模式且好人强势：击杀关键好人角色
+    if (aiBias === 'evil' || (aiBias === 'neutral' && isGoodStrong)) {
+      const priorityRoles = ['empath', 'fortuneteller', 'slayer', 'monk', 'ravenkeeper', 'sage', 'mayor'];
+      const target = aliveGood.find(p => priorityRoles.includes(p.role?.id || ''));
+      if (target) return target.playerId;
+    }
+    
+    // 平衡模式且坏人强势：击杀边缘角色，给好人留机会
+    if (aiBias === 'neutral' && isEvilStrong) {
+      const lowPriority = aliveGood.filter(p => !['empath', 'fortuneteller'].includes(p.role?.id || ''));
+      if (lowPriority.length > 0) {
+        return lowPriority[Math.floor(Math.random() * lowPriority.length)].playerId;
+      }
+    }
+    
+    return this.getRandomAlivePlayer(allPlayers) || aliveGood[0]?.playerId || '';
+  }
+
+  /**
+   * AI选择沙巴洛斯目标
+   */
+  private selectShabalothTargets(allPlayers: GamePlayer[], aiBias: string, isGoodStrong: boolean, isEvilStrong: boolean): string[] {
+    const target1 = this.selectDemonTarget(allPlayers, aiBias, isGoodStrong, isEvilStrong, 'shabaloth');
+    const target2 = this.selectDemonTarget(allPlayers, aiBias, isGoodStrong, isEvilStrong, 'shabaloth');
+    return target1 === target2 ? [target1] : [target1, target2];
+  }
+
+  /**
+   * AI选择破的目标
+   */
+  private selectPoTargets(allPlayers: GamePlayer[], aiBias: string, isGoodStrong: boolean, isEvilStrong: boolean): string[] {
+    // Po的3杀模式：如果上一轮没有杀人，这轮杀3个
+    return [this.selectDemonTarget(allPlayers, aiBias, isGoodStrong, isEvilStrong, 'po')];
+  }
+
+  /**
+   * AI选择女巫诅咒目标
+   */
+  private selectWitchTarget(allPlayers: GamePlayer[], aiBias: string, isGoodStrong: boolean, isEvilStrong: boolean): string {
+    const aliveGood = allPlayers.filter(p => !p.isDead && !isEvilPlayer(p));
+    // 女巫诅咒经常提名的活跃好人
+    if (aiBias === 'evil' || (aiBias === 'neutral' && isGoodStrong)) {
+      return aliveGood[Math.floor(Math.random() * aliveGood.length)]?.playerId || '';
+    }
+    // 偏向好人：诅咒不太重要的目标
+    return aliveGood[Math.floor(Math.random() * Math.min(3, aliveGood.length))]?.playerId || '';
+  }
+
+  /**
+   * AI选择深渊女巫目标 - 关键：避免创造第二个恶魔
+   * 返回包含目标ID和选择角色的对象
+   */
+  private selectPitHagTarget(allPlayers: GamePlayer[], aiBias: string, isGoodStrong: boolean, isEvilStrong: boolean): string {
+    const aliveGood = allPlayers.filter(p => !p.isDead && !isEvilPlayer(p));
+    const demons = allPlayers.filter(p => p.role?.team === Team.DEMON);
+    
+    // AI说书人不会选择创造恶魔导致场上存在两个恶魔
+    // 如果场上已有恶魔存活，绝不将好人变成恶魔
+    const hasAliveDemon = demons.some(p => !p.isDead);
+    if (hasAliveDemon) {
+      // 选择一个非恶魔角色的目标
+      const target = aliveGood[Math.floor(Math.random() * aliveGood.length)];
+      return target?.playerId || this.getRandomAlivePlayer(allPlayers) || '';
+    }
+    
+    // 如果恶魔已死，变出一个新恶魔（让游戏继续）
+    if (!hasAliveDemon && demons.length > 0) {
+      const target = aliveGood[Math.floor(Math.random() * aliveGood.length)];
+      return target?.playerId || this.getRandomAlivePlayer(allPlayers) || '';
+    }
+    
+    return this.getRandomAlivePlayer(allPlayers) || '';
+  }
+
+  /**
+   * AI选择保护目标（僧侣等）
+   */
+  private selectProtectTarget(allPlayers: GamePlayer[], aiBias: string, isGoodStrong: boolean, isEvilStrong: boolean): string {
+    const aliveGood = allPlayers.filter(p => !p.isDead && !isEvilPlayer(p));
+    // 保护关键好人角色
+    const priorityRoles = ['empath', 'fortuneteller', 'slayer', 'mayor', 'ravenkeeper', 'sage'];
+    const target = aliveGood.find(p => priorityRoles.includes(p.role?.id || ''));
+    if (target) return target.playerId;
+    return this.getRandomAlivePlayer(allPlayers) || aliveGood[0]?.playerId || '';
+  }
+
+  /**
+   * AI选择酒馆老板目标
+   */
+  private selectInnkeeperTargets(allPlayers: GamePlayer[], aiBias: string, isGoodStrong: boolean, isEvilStrong: boolean): string[] {
+    const aliveGood = allPlayers.filter(p => !p.isDead && !isEvilPlayer(p));
+    const t1 = this.selectProtectTarget(allPlayers, aiBias, isGoodStrong, isEvilStrong);
+    let t2 = this.getRandomAlivePlayer(allPlayers, t1) || t1;
+    return [t1, t2];
   }
 
   /**
