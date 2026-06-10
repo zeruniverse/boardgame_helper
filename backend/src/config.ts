@@ -62,6 +62,50 @@ function loadConfig(): Config {
             },
             defaultStack: 1000
           }
+        },
+        "werewolf": {
+          displayName: "狼人杀",
+          maxPlayers: 12,
+          gameSpecificConfig: {
+            allowCustomRoles: true,
+            dayTime: 300,
+            nightTime: 180
+          }
+        },
+        "mafia": {
+          displayName: "杀人游戏",
+          maxPlayers: 16,
+          gameSpecificConfig: {
+            speakTime: 60,
+            actionTime: 60,
+            nightTime: 60,
+            lastWordRound: 3
+          }
+        },
+        "one-night-werewolf": {
+          displayName: "一夜终极狼人",
+          maxPlayers: 10,
+          gameSpecificConfig: {
+            discussionTime: 300,
+            allowRoleReveal: false
+          }
+        },
+        "avalon": {
+          displayName: "阿瓦隆",
+          maxPlayers: 10,
+          gameSpecificConfig: {
+            questDiscussionTime: 180,
+            allowRoleHints: true
+          }
+        },
+        "blood-on-the-clocktower": {
+          displayName: "血染钟楼",
+          maxPlayers: 20,
+          gameSpecificConfig: {
+            dayTime: 600,
+            nightTime: 300,
+            allowPrivateChat: true
+          }
         }
       }
     };

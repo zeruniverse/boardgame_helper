@@ -467,7 +467,7 @@ class OnuWerewolfWorker extends BaseGameWorker {
     });
 
     // 开始夜间阶段
-    setTimeout(() => this.startNightPhase(), 3000);
+    this.gameTimer = setTimeout(() => this.startNightPhase(), 3000);
   }
 
   private async startNightPhase(): Promise<void> {
@@ -857,7 +857,7 @@ class OnuWerewolfWorker extends BaseGameWorker {
     });
 
     // 5分钟后重置游戏
-    setTimeout(() => this.resetGame(), 5 * 60 * 1000);
+    this.gameTimer = setTimeout(() => this.resetGame(), 5 * 60 * 1000);
   }
 
   private getGameResult(): OnuWerewolfGameResult {
@@ -887,7 +887,7 @@ class OnuWerewolfWorker extends BaseGameWorker {
       players,
       centerCards: this.gameState.centerCards,
       votes,
-      lynched: lynched.map(playerId => this.gameState.players[playerId].seat)
+      lynched: lynched.map(playerId => this.gameState.players[playerId]?.seat ?? -1)
     };
   }
 
@@ -974,6 +974,14 @@ class OnuWerewolfWorker extends BaseGameWorker {
       message: '游戏已重置，可以开始新的游戏',
       gameInfo: this.getGameInfo()
     });
+  }
+
+  dispose(): void {
+    this.clearTimer();
+    if (this.skillTimeout) {
+      clearTimeout(this.skillTimeout);
+      this.skillTimeout = null;
+    }
   }
 }
 

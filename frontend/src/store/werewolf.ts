@@ -74,6 +74,7 @@ export const useWerewolfStore = defineStore('werewolf', {
     timeLeft: 0,
     timerInterval: null as ReturnType<typeof setInterval> | null,
     autoActionTimer: null as ReturnType<typeof setTimeout> | null,
+    socketListeners: [] as Array<[string, (...args: any[]) => void]>,
   }),
 
   getters: {
@@ -118,25 +119,44 @@ export const useWerewolfStore = defineStore('werewolf', {
 
   actions: {
     initSocket() {
+      // 防止重复连接
+      if (this.socket?.connected) {
+        console.log('Werewolf socket already connected, skipping init');
+        return;
+      }
+
+      // 清理之前的连接和监听器
       if (this.socket) {
-        this.socket.removeAllListeners();
-        this.socket.disconnect();
+        this.cleanup();
       }
 
       this.socket = io(SOCKET_URL);
+      this.socketListeners = [];
 
-      this.socket.on('connect', () => {
+      // 辅助函数：追踪监听器
+      const on = (event: string, handler: (...args: any[]) => void) => {
+        this.socket!.on(event, handler);
+        this.socketListeners.push([event, handler]);
+      };
+
+      on('connect', () => {
         console.log('Werewolf socket connected');
         this.connected = true;
       });
 
-      this.socket.on('disconnect', () => {
+      on('connect_error', (error: Error) => {
+        console.error('Werewolf socket connection error:', error);
+        this.connected = false;
+        this.addSystemMessage(`连接错误：${error.message}`);
+      });
+
+      on('disconnect', () => {
         console.log('Werewolf socket disconnected');
         this.connected = false;
       });
 
       // 房间事件
-      this.socket.on('room_joined', (data: { room: WerewolfRoomState; player?: any; playerId?: string }) => {
+      on('room_joined', (data: { room: WerewolfRoomState; player?: any; playerId?: string }) => {
         this.room = data.room;
         this.currentUserId = data.player?.id || data.playerId || this.currentUserId;
         this.currentRoomId = data.room.id;
@@ -144,7 +164,7 @@ export const useWerewolfStore = defineStore('werewolf', {
         if (data.player?.nickname || data.player?.name) localStorage.setItem('werewolf_nickname', data.player.nickname || data.player.name);
       });
 
-      this.socket.on('room_update', (data: any) => {
+      on('room_update', (data: any) => {
         // 后端发送的是gameInfo格式，需要转换
         if (data.gameInfo) {
           this.updateGameStateFromGameInfo(data.gameInfo);
@@ -157,7 +177,7 @@ export const useWerewolfStore = defineStore('werewolf', {
         }
       });
 
-      this.socket.on('room_ready', (data: any) => {
+      on('room_ready', (data: any) => {
         console.log('收到狼人杀房间room_ready事件', data);
         if (data.gameInfo) {
           this.updateGameStateFromGameInfo(data.gameInfo);
@@ -165,7 +185,7 @@ export const useWerewolfStore = defineStore('werewolf', {
       });
 
       // 游戏事件 - 后端发送 {message, gameInfo}
-      this.socket.on('game_started', (data: { message: string; gameInfo: any }) => {
+      on('game_started', (data: { message: string; gameInfo: any }) => {
         console.log('游戏开始事件:', data);
         if (data.gameInfo) {
           this.updateGameStateFromGameInfo(data.gameInfo);
@@ -179,7 +199,7 @@ export const useWerewolfStore = defineStore('werewolf', {
       });
 
       // 角色分配事件 - 私发
-      this.socket.on('character_assigned', (data: { character: string; secret: WerewolfSecret }) => {
+      on('character_assigned', (data: { character: string; secret: WerewolfSecret }) => {
         console.log('收到角色分配:', data.character);
         if (data.secret) {
           this.playerSecret = data.secret;
@@ -187,12 +207,12 @@ export const useWerewolfStore = defineStore('werewolf', {
       });
 
       // secret_update - 备用
-      this.socket.on('secret_update', (secret: WerewolfSecret) => {
+      on('secret_update', (secret: WerewolfSecret) => {
         this.playerSecret = secret;
       });
 
       // 状态变更 - 后端发送 {status, day, timeout, message, gameInfo}
-      this.socket.on('status_changed', (data: any) => {
+      on('status_changed', (data: any) => {
         console.log('状态变更:', data.status);
         if (data.gameInfo) {
           this.updateGameStateFromGameInfo(data.gameInfo);
@@ -209,14 +229,14 @@ export const useWerewolfStore = defineStore('werewolf', {
       });
 
       // game_info - 游戏信息更新
-      this.socket.on('game_info', (data: any) => {
+      on('game_info', (data: any) => {
         if (data.gameInfo) {
           this.updateGameStateFromGameInfo(data.gameInfo);
         }
       });
 
       // 游戏结束 - 后端发送 {winner, reason}
-      this.socket.on('game_end', (data: { winner: 'werewolf' | 'villager'; reason: string }) => {
+      on('game_end', (data: { winner: 'werewolf' | 'villager'; reason: string }) => {
         console.log('游戏结束:', data);
         if (this.gameState) {
           this.gameState.winner = data.winner;
@@ -228,7 +248,7 @@ export const useWerewolfStore = defineStore('werewolf', {
       });
 
       // show_message - 系统消息展示
-      this.socket.on('show_message', (data: any) => {
+      on('show_message', (data: any) => {
         const message = typeof data === 'string' ? data : (data.message || '');
         if (message) {
           this.addSystemMessage(message);
@@ -236,12 +256,15 @@ export const useWerewolfStore = defineStore('werewolf', {
       });
 
       // 聊天事件
-      this.socket.on('chat_message', (message: any) => {
+      on('chat_message', (message: any) => {
         this.messages.push(message);
+        if (this.messages.length > 500) {
+          this.messages = this.messages.slice(-500);
+        }
       });
 
       // 系统消息
-      this.socket.on('system_message', (data: any) => {
+      on('system_message', (data: any) => {
         const message = typeof data === 'string' ? data : (data.message || '');
         if (message) {
           this.addSystemMessage(message);
@@ -249,19 +272,19 @@ export const useWerewolfStore = defineStore('werewolf', {
       });
 
       // 预言家验人结果 - 私发
-      this.socket.on('seer_result', (data: { target: number; isWerewolf: boolean; resultText: string }) => {
+      on('seer_result', (data: { target: number; isWerewolf: boolean; resultText: string }) => {
         this.addSystemMessage(`验人结果：${data.target}号是${data.resultText}`);
       });
 
       // 错误事件
-      this.socket.on('error', (error: any) => {
+      on('error', (error: any) => {
         const msg = typeof error === 'string' ? error : (error.message || '未知错误');
         this.errorMessage = msg;
         this.addSystemMessage(`错误：${msg}`);
       });
 
       // 游戏状态同步（用于重连）
-      this.socket.on('game_state_sync', (data: {
+      on('game_state_sync', (data: {
         gameInfo: any;
         secretInfo: WerewolfSecret | null;
         playerInfo: any;
@@ -279,7 +302,7 @@ export const useWerewolfStore = defineStore('werewolf', {
       });
 
       // 心跳响应
-      this.socket.on('heartbeat_response', (data: any) => {
+      on('heartbeat_response', (_data: any) => {
         // 忽略
       });
     },
@@ -371,7 +394,11 @@ export const useWerewolfStore = defineStore('werewolf', {
       this.clearTimer();
       this.clearAutoActionTimer();
       if (this.socket) {
-        this.socket.removeAllListeners();
+        // 遍历移除所有追踪的监听器
+        for (const [event, handler] of this.socketListeners) {
+          this.socket.off(event, handler);
+        }
+        this.socketListeners = [];
         this.socket.disconnect();
         this.socket = null;
       }
@@ -570,6 +597,9 @@ export const useWerewolfStore = defineStore('werewolf', {
         timestamp: Date.now(),
         channel: 'all'
       });
+      if (this.messages.length > 500) {
+        this.messages = this.messages.slice(-500);
+      }
     },
 
     startTimer() {

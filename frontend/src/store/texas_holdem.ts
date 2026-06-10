@@ -25,7 +25,8 @@ export const useTexasHoldemStore = defineStore('texas_holdem', {
     hostId: '',
     allowSystemDealing: true, // 是否系统发牌模式，影响线下分池UI显示
     // 游戏阶段：'idle'(未开始/已结束), 'playing'(游戏中), 'distribution'(分池中)
-    stage: 'idle' as 'idle' | 'playing' | 'distribution'
+    stage: 'idle' as 'idle' | 'playing' | 'distribution',
+    socketListeners: [] as Array<[string, (...args: any[]) => void]>,
   }),
 
   getters: {
@@ -56,8 +57,18 @@ export const useTexasHoldemStore = defineStore('texas_holdem', {
       const mainStore = useMainStore();
       if (!mainStore.socket) return;
 
+      // 先移除之前的监听器，防止重复注册
+      this.removeSocketListeners();
+      this.socketListeners = [];
+
+      // 辅助函数：追踪监听器
+      const on = (event: string, handler: (...args: any[]) => void) => {
+        mainStore.socket!.on(event, handler);
+        this.socketListeners.push([event, handler]);
+      };
+
       // 接收手牌
-      mainStore.socket.on('deal_hand', (data: { hand: string[] }) => {
+      on('deal_hand', (data: { hand: string[] }) => {
         this.hand = data.hand;
         // 游戏开始
         this.gameActive = true;
@@ -66,7 +77,7 @@ export const useTexasHoldemStore = defineStore('texas_holdem', {
       });
 
       // 接收公共游戏状态
-      mainStore.socket.on('game_state', (data: { 
+      on('game_state', (data: { 
         communityCards: string[]; 
         pot: number; 
         bets: Record<string, number>; 
@@ -91,7 +102,7 @@ export const useTexasHoldemStore = defineStore('texas_holdem', {
       });
 
       // 请求玩家行动
-      mainStore.socket.on('action_request', (data: { playerId: string; seconds?: number }) => {
+      on('action_request', (data: { playerId: string; seconds?: number }) => {
         this.currentTurn = data.playerId;
         // 设置并开始倒计时（秒）
         this.timeLeft = data.seconds ?? 30;
@@ -99,7 +110,7 @@ export const useTexasHoldemStore = defineStore('texas_holdem', {
       });
 
       // 游戏启动
-      mainStore.socket.on('game_started', () => {
+      on('game_started', () => {
         // 新一局开始，重置公共牌和投注信息，手牌由deal_hand事件设置
         this.communityCards = [];
         this.bets = {};
@@ -112,7 +123,7 @@ export const useTexasHoldemStore = defineStore('texas_holdem', {
       });
 
       // 分奖池阶段
-      mainStore.socket.on('distribution_start', () => {
+      on('distribution_start', () => {
         this.timeLeft = 0;
         if (this.timerId) {
           clearInterval(this.timerId);
@@ -123,7 +134,7 @@ export const useTexasHoldemStore = defineStore('texas_holdem', {
       });
 
       // 游戏结束
-      mainStore.socket.on('game_over', () => {
+      on('game_over', () => {
         this.gameActive = false;
         this.timeLeft = 0;
         if (this.timerId) {
@@ -135,22 +146,22 @@ export const useTexasHoldemStore = defineStore('texas_holdem', {
         // 为了方便复盘，保留手牌和公共牌显示，不在这里清空
         // 手牌和公共牌将在下一局游戏开始时清空
         // 同时添加系统提示消息
-        this.messages.push({ message: '[系统] 游戏结束，请点击开始游戏开始新局' });
+        this.addMessage({ message: '[系统] 游戏结束，请点击开始游戏开始新局' });
       });
 
       // 聊天广播
-      mainStore.socket.on('chat_broadcast', (data: any) => {
-        this.messages.push(data);
+      on('chat_broadcast', (data: any) => {
+        this.addMessage(data);
       });
 
       // 错误消息 - 支持字符串和对象两种格式
-      mainStore.socket.on('error', (msg: string | { message?: string }) => {
+      on('error', (msg: string | { message?: string }) => {
         const text = typeof msg === 'string' ? msg : (msg.message || '未知错误');
-        this.messages.push({ message: `[系统] ${text}` });
+        this.addMessage({ message: `[系统] ${text}` });
       });
 
       // 房间更新 - 使用Room数据结构中的正确字段
-      mainStore.socket.on('room_update', (data: any) => {
+      on('room_update', (data: any) => {
         if (data.players) {
           this.players = data.players;
         }
@@ -176,12 +187,12 @@ export const useTexasHoldemStore = defineStore('texas_holdem', {
       });
 
       // 监听时间更新，设置剩余时间
-      mainStore.socket.on('time_update', (data: { seconds: number }) => {
+      on('time_update', (data: { seconds: number }) => {
         this.timeLeft = data.seconds;
       });
 
       // 监听被踢出事件
-      mainStore.socket.on('kicked_out', (data: { message: string }) => {
+      on('kicked_out', (data: { message: string }) => {
         alert(data.message);
         // 清理本地存储
         localStorage.removeItem('texas_currentRoom');
@@ -196,13 +207,13 @@ export const useTexasHoldemStore = defineStore('texas_holdem', {
       });
 
       // 监听房间准备完成事件
-      mainStore.socket.on('room_ready', (data: any) => {
+      on('room_ready', (data: any) => {
         console.log('房间准备完成', data);
         // 房间准备完成，可以开始游戏
       });
 
       // 监听加入房间成功事件，获取后端分配的playerId
-      mainStore.socket.on('room_joined', (data: { room: any; player: any; isHost: boolean }) => {
+      on('room_joined', (data: { room: any; player: any; isHost: boolean }) => {
         if (data.player && data.player.id) {
           this.playerId = data.player.id;
           localStorage.setItem('texas_playerId', data.player.id);
@@ -214,6 +225,24 @@ export const useTexasHoldemStore = defineStore('texas_holdem', {
           this.roomLocked = data.room.locked === true;
         }
       });
+    },
+
+    // 移除所有追踪的socket监听器
+    removeSocketListeners() {
+      const mainStore = useMainStore();
+      if (!mainStore.socket) return;
+      for (const [event, handler] of this.socketListeners) {
+        mainStore.socket.off(event, handler);
+      }
+      this.socketListeners = [];
+    },
+
+    // 添加消息（限制最多500条）
+    addMessage(data: any) {
+      this.messages.push(data);
+      if (this.messages.length > 500) {
+        this.messages = this.messages.slice(-500);
+      }
     },
 
     // 加入房间
@@ -306,6 +335,7 @@ export const useTexasHoldemStore = defineStore('texas_holdem', {
 
     // 清理所有状态和监听器
     cleanup() {
+      this.removeSocketListeners();
       this.resetGameState();
       this.messages = [];
       this.currentRoom = null;
@@ -350,6 +380,7 @@ export const useTexasHoldemStore = defineStore('texas_holdem', {
           this.socket.emit('leave_room', { roomId: this.currentRoom, playerId: this.playerId });
         }
         
+        this.removeSocketListeners();
         this.currentRoom = null;
         this.nickname = '';
         this.playerId = '';

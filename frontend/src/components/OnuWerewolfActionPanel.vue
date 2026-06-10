@@ -635,6 +635,10 @@ const skipSkill = () => {
 
 // C2 fix: 传递座位号而非玩家ID
 const vote = (targetSeat: number) => {
+  if (targetSeat === undefined || targetSeat === null || targetSeat < 0) {
+    console.error('Invalid vote target:', targetSeat);
+    return;
+  }
   emit('game-action', 'vote', { target: targetSeat });
 };
 

@@ -320,7 +320,8 @@ export class BOTCWorker extends BaseGameWorker {
 
     // 如果没有夜晚行动，直接进入白天
     if (this.gameState.nightOrder.length === 0) {
-      setTimeout(() => this.startDay(), 2000);
+      const timer = setTimeout(() => this.startDay(), 2000);
+      this.dayTimers.set('nightToDay', timer);
     } else {
       // 如果配置了电脑说书人，自动处理夜晚
       this.autoStorytellerProcess();
@@ -702,6 +703,15 @@ export class BOTCWorker extends BaseGameWorker {
     if (player.role?.team === 'demon') {
       const mastermind = Array.from(this.gamePlayers.values()).find(p => p.role?.id === 'mastermind' && !p.isDead);
       if (mastermind) {
+        this.sendToRoom('gameMessage', {
+          message: '幕后黑手生效，游戏继续一天',
+          type: 'info'
+        });
+        // 确保游戏继续推进，不直接return
+        const gameEnd = checkGameEnd(Array.from(this.gamePlayers.values()));
+        if (gameEnd.isEnded) {
+          await this.endGame(gameEnd.winner!, gameEnd.reason!);
+        }
         return;
       }
     }
@@ -760,7 +770,8 @@ export class BOTCWorker extends BaseGameWorker {
     });
 
     if (pendingPlayers.length === 0) {
-      setTimeout(() => this.processNightActions(), 2000);
+      const timer = setTimeout(() => this.processNightActions(), 2000);
+      this.dayTimers.set('pendingNightActions', timer);
     }
   }
 
@@ -874,7 +885,8 @@ export class BOTCWorker extends BaseGameWorker {
     }
 
     // 进入白天
-    setTimeout(() => this.startDay(), 3000);
+    const timer = setTimeout(() => this.startDay(), 3000);
+    this.dayTimers.set('processNightToDay', timer);
   }
 
   /**
@@ -1170,7 +1182,7 @@ export class BOTCWorker extends BaseGameWorker {
 
     const delay = 5000 + Math.random() * 5000; // 5-10秒随机延迟
 
-    setTimeout(async () => {
+    const timer = setTimeout(async () => {
       // 如果游戏不在夜晚阶段，不处理
       if (this.gameState.phase !== GamePhase.FIRST_NIGHT && 
           this.gameState.phase !== GamePhase.NIGHT) return;
@@ -1229,6 +1241,7 @@ export class BOTCWorker extends BaseGameWorker {
       // 处理完所有行动后，自动进入白天
       await this.processNightActions();
     }, delay);
+    this.dayTimers.set('autoStoryteller', timer);
   }
 
   /**
@@ -1277,7 +1290,7 @@ export class BOTCWorker extends BaseGameWorker {
         canVote: p.canVote,
         seat: p.seat,
         hasActed: p.hasActed,
-        role: p.role,
+        role: p.isDead ? p.role : undefined,
         reminders: p.reminders,
         nominations: p.nominations
       })),
@@ -1295,12 +1308,20 @@ export class BOTCWorker extends BaseGameWorker {
   }
 
   /**
+   * 清理资源 - 在Worker终止时调用
+   */
+  dispose(): void {
+    this.clearTimers();
+    this.privateChatMessages.clear();
+  }
+
+  /**
    * 发送消息到房间
    */
   protected sendToRoom(event: string, data: any): void {
     if (parentPort) {
       parentPort.postMessage({
-        type: 'sendToRoom',
+        type: 'room_broadcast',
         roomId: this.room.id,
         event,
         data
@@ -1314,7 +1335,7 @@ export class BOTCWorker extends BaseGameWorker {
   protected sendToPlayer(playerId: string, event: string, data: any): void {
     if (parentPort) {
       parentPort.postMessage({
-        type: 'sendToPlayer',
+        type: 'player_message',
         roomId: this.room.id,
         playerId,
         event,

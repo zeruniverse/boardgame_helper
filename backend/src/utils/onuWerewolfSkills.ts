@@ -412,14 +412,14 @@ export class OnuDoppelgangerSkill extends OnuBaseSkill {
 export class OnuWitchSkill extends OnuBaseSkill {
   canUse(selection?: OnuWerewolfSelection): boolean {
     if (!selection) return false;
-    // 阶段1：查看一张中心卡（无需选择玩家）
-    if (selection.cards && selection.cards.length === 1) {
-      return selection.cards[0] >= 0 && selection.cards[0] <= 2;
-    }
-    // 阶段2：选择是否将看到的卡与某玩家交换
+    // 阶段2：选择是否将看到的卡与某玩家交换（优先判断，避免与阶段1条件重叠）
     if (selection.cards && selection.cards.length === 1 && selection.players && selection.players.length === 1) {
       const target = this.getPlayerBySeat(selection.players[0]);
-      return target !== undefined && !target.shielded;
+      return target !== undefined && !target.shielded && selection.cards[0] >= 0 && selection.cards[0] <= 2;
+    }
+    // 阶段1：查看一张中心卡（仅选择卡牌，无玩家）
+    if (selection.cards && selection.cards.length === 1 && (!selection.players || selection.players.length === 0)) {
+      return selection.cards[0] >= 0 && selection.cards[0] <= 2;
     }
     return false;
   }

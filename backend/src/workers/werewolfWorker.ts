@@ -46,6 +46,7 @@ interface GameTaskResponse {
 
 class WerewolfWorker extends BaseGameWorker {
   private config!: WerewolfConfig;
+  private timers: NodeJS.Timeout[] = [];
 
   constructor() {
     super();
@@ -459,9 +460,9 @@ class WerewolfWorker extends BaseGameWorker {
 
     const readyPlayers = this.room.players.filter(p => p.gameMetadata?.ready);
 
-    if (readyPlayers.length < this.gameState.needingCharacters.length) {
+    if (readyPlayers.length !== this.gameState.needingCharacters.length) {
       this.sendToPlayer(playerId, 'error', {
-        message: `需要 ${this.gameState.needingCharacters.length} 名玩家，当前只有 ${readyPlayers.length} 名玩家准备就绪`
+        message: `需要 ${this.gameState.needingCharacters.length} 名玩家，当前有 ${readyPlayers.length} 名玩家准备就绪`
       });
       return;
     }
@@ -473,7 +474,7 @@ class WerewolfWorker extends BaseGameWorker {
     // 分配角色
     const characters = shuffleArray([...this.gameState.needingCharacters]);
 
-    readyPlayers.forEach((player, index) => {
+    readyPlayers.slice(0, this.gameState.needingCharacters.length).forEach((player, index) => {
       const character = characters[index];
       const gamePlayer: WerewolfPlayerState = {
         id: player.id,
@@ -662,7 +663,7 @@ class WerewolfWorker extends BaseGameWorker {
       });
 
       // 延迟进入下一状态
-      setTimeout(() => {
+      this.saveTimeout(() => {
         const context = this.createContext();
         stateHandlers[GameStatus.WOLF_KILL].endOfState(this.gameState, context);
       }, 2000);
@@ -699,7 +700,7 @@ class WerewolfWorker extends BaseGameWorker {
     if (targetIndex <= 0) {
       this.sendToPlayer(playerId, 'system_message', { message: '你选择放弃验人' });
       // 结束预言家阶段
-      setTimeout(() => {
+      this.saveTimeout(() => {
         const context = this.createContext();
         stateHandlers[GameStatus.SEER_CHECK].endOfState(this.gameState, context);
       }, 1000);
@@ -738,7 +739,7 @@ class WerewolfWorker extends BaseGameWorker {
     });
 
     // 结束预言家阶段
-    setTimeout(() => {
+    this.saveTimeout(() => {
       const context = this.createContext();
       stateHandlers[GameStatus.SEER_CHECK].endOfState(this.gameState, context);
     }, 2000);
@@ -766,7 +767,7 @@ class WerewolfWorker extends BaseGameWorker {
     if (actionType === 'skip' || actionType === 'pass') {
       this.sendToPlayer(playerId, 'system_message', { message: '你选择跳过' });
       // 结束女巫阶段
-      setTimeout(() => {
+      this.saveTimeout(() => {
         const context = this.createContext();
         stateHandlers[GameStatus.WITCH_ACT].endOfState(this.gameState, context);
       }, 1000);
@@ -796,7 +797,7 @@ class WerewolfWorker extends BaseGameWorker {
       });
 
       // 结束女巫阶段
-      setTimeout(() => {
+      this.saveTimeout(() => {
         const context = this.createContext();
         stateHandlers[GameStatus.WITCH_ACT].endOfState(this.gameState, context);
       }, 2000);
@@ -849,7 +850,7 @@ class WerewolfWorker extends BaseGameWorker {
       });
 
       // 结束女巫阶段
-      setTimeout(() => {
+      this.saveTimeout(() => {
         const context = this.createContext();
         stateHandlers[GameStatus.WITCH_ACT].endOfState(this.gameState, context);
       }, 2000);
@@ -858,7 +859,7 @@ class WerewolfWorker extends BaseGameWorker {
 
     // 未知操作类型，视为跳过
     this.sendToPlayer(playerId, 'system_message', { message: '未知操作，视为跳过' });
-    setTimeout(() => {
+    this.saveTimeout(() => {
       const context = this.createContext();
       stateHandlers[GameStatus.WITCH_ACT].endOfState(this.gameState, context);
     }, 1000);
@@ -919,7 +920,7 @@ class WerewolfWorker extends BaseGameWorker {
     }
 
     // 结束守卫阶段
-    setTimeout(() => {
+    this.saveTimeout(() => {
       const context = this.createContext();
       stateHandlers[GameStatus.GUARD_PROTECT].endOfState(this.gameState, context);
     }, 2000);
@@ -978,7 +979,7 @@ class WerewolfWorker extends BaseGameWorker {
     }
 
     // 结束猎人开枪阶段
-    setTimeout(() => {
+    this.saveTimeout(() => {
       const context = this.createContext();
       stateHandlers[GameStatus.HUNTER_SHOOT].endOfState(this.gameState, context);
     }, 2000);
@@ -1005,7 +1006,10 @@ class WerewolfWorker extends BaseGameWorker {
       if (actionData.targetId !== null && actionData.targetId !== undefined && actionData.targetId !== '') {
         const targetId = String(actionData.targetId);
         const target = this.gameState.players[targetId];
-        if (target && !target.isAlive) { return; }
+        if (target && !target.isAlive) {
+          this.sendToPlayer(playerId, 'error', { message: '目标玩家已经死亡，无法投票' });
+          return;
+        }
         if (target) {
           targetIndex = target.index;
         }
@@ -1053,7 +1057,7 @@ class WerewolfWorker extends BaseGameWorker {
 
     if (allVoted) {
       this.sendToRoom('system_message', { message: '所有人都已投票' });
-      setTimeout(() => {
+      this.saveTimeout(() => {
         const context = this.createContext();
         if (this.gameState.status === GameStatus.EXILE_VOTE) {
           stateHandlers[GameStatus.EXILE_VOTE].endOfState(this.gameState, context);
@@ -1082,13 +1086,13 @@ class WerewolfWorker extends BaseGameWorker {
       });
 
       // 推进到下一个发言者
-      setTimeout(() => {
+      this.saveTimeout(() => {
         const context = this.createContext();
         stateHandlers[GameStatus.DAY_DISCUSS].endOfState(this.gameState, context);
       }, 1000);
     } else if (this.gameState.status === GameStatus.SHERIFF_SPEECH) {
       // 警长竞选发言结束
-      setTimeout(() => {
+      this.saveTimeout(() => {
         const context = this.createContext();
         stateHandlers[GameStatus.SHERIFF_SPEECH].endOfState(this.gameState, context);
       }, 1000);
@@ -1165,7 +1169,7 @@ class WerewolfWorker extends BaseGameWorker {
     }
 
     // 结束警长指派阶段
-    setTimeout(() => {
+    this.saveTimeout(() => {
       const context = this.createContext();
       stateHandlers[GameStatus.SHERIFF_ASSIGN].endOfState(this.gameState, context);
     }, 2000);
@@ -1189,7 +1193,7 @@ class WerewolfWorker extends BaseGameWorker {
     });
 
     // 结束遗言阶段
-    setTimeout(() => {
+    this.saveTimeout(() => {
       const context = this.createContext();
       stateHandlers[GameStatus.LEAVE_MSG].endOfState(this.gameState, context);
     }, 3000);
@@ -1262,6 +1266,24 @@ class WerewolfWorker extends BaseGameWorker {
         winner: winner === 'WEREWOLF' ? 'werewolf' : 'villager',
         reason: winner === 'WEREWOLF' ? '狼人数量大于或等于好人数量' : '所有狼人已死亡'
       });
+    }
+  }
+
+  private saveTimeout(callback: () => void, ms: number): NodeJS.Timeout {
+    const timer = setTimeout(() => {
+      this.timers = this.timers.filter(t => t !== timer);
+      callback();
+    }, ms);
+    this.timers.push(timer);
+    return timer;
+  }
+
+  dispose(): void {
+    this.timers.forEach(timer => clearTimeout(timer));
+    this.timers = [];
+    if (this.gameState.timer) {
+      clearTimeout(this.gameState.timer);
+      this.gameState.timer = undefined;
     }
   }
 }

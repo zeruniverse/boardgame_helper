@@ -160,6 +160,7 @@ const ROLE_NAMES: Record<Role, string> = {
 class AvalonWorker extends BaseGameWorker {
   private config!: AvalonConfig;
   private actionTimer: NodeJS.Timeout | null = null;
+  private assassinationTimer: NodeJS.Timeout | null = null;
 
   constructor() {
     super();
@@ -753,8 +754,14 @@ class AvalonWorker extends BaseGameWorker {
       reds: this.getRedPlayers()
     };
 
+    // 清除之前的刺杀定时器（如果有）
+    if (this.assassinationTimer) {
+      clearTimeout(this.assassinationTimer);
+      this.assassinationTimer = null;
+    }
+
     // 10秒后自动通过
-    setTimeout(() => {
+    this.assassinationTimer = setTimeout(() => {
       this.autoApproveAssassination();
     }, 10000);
 
@@ -768,7 +775,10 @@ class AvalonWorker extends BaseGameWorker {
     const state = this.gameState as AvalonGameState;
     const info = state.assassinateInfo;
     
-    if (!info.approvers.includes(playerId) || state.status === GameStatus.ASSASSINATE || state.status === GameStatus.OVER) {
+    if (!info.approvers.includes(playerId) || state.status === GameStatus.OVER) {
+      return;
+    }
+    if (info.approvers.length === 0) {
       return;
     }
 
@@ -1108,7 +1118,7 @@ class AvalonWorker extends BaseGameWorker {
         break;
       case GameStatus.ACTION:
         // 行动超时，自动选择成功
-        state.operators.forEach(id => {
+        [...state.operators].forEach(id => {
           this.handleTakeAction(id, true);
         });
         break;
@@ -1433,6 +1443,17 @@ class AvalonWorker extends BaseGameWorker {
       [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
     }
     return shuffled;
+  }
+
+  dispose(): void {
+    if (this.actionTimer) {
+      clearTimeout(this.actionTimer);
+      this.actionTimer = null;
+    }
+    if (this.assassinationTimer) {
+      clearTimeout(this.assassinationTimer);
+      this.assassinationTimer = null;
+    }
   }
 }
 

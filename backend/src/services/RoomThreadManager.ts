@@ -26,7 +26,7 @@ export class RoomThreadManager {
   private tasks: Map<string, { resolve: (value: any) => void; reject: (reason: any) => void; timeout: NodeJS.Timeout }> = new Map();
   private roomData: Map<string, Room> = new Map();
   private startingPromises: Map<string, Promise<Room | null>> = new Map();
-  private cleanupInterval: NodeJS.Timeout;
+  private cleanupInterval: NodeJS.Timeout | null;
   private onMessage?: (data: any) => void;
 
   constructor(eventHandler?: (data: any) => void) {
@@ -293,7 +293,8 @@ export class RoomThreadManager {
   // 关闭所有线程
   async shutdown() {
     console.log('正在关闭所有房间线程...');
-    clearInterval(this.cleanupInterval);
+    clearInterval(this.cleanupInterval!);
+    this.cleanupInterval = null;
     
     const stopPromises = [];
     for (const [roomId, worker] of this.workers.entries()) {
@@ -311,7 +312,7 @@ export class RoomThreadManager {
 
   // 更新房间数据（用于外部调用更新房间状态）
   updateRoomData(roomId: string, room: Room): void {
-    this.roomData.set(roomId, JSON.parse(JSON.stringify(room)));
+    this.roomData.set(roomId, room);
   }
 
   private normalizeWorkerEvent(roomId: string, message: any): any | null {

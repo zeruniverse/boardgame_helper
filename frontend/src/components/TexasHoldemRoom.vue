@@ -216,7 +216,7 @@ const displayRoomName = computed(() => roomName.value || roomId);
 const isHost = computed(() => store.isHost);
 
 // 房间状态检查定时器
-let statusCheckInterval: number | null = null;
+let statusCheckInterval: ReturnType<typeof setInterval> | null = null;
 
 // 请求房间状态的函数
 const requestRoomState = () => {
@@ -255,7 +255,7 @@ onMounted(() => {
   }
 
   // 监听房间更新事件，以取消"准备中"状态
-  const onRoomUpdate = (data: any) => {
+  onRoomUpdateHandler = (data: any) => {
     // 确保是当前房间的更新
     if (data && data.id === roomId) {
       console.log('收到 room_update 事件，房间已准备好', data);
@@ -273,7 +273,7 @@ onMounted(() => {
   socket.on('room_update', onRoomUpdate);
 
   // 监听房间加入成功事件（用于验证房间类型）
-  const onRoomJoined = (data: { room: any; player: any; isHost: boolean }) => {
+  onRoomJoinedHandler = (data: { room: any; player: any; isHost: boolean }) => {
     console.log('收到room_joined事件', data);
     if (data.room.type !== 'texas-holdem') {
       router.push({ name: 'Lobby' });
@@ -295,17 +295,22 @@ onMounted(() => {
 
   // 立即请求一次，并设置定时器
   requestRoomState();
-  statusCheckInterval = setInterval(requestRoomState, 3000);
+  statusCheckInterval = window.setInterval(requestRoomState, 3000);
 });
+
+// 组件级事件处理器（提升到作用域顶部以便onUnmounted引用）
+let onRoomUpdateHandler: ((data: any) => void) | null = null;
+let onRoomJoinedHandler: ((data: any) => void) | null = null;
 
 onUnmounted(() => {
   if (statusCheckInterval) {
     clearInterval(statusCheckInterval);
+    statusCheckInterval = null;
   }
-  // 清理组件特有的监听器，避免内存泄漏
+  // 精确移除组件特有的监听器，避免影响store中的监听器
   if (store.socket) {
-    store.socket.off('room_update');
-    store.socket.off('room_joined');
+    if (onRoomUpdateHandler) store.socket.off('room_update', onRoomUpdateHandler);
+    if (onRoomJoinedHandler) store.socket.off('room_joined', onRoomJoinedHandler);
   }
 });
 

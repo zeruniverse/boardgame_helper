@@ -1,5 +1,5 @@
 import { createRouter, createWebHashHistory } from 'vue-router';
-import type { RouteRecordRaw } from 'vue-router';
+import type { RouteRecordRaw, NavigationGuardNext, RouteLocationNormalized } from 'vue-router';
 import Lobby from '../components/Lobby.vue';
 import TexasHoldemRoom from '../components/TexasHoldemRoom.vue';
 import AvalonRoom from '../components/AvalonRoom.vue';
@@ -21,9 +21,54 @@ const routes: RouteRecordRaw[] = [
   { path: '/room/:id', redirect: (to) => ({ path: '/', query: { room: to.params.id as string } }) }
 ];
 
+// 游戏类型到localStorage key的映射（用于验证用户是否已登录）
+const gameStorageKeys: Record<string, string[]> = {
+  'texas-holdem': ['texas_playerId'],
+  'avalon': ['avalon_userId'],
+  'mafia': ['mafia_userId'],
+  'werewolf': ['werewolf_userId'],
+  'one-night-werewolf': ['onu_werewolf_userId'],
+  'blood-on-the-clocktower': ['botc_userId']
+};
+
+// 从路由路径提取游戏类型
+const pathToGameType: Record<string, string> = {
+  '/texas-holdem': 'texas-holdem',
+  '/avalon': 'avalon',
+  '/mafia': 'mafia',
+  '/onu-werewolf': 'one-night-werewolf',
+  '/werewolf': 'werewolf',
+  '/botc': 'blood-on-the-clocktower'
+};
+
 const router = createRouter({
   history: createWebHashHistory(),
   routes
+});
+
+// Bug R2: 添加路由守卫，阻止无playerId的用户直接访问房间URL
+router.beforeEach((to: RouteLocationNormalized, from: RouteLocationNormalized, next: NavigationGuardNext) => {
+  const path = to.path;
+  
+  // 检查是否是房间路由
+  const matchedGameType = Object.keys(pathToGameType).find(prefix => path.startsWith(prefix));
+  
+  if (matchedGameType) {
+    const gameType = pathToGameType[matchedGameType];
+    const storageKeys = gameStorageKeys[gameType];
+    
+    // 检查是否有playerId（任意一个key存在即可）
+    const hasPlayerId = storageKeys?.some(key => !!localStorage.getItem(key));
+    
+    if (!hasPlayerId) {
+      // 无playerId，重定向到大厅页面
+      console.warn(`[路由守卫] 阻止未认证访问: ${path}，缺少playerId`);
+      next({ path: '/', query: { redirect: path } });
+      return;
+    }
+  }
+  
+  next();
 });
 
 export default router;

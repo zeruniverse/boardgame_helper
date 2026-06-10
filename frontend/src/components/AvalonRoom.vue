@@ -192,6 +192,19 @@ const checkRoomStatus = () => {
   }
 }
 
+// Socket事件处理器（需要引用以便清理）
+const onRoomReady = (data: any) => {
+  roomPreparing.value = false
+  if (statusCheckInterval) {
+    clearInterval(statusCheckInterval)
+    statusCheckInterval = null
+  }
+}
+
+const onGameStateSync = (data: any) => {
+  roomPreparing.value = false
+}
+
 onMounted(() => {
   if (!roomId) {
     router.push('/')
@@ -202,18 +215,10 @@ onMounted(() => {
   store.connectToRoom(roomId, 'avalon')
 
   // 监听房间准备完成事件
-  store.socket?.on('room_ready', (data: any) => {
-    roomPreparing.value = false
-    if (statusCheckInterval) {
-      clearInterval(statusCheckInterval)
-      statusCheckInterval = null
-    }
-  })
+  store.socket?.on('room_ready', onRoomReady)
 
   // 监听游戏状态更新
-  store.socket?.on('game_state_sync', (data: any) => {
-    roomPreparing.value = false
-  })
+  store.socket?.on('game_state_sync', onGameStateSync)
 
   // 开始定时检查房间状态
   statusCheckInterval = setInterval(checkRoomStatus, 3000)
@@ -224,8 +229,17 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
-  if (timerInterval) clearInterval(timerInterval)
-  if (statusCheckInterval) clearInterval(statusCheckInterval)
+  if (timerInterval) {
+    clearInterval(timerInterval)
+    timerInterval = null
+  }
+  if (statusCheckInterval) {
+    clearInterval(statusCheckInterval)
+    statusCheckInterval = null
+  }
+  // 清理socket事件监听器，防止内存泄漏
+  store.socket?.off('room_ready', onRoomReady)
+  store.socket?.off('game_state_sync', onGameStateSync)
   store.disconnectFromRoom()
 })
 

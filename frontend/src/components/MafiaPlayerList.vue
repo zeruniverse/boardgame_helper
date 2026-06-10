@@ -229,7 +229,7 @@ const roleConfigs = {
 
 // 计算属性
 const isHost = computed(() => props.hostId === props.currentUserId)
-const gameStarted = computed(() => !!props.gamePlayersById)
+const gameStarted = computed(() => !!props.gamePlayersById && Object.keys(props.gamePlayersById).length > 0)
 
 const gamePlayersList = computed(() => {
   if (!props.gamePlayersById) return []

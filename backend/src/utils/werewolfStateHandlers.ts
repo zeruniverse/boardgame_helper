@@ -194,7 +194,19 @@ function checkAndHandleGameEnd(gameState: WerewolfGameState, context: any): bool
 }
 
 // 工具函数 - 处理死亡玩家链（猎人开枪、遗言、警长传递）
+const MAX_DEATH_CHAIN_DEPTH = 10;
+
 function processDeathChain(gameState: WerewolfGameState, context: any, dyingPlayer: WerewolfPlayerState): void {
+  // 检查递归深度，防止无限连锁
+  const currentDepth = (gameState as any).deathChainDepth || 0;
+  if (currentDepth >= MAX_DEATH_CHAIN_DEPTH) {
+    console.error(`死亡链递归深度超过最大值 ${MAX_DEATH_CHAIN_DEPTH}，强制终止`);
+    gameState.curDyingPlayer = undefined;
+    continueToNightOrDay(gameState, context);
+    return;
+  }
+  (gameState as any).deathChainDepth = currentDepth + 1;
+
   gameState.curDyingPlayer = dyingPlayer;
   dyingPlayer.isDying = true;
 
@@ -229,6 +241,8 @@ function processDeathChain(gameState: WerewolfGameState, context: any, dyingPlay
 // 工具函数 - 从死亡链继续到下一个正常状态
 function continueToNightOrDay(gameState: WerewolfGameState, context: any): void {
   gameState.curDyingPlayer = undefined;
+  // 重置死亡链深度
+  (gameState as any).deathChainDepth = 0;
 
   if (checkAndHandleGameEnd(gameState, context)) {
     return;

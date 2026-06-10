@@ -288,21 +288,36 @@ function processFortuneTeller(player: GamePlayer, allPlayers: GamePlayer[]): Ski
 }
 
 /**
- * 钟表匠技能处理
+ * 钟表匠技能处理 - 计算 Demon 到最近 Minion 的距离
  */
 function processClockmaker(player: GamePlayer, allPlayers: GamePlayer[]): SkillResult {
-  const demon = allPlayers.find(p => p.role?.team === Team.DEMON);
+  const demon = allPlayers.find(p => p.role?.team === Team.DEMON && !p.isDead);
   if (!demon) {
     return { success: true, information: { distance: 0 } };
   }
 
-  // 计算距离（简化版本）
-  const distance = Math.abs(player.seat - demon.seat);
-  const circularDistance = Math.min(distance, allPlayers.length - distance);
+  // 找到所有存活的 Minions
+  const aliveMinions = allPlayers.filter(p => p.role?.team === Team.MINION && !p.isDead);
+  if (aliveMinions.length === 0) {
+    return { success: true, information: { distance: 0 } };
+  }
+
+  // 使用原始总玩家数计算圆桌距离（座位号基于原始总数）
+  const totalSeats = allPlayers.length;
+
+  // 计算 Demon 到每个 Minion 的圆桌距离，取最小值
+  let minDistance = Infinity;
+  for (const minion of aliveMinions) {
+    const diff = Math.abs(demon.seat - minion.seat);
+    const circularDist = Math.min(diff, totalSeats - diff);
+    if (circularDist < minDistance) {
+      minDistance = circularDist;
+    }
+  }
   
   return {
     success: true,
-    information: { distance: circularDistance }
+    information: { distance: minDistance }
   };
 }
 

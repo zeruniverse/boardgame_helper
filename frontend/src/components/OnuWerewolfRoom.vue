@@ -142,14 +142,25 @@ const handleKickPlayer = (playerId: string) => {
 
 // 生命周期
 onMounted(() => {
-  if (roomId.value) {
+  if (!roomId.value) {
+    console.error('No roomId provided');
+    router.push('/');
+    return;
+  }
+  try {
     store.initSocket();
     store.connectToRoom(roomId.value, 'one-night-werewolf');
+  } catch (error) {
+    console.error('Failed to connect to room:', error);
   }
 });
 
 onUnmounted(() => {
-  store.cleanup();
+  try {
+    store.cleanup();
+  } catch (error) {
+    console.error('Error during cleanup:', error);
+  }
 });
 </script>
 

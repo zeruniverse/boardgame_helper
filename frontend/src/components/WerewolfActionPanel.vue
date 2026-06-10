@@ -424,7 +424,7 @@ const emit = defineEmits<{
 }>()
 
 const selectedTarget = ref<string>('')
-const leaveMsg = ref('')
+const leaveMsg = ref<string>('')
 
 // 计算属性
 const canOperate = computed(() => {

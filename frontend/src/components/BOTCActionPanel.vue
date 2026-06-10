@@ -212,7 +212,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 
 interface Props {
   gameState: any
@@ -234,6 +234,13 @@ const props = withDefaults(defineProps<Props>(), {
 const emit = defineEmits<Emits>()
 
 const nightActionCompleted = ref(false)
+
+// 监听游戏阶段变化，重置夜晚行动状态
+watch(() => props.gameState?.phase, (newPhase, oldPhase) => {
+  if (newPhase !== oldPhase) {
+    nightActionCompleted.value = false
+  }
+})
 
 // 计算属性
 const currentNomination = computed(() => {
@@ -375,7 +382,7 @@ const nextPhase = () => {
 const endGame = () => {
   emit('game-action', {
     type: 'storytellerAction',
-    data: { actionType: 'endGame', winner: 'good', reason: '说书人结束游戏' }
+    data: { actionType: 'endGame', winner: props.gameState?.winner || 'good', reason: '说书人结束游戏' }
   })
 }
 
@@ -677,23 +684,3 @@ const formatNightInfo = (info: any) => {
   font-weight: bold;
 }
 
-.player-role {
-  font-weight: bold;
-}
-
-.team-townsfolk {
-  color: #3498db;
-}
-
-.team-outsider {
-  color: #f39c12;
-}
-
-.team-minion {
-  color: #e74c3c;
-}
-
-.team-demon {
-  color: #2d3436;
-}
-</style>

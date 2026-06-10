@@ -12,7 +12,7 @@
       <div v-for="(msg, idx) in filteredMessages" :key="idx"
            :class="getMessageClass(msg)"
            :style="{ color: getMessageColor(msg.type || msg.channel) }">
-        <span v-html="formatMessage(msg.message || msg)"></span>
+        <span v-html="safeHtml(formatMessage(msg.message || msg))"></span>
       </div>
     </el-card>
     
@@ -35,6 +35,7 @@
 
 <script lang="ts" setup>
 import { ref, nextTick, watch, computed } from 'vue';
+import { safeHtml } from '../utils/html';
 
 interface Props {
   messages: any[]

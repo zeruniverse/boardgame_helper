@@ -2,6 +2,8 @@
 export function evaluateHand(cards: string[]): number {
   // 牌面映射
   const rankMap: Record<string, number> = { '2':2,'3':3,'4':4,'5':5,'6':6,'7':7,'8':8,'9':9,'10':10,'J':11,'Q':12,'K':13,'A':14 };
+  // 至少需要5张牌才能评估
+  if (!cards || cards.length < 5) return -1;
   // 解析手牌
   const parsed = cards.map(c => {
     const suit = c.slice(-1);

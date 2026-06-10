@@ -13,14 +13,15 @@ export function splitPotSidePots(
   totalBets: Record<string, number>,
   activeIds: string[]
 ): SidePot[] {
-  // 获取所有投注额条目，过滤掉0下注
+  // 获取所有投注额条目（保留0下注玩家，确保他们有底池资格）
   const entries = Object.entries(totalBets)
-    .map(([pid, amt]) => ({ pid, amt }))
-    .filter(e => e.amt > 0);
-  if (entries.length === 0) return [];
-  // 按投注额从小到大排序并去重
+    .map(([pid, amt]) => ({ pid, amt }));
+  // 过滤掉非active且下注为0的玩家（仍在activeIds中的0下注玩家保留底池资格）
+  const eligibleEntries = entries.filter(e => e.amt > 0 || activeIds.includes(e.pid));
+  if (eligibleEntries.length === 0) return [];
+  // 按投注额从小到大排序并去重（只考虑有实际下注的金额）
   const uniqueAmounts = Array.from(
-    new Set(entries.map(e => e.amt))
+    new Set(eligibleEntries.filter(e => e.amt > 0).map(e => e.amt))
   ).sort((a, b) => a - b);
 
   const sidePots: SidePot[] = [];
@@ -28,7 +29,7 @@ export function splitPotSidePots(
 
   for (const amount of uniqueAmounts) {
     // 计算至少贡献该投注额的玩家
-    const eligibleAll = entries.filter(e => e.amt >= amount).map(e => e.pid);
+    const eligibleAll = eligibleEntries.filter(e => e.amt >= amount).map(e => e.pid);
     if (eligibleAll.length === 0) {
       prevAmount = amount;
       continue;

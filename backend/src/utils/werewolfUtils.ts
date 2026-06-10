@@ -69,10 +69,21 @@ export function getVoteSituation(votes: Vote[]): VoteSituation {
  * @param players 玩家列表
  * @returns 获胜方或null
  */
+/**
+ * 判断角色是否属于村民阵营（非狼人且非第三方）
+ */
+function isVillagerTeam(character: WerewolfCharacter): boolean {
+  // 狼人阵营角色
+  const werewolfTeamChars: WerewolfCharacter[] = ['WEREWOLF'];
+  // 第三方/特殊角色（不参与简单的数量对比）
+  const thirdPartyChars: WerewolfCharacter[] = []; // 如有丘比特等第三方可在此添加
+  return !werewolfTeamChars.includes(character) && !thirdPartyChars.includes(character);
+}
+
 export function checkGameEnd(players: Record<string, WerewolfPlayerState>): 'WEREWOLF' | 'VILLAGER' | null {
   const alivePlayers = Object.values(players).filter(p => p.isAlive);
   const aliveWerewolves = alivePlayers.filter(p => p.character === 'WEREWOLF');
-  const aliveVillagers = alivePlayers.filter(p => p.character !== 'WEREWOLF');
+  const aliveVillagers = alivePlayers.filter(p => isVillagerTeam(p.character));
 
   if (aliveWerewolves.length === 0) {
     return 'VILLAGER'; // 村民胜利

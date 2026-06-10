@@ -176,7 +176,8 @@ const roomLocked = ref(false)
 
 // 房间准备状态 - 修改为只要连接成功就不显示loading
 const roomPreparing = ref(true)
-let statusCheckInterval: number | null = null
+let statusCheckInterval: ReturnType<typeof setInterval> | null = null
+let loadingTimeout: ReturnType<typeof setTimeout> | null = null
 
 // 获取状态消息
 const getStatusMessage = () => {
@@ -289,7 +290,7 @@ onMounted(() => {
   store.connectToRoom(roomId, 'werewolf')
 
   // 2秒后关闭loading遮罩（等待初始连接）
-  setTimeout(() => {
+  loadingTimeout = setTimeout(() => {
     roomPreparing.value = false
   }, 2000)
 
@@ -298,16 +299,25 @@ onMounted(() => {
     if (!gameState.value || !gameState.value.status || gameState.value.status === 'preparing') {
       checkRoomStatus()
     }
-  }, 3000) as unknown as number
+  }, 3000)
 
   // 立即检查一次
-  setTimeout(checkRoomStatus, 500)
+  const initialCheckTimeout = setTimeout(checkRoomStatus, 500)
+  // 清理函数
+  return () => {
+    clearTimeout(initialCheckTimeout)
+  }
 })
 
 onUnmounted(() => {
   store.disconnectFromRoom()
   if (statusCheckInterval) {
     clearInterval(statusCheckInterval)
+    statusCheckInterval = null
+  }
+  if (loadingTimeout) {
+    clearTimeout(loadingTimeout)
+    loadingTimeout = null
   }
 })
 </script>

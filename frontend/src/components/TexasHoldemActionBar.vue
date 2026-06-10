@@ -74,6 +74,12 @@ function raise() {
     alert('请输入合法的正整数加注金额');
     return;
   }
+  // 验证加注金额不超过自身筹码
+  const currentChips = ownPlayer.value?.gameMetadata?.chips || 0;
+  if (val > currentChips) {
+    alert('加注金额不能超过自身筹码');
+    return;
+  }
   // 计算新总下注额 = 当前已下注 + 需要跟注 + 额外加注
   const currentBet = store.bets[store.playerId] || 0;
   const callAmount = toCall.value;

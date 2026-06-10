@@ -256,35 +256,32 @@ const canAssassinate = computed(() => {
   return props.playerSecret?.role === 'assassin' && canOperate.value
 })
 
-// isReady和isHost从store的getters或通过props获取
-// 由于组件通过事件通信，isReady/isHost需要外部传入或从gameState推断
+// isReady: 从gameState.players中查找当前玩家的ready状态
 const isReady = computed(() => {
-  // 从gameState.players中查找当前玩家的ready状态
   const playerId = props.playerSecret?.playerId
   if (!playerId || !props.gameState?.players) return false
-  // 注意：ready状态通常在room.players中，这里无法直接获取
-  // 返回true让按钮显示逻辑由父组件控制，或通过事件请求状态
-  return false // 默认未准备，玩家需要点击准备按钮
+  // 从玩家数据中读取ready状态
+  const player = props.gameState.players[playerId]
+  return player?.ready || false
 })
 
+// isHost: 从gameState中推断房主身份（hostId字段或第一个玩家）
 const isHost = computed(() => {
-  // 从gameState推断房主身份
-  // captain在初始阶段就是房主
   const playerId = props.playerSecret?.playerId
-  if (!playerId) return false
-  // 在游戏等待阶段(status=0)，第一个队长就是房主
-  if (props.gameState?.status === 0) {
-    // 无法直接从gameState判断房主，需要外部传入
-    // 返回true以显示重新开始按钮（游戏结束时需要）
-    return true
+  if (!playerId || !props.gameState?.players) return false
+  // 优先使用hostId字段判断
+  if (props.gameState.hostId) {
+    return props.gameState.hostId === playerId
   }
+  // 回退：在游戏等待阶段(status=0)，玩家列表中的第一个可能是房主
   return false
 })
 
 const hasVoted = computed(() => {
   const playerId = props.playerSecret?.playerId
-  return props.gameState.voteResult?.true.includes(playerId) || 
-         props.gameState.voteResult?.false.includes(playerId)
+  if (!playerId || !props.gameState?.voteResult) return false
+  return props.gameState.voteResult.true?.includes(playerId) || 
+         props.gameState.voteResult.false?.includes(playerId)
 })
 
 // 方法

@@ -188,13 +188,24 @@ const toggleRoomLock = () => {
 }
 
 // 房间状态检查定时器
-let statusCheckInterval: number | null = null
+let statusCheckInterval: ReturnType<typeof setInterval> | null = null
+let initialCheckTimeout: ReturnType<typeof setTimeout> | null = null
 
 // 检查房间状态的函数
 const checkRoomStatus = () => {
   if (store.socket && roomId) {
     console.log('检查杀人游戏房间状态...')
     store.socket.emit('room_status_check', { roomId: roomId })
+  }
+}
+
+// Socket事件处理器（需要引用以便清理）
+const onRoomReady = (data: any) => {
+  console.log('收到杀人游戏房间room_ready事件 - 房间已准备好', data)
+  roomPreparing.value = false // 隐藏准备中提示
+  if (statusCheckInterval) {
+    clearInterval(statusCheckInterval) // 停止定时检查
+    statusCheckInterval = null
   }
 }
 
@@ -208,19 +219,12 @@ onMounted(() => {
   store.connectToRoom(roomId, 'mafia')
   
   // 监听房间准备完成事件
-  store.socket?.on('room_ready', (data: any) => {
-    console.log('收到杀人游戏房间room_ready事件 - 房间已准备好', data)
-    roomPreparing.value = false // 隐藏准备中提示
-    if (statusCheckInterval) {
-      clearInterval(statusCheckInterval) // 停止定时检查
-      statusCheckInterval = null
-    }
-  })
+  store.socket?.on('room_ready', onRoomReady)
 
   // 开始定时检查房间状态
   if (!statusCheckInterval) {
     // 立即检查一次
-    setTimeout(checkRoomStatus, 500)
+    initialCheckTimeout = setTimeout(checkRoomStatus, 500)
     // 然后每3秒检查一次
     statusCheckInterval = setInterval(checkRoomStatus, 3000)
   }
@@ -235,6 +239,14 @@ onUnmounted(() => {
     clearInterval(statusCheckInterval)
     statusCheckInterval = null
   }
+  if (initialCheckTimeout) {
+    clearTimeout(initialCheckTimeout)
+    initialCheckTimeout = null
+  }
+  // 清理socket事件监听器，防止内存泄漏
+  store.socket?.off('room_ready', onRoomReady)
+  // 停止计时器
+  store.clearTimer()
   store.disconnectFromRoom()
 })
 

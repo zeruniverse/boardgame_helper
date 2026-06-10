@@ -3,15 +3,17 @@ import './style.css'
 import App from './App.vue'
 import router from './router'
 import { createPinia } from 'pinia'
-import ElementPlus from 'element-plus'
-import 'element-plus/dist/index.css'
+// Bug M2: Element Plus 改为按需导入，减少打包体积
+// 组件在 src/plugins/element-plus.ts 中注册
+import { registerElementPlus } from './plugins/element-plus'
 
-const app = createApp(App)
-  .use(createPinia())
-  .use(router)
-  .use(ElementPlus);
+const app = createApp(App);
+app.use(createPinia());
+app.use(router);
+// Bug M2: 按需注册 Element Plus 组件
+registerElementPlus(app);
 
-// Bug M1: 重定向逻辑必须在app.use(router)之后执行
+// 重定向逻辑必须在app.use(router)之后执行
 if (sessionStorage.redirect) {
   const redirect = sessionStorage.redirect;
   delete sessionStorage.redirect;
@@ -21,7 +23,5 @@ if (sessionStorage.redirect) {
     router.push(url.pathname + url.search);
   }
 }
-
-// Bug M2: 移除全局window暴露router实例，store通过import引入router
 
 app.mount('#app');

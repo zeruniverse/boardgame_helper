@@ -392,8 +392,8 @@ export function roomController(io: Server) {
         rooms: getPublicRooms(),
         availableGames: Object.keys(config.games).map(gameType => ({
           type: gameType,
-          displayName: config.games[gameType].displayName,
-          maxPlayers: config.games[gameType].maxPlayers
+          displayName: config.games[gameType]?.displayName || gameType,
+          maxPlayers: config.games[gameType]?.maxPlayers || 0
         }))
       });
     });
@@ -519,7 +519,7 @@ export function roomController(io: Server) {
           }
 
           // 确保房间线程正在运行
-          const gameConfig = config.games[room.type].gameSpecificConfig;
+          const gameConfig = config.games[room.type]?.gameSpecificConfig || {};
           await threadManager.ensureRoomThreadRunning(room, gameConfig);
 
           // 将更新后的房间数据同步到工作线程
@@ -585,7 +585,7 @@ export function roomController(io: Server) {
           }
 
           await socket.join(room.id);
-          const gameConfig = config.games[room.type].gameSpecificConfig;
+          const gameConfig = config.games[room.type]?.gameSpecificConfig || {};
           await threadManager.ensureRoomThreadRunning(room, gameConfig);
           threadManager.updateRoomData(room.id, room);
           await sendTaskToRoom(room.id, 'update_room_data', { room });
@@ -650,7 +650,7 @@ export function roomController(io: Server) {
         await socket.join(room.id);
 
         // 确保房间线程正在运行
-        const gameConfig = config.games[room.type].gameSpecificConfig;
+        const gameConfig = config.games[room.type]?.gameSpecificConfig || {};
         await threadManager.ensureRoomThreadRunning(room, gameConfig);
 
         // 更新房间数据到线程管理器和工作线程
@@ -732,7 +732,7 @@ export function roomController(io: Server) {
         await socket.join(room.id);
 
         // 确保房间线程正在运行
-        const gameConfig = config.games[room.type].gameSpecificConfig;
+        const gameConfig = config.games[room.type]?.gameSpecificConfig || {};
         await threadManager.ensureRoomThreadRunning(room, gameConfig);
 
         // 更新房间数据到线程管理器和工作线程

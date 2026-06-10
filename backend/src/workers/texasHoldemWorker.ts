@@ -69,14 +69,6 @@ class TexasHoldemWorker extends BaseGameWorker {
 
   constructor() {
     super();
-    // 监听线程终止事件，清理定时器
-    if (parentPort) {
-      parentPort.on('message', (task: GameTask) => {
-        if (task.type === 'dispose') {
-          this.dispose();
-        }
-      });
-    }
     this.gameState = {
       deck: [],
       communityCards: [],
@@ -100,6 +92,10 @@ class TexasHoldemWorker extends BaseGameWorker {
     // 监听来自主线程的消息
     if (parentPort) {
       parentPort.on('message', async (task: GameTask) => {
+        if (task.type === 'dispose') {
+          this.dispose();
+          return;
+        }
         try {
           const response = await this.handleTask(task);
           parentPort?.postMessage({
@@ -306,8 +302,9 @@ class TexasHoldemWorker extends BaseGameWorker {
         default:
           console.warn(`未知的游戏行动类型: ${actionType}`);
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error(`处理游戏行动时发生错误: ${error}`);
+      this.sendToPlayer(playerId, 'error', { message: error.message || '操作失败，请重试' });
     }
   }
 
@@ -556,6 +553,11 @@ class TexasHoldemWorker extends BaseGameWorker {
     // 如果允许系统发牌，洗牌并发牌；否则不发牌
     if (this.config.allowSystemDealing) {
       gs.deck = shuffleDeck(createDeck());
+      const totalCardsNeeded = participatingPlayers.length * 2;
+      if (gs.deck.length < totalCardsNeeded) {
+        this.sendToRoom('chat_broadcast', { message: '牌组不足，无法发牌', type: 'system' });
+        return;
+      }
       participatingPlayers.forEach(p => {
         const card1 = gs.deck.pop()!;
         const card2 = gs.deck.pop()!;
@@ -670,6 +672,12 @@ class TexasHoldemWorker extends BaseGameWorker {
     // 所有检查都通过，才设置participants并开始游戏
     this.participants = participants;
     this.room.lastActiveTime = Date.now();
+
+    // 安全过滤：确保参与的玩家都在房间中
+    if (participatingPlayers.length === 0) {
+      this.sendToRoom('chat_broadcast', { message: '没有有效的参与者，游戏无法开始' });
+      return;
+    }
 
     this.sendToRoom('chat_broadcast', { message: '游戏已开始' });
     this.startGame();

@@ -3,7 +3,7 @@
     <el-card ref="chatContainer" class="chat-messages">
       <div v-for="(msg, idx) in messages" :key="idx"
            :style="{ color: getMessageColor(msg.type) }">
-        <span v-html="formatMessage(msg.message || msg)"></span>
+        <span v-html="safeHtml(formatMessage(msg.message || msg))"></span>
       </div>
     </el-card>
     <div class="chat-input">
@@ -20,6 +20,7 @@
 
 <script lang="ts" setup>
 import { ref, nextTick, watch, computed } from 'vue';
+import { safeHtml } from '../utils/html';
 
 interface Props {
   messages: any[]

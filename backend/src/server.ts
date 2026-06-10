@@ -4,7 +4,7 @@ import cors from 'cors';
 import { Server as SocketIOServer } from 'socket.io';
 import { roomController } from './controllers/roomController';
 import { config } from './config';
-import { setResetServerFunction, resetServerFunction } from './services/resetService';
+import { setResetServerFunction, callResetServer } from './services/resetService';
 
 const app = express();
 app.use(cors());
@@ -42,28 +42,19 @@ app.post('/api/reset-server', async (req: Request, res: Response) => {
 
     console.log('收到重置服务器HTTP请求，密码验证通过');
 
-    // 检查重置函数是否可用
-    if (!resetServerFunction) {
-      res.status(500).json({
-        success: false,
-        error: '重置功能未初始化'
-      });
-      return;
-    }
-
     // 执行重置操作
-    const resetSuccess = await resetServerFunction();
+    const resetResult = await callResetServer(password);
     
-    if (resetSuccess) {
+    if (resetResult.success) {
       res.json({
         success: true,
-        message: '服务器重置成功'
+        message: resetResult.message
       });
       console.log('通过HTTP接口重置服务器成功');
     } else {
       res.status(500).json({
         success: false,
-        error: '重置服务器失败'
+        error: resetResult.message || '重置服务器失败'
       });
     }
   } catch (error) {

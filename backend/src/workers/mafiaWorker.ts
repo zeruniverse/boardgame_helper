@@ -281,6 +281,12 @@ class MafiaWorker extends BaseGameWorker {
         case 'heartbeat':
           this.handleHeartbeat(playerId);
           break;
+        case 'transferHost':
+          this.handleTransferHost(playerId, actionData?.targetId);
+          break;
+        case 'kickPlayer':
+          this.handleKickPlayer(playerId, actionData?.targetId);
+          break;
         default:
           console.warn(`未知的游戏行动: ${actionType}`);
       }
@@ -725,7 +731,7 @@ class MafiaWorker extends BaseGameWorker {
 
       const message = `经查证${this.getPlayerName(suspectId)}是${result ? '<span class="red text">坏人!</span>' : '<span class="blue text">好人!</span>'}`;
       
-      this.sendToRoom('inspect_result', { message });
+      gameState.topSecret.cop.forEach(copId => this.sendToPlayer(copId, 'inspect_result', { message }));
 
       // 检查是否可以结束夜晚（警察和杀手和医生都完成）
       if (!gameState.copActionLock && !gameState.killerActionLock && !gameState.doctorActionLock) {
@@ -771,7 +777,7 @@ class MafiaWorker extends BaseGameWorker {
       gameState.wantToSave = {};
 
       const message = `你救了${this.getPlayerName(personSaved)}`;
-      this.sendToRoom('save_result', { message });
+      gameState.topSecret.doctor.forEach(docId => this.sendToPlayer(docId, 'save_result', { message }));
 
       // 检查是否可以结束夜晚
       if (!gameState.copActionLock && !gameState.killerActionLock && !gameState.doctorActionLock) {
@@ -816,7 +822,7 @@ class MafiaWorker extends BaseGameWorker {
       gameState.wantToKill = {};
 
       const message = `你们合伙谋害了${this.getPlayerName(targetId)}`;
-      this.sendToRoom('kill_result', { message });
+      gameState.topSecret.killer.forEach(kId => this.sendToPlayer(kId, 'kill_result', { message }));
 
       // 修复Bug 6.1: 移除杀手行动后立即checkGameEnd，移到endNight()中确保cop/doctor先完成行动
       // 检查是否可以结束夜晚（所有角色都完成行动）
@@ -874,7 +880,11 @@ class MafiaWorker extends BaseGameWorker {
         deathDay: gameState.day
       });
       gameState.status = GameStatus.NIGHT;
-      gameState.operators = Object.keys(gameState.players).filter(id => gameState.players[id].alive);
+      const alivePlayers = Object.values(gameState.players).filter(p => p.alive);
+      const aliveKillers = alivePlayers.filter(p => p.role === 'killer').map(p => p.id);
+      const aliveCops = alivePlayers.filter(p => p.role === 'cop').map(p => p.id);
+      const aliveDoctors = alivePlayers.filter(p => p.role === 'doctor').map(p => p.id);
+      gameState.operators = [...aliveKillers, ...aliveCops, ...aliveDoctors];
       gameState.alivePlayersOrder = this.getAlivePlayers();
       gameState.speakingPlayerIndex = -1;
       gameState.step += 1;
@@ -1170,7 +1180,7 @@ class MafiaWorker extends BaseGameWorker {
     if (!gameState.copActionLock && gameState.topSecret.copVersion.length > 0) {
       const lastInspect = gameState.topSecret.copVersion[gameState.topSecret.copVersion.length - 1];
       const message = `经查证${this.getPlayerName(lastInspect[0])}是${lastInspect[1] ? '<span class="red text">坏人!</span>' : '<span class="blue text">好人!</span>'}`;
-      this.sendToRoom('inspect_result', { message });
+      gameState.topSecret.cop.forEach(copId => this.sendToPlayer(copId, 'inspect_result', { message }));
     }
     
     // 重置所有行动锁和状态
@@ -1584,6 +1594,13 @@ class MafiaWorker extends BaseGameWorker {
       gameInfo: this.getGameInfo() 
     });
     this.sendToRoom('room_update', this.room);
+  }
+
+  dispose(): void {
+    if (this.actionTimer) {
+      clearTimeout(this.actionTimer);
+      this.actionTimer = null;
+    }
   }
 }
 

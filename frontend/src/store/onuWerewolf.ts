@@ -143,6 +143,7 @@ export const useOnuWerewolfStore = defineStore('onuWerewolf', {
     timerInterval: null as ReturnType<typeof setInterval> | null,
     skipDiscussionCount: 0,
     skipDiscussionTotal: 0,
+    socketListeners: [] as Array<[string, (...args: any[]) => void]>,
   }),
 
   getters: {
@@ -188,25 +189,43 @@ export const useOnuWerewolfStore = defineStore('onuWerewolf', {
 
   actions: {
     initSocket() {
+      // 防止重复连接
+      if (this.socket?.connected) {
+        console.log('OnuWerewolf socket already connected, skipping init');
+        return;
+      }
+
       if (this.socket) {
-        this.socket.removeAllListeners();
-        this.socket.disconnect();
+        this.cleanup();
       }
 
       this.socket = io(SOCKET_URL);
+      this.socketListeners = [];
 
-      this.socket.on('connect', () => {
+      // 辅助函数：追踪监听器
+      const on = (event: string, handler: (...args: any[]) => void) => {
+        this.socket!.on(event, handler);
+        this.socketListeners.push([event, handler]);
+      };
+
+      on('connect', () => {
         console.log('OnuWerewolf socket connected');
         this.connected = true;
       });
 
-      this.socket.on('disconnect', () => {
+      on('connect_error', (error: Error) => {
+        console.error('OnuWerewolf socket connection error:', error);
+        this.connected = false;
+        this.addSystemMessage(`连接错误：${error.message}`);
+      });
+
+      on('disconnect', () => {
         console.log('OnuWerewolf socket disconnected');
         this.connected = false;
       });
 
       // 房间事件
-      this.socket.on('room_joined', (data: { room: OnuWerewolfRoomState; player?: any; playerId?: string }) => {
+      on('room_joined', (data: { room: OnuWerewolfRoomState; player?: any; playerId?: string }) => {
         this.room = data.room;
         this.currentUserId = data.player?.id || data.playerId || this.currentUserId;
         this.currentRoomId = data.room.id;
@@ -214,24 +233,24 @@ export const useOnuWerewolfStore = defineStore('onuWerewolf', {
         if (data.player?.nickname || data.player?.name) localStorage.setItem('onu_werewolf_nickname', data.player.nickname || data.player.name);
       });
 
-      this.socket.on('room_update', (room: OnuWerewolfRoomState) => {
+      on('room_update', (room: OnuWerewolfRoomState) => {
         this.room = room;
       });
 
       // 游戏事件
-      this.socket.on('onu_game_prepared', (data: any) => {
+      on('onu_game_prepared', (data: any) => {
         if (this.gameState) {
           this.gameState.config = data.config;
         }
       });
 
-      this.socket.on('onu_config_changed', (data: any) => {
+      on('onu_config_changed', (data: any) => {
         if (this.gameState) {
           this.gameState.config = data.config;
         }
       });
 
-      this.socket.on('onu_game_started', (data: any) => {
+      on('onu_game_started', (data: any) => {
         this.gameState = data.game;
         this.playerSecret = data.secret;
         if (this.room) {
@@ -239,7 +258,7 @@ export const useOnuWerewolfStore = defineStore('onuWerewolf', {
         }
       });
 
-      this.socket.on('onu_game_state', (data: any) => {
+      on('onu_game_state', (data: any) => {
         Object.assign(this.gameState || {}, data);
         if (data.myRole !== undefined) {
           if (!this.playerSecret) this.playerSecret = {};
@@ -247,7 +266,7 @@ export const useOnuWerewolfStore = defineStore('onuWerewolf', {
         }
       });
 
-      this.socket.on('onu_night_started', (data: any) => {
+      on('onu_night_started', (data: any) => {
         if (this.gameState) {
           this.gameState.status = OnuWerewolfGameStatus.NIGHT;
           this.gameState.currentPhase = data.message || '夜晚阶段';
@@ -256,7 +275,7 @@ export const useOnuWerewolfStore = defineStore('onuWerewolf', {
       });
 
       // onu_night_ended replaces onu_voting_started (C7 fix)
-      this.socket.on('onu_night_ended', (data: any) => {
+      on('onu_night_ended', (data: any) => {
         if (this.gameState) {
           this.gameState.status = OnuWerewolfGameStatus.VOTING;
           this.gameState.currentPhase = data.message || '投票阶段';
@@ -268,7 +287,7 @@ export const useOnuWerewolfStore = defineStore('onuWerewolf', {
       });
 
       // Role assignment notification (C4 fix)
-      this.socket.on('onu_role_assigned', (data: any) => {
+      on('onu_role_assigned', (data: any) => {
         if (!this.playerSecret) this.playerSecret = {};
         this.playerSecret.myRole = data.role;
         this.playerSecret.mySeat = data.seat;
@@ -277,14 +296,14 @@ export const useOnuWerewolfStore = defineStore('onuWerewolf', {
       });
 
       // Skill ready notification (C4 fix)
-      this.socket.on('onu_skill_ready', (data: any) => {
+      on('onu_skill_ready', (data: any) => {
         if (!this.playerSecret) this.playerSecret = {};
         this.playerSecret.canUseSkill = true;
         this.addSystemMessage(data.message || '轮到你使用技能了');
       });
 
       // Skill result (C4 fix)
-      this.socket.on('onu_skill_result', (data: any) => {
+      on('onu_skill_result', (data: any) => {
         if (!this.playerSecret) this.playerSecret = {};
         this.playerSecret.canUseSkill = false;
         this.playerSecret.skillUsed = true;
@@ -295,7 +314,7 @@ export const useOnuWerewolfStore = defineStore('onuWerewolf', {
       });
 
       // Skill skipped (C4 fix)
-      this.socket.on('onu_skill_skipped', (data: any) => {
+      on('onu_skill_skipped', (data: any) => {
         if (!this.playerSecret) this.playerSecret = {};
         this.playerSecret.canUseSkill = false;
         this.playerSecret.skillUsed = true;
@@ -303,27 +322,27 @@ export const useOnuWerewolfStore = defineStore('onuWerewolf', {
       });
 
       // Board info (C4 fix)
-      this.socket.on('onu_board_info', (data: any) => {
+      on('onu_board_info', (data: any) => {
         if (data.vision && this.playerSecret) {
           this.playerSecret.vision = data.vision;
         }
       });
 
       // Role info (C4 fix)
-      this.socket.on('onu_role_info', (data: any) => {
+      on('onu_role_info', (data: any) => {
         if (!this.playerSecret) this.playerSecret = {};
         this.playerSecret.myRole = data.initialRole;
         this.playerSecret.finalRole = data.finalRole;
       });
 
-      this.socket.on('onu_voting_ended', (data: any) => {
+      on('onu_voting_ended', (data: any) => {
         if (this.gameState) {
           this.gameState.status = OnuWerewolfGameStatus.REVEALING;
           this.gameState.currentPhase = '揭示结果';
         }
       });
 
-      this.socket.on('onu_game_completed', (data: any) => {
+      on('onu_game_completed', (data: any) => {
         if (this.gameState) {
           this.gameState.status = OnuWerewolfGameStatus.COMPLETED;
           this.gameState.currentPhase = '游戏结束';
@@ -334,7 +353,7 @@ export const useOnuWerewolfStore = defineStore('onuWerewolf', {
         }
       });
 
-      this.socket.on('onu_game_reset', (data: any) => {
+      on('onu_game_reset', (data: any) => {
         this.gameState = null;
         this.playerSecret = null;
         if (this.room) {
@@ -343,7 +362,7 @@ export const useOnuWerewolfStore = defineStore('onuWerewolf', {
         this.addSystemMessage(data.message);
       });
 
-      this.socket.on('onu_player_ready', (data: any) => {
+      on('onu_player_ready', (data: any) => {
         if (this.gameState) {
           this.gameState.readyCount = data.readyCount;
         }
@@ -353,7 +372,7 @@ export const useOnuWerewolfStore = defineStore('onuWerewolf', {
         }
       });
 
-      this.socket.on('onu_player_unready', (data: any) => {
+      on('onu_player_unready', (data: any) => {
         if (this.gameState) {
           this.gameState.readyCount = data.readyCount;
         }
@@ -363,14 +382,14 @@ export const useOnuWerewolfStore = defineStore('onuWerewolf', {
         }
       });
 
-      this.socket.on('onu_skill_used', (data: any) => {
+      on('onu_skill_used', (data: any) => {
         this.addSystemMessage(data.message);
         if (this.playerSecret && data.skillData) {
           this.playerSecret.skillData = data.skillData;
         }
       });
 
-      this.socket.on('onu_vote_cast', (data: any) => {
+      on('onu_vote_cast', (data: any) => {
         this.addSystemMessage(data.message);
         if (this.room) {
           const player = this.room.players.find(p => p.id === data.playerId);
@@ -378,18 +397,18 @@ export const useOnuWerewolfStore = defineStore('onuWerewolf', {
         }
       });
 
-      this.socket.on('onu_skip_discussion', (data: any) => {
+      on('onu_skip_discussion', (data: any) => {
         this.skipDiscussionCount = data.skipCount;
         this.skipDiscussionTotal = data.totalPlayers;
         this.addSystemMessage(data.message);
       });
 
-      this.socket.on('onu_discussion_skipped', (data: any) => {
+      on('onu_discussion_skipped', (data: any) => {
         this.addSystemMessage(data.message);
       });
 
       // 聊天事件
-      this.socket.on('onu_chat_message', (message: any) => {
+      on('onu_chat_message', (message: any) => {
         this.messages.push({
           id: Date.now(),
           playerId: message.playerId,
@@ -398,25 +417,28 @@ export const useOnuWerewolfStore = defineStore('onuWerewolf', {
           timestamp: message.timestamp,
           type: 'chat'
         });
+        if (this.messages.length > 500) {
+          this.messages = this.messages.slice(-500);
+        }
       });
 
-      this.socket.on('system_message', (message: string) => {
+      on('system_message', (message: string) => {
         this.addSystemMessage(message);
       });
 
       // 错误事件
-      this.socket.on('onu_error', (data: { message: string }) => {
+      on('onu_error', (data: { message: string }) => {
         this.errorMessage = data.message;
         this.addSystemMessage(`错误：${data.message}`);
       });
 
-      this.socket.on('error', (error: string) => {
+      on('error', (error: string) => {
         this.errorMessage = error;
         this.addSystemMessage(`错误：${error}`);
       });
 
       // 游戏状态同步（用于重连）
-      this.socket.on('game_state_sync', (data: {
+      on('game_state_sync', (data: {
         room: OnuWerewolfRoomState;
         game: OnuWerewolfGameState | null;
         secret: OnuWerewolfSecret | null;
@@ -430,7 +452,7 @@ export const useOnuWerewolfStore = defineStore('onuWerewolf', {
       });
 
       // 时间更新
-      this.socket.on('time_update', (data: { timeLeft: number }) => {
+      on('time_update', (data: { timeLeft: number }) => {
         this.timeLeft = data.timeLeft;
       });
     },
@@ -479,7 +501,11 @@ export const useOnuWerewolfStore = defineStore('onuWerewolf', {
     cleanup() {
       this.clearTimer();
       if (this.socket) {
-        this.socket.removeAllListeners();
+        // 遍历移除所有追踪的监听器
+        for (const [event, handler] of this.socketListeners) {
+          this.socket.off(event, handler);
+        }
+        this.socketListeners = [];
         this.socket.disconnect();
         this.socket = null;
       }
@@ -568,6 +594,9 @@ export const useOnuWerewolfStore = defineStore('onuWerewolf', {
         timestamp: Date.now(),
         type: 'system'
       });
+      if (this.messages.length > 500) {
+        this.messages = this.messages.slice(-500);
+      }
     },
 
     updateTimer() {

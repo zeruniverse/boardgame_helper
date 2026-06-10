@@ -97,12 +97,23 @@ export function handleSetupMarkers(assignments: Map<string, Role>, editionId: st
       .filter(([_, role]) => role.team === Team.TOWNSFOLK);
     
     const outsiders = getRolesByTeam(editionId, Team.OUTSIDER);
-    if (outsiders.length >= 2 && townsfolkInPlay.length >= 2) {
-      const shuffledOutsiders = shuffleArray(outsiders);
-      // 替换两个镇民
-      townsfolkInPlay.slice(0, 2).forEach(([playerId, _], idx) => {
-        assignments.set(playerId, shuffledOutsiders[idx]);
+    // 获取尚未使用的外来者角色
+    const usedRoleIds = new Set(Array.from(assignments.values()).map(r => r.id));
+    const availableOutsiders = shuffleArray(outsiders.filter(r => !usedRoleIds.has(r.id)));
+    
+    // 计算可替换数量（受限于可用外来者数量和镇民数量）
+    const replaceCount = Math.min(2, availableOutsiders.length, townsfolkInPlay.length);
+    
+    if (replaceCount > 0) {
+      // 替换镇民为外来者
+      townsfolkInPlay.slice(0, replaceCount).forEach(([playerId, _], idx) => {
+        assignments.set(playerId, availableOutsiders[idx]);
       });
+    }
+    
+    // 如果外来者池不足，记录警告（但游戏仍可继续）
+    if (availableOutsiders.length < 2) {
+      console.warn(`Baron setup: 外来者角色池不足，只替换了 ${replaceCount} 个镇民（期望 2 个）`);
     }
   }
 

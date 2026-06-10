@@ -259,12 +259,12 @@ export function onuCalculateWinner(
   }
 
   // 检查是否有狼人被处决
-  const lyncheddWerewolves = lynched.filter(playerId => {
+  const lynchedWerewolves = lynched.filter(playerId => {
     const player = players[playerId];
     return player && onuIsWerewolf(player.actualRole);
   });
 
-  if (lyncheddWerewolves.length > 0) {
+  if (lynchedWerewolves.length > 0) {
     return OnuWerewolfTeam.Villager;
   }
 
@@ -291,10 +291,16 @@ export function onuIsPlayerWinner(player: OnuWerewolfPlayer, winner: OnuWerewolf
     return lynched.includes(player.id);
   }
   
-  // 猎人：如果被处决且不是皮匠胜利，则处决所有投票给他的人
+  // 猎人：如果被处决且不是皮匠胜利，可以开枪带走投票者
+  // 猎人属于村民阵营，村民胜利时猎人也胜利
   if (player.actualRole === OnuWerewolfRole.Hunter && lynched.includes(player.id) && winner !== OnuWerewolfTeam.Tanner) {
-    // 猎人特殊规则处理（这里简化处理）
+    // 猎人被处决时，如果村民阵营胜利，猎人胜利；如果狼人阵营胜利，猎人失败
     return winner === OnuWerewolfTeam.Villager;
+  }
+  
+  // 猎人未被处决时，按正常阵营判断
+  if (player.actualRole === OnuWerewolfRole.Hunter && !lynched.includes(player.id)) {
+    return playerTeam === winner;
   }
   
   // 其他角色：根据团队胜利情况判断

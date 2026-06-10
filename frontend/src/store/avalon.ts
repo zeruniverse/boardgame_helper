@@ -63,6 +63,7 @@ export const useAvalonStore = defineStore('avalon', {
     errorMessage: '',
     timeLeft: 0,
     timerInterval: null as ReturnType<typeof setInterval> | null,
+    socketListeners: [] as Array<[string, (...args: any[]) => void]>,
   }),
 
   getters: {
@@ -93,25 +94,43 @@ export const useAvalonStore = defineStore('avalon', {
 
   actions: {
     initSocket() {
+      // 防止重复连接
+      if (this.socket?.connected) {
+        console.log('Avalon socket already connected, skipping init');
+        return;
+      }
+
       if (this.socket) {
-        this.socket.removeAllListeners();
-        this.socket.disconnect();
+        this.cleanup();
       }
 
       this.socket = io(SOCKET_URL);
+      this.socketListeners = [];
 
-      this.socket.on('connect', () => {
+      // 辅助函数：追踪监听器
+      const on = (event: string, handler: (...args: any[]) => void) => {
+        this.socket!.on(event, handler);
+        this.socketListeners.push([event, handler]);
+      };
+
+      on('connect', () => {
         console.log('Avalon socket connected');
         this.connected = true;
       });
 
-      this.socket.on('disconnect', () => {
+      on('connect_error', (error: Error) => {
+        console.error('Avalon socket connection error:', error);
+        this.connected = false;
+        this.addSystemMessage(`连接错误：${error.message}`);
+      });
+
+      on('disconnect', () => {
         console.log('Avalon socket disconnected');
         this.connected = false;
       });
 
       // 房间事件
-      this.socket.on('room_joined', (data: { room: AvalonRoomState; player?: any; playerId?: string }) => {
+      on('room_joined', (data: { room: AvalonRoomState; player?: any; playerId?: string }) => {
         this.room = data.room;
         this.currentUserId = data.player?.id || data.playerId || this.currentUserId;
         this.currentRoomId = data.room.id;
@@ -119,12 +138,12 @@ export const useAvalonStore = defineStore('avalon', {
         if (data.player?.nickname || data.player?.name) localStorage.setItem('avalon_nickname', data.player.nickname || data.player.name);
       });
 
-      this.socket.on('room_update', (room: AvalonRoomState) => {
+      on('room_update', (room: AvalonRoomState) => {
         this.room = room;
       });
 
       // 游戏事件
-      this.socket.on('game_start', (data: { game: AvalonGameState; secret: AvalonSecret }) => {
+      on('game_start', (data: { game: AvalonGameState; secret: AvalonSecret }) => {
         this.gameState = data.game;
         this.playerSecret = data.secret;
         if (this.room) {
@@ -132,16 +151,16 @@ export const useAvalonStore = defineStore('avalon', {
         }
       });
 
-      this.socket.on('game_update', (gameState: AvalonGameState) => {
+      on('game_update', (gameState: AvalonGameState) => {
         this.gameState = gameState;
         this.updateTimer();
       });
 
-      this.socket.on('secret_update', (secret: AvalonSecret) => {
+      on('secret_update', (secret: AvalonSecret) => {
         this.playerSecret = secret;
       });
 
-      this.socket.on('game_over', (data: { winner: 'blue' | 'red'; reason: string }) => {
+      on('game_over', (data: { winner: 'blue' | 'red'; reason: string }) => {
         if (this.gameState) {
           this.gameState.winner = data.winner;
           this.gameState.status = 999;
@@ -150,47 +169,53 @@ export const useAvalonStore = defineStore('avalon', {
       });
 
       // 聊天事件
-      this.socket.on('chat_broadcast', (message: any) => {
+      on('chat_broadcast', (message: any) => {
         this.messages.push(message);
+        if (this.messages.length > 500) {
+          this.messages = this.messages.slice(-500);
+        }
       });
 
       // 游戏消息事件
-      this.socket.on('game_message', (data: { message: string; timestamp: number }) => {
+      on('game_message', (data: { message: string; timestamp: number }) => {
         this.messages.push({
           id: `gm_${Date.now()}`,
           type: 'game',
           message: data.message,
           timestamp: data.timestamp
         });
+        if (this.messages.length > 500) {
+          this.messages = this.messages.slice(-500);
+        }
       });
 
-      this.socket.on('system_message', (message: string) => {
+      on('system_message', (message: string) => {
         this.addSystemMessage(message);
       });
 
       // 湖上夫人验人结果
-      this.socket.on('lady_result', (data: { target: string; team: string }) => {
+      on('lady_result', (data: { target: string; team: string }) => {
         this.addSystemMessage(`湖上夫人验人结果：${data.target} 属于 ${data.team}`);
       });
 
       // 刺杀投票开始
-      this.socket.on('assassinate_vote_start', (data: any) => {
+      on('assassinate_vote_start', (data: any) => {
         this.addSystemMessage(data.message || '刺客请求进行刺杀');
       });
 
       // 错误事件
-      this.socket.on('error', (error: string) => {
+      on('error', (error: string) => {
         this.errorMessage = error;
         this.addSystemMessage(`错误：${error}`);
       });
 
       // 时间同步
-      this.socket.on('time_update', (data: { timeLeft: number }) => {
+      on('time_update', (data: { timeLeft: number }) => {
         this.timeLeft = data.timeLeft;
       });
 
       // 游戏状态同步（用于重连）
-      this.socket.on('game_state_sync', (data: {
+      on('game_state_sync', (data: {
         room: AvalonRoomState;
         game: AvalonGameState | null;
         secret: AvalonSecret | null;
@@ -252,7 +277,11 @@ export const useAvalonStore = defineStore('avalon', {
       }
 
       if (this.socket) {
-        this.socket.removeAllListeners();
+        // 遍历移除所有追踪的监听器
+        for (const [event, handler] of this.socketListeners) {
+          this.socket.off(event, handler);
+        }
+        this.socketListeners = [];
         this.socket.disconnect();
         this.socket = null;
       }
@@ -353,6 +382,9 @@ export const useAvalonStore = defineStore('avalon', {
         content: message,
         timestamp: new Date().toISOString()
       });
+      if (this.messages.length > 500) {
+        this.messages = this.messages.slice(-500);
+      }
     },
 
     updateTimer() {

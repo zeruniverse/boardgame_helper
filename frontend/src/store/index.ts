@@ -7,6 +7,7 @@ import router from '../router';
 // 重新导出游戏特定的store
 export { useTexasHoldemStore } from './texas_holdem';
 export { useAvalonStore } from './avalon';
+export { useBOTCGameStore } from './botc';
 
 
 const gameRoutes: Record<string, string> = {
@@ -52,16 +53,20 @@ export const useMainStore = defineStore('main', {
     rooms: [] as RoomInfo[],
     connected: false,
     heartbeatInterval: null as ReturnType<typeof setInterval> | null,
+    socketListeners: [] as Array<[string, (...args: any[]) => void]>,
   }),
   
   actions: {
     initSocket() {
-      // 如果已有socket连接，先断开
+      // 防止重复连接
+      if (this.socket?.connected) {
+        console.log('Socket already connected, skipping init');
+        return;
+      }
+
+      // 如果已有socket连接，先断开并清理监听器
       if (this.socket) {
-        console.log('断开现有socket连接');
-        this.socket.removeAllListeners();
-        this.socket.disconnect();
-        this.socket = null;
+        this.disconnectSocket();
       }
 
       // 清除之前的心跳定时器
@@ -70,6 +75,9 @@ export const useMainStore = defineStore('main', {
         this.heartbeatInterval = null;
       }
 
+      // 重置监听器追踪
+      this.socketListeners = [];
+
       // 创建新的socket连接
       console.log('创建新的socket连接到:', SOCKET_URL);
       this.socket = io(SOCKET_URL, {
@@ -77,38 +85,53 @@ export const useMainStore = defineStore('main', {
       });
 
       // 连接建立后的处理
-      this.socket.on('connect', () => {
+      const connectHandler = () => {
         console.log('Socket connected to:', SOCKET_URL);
         this.connected = true;
-        // Bug S1: 连接成功后自动获取大厅数据
+        // 连接成功后自动获取大厅数据
         this.socket?.emit('get_lobby');
-      });
+      };
+      this.socket.on('connect', connectHandler);
+      this.socketListeners.push(['connect', connectHandler]);
 
-      this.socket.on('disconnect', () => {
+      // 连接错误处理
+      const connectErrorHandler = (error: Error) => {
+        console.error('Socket connection error:', error);
+        this.connected = false;
+      };
+      this.socket.on('connect_error', connectErrorHandler);
+      this.socketListeners.push(['connect_error', connectErrorHandler]);
+
+      const disconnectHandler = () => {
         console.log('Socket disconnected');
         this.connected = false;
-        // Bug S4: 断开连接时清理心跳定时器
+        // 断开连接时清理心跳定时器
         if (this.heartbeatInterval) {
           clearInterval(this.heartbeatInterval);
           this.heartbeatInterval = null;
         }
-      });
+      };
+      this.socket.on('disconnect', disconnectHandler);
+      this.socketListeners.push(['disconnect', disconnectHandler]);
 
       // 房间列表
-      this.socket.on('room_list', (rooms: RoomInfo[]) => {
+      const roomListHandler = (rooms: RoomInfo[]) => {
         this.rooms = rooms;
-      });
+      };
+      this.socket.on('room_list', roomListHandler);
+      this.socketListeners.push(['room_list', roomListHandler]);
 
       // 监听大厅数据更新
-      this.socket.on('lobby_update', (data: { rooms: RoomInfo[] }) => {
+      const lobbyUpdateHandler = (data: { rooms: RoomInfo[] }) => {
         this.rooms = data.rooms;
-      });
+      };
+      this.socket.on('lobby_update', lobbyUpdateHandler);
+      this.socketListeners.push(['lobby_update', lobbyUpdateHandler]);
 
       // 监听房间加入成功事件 - 通用路由处理
-      this.socket.on('room_joined', (data: { room: any; player: any; playerId?: string; isHost: boolean }) => {
+      const roomJoinedHandler = (data: { room: any; player: any; playerId?: string; isHost: boolean }) => {
         rememberGameSession(data.room, data.player);
         // 根据房间类型导航到对应的游戏页面
-        // Bug S5: 使用import引入的router实例，替代全局window访问
         const routeName = gameRoutes[data.room?.type];
         if (data.room?.type === 'texas-holdem' && data.player) {
           const texasStore = useTexasHoldemStore();
@@ -117,7 +140,9 @@ export const useMainStore = defineStore('main', {
         if (router && routeName) {
           router.push({ name: routeName, params: { id: data.room.id } });
         }
-      });
+      };
+      this.socket.on('room_joined', roomJoinedHandler);
+      this.socketListeners.push(['room_joined', roomJoinedHandler]);
       
       // 心跳保持在线
       this.heartbeatInterval = setInterval(() => {
@@ -125,7 +150,7 @@ export const useMainStore = defineStore('main', {
       }, 5000);
 
       // 监听服务器重置开始事件
-      this.socket.on('server_reset_start', (data: { message: string }) => {
+      const serverResetHandler = (data: { message: string }) => {
         alert(data.message);
         
         // 清理本地存储
@@ -136,13 +161,19 @@ export const useMainStore = defineStore('main', {
         
         // 断开连接
         this.disconnectSocket();
-      });
+      };
+      this.socket.on('server_reset_start', serverResetHandler);
+      this.socketListeners.push(['server_reset_start', serverResetHandler]);
     },
 
     disconnectSocket() {
       if (this.socket) {
         console.log('主动断开socket连接');
-        this.socket.removeAllListeners();
+        // 遍历移除所有追踪的监听器
+        for (const [event, handler] of this.socketListeners) {
+          this.socket.off(event, handler);
+        }
+        this.socketListeners = [];
         this.socket.disconnect();
         this.socket = null;
       }

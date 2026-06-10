@@ -4,7 +4,7 @@ import { io, Socket } from 'socket.io-client'
 import { ElMessage } from 'element-plus'
 import { SOCKET_URL } from '../config'
 
-export const useGameStore = defineStore('botc', () => {
+export const useBOTCGameStore = defineStore('botc', () => {
   // 状态
   const socket = ref<Socket | null>(null)
   const currentUserId = ref<string>('')
@@ -19,6 +19,21 @@ export const useGameStore = defineStore('botc', () => {
   const nightInfo = ref<any>(null)
   const isStoryteller = ref<boolean>(false)
   const chatMessages = ref<any[]>([])
+  const socketListeners = ref<Array<[string, (...args: any[]) => void]>>([])
+
+  // 辅助函数：追踪监听器
+  const on = (event: string, handler: (...args: any[]) => void) => {
+    socket.value!.on(event, handler)
+    socketListeners.value.push([event, handler])
+  }
+
+  // 辅助函数：添加聊天消息（限制500条）
+  const addChatMessage = (data: any) => {
+    chatMessages.value.push(data)
+    if (chatMessages.value.length > 500) {
+      chatMessages.value = chatMessages.value.slice(-500)
+    }
+  }
 
   // 连接到服务器
   const connect = () => {
@@ -28,42 +43,48 @@ export const useGameStore = defineStore('botc', () => {
 
     return new Promise((resolve, reject) => {
       try {
+        // 先清理之前的连接
+        if (socket.value) {
+          disconnect()
+        }
+
         socket.value = io(SOCKET_URL, {
           transports: ['websocket'],
           timeout: 10000,
         })
+        socketListeners.value = []
 
-        socket.value.on('connect', () => {
+        on('connect', () => {
           console.log('血染钟楼: 连接到服务器成功')
           connected.value = true
           resolve(void 0)
         })
 
-        socket.value.on('disconnect', () => {
+        on('disconnect', () => {
           console.log('血染钟楼: 与服务器断开连接')
           connected.value = false
         })
 
-        socket.value.on('connect_error', (error) => {
+        on('connect_error', (error) => {
           console.error('血染钟楼: 连接错误:', error)
           connected.value = false
           reject(error)
         })
 
         // 监听错误消息 - 后端使用actionError
-        socket.value.on('actionError', (data) => {
+        on('actionError', (data) => {
           console.error('血染钟楼: 服务器错误:', data)
           ElMessage.error(data.message || '发生未知错误')
         })
 
         // 监听用户认证
-        socket.value.on('user_authenticated', (data) => {
+        on('user_authenticated', (data) => {
           currentUserId.value = data.userId
           console.log('血染钟楼: 用户认证成功:', data.userId)
         })
 
         // 监听房间事件
-        socket.value.on('room_joined', (data) => {
+        on('room_joined', (data) => {
           console.log('血染钟楼: 成功加入房间:', data)
           room.value = data.room
           currentRoomId.value = data.room.id
@@ -72,7 +93,7 @@ export const useGameStore = defineStore('botc', () => {
           if (data.player?.nickname || data.player?.name) localStorage.setItem('botc_nickname', data.player.nickname || data.player.name)
         })
 
-        socket.value.on('room_left', () => {
+        on('room_left', () => {
           console.log('血染钟楼: 离开房间')
           room.value = null
           currentRoomId.value = ''
@@ -80,7 +101,7 @@ export const useGameStore = defineStore('botc', () => {
           playerRole.value = null
         })
 
-        socket.value.on('room_update', (data) => {
+        on('room_update', (data) => {
           room.value = data
           // 如果锁定了房间，更新本地状态
           if (data && data.locked !== undefined) {
@@ -93,39 +114,39 @@ export const useGameStore = defineStore('botc', () => {
         })
 
         // 监听游戏状态同步 - 后端使用gameState
-        socket.value.on('gameState', (data) => {
+        on('gameState', (data) => {
           gameState.value = data.gameState
           if (data.gameConfig) gameConfig.value = data.gameConfig
           isStoryteller.value = data.isStoryteller || false
         })
 
         // 监听游戏更新
-        socket.value.on('gameStarted', (data) => {
+        on('gameStarted', (data) => {
           gameState.value = data.gameState
         })
 
-        socket.value.on('game_update', (data) => {
+        on('game_update', (data) => {
           gameState.value = data
         })
 
         // 监听角色分配 - 后端使用roleAssigned (camelCase)
-        socket.value.on('roleAssigned', (data) => {
+        on('roleAssigned', (data) => {
           playerRole.value = data.role
           nightInfo.value = data.nightInfo
           ElMessage.success(`你的角色是: ${data.role?.name || '未知'}`)
         })
 
         // 监听夜晚信息 - 后端使用nightActionConfirmed
-        socket.value.on('nightActionConfirmed', (data) => {
+        on('nightActionConfirmed', (data) => {
           nightInfo.value = data.action
         })
 
-        socket.value.on('nightInfo', (data) => {
+        on('nightInfo', (data) => {
           nightInfo.value = data
         })
 
         // 监听白天/夜晚开始
-        socket.value.on('dayStarted', (data) => {
+        on('dayStarted', (data) => {
           if (gameState.value) {
             gameState.value.phase = 'day'
             gameState.value.day = data.day
@@ -133,7 +154,7 @@ export const useGameStore = defineStore('botc', () => {
           ElMessage.info(`第${data.day}天开始`)
         })
 
-        socket.value.on('nightStarted', (data) => {
+        on('nightStarted', (data) => {
           if (gameState.value) {
             gameState.value.phase = data.isFirstNight ? 'firstNight' : 'night'
             gameState.value.nightOrder = data.nightOrder || []
@@ -142,7 +163,7 @@ export const useGameStore = defineStore('botc', () => {
         })
 
         // 监听提名和投票
-        socket.value.on('nominationCreated', (data) => {
+        on('nominationCreated', (data) => {
           if (gameState.value) {
             if (!gameState.value.nominations) gameState.value.nominations = []
             gameState.value.nominations.push({
@@ -155,11 +176,11 @@ export const useGameStore = defineStore('botc', () => {
           }
         })
 
-        socket.value.on('votingStarted', (data) => {
+        on('votingStarted', (_data) => {
           ElMessage.warning('投票开始！')
         })
 
-        socket.value.on('voteSubmitted', (data) => {
+        on('voteSubmitted', (data) => {
           if (gameState.value?.nominations) {
             const activeNom = gameState.value.nominations.find((n: any) => n.isOnTrial)
             if (activeNom) {
@@ -174,7 +195,7 @@ export const useGameStore = defineStore('botc', () => {
           }
         })
 
-        socket.value.on('votingEnded', (data) => {
+        on('votingEnded', (data) => {
           if (gameState.value?.nominations) {
             const activeNom = gameState.value.nominations.find((n: any) => n.isOnTrial)
             if (activeNom) {
@@ -186,11 +207,11 @@ export const useGameStore = defineStore('botc', () => {
           ElMessage.info(data.shouldExecute ? '处决通过！' : '处决未通过')
         })
 
-        socket.value.on('playerExecuted', (data) => {
+        on('playerExecuted', (data) => {
           ElMessage.error(`${data.playerName} 被处决！`)
         })
 
-        socket.value.on('playerDied', (data) => {
+        on('playerDied', (data) => {
           if (gameState.value?.players) {
             const player = gameState.value.players.find((p: any) => p.id === data.playerId)
             if (player) {
@@ -201,7 +222,7 @@ export const useGameStore = defineStore('botc', () => {
           ElMessage.error(`${data.playerName} 死亡！原因: ${data.cause}`)
         })
 
-        socket.value.on('playerRevived', (data) => {
+        on('playerRevived', (data) => {
           if (gameState.value?.players) {
             const player = gameState.value.players.find((p: any) => p.id === data.playerId)
             if (player) {
@@ -213,7 +234,7 @@ export const useGameStore = defineStore('botc', () => {
         })
 
         // 监听游戏结束
-        socket.value.on('gameEnded', (data) => {
+        on('gameEnded', (data) => {
           if (gameState.value) {
             gameState.value.phase = 'ended'
             gameState.value.winner = data.winner
@@ -224,21 +245,21 @@ export const useGameStore = defineStore('botc', () => {
         })
 
         // 监听聊天消息 - 后端使用chatMessage (camelCase)
-        socket.value.on('chatMessage', (data) => {
-          chatMessages.value.push(data)
+        on('chatMessage', (data) => {
+          addChatMessage(data)
         })
 
         // 监听私聊消息
-        socket.value.on('privateMessage', (data) => {
-          chatMessages.value.push({
+        on('privateMessage', (data) => {
+          addChatMessage({
             ...data,
             channel: 'private',
             to: currentUserId.value
           })
         })
 
-        socket.value.on('privateMessageSent', (data) => {
-          chatMessages.value.push({
+        on('privateMessageSent', (data) => {
+          addChatMessage({
             ...data,
             channel: 'private',
             from: currentUserId.value
@@ -246,7 +267,7 @@ export const useGameStore = defineStore('botc', () => {
         })
 
         // 监听系统消息
-        socket.value.on('gameMessage', (data) => {
+        on('gameMessage', (data) => {
           ElMessage({
             message: data.message,
             type: data.type || 'info',
@@ -254,7 +275,7 @@ export const useGameStore = defineStore('botc', () => {
           })
         })
 
-        socket.value.on('gameConfigured', (data) => {
+        on('gameConfigured', (data) => {
           gameConfig.value = data.config
         })
 
@@ -268,6 +289,11 @@ export const useGameStore = defineStore('botc', () => {
   // 断开连接
   const disconnect = () => {
     if (socket.value) {
+      // 遍历移除所有追踪的监听器
+      for (const [event, handler] of socketListeners.value) {
+        socket.value.off(event, handler)
+      }
+      socketListeners.value = []
       socket.value.disconnect()
       socket.value = null
       connected.value = false

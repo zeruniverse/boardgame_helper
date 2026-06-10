@@ -126,6 +126,7 @@
           @transfer-host="handleTransferHost"
           @kick-player="handleKickPlayer"
           @start-private-chat="handleStartPrivateChat"
+          @start-game="handleStartGame"
         />
 
         <!-- 聊天区域 -->
@@ -150,7 +151,7 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { useGameStore } from '../store/botc'
+import { useBOTCGameStore } from '../store/botc'
 import { Back } from '@element-plus/icons-vue'
 import BOTCActionPanel from './BOTCActionPanel.vue'
 import BOTCPlayerList from './BOTCPlayerList.vue'
@@ -158,7 +159,7 @@ import BOTCChat from './BOTCChat.vue'
 
 const route = useRoute()
 const router = useRouter()
-const store = useGameStore()
+const store = useBOTCGameStore()
 
 const roomId = route.params.id as string
 const room = computed(() => store.room)
@@ -196,34 +197,29 @@ onMounted(() => {
   
   // 连接到房间
   store.connectToRoom(roomId, 'blood-on-the-clocktower')
+  
+  // 启动计时器同步
+  startTimer()
 })
 
 onUnmounted(() => {
   if (timerInterval) {
     clearInterval(timerInterval)
+    timerInterval = null
   }
   store.disconnectFromRoom()
 })
 
-// 计时器更新
-const updateTimeLeft = () => {
-  if (timeLeft.value > 0) {
-    startTimer()
-  }
-}
-
+// 计时器更新 - 从store同步timeLeft
 const startTimer = () => {
   if (timerInterval) {
     clearInterval(timerInterval)
+    timerInterval = null
   }
   
   timerInterval = setInterval(() => {
-    if (timeLeft.value > 0) {
-      timeLeft.value--
-    } else {
-      clearInterval(timerInterval!)
-      timerInterval = null
-    }
+    // 从store同步timeLeft
+    timeLeft.value = store.timeLeft || 0
   }, 1000)
 }
 
@@ -360,22 +356,18 @@ const handleGameAction = (action: any) => {
 
 // 处理转移房主
 const handleTransferHost = (targetId: string) => {
-  if (store.socket) {
-    store.socket.emit('transfer_host', {
-      roomId: roomId,
-      targetId: targetId
-    })
-  }
+  store.transferHost?.(targetId) || store.socket?.emit('transfer_host', {
+    roomId: roomId,
+    targetId: targetId
+  })
 }
 
 // 处理踢出玩家
 const handleKickPlayer = (targetId: string) => {
-  if (store.socket) {
-    store.socket.emit('kick_player', {
-      roomId: roomId,
-      targetId: targetId
-    })
-  }
+  store.kickPlayer?.(targetId) || store.socket?.emit('kick_player', {
+    roomId: roomId,
+    targetId: targetId
+  })
 }
 
 // 处理开始私聊 - 使用ref代替DOM操作
@@ -388,6 +380,11 @@ const handleStartPrivateChat = (targetId: string) => {
 // 处理私聊消息
 const handlePrivateMessage = (data: any) => {
   store.sendPrivateMessage(data.targetId, data.message)
+}
+
+// 处理开始游戏
+const handleStartGame = (config: any) => {
+  store.sendGameAction('startGame', config)
 }
 </script>
 
