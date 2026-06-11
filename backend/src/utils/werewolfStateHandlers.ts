@@ -350,29 +350,31 @@ export const WolfKillHandler: StateHandler = {
       voteAt: p.characterStatus.wantToKills?.[gameState.currentDay] || 0
     }));
 
-    const voteResult = getVoteResult(votes);
+    // 检查是否所有狼人都投票给同一个有效目标（要求全员一致）
+    const nonZeroVotes = votes.filter(v => v.voteAt > 0);
+    const allWolvesAgree = nonZeroVotes.length > 0 && nonZeroVotes.every(v => v.voteAt === nonZeroVotes[0].voteAt);
+    const unanimousTarget = allWolvesAgree ? nonZeroVotes[0].voteAt : 0;
 
-    if (voteResult && voteResult.length > 0) {
-      const targetIndex = voteResult[0];
-      const targetPlayer = findPlayerByIndex(gameState.players, targetIndex);
+    if (unanimousTarget > 0) {
+      const targetPlayer = findPlayerByIndex(gameState.players, unanimousTarget);
 
       if (targetPlayer && targetPlayer.isAlive) {
         // 记录狼人击杀目标
         if (!gameState.nightActions) gameState.nightActions = {};
-        gameState.nightActions.wolfKillTarget = targetIndex;
+        gameState.nightActions.wolfKillTarget = unanimousTarget;
 
         // 设置死亡标记（初始状态，可能被救）
         targetPlayer.die = {
           at: gameState.currentDay,
           fromIndex: werewolves
-            .filter(w => w.characterStatus.wantToKills?.[gameState.currentDay] === targetIndex)
+            .filter(w => w.characterStatus.wantToKills?.[gameState.currentDay] === unanimousTarget)
             .map(w => w.index),
           fromCharacter: 'WEREWOLF'
         };
 
         // 通知狼人击杀结果
         context.sendToRoom('system_message', {
-          message: `狼人选择了 ${targetIndex}号玩家 作为击杀目标`
+          message: `狼人选择了 ${unanimousTarget}号玩家 作为击杀目标`
         });
       }
     } else {
@@ -958,15 +960,14 @@ export const ExileVoteHandler: StateHandler = {
 
       // PK发言后重新投票
       setTimeout(() => {
-        // 先PK发言
-        DayDiscussHandler.startOfState(gameState, context);
-
-        // PK发言结束后重新投票（在DayDiscuss的endOfState中处理）
-        // 我们需要标记这是PK投票
+        // 先重置投票记录，再进入PK发言状态，避免竞争条件
         gameState.votes = {};
         Object.values(gameState.players).forEach(p => {
           p.hasVotedAt[gameState.currentDay] = 0;
         });
+
+        // PK发言结束后重新投票（在DayDiscuss的endOfState中处理）
+        DayDiscussHandler.startOfState(gameState, context);
       }, 3000);
     }
   }

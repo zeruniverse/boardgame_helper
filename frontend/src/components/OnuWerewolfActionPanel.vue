@@ -34,7 +34,17 @@
             已选择: {{ selectedRoles.length }} 个角色 
             (玩家: {{ playerCount }}, 需要: {{ playerCount + 3 }})
           </div>
-          
+
+          <div class="config-options">
+            <el-checkbox v-model="allowRoleReveal">
+              游戏结束后揭示所有玩家的最终角色
+            </el-checkbox>
+          </div>
+
+          <div v-if="configError" class="config-error">
+            <el-alert :title="configError" type="error" :closable="false" />
+          </div>
+
           <div class="config-actions">
             <el-button 
               type="primary" 
@@ -488,6 +498,7 @@ const emit = defineEmits<{
 
 // 响应式数据
 const selectedRoles = ref<OnuWerewolfRole[]>([...requiredRoles]);
+const allowRoleReveal = ref(true);
 const hasSkippedDiscussion = ref(false);
 
 // 技能选择状态 (H1 fix)
@@ -501,7 +512,26 @@ const skillResult = ref<string>('');
 
 // 计算属性
 const canUpdateConfig = computed(() => {
-  return selectedRoles.value.length === props.playerCount + 3;
+  if (selectedRoles.value.length !== props.playerCount + 3) {
+    return false;
+  }
+  // 石匠必须成对出现（0个或2个）
+  const masonCount = selectedRoles.value.filter(r => r === OnuWerewolfRole.Mason).length;
+  if (masonCount === 1) {
+    return false;
+  }
+  return true;
+});
+
+const configError = computed(() => {
+  if (selectedRoles.value.length !== props.playerCount + 3) {
+    return `需要选择 ${props.playerCount + 3} 个角色（${props.playerCount} 玩家 + 3 中心卡），当前已选 ${selectedRoles.value.length} 个`;
+  }
+  const masonCount = selectedRoles.value.filter(r => r === OnuWerewolfRole.Mason).length;
+  if (masonCount === 1) {
+    return '石匠角色必须有0个或2个，不能只有1个';
+  }
+  return '';
 });
 
 const gameResult = computed(() => {
@@ -613,7 +643,8 @@ const updateConfig = () => {
     roles: selectedRoles.value,
     nightTime: 300,
     discussTime: 180,
-    votingTime: 300
+    votingTime: 300,
+    allowRoleReveal: allowRoleReveal.value
   });
 };
 
@@ -822,6 +853,15 @@ watch(() => props.myRole, () => {
   font-weight: 600;
   margin-bottom: 15px;
   color: #495057;
+}
+
+.config-options {
+  margin: 15px 0;
+  text-align: left;
+}
+
+.config-error {
+  margin: 15px 0;
 }
 
 .config-actions {

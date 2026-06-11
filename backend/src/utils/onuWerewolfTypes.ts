@@ -199,9 +199,10 @@ export interface OnuWerewolfConfig {
   roles: OnuWerewolfRole[];
   random: boolean;
   loneWolf: boolean;
-  nightTime: number;    // 夜间阶段时间（秒）
-  votingTime: number;   // 投票阶段时间（秒）
-  discussTime: number;  // 讨论时间（秒）
+  nightTime: number;       // 夜间阶段时间（秒）
+  votingTime: number;      // 投票阶段时间（秒）
+  discussTime: number;     // 讨论时间（秒）
+  allowRoleReveal?: boolean; // 游戏结束后是否揭示所有玩家的最终角色
 }
 
 // 游戏状态

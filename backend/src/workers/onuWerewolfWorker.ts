@@ -134,9 +134,17 @@ class OnuWerewolfWorker extends BaseGameWorker {
       throw new Error('游戏已开始，无法修改配置');
     }
 
+    // 如果传入了角色配置，先验证
+    if (config.roles && config.roles.length > 0) {
+      const validation = onuValidateGameConfig(config.roles);
+      if (!validation.valid) {
+        throw new Error(validation.error);
+      }
+    }
+
     this.config = { ...this.config, ...config };
     this.gameState.config = this.config;
-    
+
     this.sendToRoom('onu_config_changed', { config: this.config });
   }
 
@@ -765,7 +773,8 @@ class OnuWerewolfWorker extends BaseGameWorker {
     }
 
     const targetSeat = actionData.target !== undefined ? Number(actionData.target) : undefined;
-    if (!targetSeat || isNaN(targetSeat) || targetSeat < 1) {
+    const totalPlayers = Object.keys(this.gameState.players).length;
+    if (!targetSeat || isNaN(targetSeat) || targetSeat < 1 || targetSeat > totalPlayers) {
       throw new Error('无效的投票目标');
     }
 
@@ -787,7 +796,6 @@ class OnuWerewolfWorker extends BaseGameWorker {
     });
 
     // 检查是否所有玩家都已投票
-    const totalPlayers = Object.keys(this.gameState.players).length;
     const votedPlayers = Object.keys(this.gameState.votes).length;
     
     if (votedPlayers === totalPlayers) {

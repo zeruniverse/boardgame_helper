@@ -144,18 +144,18 @@ export class OnuWerewolfSkill extends OnuBaseSkill {
 export class OnuSeerSkill extends OnuBaseSkill {
   canUse(selection?: OnuWerewolfSelection): boolean {
     if (!selection) return false;
-    
+
     // 可以查看一个玩家或两张中心卡牌
     if (selection.players && selection.players.length === 1) {
       const seat = selection.players[0];
       const target = this.getPlayerBySeat(seat);
-      return target !== undefined && target.id !== this.owner.id;
+      return target !== undefined && target.id !== this.owner.id && !target.shielded;
     }
-    
+
     if (selection.cards && selection.cards.length === 2) {
       return selection.cards.every(pos => pos >= 0 && pos <= 2);
     }
-    
+
     return false;
   }
 
@@ -165,7 +165,10 @@ export class OnuSeerSkill extends OnuBaseSkill {
       if (!target) {
         return { success: false, error: '目标玩家不存在' };
       }
-      
+      if (target.shielded) {
+        return { success: false, error: '目标玩家被哨兵保护，无法查看' };
+      }
+
       return {
         success: true,
         vision: onuCreateVision([target]),
@@ -370,10 +373,10 @@ export class OnuDoppelgangerSkill extends OnuBaseSkill {
     if (!selection || !selection.players || selection.players.length !== 1) {
       return false;
     }
-    
+
     const seat = selection.players[0];
     const target = this.getPlayerBySeat(seat);
-    return target !== undefined && target.id !== this.owner.id;
+    return target !== undefined && target.id !== this.owner.id && !target.shielded;
   }
 
   execute(selection: OnuWerewolfSelection): OnuSkillResult {
@@ -592,10 +595,10 @@ export class OnuAlphaWolfSkill extends OnuBaseSkill {
   canUse(selection?: OnuWerewolfSelection): boolean {
     // 如果没有选择，只查看同伴
     if (!selection || (!selection.players && !selection.cards)) return true;
-    // 如果要移动标记，需要选择一名非狼人玩家
+    // 如果要移动标记，需要选择一名非狼人且未被保护的玩家
     if (selection.players && selection.players.length === 1) {
       const target = this.getPlayerBySeat(selection.players[0]);
-      return target !== undefined && target.id !== this.owner.id && !onuIsWerewolf(target.initialRole);
+      return target !== undefined && target.id !== this.owner.id && !onuIsWerewolf(target.initialRole) && !target.shielded;
     }
     return true;
   }
@@ -635,7 +638,7 @@ export class OnuMysticWolfSkill extends OnuBaseSkill {
     }
     const seat = selection.players[0];
     const target = this.getPlayerBySeat(seat);
-    return target !== undefined && target.id !== this.owner.id && !onuIsWerewolf(target.actualRole);
+    return target !== undefined && target.id !== this.owner.id && !onuIsWerewolf(target.actualRole) && !target.shielded;
   }
 
   execute(selection: OnuWerewolfSelection): OnuSkillResult {

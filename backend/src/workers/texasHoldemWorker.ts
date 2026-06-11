@@ -27,6 +27,7 @@ interface TexasHoldemGameState {
   playerHands: Record<string, string[]>;
   acted: string[];
   stage: 'idle' | 'playing' | 'distribution';
+  winners: string[];
 }
 
 // 德州扑克配置接口
@@ -85,7 +86,8 @@ class TexasHoldemWorker extends BaseGameWorker {
       round: 0,
       playerHands: {},
       acted: [],
-      stage: 'idle'
+      stage: 'idle',
+      winners: []
     } as TexasHoldemGameState;
     this.participants = [];
 
@@ -237,7 +239,6 @@ class TexasHoldemWorker extends BaseGameWorker {
         message: `${player.nickname} 断开连接`
       });
 
-      // 修复：如果玩家在游戏进行中，自动fold该玩家
       if (this.participants.includes(playerId)) {
         const gs = this.gameState as TexasHoldemGameState;
         if (!gs.folded.includes(playerId)) {
@@ -335,12 +336,10 @@ class TexasHoldemWorker extends BaseGameWorker {
       this.participants.splice(participantIndex, 1);
     }
 
-    // 修复Bug 1.4: 参考handleCashOut逻辑，在移除玩家后调整currentTurn
     if (this.gameState.currentTurn >= this.participants.length) {
       this.gameState.currentTurn = 0;
     }
 
-    // 修复：同步参与者到room.gameMetadata
     if (!this.room.gameMetadata) {
       this.room.gameMetadata = {};
     }
@@ -505,15 +504,25 @@ class TexasHoldemWorker extends BaseGameWorker {
     const player = this.room.players[playerIndex];
     const gs = this.gameState as TexasHoldemGameState;
 
-    // 修复：如果游戏正在进行中且该玩家未fold，先fold
+    // 如果游戏正在进行中且该玩家未fold，先fold
     if (this.participants.includes(playerId) && !gs.folded.includes(playerId)) {
       if (gs.currentTurn >= 0 && gs.currentTurn < this.room.players.length && this.room.players[gs.currentTurn].id === playerId) {
         // 是当前回合，通过handleFold统一处理（会推进游戏）
         this.handleFold(playerId);
       } else {
-        // 不是当前回合，直接fold
+        // 不是当前回合，直接fold并检查是否只剩一个玩家
         gs.folded.push(playerId);
         this.sendToRoom('chat_broadcast', { message: `${player.nickname} cash out 并自动弃牌`, type: 'system' });
+        const activeIds = this.participants.filter((id: string) => !gs.folded.includes(id));
+        if (activeIds.length === 1) {
+          const winner = this.room.players.find(p => p.id === activeIds[0]);
+          if (winner) {
+            winner.gameMetadata.chips += gs.pot;
+            this.sendToRoom('chat_broadcast', { message: `${winner.nickname} 赢得底池 ${gs.pot}` });
+            this.sendToRoom('room_update', this.room);
+            this.handleGameOver();
+          }
+        }
       }
     }
 
@@ -521,13 +530,11 @@ class TexasHoldemWorker extends BaseGameWorker {
     const removedIndex = playerIndex;
     this.room.players.splice(playerIndex, 1);
 
-    // 修复：从参与者列表中移除
     const participantIdx = this.participants.indexOf(playerId);
     if (participantIdx !== -1) {
       this.participants.splice(participantIdx, 1);
     }
 
-    // 修复：调整currentTurn，因为splice改变了players数组的索引
     if (gs.currentTurn > removedIndex) {
       gs.currentTurn--;
     }
@@ -536,7 +543,6 @@ class TexasHoldemWorker extends BaseGameWorker {
       gs.currentTurn = this.room.players.length > 0 ? 0 : -1;
     }
 
-    // 修复：同步参与者到room.gameMetadata
     if (!this.room.gameMetadata) {
       this.room.gameMetadata = {};
     }
@@ -560,6 +566,7 @@ class TexasHoldemWorker extends BaseGameWorker {
     gs.totalBets = {};
     gs.playerHands = {};
     gs.stage = 'playing';
+    gs.winners = [];
 
     // 获取参与游戏的玩家列表
     const participatingPlayers = this.room.players.filter(p => this.participants.includes(p.id));
@@ -620,7 +627,6 @@ class TexasHoldemWorker extends BaseGameWorker {
     const nextPlayer = participatingPlayers[nextPlayerIndex];
     gs.currentTurn = this.room.players.findIndex(p => p.id === nextPlayer.id);
 
-    // 修复：将参与者列表同步到room.gameMetadata，确保前端能获取
     if (!this.room.gameMetadata) {
       this.room.gameMetadata = {};
     }
@@ -629,7 +635,6 @@ class TexasHoldemWorker extends BaseGameWorker {
     // 同步状态
     this.sendToRoom('room_update', this.room);
     this.sendToRoom('game_started', {});
-    // 修复：将currentTurn从索引转换为playerId
     const startGameTurnPlayerId = this.room.players[gs.currentTurn]?.id || '';
     this.sendToRoom('game_state', {
       communityCards: gs.communityCards,
@@ -668,7 +673,6 @@ class TexasHoldemWorker extends BaseGameWorker {
       return;
     }
 
-    // 修复：使用 inGame !== false 作为参与条件（自动给予默认筹码后不需要检查chips）
     const participants = this.room.players.filter(p => {
       const gm = p.gameMetadata || {};
       return gm.inGame !== false;
@@ -754,8 +758,6 @@ class TexasHoldemWorker extends BaseGameWorker {
       return;
     }
 
-    // 修复Bug 1.6: 检查玩家是否已fold或已行动，避免重复处理
-    // 修复：已全下(chips===0)的玩家自动跳过，视为已行动
     if (gs.folded.includes(player.id) || gs.acted.includes(player.id) || player.gameMetadata.chips === 0) {
       this.clearActionTimer();
       // 如果是全下玩家，确保他们被标记为已行动并继续游戏
@@ -811,7 +813,6 @@ class TexasHoldemWorker extends BaseGameWorker {
       let allActed = true;
       let allBetsEqual = true;
       for (const player of activePlayers) {
-        // 修复：已全下(chips===0)的玩家自动视为已行动，因为他们无法再做任何行动
         if (player.gameMetadata.chips > 0 && !gs.acted.includes(player.id)) {
           allActed = false;
           break;
@@ -876,7 +877,6 @@ class TexasHoldemWorker extends BaseGameWorker {
     gs.currentTurn = nextGlobalIdx;
 
     // 广播游戏状态更新并请求下一个玩家行动
-    // 修复：将currentTurn从索引转换为playerId，确保前端能正确识别当前行动玩家
     const currentTurnPlayerId = this.room.players[gs.currentTurn]?.id || '';
     this.sendToRoom('game_state', {
       communityCards: gs.communityCards,
@@ -908,15 +908,15 @@ class TexasHoldemWorker extends BaseGameWorker {
     this.participants = [];
 
     // 重置游戏状态中的关键字段
-    this.gameState.currentTurn = -1; // 设置为无效值
+    this.gameState.currentTurn = -1;
     this.gameState.acted = [];
     this.gameState.folded = [];
     this.gameState.stage = 'idle';
-    this.gameState.totalBets = {}; // 重置总投注记录
+    this.gameState.totalBets = {};
+    this.gameState.winners = [];
 
     // 同步最终的游戏状态（包括完整的公共牌）
     const gs = this.gameState as TexasHoldemGameState;
-    // 修复：currentTurn为-1时发送空字符串，确保前端类型一致性
     const gameOverTurnPlayerId = gs.currentTurn >= 0 && gs.currentTurn < this.room.players.length ? this.room.players[gs.currentTurn]?.id || '' : '';
     this.sendToRoom('game_state', {
       communityCards: gs.communityCards,
@@ -929,7 +929,6 @@ class TexasHoldemWorker extends BaseGameWorker {
       stage: gs.stage
     });
 
-    // 修复：同步清空的参与者列表到room.gameMetadata
     if (!this.room.gameMetadata) {
       this.room.gameMetadata = {};
     }
@@ -1131,17 +1130,7 @@ class TexasHoldemWorker extends BaseGameWorker {
         return;
     }
 
-    // 修复：移除 handlePlayerAction 末尾的 acted 管理代码。
-    // 所有 action handler（handleCheck/handleCall/handleRaise/handleAllIn/handleFold）
-    // 内部已经自行处理了 acted 列表的更新。在此额外添加 playerId 会导致：
-    // 若 action handler 调用了 continueToNextPlayer() -> nextRound() 进入新轮次，
-    // nextRound() 已将 gs.acted 重置为 []，而此处在其之后执行，会把 playerId
-    // 错误地写入新轮次的 acted，导致该玩家在新轮次被跳过行动。
 
-    // 修复：移除末尾多余的 checkRoundEnd()。
-    // 所有 action handler（fold/check/call/raise/allin）内部已经通过
-    // continueToNextPlayer() 或 handleGameOver() 推进了游戏状态。
-    // 额外的 checkRoundEnd() 可能导致 nextRound() 被调用两次。
   }
 
   private handleChatMessage(playerId: string, data: any) {
@@ -1271,6 +1260,12 @@ class TexasHoldemWorker extends BaseGameWorker {
       return;
     }
 
+    // 验证只有赢家可以拿筹码
+    if (gs.winners.length > 0 && !gs.winners.includes(playerId)) {
+      this.sendToPlayer(playerId, 'error', { message: '你不是赢家，无法领取筹码' });
+      return;
+    }
+
     player.gameMetadata.chips += takeAmt;
     gs.pot -= takeAmt;
 
@@ -1305,6 +1300,12 @@ class TexasHoldemWorker extends BaseGameWorker {
 
     const gs = this.gameState as TexasHoldemGameState;
     if (gs.pot === 0) {
+      return;
+    }
+
+    // 验证只有赢家可以拿筹码
+    if (gs.winners.length > 0 && !gs.winners.includes(playerId)) {
+      this.sendToPlayer(playerId, 'error', { message: '你不是赢家，无法领取筹码' });
       return;
     }
 
@@ -1372,8 +1373,6 @@ class TexasHoldemWorker extends BaseGameWorker {
     const player = this.room.players.find(p => p.id === playerId);
     if (!player) return;
     const gs = this.gameState as TexasHoldemGameState;
-    // 修复：在 continueToNextPlayer 前确保 playerId 已加入 acted，
-    // 否则 allActed 检查会看不到当前玩家，导致前一个玩家获得额外行动机会
     if (!gs.acted.includes(playerId)) gs.acted.push(playerId);
     this.sendToRoom('chat_broadcast', { message: `${player.nickname} 看牌` });
     this.continueToNextPlayer();
@@ -1397,7 +1396,6 @@ class TexasHoldemWorker extends BaseGameWorker {
       this.sendToRoom('chat_broadcast', { message: `${player.nickname} 跟注 ${actualCall}` });
     }
 
-    // 修复：在 continueToNextPlayer 前确保 playerId 已加入 acted
     if (!gs.acted.includes(playerId)) gs.acted.push(playerId);
 
     this.sendToRoom('room_update', this.room);
@@ -1440,7 +1438,6 @@ class TexasHoldemWorker extends BaseGameWorker {
     if (!player) return;
 
     if (player.gameMetadata.chips === 0) {
-      // 修复：在 continueToNextPlayer 前确保 playerId 已加入 acted
       if (!gs.acted.includes(playerId)) gs.acted.push(playerId);
       this.sendToRoom('chat_broadcast', { message: `${player.nickname} 已经全下` });
       this.continueToNextPlayer();
@@ -1459,8 +1456,6 @@ class TexasHoldemWorker extends BaseGameWorker {
       gs.currentBet = allInAmount;
       gs.acted = [playerId];
     } else {
-      // 修复Bug 1.2: all-in金额未超过当前最高注时，确保playerId已加入acted
-      // 边池资格由totalBets和splitPotSidePots正确追踪：all-in玩家只对等于其all-in金额的pot有资格
       if (!gs.acted.includes(playerId)) gs.acted.push(playerId);
     }
 
@@ -1492,7 +1487,6 @@ class TexasHoldemWorker extends BaseGameWorker {
     let allBetsEqual = true;
 
     for (const player of activePlayers) {
-      // 修复：已全下(chips===0)的玩家自动视为已行动，因为他们无法再做任何行动
       if (player.gameMetadata.chips > 0 && !gs.acted.includes(player.id)) {
         allActed = false;
         break;
@@ -1709,7 +1703,6 @@ class TexasHoldemWorker extends BaseGameWorker {
       const pots = this.splitPotSidePots(gs.totalBets, activeIds);
       let totalDistributed = 0;
 
-      // 获取参与玩家列表用于正确的sbOrder计算 - 修复：使用participatingPlayers而非activeIds
       const participatingPlayers = this.room.players.filter(p => this.participants.includes(p.id));
 
       pots.forEach((pot: SidePot) => {
@@ -1721,7 +1714,6 @@ class TexasHoldemWorker extends BaseGameWorker {
         let winners: Player[] = [];
 
         pot.eligibleIds.forEach((pid: string) => {
-          // 修复：安全跳过没有手牌的玩家
           if (!gs.playerHands[pid] || gs.playerHands[pid].length === 0) {
             console.log(`警告：玩家 ${pid} 没有手牌数据，跳过`);
             return;
@@ -1738,7 +1730,6 @@ class TexasHoldemWorker extends BaseGameWorker {
           }
         });
 
-        // 安全修复：如果没有赢家，跳过
         if (winners.length === 0) {
           console.log(`警告：奖池 ${pot.amount} 没有合格赢家`);
           return;
@@ -1755,7 +1746,6 @@ class TexasHoldemWorker extends BaseGameWorker {
           this.sendToRoom('chat_broadcast', { message: `${winnerNames} 平分池子 ${pot.amount}`, type: 'system' });
         }
 
-        // 修复Bug 1.3: 找到小盲注玩家在participatingPlayers中的正确索引，避免gs.sbIndex越界
         const sbIndex = gs.sbIndex < participatingPlayers.length ? gs.sbIndex : 0;
         const sbOrder: string[] = [];
         let idx = sbIndex;
@@ -1789,7 +1779,31 @@ class TexasHoldemWorker extends BaseGameWorker {
       this.sendToRoom('chat_broadcast', { message: `总计分配奖池: ${totalDistributed}`, type: 'system' });
       gs.pot = 0; // 奖池已分配完毕
     } else {
-      // 非系统发牌模式，不自动分配奖金，让玩家自行take
+      // 非系统发牌模式，评估手牌确定赢家以验证take操作
+      if (gs.playerHands) {
+        const evaluatedPlayers = activePlayers.filter((p: Player) => gs.playerHands[p.id] && gs.playerHands[p.id].length > 0);
+        if (evaluatedPlayers.length > 0) {
+          let bestHand: number | null = null;
+          const handWinners: Player[] = [];
+          evaluatedPlayers.forEach((player: Player) => {
+            const hand = [...gs.playerHands[player.id], ...gs.communityCards];
+            const hv = evaluateHand(hand);
+            if (bestHand === null || hv > bestHand) {
+              bestHand = hv;
+              handWinners.length = 0;
+              handWinners.push(player);
+            } else if (hv === bestHand) {
+              handWinners.push(player);
+            }
+          });
+          gs.winners = handWinners.map(w => w.id);
+        } else {
+          // 无手牌数据时，所有活跃玩家都视为有资格
+          gs.winners = activePlayers.map((p: Player) => p.id);
+        }
+      } else {
+        gs.winners = activePlayers.map((p: Player) => p.id);
+      }
       this.sendToRoom('chat_broadcast', { message: `奖池共计 ${gs.pot}，请各位玩家根据牌型大小自行分配奖金`, type: 'system' });
       this.sendToRoom('chat_broadcast', { message: '可使用 take 命令取奖金，或 take_all 取全部奖金', type: 'system' });
 

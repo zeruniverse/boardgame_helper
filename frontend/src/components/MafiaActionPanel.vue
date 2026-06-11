@@ -80,6 +80,22 @@
         </div>
       </div>
 
+      <!-- 狙击手行动 -->
+      <div v-if="playerSecret?.role === 'SNIPER'" class="sniper-actions">
+        <h5>选择要狙击的目标:</h5>
+        <div class="player-buttons">
+          <el-button
+            v-for="player in getAliveOtherPlayers()"
+            :key="player.id"
+            @click="sniperShoot(player.id)"
+            :disabled="!canOperate || playerSecret?.sniperShot"
+            size="small"
+          >
+            {{ player.name }}
+          </el-button>
+        </div>
+      </div>
+
       <!-- 平民等待 -->
       <div v-if="playerSecret?.role === 'CIVILIAN'" class="civilian-wait">
         <p>平民请耐心等待，夜晚即将结束...</p>
@@ -232,7 +248,7 @@ interface Player {
   name: string
   alive: boolean
   team?: 'RED' | 'BLUE'
-  role?: 'KILLER' | 'COP' | 'DOCTOR' | 'CIVILIAN'
+  role?: 'KILLER' | 'COP' | 'DOCTOR' | 'SNIPER' | 'CIVILIAN'
 }
 
 interface Props {
@@ -315,6 +331,10 @@ const isTeammate = (playerId: string): boolean => {
   if (props.playerSecret.role === 'DOCTOR') {
     return props.playerSecret.teammates?.includes(playerId) ?? false
   }
+  // 狙击手之间是队友
+  if (props.playerSecret.role === 'SNIPER') {
+    return props.playerSecret.teammates?.includes(playerId) ?? false
+  }
   return false
 }
 
@@ -335,6 +355,10 @@ const getNightActionDescription = (): string => {
     return '警察请选择今晚要查验的目标'
   } else if (props.playerSecret?.role === 'DOCTOR') {
     return '医生请选择今晚要救的目标'
+  } else if (props.playerSecret?.role === 'SNIPER') {
+    return props.playerSecret?.sniperShot
+      ? '你已经使用过狙击机会了，请耐心等待...'
+      : '狙击手请选择今晚要狙击的目标（仅一次机会）'
   } else {
     return '夜晚降临，请耐心等待...'
   }
@@ -347,6 +371,7 @@ const startGame = () => store.startGame()
 const killPerson = (targetId: string) => store.killPerson(targetId)
 const inspectSuspect = (targetId: string) => store.inspectSuspect(targetId)
 const doctorSave = (targetId: string) => store.doctorSave(targetId)
+const sniperShoot = (targetId: string) => store.sniperShoot(targetId)
 const vote = (targetId: string) => store.vote(targetId)
 const endSpeak = () => store.endSpeak()
 const confess = () => store.confess()
@@ -393,7 +418,8 @@ const restartGame = () => store.restartGame()
 }
 
 .night-actions .killer-actions,
-.night-actions .cop-actions {
+.night-actions .cop-actions,
+.night-actions .sniper-actions {
   margin-bottom: 16px;
 }
 

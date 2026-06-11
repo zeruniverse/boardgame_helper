@@ -236,7 +236,7 @@ export const ONU_WEREWOLF_PRESETS: Record<string, OnuWerewolfPreset> = {
       OnuWerewolfRole.Troublemaker,
       OnuWerewolfRole.Drunk,
       OnuWerewolfRole.Insomniac,
-      OnuWerewolfRole.Mason
+      OnuWerewolfRole.Villager
     ],
     config: {
       nightTime: 120,
@@ -312,10 +312,13 @@ export function validatePreset(preset: OnuWerewolfPreset): { valid: boolean; err
     }
   }
 
-  // 石匠最多2个
+  // 石匠最多2个，且必须成对出现（0个或2个）
   const masonCount = preset.roles.filter(r => r === OnuWerewolfRole.Mason).length;
   if (masonCount > 2) {
     return { valid: false, error: '石匠角色最多2个' };
+  }
+  if (masonCount === 1) {
+    return { valid: false, error: '石匠角色必须有0个或2个' };
   }
 
   return { valid: true };
@@ -410,7 +413,7 @@ export function getRecommendedRoles(playerCount: number): OnuWerewolfRole[] {
         OnuWerewolfRole.Villager
       ];
     case 8:
-      // 2狼 + 爪牙 + 预言家 + 强盗 + 捣蛋鬼 + 酒鬼 + 失眠者 + 猎人 + 1村民 + 3中心 = 11
+      // 2狼 + 爪牙 + 预言家 + 强盗 + 捣蛋鬼 + 酒鬼 + 失眠者 + 猎人 + 2村民 + 3中心 = 11
       return [
         OnuWerewolfRole.Werewolf,
         OnuWerewolfRole.Werewolf,
@@ -422,6 +425,39 @@ export function getRecommendedRoles(playerCount: number): OnuWerewolfRole[] {
         OnuWerewolfRole.Insomniac,
         OnuWerewolfRole.Hunter,
         OnuWerewolfRole.Villager,
+        OnuWerewolfRole.Villager
+      ];
+    case 9:
+      // 2狼 + 爪牙 + 预言家 + 强盗 + 捣蛋鬼 + 酒鬼 + 失眠者 + 猎人 + 皮匠 + 2村民 + 3中心 = 12
+      return [
+        OnuWerewolfRole.Werewolf,
+        OnuWerewolfRole.Werewolf,
+        OnuWerewolfRole.Minion,
+        OnuWerewolfRole.Seer,
+        OnuWerewolfRole.Robber,
+        OnuWerewolfRole.Troublemaker,
+        OnuWerewolfRole.Drunk,
+        OnuWerewolfRole.Insomniac,
+        OnuWerewolfRole.Hunter,
+        OnuWerewolfRole.Tanner,
+        OnuWerewolfRole.Villager,
+        OnuWerewolfRole.Villager
+      ];
+    case 10:
+      // 2狼 + 爪牙 + 预言家 + 强盗 + 捣蛋鬼 + 酒鬼 + 失眠者 + 猎人 + 皮匠 + 共济会x2 + 1村民 + 3中心 = 13
+      return [
+        OnuWerewolfRole.Werewolf,
+        OnuWerewolfRole.Werewolf,
+        OnuWerewolfRole.Minion,
+        OnuWerewolfRole.Seer,
+        OnuWerewolfRole.Robber,
+        OnuWerewolfRole.Troublemaker,
+        OnuWerewolfRole.Drunk,
+        OnuWerewolfRole.Insomniac,
+        OnuWerewolfRole.Hunter,
+        OnuWerewolfRole.Tanner,
+        OnuWerewolfRole.Mason,
+        OnuWerewolfRole.Mason,
         OnuWerewolfRole.Villager
       ];
     default:

@@ -175,27 +175,27 @@ export class BOTCWorker extends BaseGameWorker {
       return;
     }
 
-    switch (action.type) {
+    switch (actionType) {
       case 'ready':
-        await this.handlePlayerReady(playerId, action.data);
+        await this.handlePlayerReady(playerId, actionData);
         break;
       case 'nominate':
-        await this.handleNomination(playerId, action.data);
+        await this.handleNomination(playerId, actionData);
         break;
       case 'vote':
-        await this.handleVote(playerId, action.data);
+        await this.handleVote(playerId, actionData);
         break;
       case 'nightAction':
-        await this.handleNightAction(playerId, action.data);
+        await this.handleNightAction(playerId, actionData);
         break;
       case 'storytellerAction':
-        await this.handleStoryteller(playerId, action.data);
+        await this.handleStoryteller(playerId, actionData);
         break;
       case 'dayAbility':
-        await this.handleDayAbility(playerId, action.data);
+        await this.handleDayAbility(playerId, actionData);
         break;
       case 'chat':
-        await this.handleChat(playerId, action.data);
+        await this.handleChat(playerId, actionData);
         break;
       default:
         this.sendToPlayer(playerId, 'actionError', { message: '未知操作类型' });

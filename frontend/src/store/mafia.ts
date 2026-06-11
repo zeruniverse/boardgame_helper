@@ -9,7 +9,7 @@ interface MafiaPlayer {
   index: number;
   ready: boolean;
   alive?: boolean;
-  role?: 'KILLER' | 'COP' | 'DOCTOR' | 'CIVILIAN';
+  role?: 'KILLER' | 'COP' | 'DOCTOR' | 'SNIPER' | 'CIVILIAN';
   team?: 'RED' | 'BLUE';
 }
 
@@ -37,6 +37,7 @@ interface MafiaGameState {
   killerCount?: number;
   copCount?: number;
   doctorCount?: number;
+  sniperCount?: number;
   nightActions?: {
     killTargets?: string[];
     inspectTargets?: string[];
@@ -45,7 +46,7 @@ interface MafiaGameState {
 
 interface MafiaSecret {
   playerId: string;
-  role: 'KILLER' | 'COP' | 'DOCTOR' | 'CIVILIAN';
+  role: 'KILLER' | 'COP' | 'DOCTOR' | 'SNIPER' | 'CIVILIAN';
   team: 'RED' | 'BLUE';
   teammates?: string[];
   actionLock?: boolean;
@@ -136,6 +137,10 @@ export const useMafiaStore = defineStore('mafia', {
 
     isDoctor(): boolean {
       return this.playerSecret?.role === 'DOCTOR';
+    },
+
+    isSniper(): boolean {
+      return this.playerSecret?.role === 'SNIPER';
     },
 
     isCivilian(): boolean {
@@ -488,6 +493,10 @@ export const useMafiaStore = defineStore('mafia', {
 
     doctorSave(targetId: string) {
       this.sendGameAction('doctor_save', { targetId });
+    },
+
+    sniperShoot(targetId: string) {
+      this.sendGameAction('sniper_shoot', { targetId });
     },
 
     vote(targetId: string) {

@@ -122,10 +122,13 @@ export function onuValidateGameConfig(roles: OnuWerewolfRole[]): {
     }
   }
 
-  // 石匠最多2个
+  // 石匠最多2个，且必须成对出现（0个或2个）
   const masonCount = roles.filter(r => r === OnuWerewolfRole.Mason).length;
   if (masonCount > 2) {
     return { valid: false, error: '石匠角色最多2个' };
+  }
+  if (masonCount === 1) {
+    return { valid: false, error: '石匠角色必须有0个或2个' };
   }
 
   const playerCount = roles.length - 3; // 3张中心卡牌
@@ -247,6 +250,11 @@ export function onuCalculateWinner(
   players: Record<string, OnuWerewolfPlayer>,
   lynched: string[]
 ): OnuWerewolfTeam {
+  // 没有人被处决，村民阵营胜利
+  if (lynched.length === 0) {
+    return OnuWerewolfTeam.Villager;
+  }
+
   // 检查是否有皮匠被处决
   const lynchedTanners = lynched.filter(playerId => {
     const player = players[playerId];
@@ -268,8 +276,9 @@ export function onuCalculateWinner(
   }
 
   // 如果没有狼人被处决，检查场上是否有狼人
-  const aliveWerewolves = alivePlayers.filter(p => onuIsWerewolf(p.actualRole));
-  
+  const allPlayers = Object.values(players);
+  const aliveWerewolves = allPlayers.filter(p => onuIsWerewolf(p.actualRole));
+
   if (aliveWerewolves.length === 0) {
     // 场上没有狼人，村民胜利
     return OnuWerewolfTeam.Villager;

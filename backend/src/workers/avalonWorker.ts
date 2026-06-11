@@ -120,8 +120,8 @@ const AVALON_TEAM_CONFIG: Record<number, [Role[], Role[]]> = {
   8: [[Role.MERLIN, Role.PERCIVAL, Role.GOOD, Role.GOOD, Role.GOOD], [Role.MORGANA, Role.ASSASSIN, Role.BAD]],
   9: [[Role.MERLIN, Role.PERCIVAL, Role.GOOD, Role.GOOD, Role.GOOD, Role.GOOD], [Role.MORGANA, Role.ASSASSIN, Role.MORDRED]],
   10: [[Role.MERLIN, Role.PERCIVAL, Role.GOOD, Role.GOOD, Role.GOOD, Role.GOOD], [Role.MORGANA, Role.ASSASSIN, Role.MORDRED, Role.OBERON]],
-  11: [[Role.MERLIN, Role.PERCIVAL, Role.GOOD, Role.GOOD, Role.GOOD, Role.GOOD, Role.GOOD], [Role.MORGANA, Role.ASSASSIN, Role.MORDRED, Role.BAD]],
-  12: [[Role.MERLIN, Role.PERCIVAL, Role.GOOD, Role.GOOD, Role.GOOD, Role.GOOD, Role.GOOD], [Role.MORGANA, Role.ASSASSIN, Role.MORDRED, Role.BAD, Role.OBERON]]
+  11: [[Role.MERLIN, Role.PERCIVAL, Role.GOOD, Role.GOOD, Role.GOOD, Role.GOOD, Role.GOOD], [Role.MORGANA, Role.ASSASSIN, Role.MORDRED, Role.OBERON]],
+  12: [[Role.MERLIN, Role.PERCIVAL, Role.GOOD, Role.GOOD, Role.GOOD, Role.GOOD, Role.GOOD, Role.GOOD], [Role.MORGANA, Role.ASSASSIN, Role.MORDRED, Role.OBERON]]
 };
 
 // 湖上夫人模式的角色配置（湖上夫人机制不改变角色配置，与标准配置一致）
@@ -132,8 +132,8 @@ const AVALON_LADY_TEAM_CONFIG: Record<number, [Role[], Role[]]> = {
   8: [[Role.MERLIN, Role.PERCIVAL, Role.GOOD, Role.GOOD, Role.GOOD], [Role.MORGANA, Role.ASSASSIN, Role.BAD]],
   9: [[Role.MERLIN, Role.PERCIVAL, Role.GOOD, Role.GOOD, Role.GOOD, Role.GOOD], [Role.MORGANA, Role.ASSASSIN, Role.MORDRED]],
   10: [[Role.MERLIN, Role.PERCIVAL, Role.GOOD, Role.GOOD, Role.GOOD, Role.GOOD], [Role.MORGANA, Role.ASSASSIN, Role.MORDRED, Role.OBERON]],
-  11: [[Role.MERLIN, Role.PERCIVAL, Role.GOOD, Role.GOOD, Role.GOOD, Role.GOOD, Role.GOOD], [Role.MORGANA, Role.ASSASSIN, Role.MORDRED, Role.BAD]],
-  12: [[Role.MERLIN, Role.PERCIVAL, Role.GOOD, Role.GOOD, Role.GOOD, Role.GOOD, Role.GOOD], [Role.MORGANA, Role.ASSASSIN, Role.MORDRED, Role.BAD, Role.OBERON]]
+  11: [[Role.MERLIN, Role.PERCIVAL, Role.GOOD, Role.GOOD, Role.GOOD, Role.GOOD, Role.GOOD], [Role.MORGANA, Role.ASSASSIN, Role.MORDRED, Role.OBERON]],
+  12: [[Role.MERLIN, Role.PERCIVAL, Role.GOOD, Role.GOOD, Role.GOOD, Role.GOOD, Role.GOOD, Role.GOOD], [Role.MORGANA, Role.ASSASSIN, Role.MORDRED, Role.OBERON]]
 };
 
 // 任务人数配置 [任务参与人数, 失败所需人数, 实际结果]
