@@ -405,6 +405,23 @@ export const useBOTCGameStore = defineStore('botc', () => {
     }
   }
 
+  // 房间管理
+  const transferHost = (newHostId: string) => {
+    if (socket.value && currentRoomId.value) {
+      socket.value.emit('transfer_host', { roomId: currentRoomId.value, targetId: newHostId })
+      return true
+    }
+    return false
+  }
+
+  const kickPlayer = (playerId: string) => {
+    if (socket.value && currentRoomId.value) {
+      socket.value.emit('kick_player', { roomId: currentRoomId.value, playerId })
+      return true
+    }
+    return false
+  }
+
   // 创建房间
   const createRoom = (roomConfig: any) => {
     return new Promise((resolve, reject) => {
@@ -517,6 +534,8 @@ export const useBOTCGameStore = defineStore('botc', () => {
     sendGameAction,
     sendChatMessage,
     sendPrivateMessage,
+    transferHost,
+    kickPlayer,
     createRoom,
     startGame,
     nominate,

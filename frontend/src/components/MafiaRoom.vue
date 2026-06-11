@@ -107,9 +107,9 @@
                 :key="voter"
                 class="vote-item"
               >
-                <span class="voter">{{ getPlayerName(voter) }}</span>
+                <span class="voter">{{ getPlayerName(voter as string) }}</span>
                 <span class="arrow">→</span>
-                <span class="target">{{ getPlayerName(target) }}</span>
+                <span class="target">{{ getPlayerName(target as string) }}</span>
               </div>
             </div>
           </div>

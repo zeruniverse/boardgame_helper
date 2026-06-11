@@ -24,7 +24,7 @@ interface Props {
   nickname?: string
   currentUserId?: string
   socket?: any
-  playerRole?: 'KILLER' | 'COP' | 'DOCTOR' | 'CIVILIAN'
+  playerRole?: 'KILLER' | 'COP' | 'DOCTOR' | 'SNIPER' | 'CIVILIAN'
   playerTeam?: 'RED' | 'BLUE'
   gameState?: any
 }

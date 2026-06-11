@@ -181,7 +181,7 @@ interface Player {
   index: number
   ready: boolean
   alive?: boolean
-  role?: 'KILLER' | 'COP' | 'DOCTOR' | 'CIVILIAN'
+  role?: 'KILLER' | 'COP' | 'DOCTOR' | 'SNIPER' | 'CIVILIAN'
   team?: 'RED' | 'BLUE'
 }
 
@@ -191,7 +191,7 @@ interface Props {
   currentUserId: string
   gamePlayersById?: Record<string, Player>
   playerSecret?: {
-    role: 'KILLER' | 'COP' | 'DOCTOR' | 'CIVILIAN'
+    role: 'KILLER' | 'COP' | 'DOCTOR' | 'SNIPER' | 'CIVILIAN'
     team: 'RED' | 'BLUE'
     teammates?: string[]
   }

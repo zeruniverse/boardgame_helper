@@ -144,7 +144,7 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { useGameStore } from '../store/avalon'
+import { useAvalonStore as useGameStore } from '../store/avalon'
 import { Back, Loading } from '@element-plus/icons-vue'
 import AvalonActionPanel from './AvalonActionPanel.vue'
 import AvalonPlayerList from './AvalonPlayerList.vue'
