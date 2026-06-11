@@ -57,7 +57,7 @@ interface MafiaGameState {
   wantToKill: Record<string, string>; // 杀手杀人 {杀手ID: 被杀者ID}
   wantToSave: Record<string, string>; // 医生救人 {医生ID: 被救者ID}
   personWillDie: string | null;       // 夜晚将死的人
-  personSaved: string | null;         // 夜晚被救的人
+  personSaved: string[];             // 夜晚被救的人列表（支持多名医生）
   killerActionLock: boolean;          // 杀手行动锁
   copActionLock: boolean;             // 警察行动锁
   doctorActionLock: boolean;          // 医生行动锁
@@ -104,22 +104,23 @@ interface GameTaskResponse {
 }
 
 // 团队配置：[杀手数, 警察数, 医生数, 平民数]
+// 与 doc/mafia.md 一致（狙击手角色暂未实现，其名额并入平民）
 const MAFIA_TEAM_CONFIG: Record<number, [number, number, number, number]> = {
-  6: [1, 1, 1, 3],
-  7: [1, 1, 1, 4],
-  8: [2, 2, 1, 3],
-  9: [2, 2, 1, 4],
-  10: [2, 2, 1, 5],
+  6: [2, 1, 1, 2],
+  7: [2, 1, 1, 3],
+  8: [2, 1, 1, 4],
+  9: [3, 2, 1, 3],
+  10: [3, 2, 1, 4],
   11: [3, 2, 1, 5],
-  12: [3, 3, 1, 5],
-  13: [3, 3, 1, 6],
-  14: [3, 3, 1, 7],
-  15: [3, 3, 1, 8],
-  16: [4, 3, 1, 8],
-  17: [4, 4, 1, 8],
-  18: [4, 4, 1, 9],
-  19: [4, 4, 2, 9],
-  20: [4, 4, 2, 10]
+  12: [3, 2, 1, 6],
+  13: [4, 3, 2, 4],
+  14: [4, 3, 2, 5],
+  15: [4, 3, 2, 6],
+  16: [4, 3, 2, 7],
+  17: [5, 4, 2, 6],
+  18: [5, 4, 2, 7],
+  19: [5, 4, 2, 8],
+  20: [5, 4, 2, 9]
 };
 
 const MAX_PLAYER_COUNT = 20;
@@ -158,7 +159,7 @@ class MafiaWorker extends BaseGameWorker {
       wantToKill: {},
       wantToSave: {},
       personWillDie: null,
-      personSaved: null,
+      personSaved: [],
       killerActionLock: true,
       copActionLock: true,
       doctorActionLock: true,
@@ -636,23 +637,18 @@ class MafiaWorker extends BaseGameWorker {
     const shuffledPlayers = this.shuffleArray([...readyPlayers]);
     
     // 初始化游戏状态
-    gameState.status = GameStatus.NIGHT;
+    // 修复: 游戏从第一天白天(SPEAK)开始，与文档和标准规则一致
+    gameState.status = GameStatus.SPEAK;
     gameState.day = 1;
     gameState.step = 1;
     gameState.killerCount = killerCount;
     gameState.copCount = copCount;
     gameState.doctorCount = doctorCount;
-    // 夜晚阶段只有特殊角色可以操作（杀手、警察、医生）
-    const specialRoleIds = [
-      ...gameState.topSecret.killer,
-      ...gameState.topSecret.cop,
-      ...gameState.topSecret.doctor
-    ];
-    gameState.operators = specialRoleIds;
-    gameState.operateEndTime = new Date(Date.now() + this.config.nightTime * 1000);
     gameState.alivePlayersOrder = shuffledPlayers.map(p => p.id);
     gameState.speakingPlayerIndex = 0;
     gameState.deathQueue = [];
+    (gameState as any).lastSavedTarget = null;
+    (gameState as any).lastSavedDay = 0;
     
     // 分配玩家信息和角色
     shuffledPlayers.forEach((player, index) => {
@@ -681,12 +677,18 @@ class MafiaWorker extends BaseGameWorker {
       }
     });
 
+    // 修复: operators 必须在角色分配之后设置
+    const firstSpeaker = shuffledPlayers[0].id;
+    gameState.operators = [firstSpeaker];
+    gameState.speakedCount = 0;
+    gameState.operateEndTime = new Date(Date.now() + this.config.speakTime * 1000);
+
     // 设置超时处理
-    this.setTimer(this.config.nightTime * 1000, () => {
+    this.setTimer(this.config.speakTime * 1000, () => {
       this.handleTimeout();
     });
 
-    const message = "游戏已开始, 请从玩家列表处查看自己身份\n天黑了, 警察、杀手、医生都出来干活了";
+    const message = "游戏已开始, 请从玩家列表处查看自己身份\n第一天白天, 请讨论并投票";
     
     // 发送统一的游戏开始事件（包含游戏信息和角色信息）
     shuffledPlayers.forEach(player => {
@@ -723,23 +725,21 @@ class MafiaWorker extends BaseGameWorker {
       delete gameState.inspect[copId];
     });
 
-    // 检查是否所有在线警察都做出了选择
+    // 执行验人（每个警察独立查验，无需达成一致）
+    const result = gameState.topSecret.killer.includes(suspectId);
+    gameState.topSecret.copVersion.push([suspectId, result]);
+
+    const message = `经查证${this.getPlayerName(suspectId)}是${result ? '<span class="red text">坏人!</span>' : '<span class="blue text">好人!</span>'}`;
+    this.sendToPlayer(playerId, 'inspect_result', { message });
+
+    // 检查是否所有在线警察都完成了查验
     const aliveOnlineCops = this.getAliveOnlineCops();
-    const allCopsChosen = aliveOnlineCops.every(copId => copId in gameState.inspect);
-    const allSameChoice = new Set(Object.values(gameState.inspect)).size === 1;
+    const allCopsDone = aliveOnlineCops.every(copId => copId in gameState.inspect);
     
-    if (allCopsChosen && allSameChoice) {
-      // 执行验人
-      const result = gameState.topSecret.killer.includes(suspectId);
-      gameState.topSecret.copVersion.push([suspectId, result]);
+    if (allCopsDone) {
       gameState.copActionLock = false;
       gameState.inspect = {};
-
-      const message = `经查证${this.getPlayerName(suspectId)}是${result ? '<span class="red text">坏人!</span>' : '<span class="blue text">好人!</span>'}`;
-      
-      gameState.topSecret.cop.forEach(copId => this.sendToPlayer(copId, 'inspect_result', { message }));
-
-      // 检查是否可以结束夜晚（警察和杀手和医生都完成）
+      // 检查是否可以结束夜晚
       if (!gameState.copActionLock && !gameState.killerActionLock && !gameState.doctorActionLock) {
         this.endNight();
       }
@@ -769,22 +769,33 @@ class MafiaWorker extends BaseGameWorker {
       delete gameState.wantToSave[docId];
     });
 
-    // 检查是否所有在线医生都做出了选择
-    const aliveOnlineDoctors = this.getAliveOnlineDoctors();
-    const allDoctorsChosen = aliveOnlineDoctors.every(docId => docId in gameState.wantToSave);
-    // 修复Bug 6.4: 像killer一样检查所有doctor是否选择同一目标
-    const allSameChoice = new Set(Object.values(gameState.wantToSave)).size === 1;
+    // 执行救人（每个医生独立选择，无需达成一致）
+    // 检查不可连续两晚救同一人
+    const lastSaved = (gameState as any).lastSavedTarget;
+    const lastSavedDay = (gameState as any).lastSavedDay || 0;
+    if (lastSaved === targetId && lastSavedDay === gameState.day - 1) {
+      this.sendToPlayer(playerId, 'save_rejected', {
+        message: `你昨晚刚救过${this.getPlayerName(targetId)}，不可连续两晚救治同一人`
+      });
+      return;
+    }
 
-    if (allDoctorsChosen && allSameChoice) {
-      // 执行救人（取第一个医生的选择）
-      const personSaved = Object.values(gameState.wantToSave)[0];
-      gameState.personSaved = personSaved;
+    if (!gameState.personSaved.includes(targetId)) {
+      gameState.personSaved.push(targetId);
+    }
+    (gameState as any).lastSavedTarget = targetId;
+    (gameState as any).lastSavedDay = gameState.day;
+
+    const message = `你救了${this.getPlayerName(targetId)}`;
+    this.sendToPlayer(playerId, 'save_result', { message });
+
+    // 检查是否所有在线医生都完成了救人
+    const aliveOnlineDoctors = this.getAliveOnlineDoctors();
+    const allDoctorsDone = aliveOnlineDoctors.every(docId => docId in gameState.wantToSave);
+
+    if (allDoctorsDone) {
       gameState.doctorActionLock = false;
       gameState.wantToSave = {};
-
-      const message = `你救了${this.getPlayerName(personSaved)}`;
-      gameState.topSecret.doctor.forEach(docId => this.sendToPlayer(docId, 'save_result', { message }));
-
       // 检查是否可以结束夜晚
       if (!gameState.copActionLock && !gameState.killerActionLock && !gameState.doctorActionLock) {
         this.endNight();
@@ -896,7 +907,7 @@ class MafiaWorker extends BaseGameWorker {
       gameState.step += 1;
       gameState.day += 1;
       gameState.personWillDie = null;
-      gameState.personSaved = null;
+      gameState.personSaved = [];
       gameState.killerActionLock = true;
       gameState.copActionLock = true;
       gameState.doctorActionLock = true;
@@ -989,6 +1000,14 @@ class MafiaWorker extends BaseGameWorker {
     const gameState = this.gameState as MafiaGameState;
     
     if (!gameState.operators.includes(playerId) || gameState.status !== GameStatus.VOTE) {
+      return;
+    }
+
+    // 第一天白天不可自投
+    if (gameState.day === 1 && targetId === playerId) {
+      this.sendToPlayer(playerId, 'vote_rejected', {
+        message: '第一天白天不能投票给自己'
+      });
       return;
     }
 
@@ -1214,13 +1233,15 @@ class MafiaWorker extends BaseGameWorker {
       gameState.operators = [firstPlayer];
       gameState.speakingPlayerIndex = 0;
       gameState.speakedCount = 0;
-      gameState.personSaved = null;
+      gameState.personSaved = [];
       gameState.operateEndTime = new Date(Date.now() + this.config.speakTime * 1000);
 
       this.setTimer(this.config.speakTime * 1000, () => this.handleTimeout());
 
-      const message = gameState.personSaved 
-        ? `昨夜${this.getPlayerName(gameState.personSaved)}被医生救下, 无人遇害, 请${this.getPlayerName(firstPlayer)}发言`
+      const savedAny = gameState.personSaved.length > 0;
+      const savedName = savedAny ? this.getPlayerName(gameState.personSaved[0]) : '';
+      const message = savedAny
+        ? `昨夜${savedName}被医生救下, 无人遇害, 请${this.getPlayerName(firstPlayer)}发言`
         : `昨夜无人遇害, 请${this.getPlayerName(firstPlayer)}发言`;
       this.sendToRoom('day_start', { message, gameInfo: this.getGameInfo() });
     } else {
@@ -1233,8 +1254,8 @@ class MafiaWorker extends BaseGameWorker {
     
     if (!gameState.personWillDie) return;
     
-    // 检查医生是否救了被杀的人
-    const isSaved = gameState.personSaved === gameState.personWillDie;
+    // 检查医生是否救了被杀的人（支持多名医生各自救不同的人）
+    const isSaved = gameState.personSaved.includes(gameState.personWillDie);
     
     gameState.killerActionLock = true;
     gameState.copActionLock = true;
@@ -1267,7 +1288,7 @@ class MafiaWorker extends BaseGameWorker {
       const message = `昨夜${this.getPlayerName(gameState.personWillDie)}被医生救下, 无人遇害, 请${this.getPlayerName(firstPlayer)}发言`;
       
       gameState.personWillDie = null;
-      gameState.personSaved = null;
+      gameState.personSaved = [];
       gameState.status = GameStatus.SPEAK;
       gameState.operators = [firstPlayer];
       gameState.speakingPlayerIndex = 0;
@@ -1300,7 +1321,7 @@ class MafiaWorker extends BaseGameWorker {
       gameState.operators = [speaker];
       gameState.players[gameState.personWillDie].alive = false;
       gameState.personWillDie = null;
-      gameState.personSaved = null;
+      gameState.personSaved = [];
       gameState.speakingPlayerIndex = 0;
       gameState.speakedCount = 0;
       gameState.operateEndTime = new Date(Date.now() + this.config.speakTime * 1000);
@@ -1411,8 +1432,7 @@ class MafiaWorker extends BaseGameWorker {
 
   private processVoteResult(): void {
     const gameState = this.gameState as MafiaGameState;
-    const voteSummary = this.getVoteSummary();
-    
+
     // 统计票数（排除give_up）
     const voteCounts: Record<string, number> = {};
     Object.values(gameState.voteResult).forEach(target => {
@@ -1500,7 +1520,7 @@ class MafiaWorker extends BaseGameWorker {
     gameState.step += 1;
     gameState.day += 1;
     gameState.personWillDie = null;
-    gameState.personSaved = null;
+    gameState.personSaved = [];
     gameState.killerActionLock = true;
     gameState.copActionLock = true;
     gameState.doctorActionLock = true;

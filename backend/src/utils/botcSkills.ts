@@ -1,8 +1,7 @@
 import { 
   GamePlayer, 
   NightAction, 
-  Team, 
-  Role 
+  Team 
 } from './botcTypes';
 import { 
   isEvilPlayer, 
@@ -10,7 +9,7 @@ import {
   getNeighbors, 
   countAdjacentEvilPairs 
 } from './botcUtils';
-import { getRolesByTeam, getRoleById } from './botcData';
+// 注意：如需使用角色数据工具函数，请从botcData导入
 
 /**
  * 血染钟楼角色技能处理器 - 完整版本
@@ -315,12 +314,21 @@ function processEmpath(player: GamePlayer, allPlayers: GamePlayer[]): SkillResul
 
 /**
  * 占卜师技能处理
+ * 规则：首夜时随机分配一个善良玩家为"假恶魔"（Red Herring），
+ * 此后占卜时如果选择包含该假恶魔的玩家，结果也会显示为true
  */
 function processFortuneTeller(player: GamePlayer, allPlayers: GamePlayer[]): SkillResult {
-  // 占卜师需要在夜晚选择两个玩家
+  // 查找假恶魔标记（Red Herring）- 由说书人在游戏开始时分配
+  const redHerringPlayer = allPlayers.find(p => 
+    p.reminders.includes('Red herring') && p.playerId !== player.playerId
+  );
+  
   return {
     success: true,
-    information: { requiresTargets: 2 }
+    information: { 
+      requiresTargets: 2,
+      redHerring: redHerringPlayer?.playerId || null
+    }
   };
 }
 
@@ -381,9 +389,11 @@ function processChambermaid(player: GamePlayer, allPlayers: GamePlayer[]): Skill
 
 // Sects & Violets 信息技能
 function processDreamer(player: GamePlayer, allPlayers: GamePlayer[]): SkillResult {
+  // Dreamer: 每夜选择一名玩家（非自己、非旅行者），得知一个正确和一个错误的角色
+  // 实际角色选择逻辑在worker中完成，这里返回需要一个目标
   return {
     success: true,
-    information: { requiresTargets: 1 }
+    information: { requiresTargets: 1, notSelf: true, noTravelers: true }
   };
 }
 
@@ -403,16 +413,20 @@ function processMathematician(player: GamePlayer, allPlayers: GamePlayer[]): Ski
 }
 
 function processFlowergirl(player: GamePlayer, allPlayers: GamePlayer[]): SkillResult {
+  // Flowergirl: 每夜得知白天是否有恶魔投票
+  // 需要从游戏状态获取白天投票信息，这里返回结构让worker填充
   return {
     success: true,
-    information: { requiresTargets: 1 }
+    information: { requiresTargets: 1, checkDemonVoted: true }
   };
 }
 
 function processTowncrier(player: GamePlayer, allPlayers: GamePlayer[]): SkillResult {
+  // Towncrier: 每夜得知白天是否有爪牙提名
+  // 需要从游戏状态获取白天提名信息，这里返回结构让worker填充
   return {
     success: true,
-    information: { requiresTargets: 1 }
+    information: { requiresTargets: 1, checkMinionNominated: true }
   };
 }
 
@@ -434,9 +448,11 @@ function processSavant(player: GamePlayer, allPlayers: GamePlayer[]): SkillResul
 }
 
 function processSeamstress(player: GamePlayer, allPlayers: GamePlayer[]): SkillResult {
+  // Seamstress: 限一次，选择两名玩家（不是自己），得知是否同阵营
+  // 实际比较逻辑在worker的目标处理中完成，这里返回需要两个目标
   return {
     success: true,
-    information: { requiresTargets: 2 }
+    information: { requiresTargets: 2, notSelf: true, checkSameAlignment: true }
   };
 }
 

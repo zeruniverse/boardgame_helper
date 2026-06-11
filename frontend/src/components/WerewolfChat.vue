@@ -90,7 +90,7 @@ const canSendMessage = computed(() => {
   if (props.gameState?.status === 'preparing') return true;
 
   // 在夜晚阶段，只有狼人可以在狼人频道交流
-  const nightPhases = ['WOLF_KILL', 'SEER_CHECK', 'WITCH_ACT', 'GUARD_PROTECT', 'HUNTER_SHOOT', 'SHERIFF_ASSIGN'];
+  const nightPhases = ['WOLF_KILL', 'SEER_CHECK', 'WITCH_ACT', 'GUARD_PROTECT', 'HUNTER_SHOOT'];
   if (nightPhases.includes(props.gameState?.status)) {
     // 狼人在狼人频道可以发言
     if (currentChannel.value === 'werewolf' && isWerewolfPlayer.value) return true;
@@ -282,7 +282,7 @@ watch(
   () => props.gameState?.status,
   (newStatus) => {
     // 在夜晚阶段，如果是狼人自动切换到狼人频道
-    const nightPhases = ['WOLF_KILL', 'SEER_CHECK', 'WITCH_ACT', 'GUARD_PROTECT', 'HUNTER_SHOOT', 'SHERIFF_ASSIGN'];
+    const nightPhases = ['WOLF_KILL', 'SEER_CHECK', 'WITCH_ACT', 'GUARD_PROTECT', 'HUNTER_SHOOT'];
     if (nightPhases.includes(newStatus) && isWerewolfPlayer.value) {
       currentChannel.value = 'werewolf';
     }

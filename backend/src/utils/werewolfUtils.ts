@@ -117,6 +117,10 @@ export function validatePlayerAction(
       if (player.character !== 'HUNTER' || !dyingPlayer || dyingPlayer.id !== player.id) {
         return { valid: false, reason: '你不是猎人或不在开枪阶段' };
       }
+      // 被女巫毒死的猎人不能开枪
+      if (dyingPlayer.die?.fromCharacter === 'WITCH') {
+        return { valid: false, reason: '你被女巫毒死，无法开枪' };
+      }
       if (player.characterStatus.shootAt && player.characterStatus.shootAt.day >= 0) {
         return { valid: false, reason: '你已经使用过技能了' };
       }

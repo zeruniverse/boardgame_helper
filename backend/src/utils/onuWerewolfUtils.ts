@@ -233,7 +233,9 @@ export function onuCalculateVoteResult(votes: Record<string, string>, players: R
   const maxVotes = Math.max(...Object.values(voteCounts), 0);
   
   // 找出所有获得最高票数的玩家
-  const lynched = Object.keys(voteCounts).filter(playerId => voteCounts[playerId] === maxVotes);
+  // 标准规则: 如果最高票数为1且多个玩家并列，则无人被处决（分散投票）
+  const tiedPlayers = Object.keys(voteCounts).filter(playerId => voteCounts[playerId] === maxVotes);
+  const lynched = maxVotes <= 1 && tiedPlayers.length > 1 ? [] : tiedPlayers;
 
   return { voteCounts, lynched, maxVotes };
 }
@@ -245,9 +247,6 @@ export function onuCalculateWinner(
   players: Record<string, OnuWerewolfPlayer>,
   lynched: string[]
 ): OnuWerewolfTeam {
-  const alivePlayers = Object.values(players);
-  const lynchSet = new Set(lynched);
-
   // 检查是否有皮匠被处决
   const lynchedTanners = lynched.filter(playerId => {
     const player = players[playerId];
@@ -305,6 +304,33 @@ export function onuIsPlayerWinner(player: OnuWerewolfPlayer, winner: OnuWerewolf
   
   // 其他角色：根据团队胜利情况判断
   return playerTeam === winner;
+}
+
+/**
+ * 处理猎人的复仇击杀
+ * 如果被处决的玩家中有猎人，将其投票目标也加入处决列表
+ */
+export function onuProcessHunterRevenge(
+  players: Record<string, OnuWerewolfPlayer>,
+  lynched: string[],
+  votes: Record<string, string>
+): string[] {
+  const result = [...lynched];
+  const resultSet = new Set(result);
+
+  for (const playerId of lynched) {
+    const player = players[playerId];
+    if (player && player.actualRole === OnuWerewolfRole.Hunter) {
+      // 猎人被处决，其投票目标也一同死亡
+      const hunterTarget = votes[playerId];
+      if (hunterTarget && players[hunterTarget] && !resultSet.has(hunterTarget)) {
+        result.push(hunterTarget);
+        resultSet.add(hunterTarget);
+      }
+    }
+  }
+
+  return result;
 }
 
 /**

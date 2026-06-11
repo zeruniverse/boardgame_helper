@@ -551,7 +551,3 @@ export const useMafiaStore = defineStore('mafia', {
     }
   }
 });
-
-export function useMafiaGameStore() {
-  return useMafiaStore();
-} 

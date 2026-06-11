@@ -113,6 +113,8 @@ const formatMessage = (message: string): string => {
   // 高亮角色名称
   formattedMessage = formattedMessage.replace(/杀手/g, '<span class="role-killer">杀手</span>');
   formattedMessage = formattedMessage.replace(/警察/g, '<span class="role-cop">警察</span>');
+  formattedMessage = formattedMessage.replace(/医生/g, '<span class="role-doctor">医生</span>');
+  formattedMessage = formattedMessage.replace(/狙击手/g, '<span class="role-sniper">狙击手</span>');
   formattedMessage = formattedMessage.replace(/平民/g, '<span class="role-civilian">平民</span>');
   
   // 高亮死亡相关词汇
@@ -210,6 +212,16 @@ function send() {
 
 :deep(.role-cop) {
   color: #2563eb;
+  font-weight: bold;
+}
+
+:deep(.role-doctor) {
+  color: #52c41a;
+  font-weight: bold;
+}
+
+:deep(.role-sniper) {
+  color: #fa8c16;
   font-weight: bold;
 }
 

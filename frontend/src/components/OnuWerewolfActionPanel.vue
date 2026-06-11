@@ -432,11 +432,10 @@
 
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue';
-import { 
-  OnuWerewolfRole, 
-  OnuWerewolfGameStatus, 
+import {
+  OnuWerewolfRole,
   OnuWerewolfTeam,
-  ONU_WEREWOLF_ROLE_NAMES 
+  ONU_WEREWOLF_ROLE_NAMES
 } from '../store/onuWerewolf';
 import { Loading } from '@element-plus/icons-vue';
 

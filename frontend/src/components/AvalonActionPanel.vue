@@ -296,7 +296,7 @@ const getPlayerName = (playerId: string): string => {
 
 const getAssassinateTargets = () => {
   const targets: Record<string, any> = {}
-  // 刺客只能刺杀蓝方阵营玩家
+  // 刺客选择目标（后端会验证目标是否属于蓝方阵营）
   Object.keys(props.gameState.players).forEach(playerId => {
     targets[playerId] = props.gameState.players[playerId]
   })
@@ -307,9 +307,10 @@ const getLadyTargets = () => {
   const targets: Record<string, any> = {}
   const playerId = props.playerSecret?.playerId
   const ladys = props.gameState.ladys || []
+  const captainId = props.gameState.captain
   Object.keys(props.gameState.players).forEach(pid => {
-    // 不能验自己，不能验已经被验过的人
-    if (pid !== playerId && !ladys.includes(pid)) {
+    // 不能验自己，不能验已经被验过的人，不能验当前队长
+    if (pid !== playerId && !ladys.includes(pid) && pid !== captainId) {
       targets[pid] = props.gameState.players[pid]
     }
   })

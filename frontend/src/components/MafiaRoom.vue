@@ -279,7 +279,7 @@ const getRoleName = (role: string): string => {
 
 const getTeamName = (team: string): string => {
   const teamNames = {
-    'RED': '狼人阵营',
+    'RED': '杀手阵营',
     'BLUE': '好人阵营'
   }
   return teamNames[team as keyof typeof teamNames] || team
@@ -300,8 +300,6 @@ const getMyNickname = (): string => {
 const handleGameAction = (actionType: string, actionData: any) => {
   store.sendGameAction(actionType, actionData)
 }
-
-
 
 const handleTransferHost = (newHostId: string) => {
   store.transferHost(newHostId)

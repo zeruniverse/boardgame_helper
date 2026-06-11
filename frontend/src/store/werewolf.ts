@@ -629,7 +629,3 @@ export const useWerewolfStore = defineStore('werewolf', {
     }
   }
 });
-
-export function useGameStore() {
-  return useWerewolfStore();
-}

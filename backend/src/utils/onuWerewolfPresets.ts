@@ -19,15 +19,15 @@ export const ONU_WEREWOLF_PRESETS: Record<string, OnuWerewolfPreset> = {
   // 3人游戏（最小配置）
   'basic_3': {
     name: '基础3人局',
-    description: '适合新手的基础配置：狼人、村民、预言家 + 3张中心卡',
+    description: '适合新手的基础配置：2狼人、预言家、强盗、捣蛋鬼 + 1村民 + 3张中心卡',
     playerCount: 3,
     roles: [
       OnuWerewolfRole.Werewolf,
-      OnuWerewolfRole.Villager,
+      OnuWerewolfRole.Werewolf,
       OnuWerewolfRole.Seer,
-      OnuWerewolfRole.Villager,
       OnuWerewolfRole.Robber,
-      OnuWerewolfRole.Troublemaker
+      OnuWerewolfRole.Troublemaker,
+      OnuWerewolfRole.Villager
     ],
     config: {
       nightTime: 180,
@@ -39,16 +39,16 @@ export const ONU_WEREWOLF_PRESETS: Record<string, OnuWerewolfPreset> = {
   // 4人游戏
   'standard_4': {
     name: '标准4人局',
-    description: '经典4人配置：包含基础角色和部分特殊角色',
+    description: '经典4人配置：2狼人、预言家、强盗、捣蛋鬼 + 2村民 + 3张中心卡',
     playerCount: 4,
     roles: [
       OnuWerewolfRole.Werewolf,
-      OnuWerewolfRole.Villager,
+      OnuWerewolfRole.Werewolf,
       OnuWerewolfRole.Seer,
       OnuWerewolfRole.Robber,
       OnuWerewolfRole.Troublemaker,
-      OnuWerewolfRole.Drunk,
-      OnuWerewolfRole.Insomniac
+      OnuWerewolfRole.Villager,
+      OnuWerewolfRole.Villager
     ],
     config: {
       nightTime: 240,
@@ -60,17 +60,17 @@ export const ONU_WEREWOLF_PRESETS: Record<string, OnuWerewolfPreset> = {
   // 5人游戏
   'balanced_5': {
     name: '平衡5人局',
-    description: '平衡的5人配置，包含多种角色类型',
+    description: '平衡的5人配置：2狼人、预言家、强盗、捣蛋鬼 + 3村民 + 3张中心卡',
     playerCount: 5,
     roles: [
       OnuWerewolfRole.Werewolf,
       OnuWerewolfRole.Werewolf,
-      OnuWerewolfRole.Villager,
       OnuWerewolfRole.Seer,
       OnuWerewolfRole.Robber,
       OnuWerewolfRole.Troublemaker,
-      OnuWerewolfRole.Mason,
-      OnuWerewolfRole.Mason
+      OnuWerewolfRole.Villager,
+      OnuWerewolfRole.Villager,
+      OnuWerewolfRole.Villager
     ],
     config: {
       nightTime: 300,
@@ -82,18 +82,18 @@ export const ONU_WEREWOLF_PRESETS: Record<string, OnuWerewolfPreset> = {
   // 6人游戏
   'classic_6': {
     name: '经典6人局',
-    description: '经典6人配置，角色种类丰富',
+    description: '经典6人配置：2狼人、预言家、强盗、捣蛋鬼、酒鬼、失眠者 + 1村民 + 3张中心卡',
     playerCount: 6,
     roles: [
       OnuWerewolfRole.Werewolf,
       OnuWerewolfRole.Werewolf,
-      OnuWerewolfRole.Villager,
       OnuWerewolfRole.Seer,
       OnuWerewolfRole.Robber,
       OnuWerewolfRole.Troublemaker,
       OnuWerewolfRole.Drunk,
       OnuWerewolfRole.Insomniac,
-      OnuWerewolfRole.Mason
+      OnuWerewolfRole.Villager,
+      OnuWerewolfRole.Villager
     ],
     config: {
       nightTime: 300,
@@ -105,19 +105,19 @@ export const ONU_WEREWOLF_PRESETS: Record<string, OnuWerewolfPreset> = {
   // 7人游戏（含爪牙）
   'minion_7': {
     name: '爪牙7人局',
-    description: '包含爪牙的7人配置，增加游戏复杂度',
+    description: '包含爪牙的7人配置：2狼人、爪牙、预言家、强盗、捣蛋鬼、酒鬼、失眠者 + 1村民 + 3张中心卡',
     playerCount: 7,
     roles: [
       OnuWerewolfRole.Werewolf,
       OnuWerewolfRole.Werewolf,
       OnuWerewolfRole.Minion,
-      OnuWerewolfRole.Villager,
       OnuWerewolfRole.Seer,
       OnuWerewolfRole.Robber,
       OnuWerewolfRole.Troublemaker,
-      OnuWerewolfRole.Mason,
-      OnuWerewolfRole.Mason,
-      OnuWerewolfRole.Drunk
+      OnuWerewolfRole.Drunk,
+      OnuWerewolfRole.Insomniac,
+      OnuWerewolfRole.Villager,
+      OnuWerewolfRole.Villager
     ],
     config: {
       nightTime: 360,
@@ -129,20 +129,20 @@ export const ONU_WEREWOLF_PRESETS: Record<string, OnuWerewolfPreset> = {
   // 8人游戏（含皮匠）
   'tanner_8': {
     name: '皮匠8人局',
-    description: '包含皮匠的8人配置，皮匠需要被处决才能获胜',
+    description: '包含皮匠的8人配置：2狼人、爪牙、预言家、强盗、捣蛋鬼、酒鬼、失眠者、猎人 + 1村民 + 3张中心卡',
     playerCount: 8,
     roles: [
       OnuWerewolfRole.Werewolf,
       OnuWerewolfRole.Werewolf,
-      OnuWerewolfRole.Villager,
-      OnuWerewolfRole.Villager,
+      OnuWerewolfRole.Minion,
       OnuWerewolfRole.Seer,
       OnuWerewolfRole.Robber,
       OnuWerewolfRole.Troublemaker,
       OnuWerewolfRole.Drunk,
       OnuWerewolfRole.Insomniac,
-      OnuWerewolfRole.Tanner,
-      OnuWerewolfRole.Hunter
+      OnuWerewolfRole.Hunter,
+      OnuWerewolfRole.Villager,
+      OnuWerewolfRole.Villager
     ],
     config: {
       nightTime: 360,
@@ -346,87 +346,93 @@ export function createCustomPreset(
   };
 }
 
-// 角色推荐函数
+// 角色推荐函数（基于标准官方推荐配置）
 export function getRecommendedRoles(playerCount: number): OnuWerewolfRole[] {
   switch (playerCount) {
     case 3:
+      // 2狼 + 预言家 + 强盗 + 捣蛋鬼 + 1村民 + 3中心 = 6
       return [
         OnuWerewolfRole.Werewolf,
-        OnuWerewolfRole.Villager,
+        OnuWerewolfRole.Werewolf,
         OnuWerewolfRole.Seer,
-        OnuWerewolfRole.Villager,
         OnuWerewolfRole.Robber,
-        OnuWerewolfRole.Troublemaker
+        OnuWerewolfRole.Troublemaker,
+        OnuWerewolfRole.Villager
       ];
     case 4:
+      // 2狼 + 预言家 + 强盗 + 捣蛋鬼 + 2村民 + 3中心 = 7
       return [
         OnuWerewolfRole.Werewolf,
-        OnuWerewolfRole.Villager,
+        OnuWerewolfRole.Werewolf,
         OnuWerewolfRole.Seer,
         OnuWerewolfRole.Robber,
         OnuWerewolfRole.Troublemaker,
-        OnuWerewolfRole.Drunk,
-        OnuWerewolfRole.Insomniac
+        OnuWerewolfRole.Villager,
+        OnuWerewolfRole.Villager
       ];
     case 5:
+      // 2狼 + 预言家 + 强盗 + 捣蛋鬼 + 3村民 + 3中心 = 8
       return [
         OnuWerewolfRole.Werewolf,
         OnuWerewolfRole.Werewolf,
-        OnuWerewolfRole.Villager,
         OnuWerewolfRole.Seer,
         OnuWerewolfRole.Robber,
         OnuWerewolfRole.Troublemaker,
-        OnuWerewolfRole.Mason,
-        OnuWerewolfRole.Mason
+        OnuWerewolfRole.Villager,
+        OnuWerewolfRole.Villager,
+        OnuWerewolfRole.Villager
       ];
     case 6:
+      // 2狼 + 预言家 + 强盗 + 捣蛋鬼 + 酒鬼 + 失眠者 + 1村民 + 3中心 = 9
       return [
         OnuWerewolfRole.Werewolf,
         OnuWerewolfRole.Werewolf,
-        OnuWerewolfRole.Villager,
         OnuWerewolfRole.Seer,
         OnuWerewolfRole.Robber,
         OnuWerewolfRole.Troublemaker,
         OnuWerewolfRole.Drunk,
         OnuWerewolfRole.Insomniac,
-        OnuWerewolfRole.Mason
+        OnuWerewolfRole.Villager,
+        OnuWerewolfRole.Villager
       ];
     case 7:
+      // 2狼 + 爪牙 + 预言家 + 强盗 + 捣蛋鬼 + 酒鬼 + 失眠者 + 1村民 + 3中心 = 10
       return [
         OnuWerewolfRole.Werewolf,
         OnuWerewolfRole.Werewolf,
         OnuWerewolfRole.Minion,
-        OnuWerewolfRole.Villager,
-        OnuWerewolfRole.Seer,
-        OnuWerewolfRole.Robber,
-        OnuWerewolfRole.Troublemaker,
-        OnuWerewolfRole.Mason,
-        OnuWerewolfRole.Mason,
-        OnuWerewolfRole.Drunk
-      ];
-    case 8:
-      return [
-        OnuWerewolfRole.Werewolf,
-        OnuWerewolfRole.Werewolf,
-        OnuWerewolfRole.Villager,
-        OnuWerewolfRole.Villager,
         OnuWerewolfRole.Seer,
         OnuWerewolfRole.Robber,
         OnuWerewolfRole.Troublemaker,
         OnuWerewolfRole.Drunk,
         OnuWerewolfRole.Insomniac,
-        OnuWerewolfRole.Tanner,
-        OnuWerewolfRole.Hunter
+        OnuWerewolfRole.Villager,
+        OnuWerewolfRole.Villager
       ];
-    default:
-      // 默认返回基础配置
+    case 8:
+      // 2狼 + 爪牙 + 预言家 + 强盗 + 捣蛋鬼 + 酒鬼 + 失眠者 + 猎人 + 1村民 + 3中心 = 11
       return [
         OnuWerewolfRole.Werewolf,
-        OnuWerewolfRole.Villager,
+        OnuWerewolfRole.Werewolf,
+        OnuWerewolfRole.Minion,
         OnuWerewolfRole.Seer,
-        OnuWerewolfRole.Villager,
         OnuWerewolfRole.Robber,
-        OnuWerewolfRole.Troublemaker
+        OnuWerewolfRole.Troublemaker,
+        OnuWerewolfRole.Drunk,
+        OnuWerewolfRole.Insomniac,
+        OnuWerewolfRole.Hunter,
+        OnuWerewolfRole.Villager,
+        OnuWerewolfRole.Villager
+      ];
+    default:
+      // 默认返回基础3人配置
+      return [
+        OnuWerewolfRole.Werewolf,
+        OnuWerewolfRole.Werewolf,
+        OnuWerewolfRole.Seer,
+        OnuWerewolfRole.Robber,
+        OnuWerewolfRole.Troublemaker,
+        OnuWerewolfRole.Villager
       ];
   }
 } 

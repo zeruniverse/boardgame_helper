@@ -190,22 +190,9 @@ function findPlayerByIndex(players: Record<string, WerewolfPlayerState>, index: 
   return Object.values(players).find(p => p.index === index);
 }
 
-// 工具函数 - 查找玩家by id
-function findPlayerById(players: Record<string, WerewolfPlayerState>, id: string): WerewolfPlayerState | undefined {
-  return players[id];
-}
-
 // 工具函数 - 检查是否有活着的特定角色
 function hasAliveCharacter(players: Record<string, WerewolfPlayerState>, character: string): boolean {
   return Object.values(players).some(p => p.character === character && p.isAlive);
-}
-
-// 工具函数 - 切换到下一个状态
-function transitionToNext(gameState: WerewolfGameState, context: any, nextStatus: GameStatus): void {
-  const handler = stateHandlers[nextStatus];
-  if (handler) {
-    handler.startOfState(gameState, context);
-  }
 }
 
 // 工具函数 - 检查游戏结束并处理
@@ -247,10 +234,11 @@ function processDeathChain(gameState: WerewolfGameState, context: any, dyingPlay
   gameState.curDyingPlayer = dyingPlayer;
   dyingPlayer.isDying = true;
 
-  // 如果是猎人，进入开枪阶段
+  // 如果是猎人，进入开枪阶段（被女巫毒死的猎人不能开枪）
   if (dyingPlayer.character === 'HUNTER') {
+    const diedByPoison = dyingPlayer.die?.fromCharacter === 'WITCH';
     const hunterStatus = dyingPlayer.characterStatus;
-    if (!hunterStatus.hasUsedSkill && (!hunterStatus.shootAt || hunterStatus.shootAt.day < 0)) {
+    if (!diedByPoison && !hunterStatus.hasUsedSkill && (!hunterStatus.shootAt || hunterStatus.shootAt.day < 0)) {
       gameState.nextStateOfDieCheck = GameStatus.HUNTER_SHOOT;
       HunterShootHandler.startOfState(gameState, context);
       return;
@@ -264,8 +252,10 @@ function processDeathChain(gameState: WerewolfGameState, context: any, dyingPlay
     return;
   }
 
-  // 否则进入遗言阶段（第一天有遗言）
-  if (gameState.currentDay <= 1) {
+  // 否则进入遗言阶段
+  // 白天被投票放逐的玩家始终有遗言，夜晚死亡的只有第一天有遗言
+  const isExiled = dyingPlayer.die?.fromCharacter === 'VILLAGER';
+  if (isExiled || gameState.currentDay <= 1) {
     gameState.nextStateOfDieCheck = GameStatus.LEAVE_MSG;
     LeaveMsgHandler.startOfState(gameState, context);
     return;
@@ -273,48 +263,6 @@ function processDeathChain(gameState: WerewolfGameState, context: any, dyingPlay
 
   // 无后续处理，继续到下一个正常状态
   continueToNightOrDay(gameState, context);
-}
-
-// 工具函数 - 处理完一个死亡玩家后，检查是否还有更多待处理
-function processNextPendingDeath(gameState: WerewolfGameState, context: any): void {
-  // 将当前死亡玩家从队列中移除
-  if (gameState.pendingDeaths && gameState.pendingDeaths.length > 0) {
-    // 移除已处理的玩家（队列头部）
-    gameState.pendingDeaths.shift();
-  }
-  // 清除当前死亡玩家标记
-  gameState.curDyingPlayer = undefined;
-
-  // 检查是否还有待处理的死亡玩家
-  if (gameState.pendingDeaths && gameState.pendingDeaths.length > 0) {
-    const nextDyingPlayer = gameState.pendingDeaths[0];
-    processDeathChain(gameState, context, nextDyingPlayer);
-  } else {
-    // 所有死亡玩家处理完毕
-    gameState.pendingDeaths = undefined;
-    if (!checkAndHandleGameEnd(gameState, context)) {
-      // 进入白天讨论阶段
-      Object.values(gameState.players).forEach(p => {
-        p.canBeVoted = p.isAlive;
-      });
-
-      // 设置发言顺序：警长优先（如果有），然后按编号
-      const alivePlayers = Object.values(gameState.players)
-        .filter(p => p.isAlive)
-        .sort((a, b) => a.index - b.index);
-
-      const sheriff = alivePlayers.find(p => p.isSheriff);
-      const others = alivePlayers.filter(p => p !== sheriff);
-
-      gameState.speakOrder = [
-        ...(sheriff ? [sheriff.index] : []),
-        ...others.map(p => p.index)
-      ];
-      gameState.currentSpeakerIndex = 0;
-
-      DayDiscussHandler.startOfState(gameState, context);
-    }
-  }
 }
 
 // 工具函数 - 从死亡链继续到下一个正常状态
@@ -1119,6 +1067,7 @@ export const HunterShootHandler: StateHandler = {
       }
 
       hunter.characterStatus.hasUsedSkill = true;
+      hunter.isDying = false; // 标记当前猎人死亡处理完成
     }
 
     // 如果猎人开枪带走了另一个猎人，优先处理那个猎人

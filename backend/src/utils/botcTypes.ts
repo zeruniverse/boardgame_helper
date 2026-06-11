@@ -53,6 +53,7 @@ export interface GamePlayer {
   playerId: string;
   role: Role | null;
   isDead: boolean;
+  isAlive?: boolean;  // 前端兼容性属性，由isDead派生
   deathCause?: string;
   canVote: boolean;
   votesUsed: number;
@@ -123,6 +124,12 @@ export interface GameConfig {
   dayTimer: number;
   nightTimer: number;
   votingTimer: number;
+  /** 说书人模式：player / ai / none */
+  storytellerMode?: 'player' | 'ai' | 'none';
+  /** AI说书人偏好：neutral / good / evil */
+  aiBias?: 'neutral' | 'good' | 'evil';
+  /** 是否允许私聊 */
+  allowPrivateChat?: boolean;
 }
 
 export interface PlayerSetup {

@@ -485,9 +485,32 @@ const formatNightInfo = (info: any) => {
     if (data.abnormalCount !== undefined) {
       return `异常玩家数: ${data.abnormalCount}`
     }
+    if (data.demonVoted !== undefined) {
+      return data.demonVoted ? '今天有恶魔投票了' : '今天没有恶魔投票'
+    }
+    if (data.minionNominated !== undefined) {
+      return data.minionNominated ? '今天有爪牙提名了' : '今天没有爪牙提名'
+    }
+    if (data.deadEvilCount !== undefined) {
+      return `死亡的邪恶玩家数: ${data.deadEvilCount}`
+    }
+    if (data.sameAlignment !== undefined) {
+      return data.sameAlignment ? '两名玩家同阵营' : '两名玩家不同阵营'
+    }
     return JSON.stringify(data)
   }
-  
+
+  // 直接处理information对象（worker直接发送的数据格式）
+  if (info.demonVoted !== undefined) {
+    return info.demonVoted ? '今天有恶魔投票了' : '今天没有恶魔投票'
+  }
+  if (info.minionNominated !== undefined) {
+    return info.minionNominated ? '今天有爪牙提名了' : '今天没有爪牙提名'
+  }
+  if (info.deadEvilCount !== undefined) {
+    return `死亡的邪恶玩家数: ${info.deadEvilCount}`
+  }
+
   return JSON.stringify(info)
 }
 </script>

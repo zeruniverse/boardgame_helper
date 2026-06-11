@@ -17,9 +17,7 @@ import {
 import {
   onuIsWerewolf,
   onuIsWerewolfTeam,
-  onuCreateVision,
-  onuValidateSelection,
-  onuGetDistance
+  onuCreateVision
 } from './onuWerewolfUtils';
 
 // 技能结果接口
@@ -110,20 +108,27 @@ export abstract class OnuBaseSkill {
 
 // 狼人技能
 export class OnuWerewolfSkill extends OnuBaseSkill {
-  canUse(): boolean {
-    return true; // 狼人总是可以查看其他狼人
+  canUse(selection?: OnuWerewolfSelection): boolean {
+    const werewolves = this.getOtherPlayers().filter(p => onuIsWerewolf(p.actualRole));
+    // 如果有其他狼人，无需选择；如果是 lone wolf，支持选择一张中心卡（也允许默认回退）
+    if (werewolves.length === 0 && selection && selection.cards && selection.cards.length === 1) {
+      const pos = selection.cards[0];
+      return pos >= 0 && pos <= 2;
+    }
+    return true;
   }
 
-  execute(): OnuSkillResult {
+  execute(selection?: OnuWerewolfSelection): OnuSkillResult {
     const werewolves = this.getOtherPlayers().filter(p => onuIsWerewolf(p.actualRole));
     
     if (werewolves.length === 0) {
-      // 如果没有其他狼人，可以查看一张中心卡牌
-      const card = this.centerCards[0];
+      // 如果没有其他狼人，可以查看一张中心卡牌（自己选择）
+      const cardPos = selection?.cards?.[0] ?? 0;
+      const card = this.centerCards[cardPos];
       return {
         success: true,
         vision: onuCreateVision([], [card]),
-        message: '你是唯一的狼人，查看了第一张中心卡牌'
+        message: `你是唯一的狼人，查看了中心卡${cardPos}`
       };
     }
 
@@ -209,7 +214,7 @@ export class OnuRobberSkill extends OnuBaseSkill {
 
     return {
       success: true,
-      vision: onuCreateVision([{ ...target, actualRole: ownerRole }]),
+      vision: onuCreateVision([{ ...target, actualRole: targetRole, revealed: true }]),
       roleChanges: [
         { playerId: this.owner.id, newRole: targetRole, type: 'actual' },
         { playerId: target.id, newRole: ownerRole, type: 'actual' }

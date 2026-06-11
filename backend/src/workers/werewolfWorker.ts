@@ -20,7 +20,7 @@ import {
   renderPlayersHTML,
   shuffleArray
 } from '../utils/werewolfUtils';
-import { stateHandlers, startCurrentState } from '../utils/werewolfStateHandlers';
+import { stateHandlers } from '../utils/werewolfStateHandlers';
 
 if (!parentPort) {
   throw new Error('这个文件只能在Worker线程中运行');
@@ -253,10 +253,6 @@ class WerewolfWorker extends BaseGameWorker {
   private getTimeLeft(): number {
     if (!this.gameState.operateEndTime) return 0;
     return Math.max(0, Math.floor((this.gameState.operateEndTime.getTime() - Date.now()) / 1000));
-  }
-
-  private getStatusMessage(): string {
-    return (StatusDisplayMessages as any)[this.gameState.status] || this.gameState.status;
   }
 
   private getPublicPlayerInfo(): any[] {
@@ -786,6 +782,12 @@ class WerewolfWorker extends BaseGameWorker {
       const killTarget = this.gameState.nightActions?.wolfKillTarget;
       if (!killTarget) {
         this.sendToPlayer(playerId, 'error', { message: '昨晚没有人被狼人杀，无法使用解药' });
+        return;
+      }
+
+      // 女巫不能自救（标准规则）
+      if (killTarget === gamePlayer.index) {
+        this.sendToPlayer(playerId, 'error', { message: '女巫不能对自己使用解药' });
         return;
       }
 

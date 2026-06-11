@@ -9,6 +9,10 @@ export { useTexasHoldemStore } from './texas_holdem';
 export { useAvalonStore } from './avalon';
 export { useBOTCGameStore } from './botc';
 
+// 重新导出游戏特定的store
+export { useTexasHoldemStore } from './texas_holdem';
+export { useAvalonStore } from './avalon';
+export { useBOTCGameStore } from './botc';
 
 const gameRoutes: Record<string, string> = {
   'texas-holdem': 'TexasHoldemRoom',

@@ -143,7 +143,6 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import { More } from '@element-plus/icons-vue'
-import { ElIcon } from 'element-plus'
 
 interface Player {
   id: string

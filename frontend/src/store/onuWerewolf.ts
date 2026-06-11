@@ -627,7 +627,3 @@ export const useOnuWerewolfStore = defineStore('onuWerewolf', {
     }
   }
 });
-
-export function useGameStore() {
-  return useOnuWerewolfStore();
-} 

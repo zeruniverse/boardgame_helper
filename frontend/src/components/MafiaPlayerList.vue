@@ -209,21 +209,25 @@ defineEmits<{
 // 游戏配置
 const speakTime = ref(60)
 const actionTime = ref(60)
-const maxPlayers = 16
+const maxPlayers = 20
 
-// 角色配置
+// 角色配置 - 与后端 MAFIA_TEAM_CONFIG 和 doc/mafia.md 一致
 const roleConfigs = {
-  6: { killers: 1, cops: 1, doctors: 1, civilians: 3 },
-  7: { killers: 1, cops: 1, doctors: 1, civilians: 4 },
-  8: { killers: 2, cops: 2, doctors: 1, civilians: 3 },
-  9: { killers: 2, cops: 2, doctors: 1, civilians: 4 },
-  10: { killers: 2, cops: 2, doctors: 1, civilians: 5 },
+  6: { killers: 2, cops: 1, doctors: 1, civilians: 2 },
+  7: { killers: 2, cops: 1, doctors: 1, civilians: 3 },
+  8: { killers: 2, cops: 1, doctors: 1, civilians: 4 },
+  9: { killers: 3, cops: 2, doctors: 1, civilians: 3 },
+  10: { killers: 3, cops: 2, doctors: 1, civilians: 4 },
   11: { killers: 3, cops: 2, doctors: 1, civilians: 5 },
-  12: { killers: 3, cops: 3, doctors: 1, civilians: 5 },
-  13: { killers: 3, cops: 3, doctors: 1, civilians: 6 },
-  14: { killers: 3, cops: 3, doctors: 1, civilians: 7 },
-  15: { killers: 3, cops: 3, doctors: 1, civilians: 8 },
-  16: { killers: 4, cops: 3, doctors: 1, civilians: 8 }
+  12: { killers: 3, cops: 2, doctors: 1, civilians: 6 },
+  13: { killers: 4, cops: 3, doctors: 2, civilians: 4 },
+  14: { killers: 4, cops: 3, doctors: 2, civilians: 5 },
+  15: { killers: 4, cops: 3, doctors: 2, civilians: 6 },
+  16: { killers: 4, cops: 3, doctors: 2, civilians: 7 },
+  17: { killers: 5, cops: 4, doctors: 2, civilians: 6 },
+  18: { killers: 5, cops: 4, doctors: 2, civilians: 7 },
+  19: { killers: 5, cops: 4, doctors: 2, civilians: 8 },
+  20: { killers: 5, cops: 4, doctors: 2, civilians: 9 }
 }
 
 

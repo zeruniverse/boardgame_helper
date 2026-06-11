@@ -590,8 +590,16 @@ class TexasHoldemWorker extends BaseGameWorker {
     const dealerIdx = (prevDealerIdx + 1) % participatingPlayers.length;
     gs.dealerIndex = dealerIdx; // participatingPlayers 中的索引
 
-    const sbIndex = (dealerIdx + 1) % participatingPlayers.length;
-    const bbIndex = (sbIndex + 1) % participatingPlayers.length;
+    let sbIndex: number;
+    let bbIndex: number;
+    if (participatingPlayers.length === 2) {
+      // 2人局：Dealer兼做SB
+      sbIndex = dealerIdx;
+      bbIndex = (dealerIdx + 1) % participatingPlayers.length;
+    } else {
+      sbIndex = (dealerIdx + 1) % participatingPlayers.length;
+      bbIndex = (sbIndex + 1) % participatingPlayers.length;
+    }
     gs.sbIndex = sbIndex;
     gs.bbIndex = bbIndex;
     const sbPlayer = participatingPlayers[sbIndex];
@@ -676,8 +684,15 @@ class TexasHoldemWorker extends BaseGameWorker {
     // 提前检查盲注，避免前端进入错误状态
     const participatingPlayers = this.room.players.filter(p => participants.includes(p.id));
     const dealerIndex = ((this.gameState.dealerIndex ?? -1) + 1) % participatingPlayers.length;
-    const sbIndex = (dealerIndex + 1) % participatingPlayers.length;
-    const bbIndex = (sbIndex + 1) % participatingPlayers.length;
+    let sbIndex: number;
+    let bbIndex: number;
+    if (participatingPlayers.length === 2) {
+      sbIndex = dealerIndex;
+      bbIndex = (dealerIndex + 1) % participatingPlayers.length;
+    } else {
+      sbIndex = (dealerIndex + 1) % participatingPlayers.length;
+      bbIndex = (sbIndex + 1) % participatingPlayers.length;
+    }
     const sbPlayer = participatingPlayers[sbIndex];
     const bbPlayer = participatingPlayers[bbIndex];
 
@@ -948,8 +963,15 @@ class TexasHoldemWorker extends BaseGameWorker {
       const participants = eligiblePlayers.map(p => p.id);
       const participatingPlayers = eligiblePlayers;
       const dealerIndex = ((this.gameState.dealerIndex ?? -1) + 1) % participatingPlayers.length;
-      const sbIndex = (dealerIndex + 1) % participatingPlayers.length;
-      const bbIndex = (sbIndex + 1) % participatingPlayers.length;
+      let sbIndex: number;
+      let bbIndex: number;
+      if (participatingPlayers.length === 2) {
+        sbIndex = dealerIndex;
+        bbIndex = (dealerIndex + 1) % participatingPlayers.length;
+      } else {
+        sbIndex = (dealerIndex + 1) % participatingPlayers.length;
+        bbIndex = (sbIndex + 1) % participatingPlayers.length;
+      }
       const sbPlayer = participatingPlayers[sbIndex];
       const bbPlayer = participatingPlayers[bbIndex];
 
@@ -1553,7 +1575,14 @@ class TexasHoldemWorker extends BaseGameWorker {
     } else {
       const dealerGlobalIndex = this.room.players.findIndex(p => p.id === dealerPlayer!.id);
 
-      let nextPlayerIndex = (dealerGlobalIndex + 1) % this.room.players.length;
+      let nextPlayerIndex: number;
+      if (participatingPlayers.length === 2) {
+        // 2人局：Dealer(SB)先行动
+        nextPlayerIndex = dealerGlobalIndex;
+      } else {
+        // 3+人局：Dealer左边(SB)先行动
+        nextPlayerIndex = (dealerGlobalIndex + 1) % this.room.players.length;
+      }
       let safetyCount = 0;
       const maxSafety = Math.max(this.room.players.length * 2, 1);
 

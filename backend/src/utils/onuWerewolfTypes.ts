@@ -76,7 +76,7 @@ export enum OnuWerewolfGameStatus {
 export const ONU_WEREWOLF_SKILL_PRIORITY: Record<OnuWerewolfRole, number> = {
   [OnuWerewolfRole.Doppelganger]: -0x700,
   [OnuWerewolfRole.Sentinel]: 0x000,
-  [OnuWerewolfRole.Minion]: 0x200,
+  [OnuWerewolfRole.Minion]: 0x350,
   [OnuWerewolfRole.ApprenticeTanner]: 0x220,
   [OnuWerewolfRole.Werewolf]: 0x300,
   [OnuWerewolfRole.AlphaWolf]: 0x320,

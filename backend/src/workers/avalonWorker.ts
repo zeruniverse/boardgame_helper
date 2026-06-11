@@ -72,6 +72,7 @@ interface AvalonGameState {
 interface AvalonPlayer {
   name: string;
   index: number;
+  ready?: boolean;
 }
 
 interface AssassinateInfo {
@@ -123,16 +124,16 @@ const AVALON_TEAM_CONFIG: Record<number, [Role[], Role[]]> = {
   12: [[Role.MERLIN, Role.PERCIVAL, Role.GOOD, Role.GOOD, Role.GOOD, Role.GOOD, Role.GOOD], [Role.MORGANA, Role.ASSASSIN, Role.MORDRED, Role.BAD, Role.OBERON]]
 };
 
-// 湖上夫人模式的角色配置
+// 湖上夫人模式的角色配置（湖上夫人机制不改变角色配置，与标准配置一致）
 const AVALON_LADY_TEAM_CONFIG: Record<number, [Role[], Role[]]> = {
   5: [[Role.MERLIN, Role.PERCIVAL, Role.GOOD], [Role.MORGANA, Role.ASSASSIN]],
-  6: [[Role.MERLIN, Role.PERCIVAL, Role.GOOD, Role.GOOD], [Role.MORGANA, Role.ASSASSIN, Role.BAD]],
-  7: [[Role.MERLIN, Role.PERCIVAL, Role.GOOD, Role.GOOD], [Role.MORGANA, Role.ASSASSIN, Role.BAD]],
-  8: [[Role.MERLIN, Role.PERCIVAL, Role.GOOD, Role.GOOD, Role.GOOD], [Role.MORGANA, Role.ASSASSIN, Role.MORDRED]],
-  9: [[Role.MERLIN, Role.PERCIVAL, Role.PERCIVAL, Role.GOOD, Role.GOOD], [Role.MORGANA, Role.ASSASSIN, Role.MORDRED, Role.OBERON]],
-  10: [[Role.MERLIN, Role.PERCIVAL, Role.GOOD, Role.GOOD, Role.GOOD, Role.GOOD], [Role.MORGANA, Role.ASSASSIN, Role.MORDRED, Role.BAD]],
-  11: [[Role.MERLIN, Role.PERCIVAL, Role.PERCIVAL, Role.GOOD, Role.GOOD, Role.GOOD], [Role.MORGANA, Role.ASSASSIN, Role.BAD, Role.MORDRED, Role.OBERON]],
-  12: [[Role.MERLIN, Role.PERCIVAL, Role.GOOD, Role.GOOD, Role.GOOD, Role.GOOD, Role.GOOD], [Role.MORGANA, Role.ASSASSIN, Role.MORDRED, Role.BAD, Role.BAD]]
+  6: [[Role.MERLIN, Role.PERCIVAL, Role.GOOD, Role.GOOD], [Role.MORGANA, Role.ASSASSIN]],
+  7: [[Role.MERLIN, Role.PERCIVAL, Role.GOOD, Role.GOOD], [Role.MORGANA, Role.ASSASSIN, Role.OBERON]],
+  8: [[Role.MERLIN, Role.PERCIVAL, Role.GOOD, Role.GOOD, Role.GOOD], [Role.MORGANA, Role.ASSASSIN, Role.BAD]],
+  9: [[Role.MERLIN, Role.PERCIVAL, Role.GOOD, Role.GOOD, Role.GOOD, Role.GOOD], [Role.MORGANA, Role.ASSASSIN, Role.MORDRED]],
+  10: [[Role.MERLIN, Role.PERCIVAL, Role.GOOD, Role.GOOD, Role.GOOD, Role.GOOD], [Role.MORGANA, Role.ASSASSIN, Role.MORDRED, Role.OBERON]],
+  11: [[Role.MERLIN, Role.PERCIVAL, Role.GOOD, Role.GOOD, Role.GOOD, Role.GOOD, Role.GOOD], [Role.MORGANA, Role.ASSASSIN, Role.MORDRED, Role.BAD]],
+  12: [[Role.MERLIN, Role.PERCIVAL, Role.GOOD, Role.GOOD, Role.GOOD, Role.GOOD, Role.GOOD], [Role.MORGANA, Role.ASSASSIN, Role.MORDRED, Role.BAD, Role.OBERON]]
 };
 
 // 任务人数配置 [任务参与人数, 失败所需人数, 实际结果]
@@ -429,9 +430,18 @@ class AvalonWorker extends BaseGameWorker {
   // 获取游戏信息（不包含机密信息）
   private getGameInfo(): any {
     const state = this.gameState as AvalonGameState;
+    // 将房间中的 ready 状态合并到游戏玩家信息中
+    const playersWithReady: Record<string, AvalonPlayer> = {};
+    for (const [id, player] of Object.entries(state.players)) {
+      const roomPlayer = this.room.players.find(p => p.id === id);
+      playersWithReady[id] = {
+        ...player,
+        ready: roomPlayer?.gameMetadata?.ready || false
+      };
+    }
     return {
       status: state.status,
-      players: state.players,
+      players: playersWithReady,
       mission: state.mission,
       scoreBoard: state.scoreBoard,
       captain: state.captain,
@@ -832,10 +842,10 @@ class AvalonWorker extends BaseGameWorker {
       return;
     }
 
-    // 检查目标是否有效（不能是自己或已经被验过的）
-    if (targetId === playerId || state.ladys.includes(targetId)) {
+    // 检查目标是否有效（不能是自己、不能验已经被验过的人、不能验当前队长）
+    if (targetId === playerId || state.ladys.includes(targetId) || targetId === state.captain) {
       this.sendToPlayer(playerId, 'game_error', {
-        message: '无效的验人目标'
+        message: '无效的验人目标（不能查验自己、已查验过的玩家或当前队长）'
       });
       return;
     }
@@ -882,8 +892,11 @@ class AvalonWorker extends BaseGameWorker {
     };
 
     if (data.channel === 'evil') {
-      // 邪恶方密聊只发送给红方成员
-      const redPlayers = this.getRedPlayers();
+      // 邪恶方密聊只发送给红方成员（奥伯伦除外，他看不到其他坏人）
+      const state = this.gameState as AvalonGameState;
+      const redPlayers = Object.keys(state.topSecret.red).filter(
+        id => state.topSecret.red[id] !== Role.OBERON
+      );
       redPlayers.forEach(id => {
         this.sendToPlayer(id, 'chat_broadcast', messagePayload);
       });
@@ -1136,10 +1149,10 @@ class AvalonWorker extends BaseGameWorker {
         }
         break;
       case GameStatus.LADY:
-        // 湖上夫人超时，随机选择目标
+        // 湖上夫人超时，随机选择目标（排除自己、已查验过的人、当前队长）
         const ladyPlayer = state.operators[0];
         const availableTargets = Object.keys(state.players).filter(
-          id => id !== ladyPlayer && !state.ladys.includes(id)
+          id => id !== ladyPlayer && !state.ladys.includes(id) && id !== state.captain
         );
         if (availableTargets.length > 0) {
           const randomTarget = availableTargets[Math.floor(Math.random() * availableTargets.length)];

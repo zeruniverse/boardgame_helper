@@ -249,10 +249,6 @@ const startTimer = () => {
   }, 1000)
 }
 
-const updateTimeLeft = () => {
-  store.updateTimer()
-}
-
 const getStatusMessage = (): string => {
   if (!gameState.value) return '等待开始'
   return gameState.value.statusMessage || '游戏进行中'

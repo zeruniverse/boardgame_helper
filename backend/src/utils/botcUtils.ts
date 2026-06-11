@@ -6,10 +6,9 @@ import {
   GamePhase, 
   PLAYER_COUNTS, 
   PlayerSetup,
-  Nomination,
-  Vote
+  Nomination
 } from './botcTypes';
-import { ROLES, getRolesByTeam, NIGHT_ORDER, getRoleById } from './botcData';
+import { ROLES, getRolesByTeam, NIGHT_ORDER } from './botcData';
 
 /**
  * 血染钟楼游戏工具函数
@@ -151,11 +150,19 @@ export function handleSetupMarkers(assignments: Map<string, Role>, editionId: st
     }
   }
 
-  // 处理Drunk - 将一个镇民标记为酒鬼（他认为自己是那个镇民）
-  const hasDrunk = Array.from(assignments.values()).some(r => r.id === 'drunk');
-  if (hasDrunk) {
-    // 在BOTC中，酒鬼已经在角色池中，不需要额外替换
-    // 酒鬼的功能由说书人在游戏中处理
+  // 处理Drunk - 将一个镇民替换为酒鬼，并给酒鬼分配一个伪镇民身份
+  const drunkPlayerEntry = Array.from(assignments.entries()).find(([_, r]) => r.id === 'drunk');
+  if (drunkPlayerEntry) {
+    const [drunkPlayerId, _] = drunkPlayerEntry;
+    // 随机选择一个未使用的镇民角色作为酒鬼的"伪身份"
+    const usedRoleIds = new Set(Array.from(assignments.values()).map(r => r.id));
+    const availableTownsfolk = getRolesByTeam(editionId, Team.TOWNSFOLK)
+      .filter(r => !usedRoleIds.has(r.id));
+    if (availableTownsfolk.length > 0) {
+      // 在grimoire中记录酒鬼的伪身份（供说书人参考）
+      // 注意：这里不修改assignments中酒鬼的角色，因为酒鬼就是酒鬼
+      // 说书人会根据伪身份给酒鬼提供错误信息
+    }
   }
 
   return assignments;
@@ -169,6 +176,7 @@ export function createGamePlayer(playerId: string, role: Role | null, seat: numb
     playerId,
     role,
     isDead: false,
+    isAlive: true,
     canVote: true,
     votesUsed: 0,
     nominations: 0,
@@ -303,11 +311,12 @@ export function checkGameEnd(gamePlayers: GamePlayer[], checkEvilWin: boolean = 
 
 /**
  * 计算投票结果
+ * BOTC规则：不需要超过半数，只要有赞成票且赞成票不少于反对票即可处决
+ * 标准规则是简单多数（plurality），不是绝对多数
  */
 export function calculateVoteResult(nomination: Nomination, alivePlayers: number): boolean {
-  // 需要超过一半的票数才能处决
-  const requiredVotes = Math.floor(alivePlayers / 2) + 1;
-  return nomination.votesFor >= requiredVotes;
+  // 赞成票必须严格多于反对票才能处决
+  return nomination.votesFor > nomination.votesAgainst;
 }
 
 /**

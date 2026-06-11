@@ -26,7 +26,8 @@ import {
   onuIsPlayerWinner,
   onuCreateVision,
   onuFormatTime,
-  onuGetRoleTeam
+  onuGetRoleTeam,
+  onuProcessHunterRevenge
 } from '../utils/onuWerewolfUtils';
 
 import {
@@ -835,10 +836,16 @@ class OnuWerewolfWorker extends BaseGameWorker {
 
     // 计算投票结果
     const voteResult = onuCalculateVoteResult(this.gameState.votes, this.gameState.players);
-    this.gameState.lynchResults = voteResult.lynched;
+
+    // 处理猎人复仇击杀：被处决的猎人带走其投票目标
+    this.gameState.lynchResults = onuProcessHunterRevenge(
+      this.gameState.players,
+      voteResult.lynched,
+      this.gameState.votes
+    );
 
     // 计算胜利者
-    const winner = onuCalculateWinner(this.gameState.players, voteResult.lynched);
+    const winner = onuCalculateWinner(this.gameState.players, this.gameState.lynchResults);
     this.gameState.winner = winner;
 
     this.sendToRoom('onu_voting_ended', {

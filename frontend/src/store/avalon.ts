@@ -416,8 +416,3 @@ export const useAvalonStore = defineStore('avalon', {
     }
   }
 });
-
-// 导出一个包装函数以便组件使用
-export function useGameStore() {
-  return useAvalonStore();
-} 
