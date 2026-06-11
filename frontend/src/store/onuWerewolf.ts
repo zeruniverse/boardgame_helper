@@ -229,12 +229,42 @@ export const useOnuWerewolfStore = defineStore('onuWerewolf', {
         this.room = data.room;
         this.currentUserId = data.player?.id || data.playerId || this.currentUserId;
         this.currentRoomId = data.room.id;
+        if (!this.gameState) {
+          this.gameState = {
+            status: OnuWerewolfGameStatus.WAITING,
+            currentPhase: '等待中',
+            timeLeft: 0,
+            playerCount: data.room.players.length,
+            readyCount: data.room.players.filter(p => p.ready).length,
+            day: 1,
+            players: data.room.players.map(p => ({
+              id: p.id,
+              name: p.name || p.nickname || '',
+              seat: p.seat || 0,
+              ready: p.ready || false,
+              voted: p.voted || false,
+              skillUsed: p.skillUsed || false
+            }))
+          };
+        }
         if (this.currentUserId) localStorage.setItem('onu_werewolf_userId', this.currentUserId);
         if (data.player?.nickname || data.player?.name) localStorage.setItem('onu_werewolf_nickname', data.player.nickname || data.player.name);
       });
 
       on('room_update', (room: OnuWerewolfRoomState) => {
         this.room = room;
+        if (this.gameState) {
+          this.gameState.playerCount = room.players.length;
+          this.gameState.readyCount = room.players.filter(p => p.ready).length;
+          this.gameState.players = room.players.map(p => ({
+            id: p.id,
+            name: p.name || p.nickname || '',
+            seat: p.seat || 0,
+            ready: p.ready || false,
+            voted: p.voted || false,
+            skillUsed: p.skillUsed || false
+          }));
+        }
       });
 
       // 游戏事件

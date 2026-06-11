@@ -7,6 +7,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { setResetServerFunction } from '../services/resetService';
 import { WerewolfCharacter } from '../utils/werewolfTypes';
 import { OnuWerewolfRole } from '../utils/onuWerewolfTypes';
+import { getRecommendedRoles } from '../utils/onuWerewolfPresets';
 
 const rooms: Map<string, Room> = new Map();
 let threadManager: RoomThreadManager;
@@ -106,24 +107,7 @@ function defaultWerewolfCharacters(playerCount: number): WerewolfCharacter[] {
 
 function defaultOnuRoles(playerCount: number): OnuWerewolfRole[] {
   const count = Math.max(3, Math.min(10, Math.floor(playerCount || 3)));
-  const baseRoles: OnuWerewolfRole[] = [
-    OnuWerewolfRole.Werewolf,
-    OnuWerewolfRole.Werewolf,
-    OnuWerewolfRole.Seer,
-    OnuWerewolfRole.Robber,
-    OnuWerewolfRole.Troublemaker,
-    OnuWerewolfRole.Drunk,
-    OnuWerewolfRole.Insomniac,
-    OnuWerewolfRole.Minion,
-    OnuWerewolfRole.Hunter,
-    OnuWerewolfRole.Tanner,
-    OnuWerewolfRole.Mason,
-    OnuWerewolfRole.Mason,
-    OnuWerewolfRole.Villager
-  ];
-  const roles = baseRoles.slice(0, count + 3);
-  while (roles.length < count + 3) roles.push(OnuWerewolfRole.Villager);
-  return roles;
+  return getRecommendedRoles(count);
 }
 
 function buildGameConfig(gameType: string, incomingConfig: any): any {

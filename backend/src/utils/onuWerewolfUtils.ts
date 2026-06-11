@@ -112,7 +112,8 @@ export function onuValidateGameConfig(roles: OnuWerewolfRole[]): {
     OnuWerewolfRole.Robber, 
     OnuWerewolfRole.Troublemaker, 
     OnuWerewolfRole.Drunk, 
-    OnuWerewolfRole.Insomniac
+    OnuWerewolfRole.Insomniac,
+    OnuWerewolfRole.Tanner
   ];
   
   for (const uniqueRole of uniqueRoles) {

@@ -302,7 +302,8 @@ export function validatePreset(preset: OnuWerewolfPreset): { valid: boolean; err
     OnuWerewolfRole.Robber,
     OnuWerewolfRole.Troublemaker,
     OnuWerewolfRole.Drunk,
-    OnuWerewolfRole.Insomniac
+    OnuWerewolfRole.Insomniac,
+    OnuWerewolfRole.Tanner
   ];
 
   for (const role of uniqueRoles) {

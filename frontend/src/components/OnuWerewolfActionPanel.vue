@@ -1,7 +1,7 @@
 <template>
   <div class="onu-werewolf-action-panel">
     <!-- 等待阶段 - 角色配置 -->
-    <div v-if="gameState?.status === 0" class="waiting-phase">
+    <div v-if="!gameState || gameState?.status === 0" class="waiting-phase">
       <div class="phase-header">
         <h3>游戏配置</h3>
         <p>房主可以配置本局游戏的角色</p>
