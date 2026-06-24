@@ -324,13 +324,13 @@ export const WolfKillHandler: StateHandler = {
         showTime: 3
       });
 
-      // 向狼人发送被杀提示（告知当前受害者）
+      // 向狼人发送私密提示（只发送给狼人）
       const aliveWerewolves = Object.values(gameState.players).filter(p => p.character === 'WEREWOLF' && p.isAlive);
-      if (aliveWerewolves.length > 0) {
-        context.sendToRoom('system_message', {
+      aliveWerewolves.forEach(w => {
+        context.sendToPlayer(w.id, 'system_message', {
           message: '狼人请睁眼，讨论并选择要击杀的目标'
         });
-      }
+      });
     }
   },
 
@@ -372,15 +372,21 @@ export const WolfKillHandler: StateHandler = {
           fromCharacter: 'WEREWOLF'
         };
 
-        // 通知狼人击杀结果
-        context.sendToRoom('system_message', {
-          message: `狼人选择了 ${unanimousTarget}号玩家 作为击杀目标`
+        // 通知狼人击杀结果（只发送给狼人）
+        const aliveWerewolves = Object.values(gameState.players).filter(p => p.character === 'WEREWOLF' && p.isAlive);
+        aliveWerewolves.forEach(w => {
+          context.sendToPlayer(w.id, 'system_message', {
+            message: `狼人选择了 ${unanimousTarget}号玩家 作为击杀目标`
+          });
         });
       }
     } else {
-      // 狼人未达成一致或放弃杀人
-      context.sendToRoom('system_message', {
-        message: '狼人没有统一的击杀目标'
+      // 狼人未达成一致或放弃杀人（只通知狼人）
+      const aliveWerewolves = Object.values(gameState.players).filter(p => p.character === 'WEREWOLF' && p.isAlive);
+      aliveWerewolves.forEach(w => {
+        context.sendToPlayer(w.id, 'system_message', {
+          message: '狼人没有统一的击杀目标'
+        });
       });
     }
 
@@ -405,8 +411,12 @@ export const SeerCheckHandler: StateHandler = {
   startOfState(gameState, context) {
     startCurrentState(this, gameState, context);
 
-    context.sendToRoom('system_message', {
-      message: '预言家请验人'
+    // 预言家验人提示只发送给预言家
+    const aliveSeers = Object.values(gameState.players).filter(p => p.character === 'SEER' && p.isAlive);
+    aliveSeers.forEach(s => {
+      context.sendToPlayer(s.id, 'system_message', {
+        message: '预言家请验人'
+      });
     });
   },
 
@@ -448,8 +458,12 @@ export const WitchActHandler: StateHandler = {
       }
     }
 
-    context.sendToRoom('system_message', {
-      message: '女巫请选择是否用药'
+    // 女巫用药提示只发送给女巫
+    const aliveWitches = Object.values(gameState.players).filter(p => p.character === 'WITCH' && p.isAlive);
+    aliveWitches.forEach(w => {
+      context.sendToPlayer(w.id, 'system_message', {
+        message: '女巫请选择是否用药'
+      });
     });
   },
 
@@ -480,8 +494,12 @@ export const GuardProtectHandler: StateHandler = {
   startOfState(gameState, context) {
     startCurrentState(this, gameState, context);
 
-    context.sendToRoom('system_message', {
-      message: '守卫请选择保护的玩家'
+    // 守卫保护提示只发送给守卫
+    const aliveGuards = Object.values(gameState.players).filter(p => p.character === 'GUARD' && p.isAlive);
+    aliveGuards.forEach(g => {
+      context.sendToPlayer(g.id, 'system_message', {
+        message: '守卫请选择保护的玩家'
+      });
     });
   },
 

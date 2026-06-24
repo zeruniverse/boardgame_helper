@@ -402,29 +402,30 @@ export function getRoleName(roleId: string): string {
  * 验证玩家行动是否有效
  */
 export function validatePlayerAction(
-  playerId: string, 
-  actionType: string, 
-  actionData: any, 
-  gameState: GameState, 
+  playerId: string,
+  actionType: string,
+  actionData: any,
+  gameState: GameState,
   gamePlayers: GamePlayer[]
 ): { valid: boolean; error?: string } {
-  const player = gamePlayers.find(p => p.playerId === playerId);
-  
-  if (!player) {
-    return { valid: false, error: '玩家不存在' };
-  }
-
-  // 聊天操作任何人都可执行
+  // 聊天操作任何人都可执行（包括SETUP阶段）
   if (actionType === 'chat' || actionType === 'private_message') {
     return { valid: true };
   }
 
-  // ready操作在SETUP阶段允许（说书人专用，在Worker中验证）
+  // ready操作在SETUP阶段允许（身份验证在Worker中处理）
+  // 必须在gamePlayers检查之前，因为gamePlayers在startGame后才填充
   if (actionType === 'ready') {
     if (gameState.phase !== GamePhase.SETUP) {
       return { valid: false, error: '游戏已经开始' };
     }
     return { valid: true };
+  }
+
+  const player = gamePlayers.find(p => p.playerId === playerId);
+
+  if (!player) {
+    return { valid: false, error: '玩家不存在' };
   }
 
   // setup阶段只允许ready和chat

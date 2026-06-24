@@ -294,7 +294,7 @@ export class BOTCWorker extends BaseGameWorker {
 
       // 发送角色信息给参与游戏的玩家
       this.gamePlayers.forEach((gamePlayer, playerId) => {
-        this.sendToPlayer(playerId, 'roleAssigned', {
+        this.sendToPlayer(playerId, 'role_assigned', {
           role: gamePlayer.role,
           seat: gamePlayer.seat,
           isEvil: isEvilPlayer(gamePlayer),

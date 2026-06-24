@@ -328,6 +328,7 @@ class WerewolfWorker extends BaseGameWorker {
     if (actionType === 'ready') { this.handleReady(playerId); return; }
     if (actionType === 'unready') { this.handleUnready(playerId); return; }
     if (actionType === 'start_game') { this.handleStartGame(playerId); return; }
+    if (actionType === 'restart_game') { this.handleRestartGame(playerId); return; }
 
     const gamePlayer = this.gameState.players[playerId];
     if (!gamePlayer) return;
@@ -466,11 +467,62 @@ class WerewolfWorker extends BaseGameWorker {
     this.startGame(readyPlayers);
   }
 
+  private handleRestartGame(playerId: string): void {
+    // 只有房主能重新开始游戏
+    if (this.room.hostId !== playerId) {
+      this.sendToPlayer(playerId, 'error', { message: '只有房主可以重新开始游戏' });
+      return;
+    }
+
+    // 清除所有定时器
+    this.timers.forEach(timer => clearTimeout(timer));
+    this.timers = [];
+    if (this.gameState.timer) {
+      clearTimeout(this.gameState.timer);
+      this.gameState.timer = undefined;
+    }
+
+    // 清除游戏状态中所有玩家的角色和生死状态
+    (Object.values(this.gameState.players) as WerewolfPlayerState[]).forEach(gp => {
+      gp.character = 'UNKNOWN' as WerewolfCharacter;
+      gp.isAlive = true;
+      gp.isSheriff = false;
+      gp.isDying = false;
+      gp.canBeVoted = false;
+      gp.hasVotedAt = [];
+      gp.sheriffVotes = [];
+      gp.characterStatus = {};
+      gp.die = undefined;
+    });
+
+    // 重置房间玩家的准备状态
+    this.room.players.forEach(p => {
+      if (p.gameMetadata) {
+        p.gameMetadata.ready = false;
+      }
+    });
+
+    // 重新初始化游戏状态
+    this.initializeGameState();
+
+    // 重新设置needingCharacters
+    this.gameState.needingCharacters = this.config.characters;
+
+    this.sendToRoom('game_restarted', {
+      message: '游戏已重新开始，请所有玩家重新准备',
+      gameInfo: this.getGameInfo()
+    });
+
+    this.sendToRoom('room_update', this.room);
+  }
+
   private startGame(readyPlayers: Player[]): void {
     // 分配角色
     const characters = shuffleArray([...this.gameState.needingCharacters]);
 
-    readyPlayers.slice(0, this.gameState.needingCharacters.length).forEach((player, index) => {
+    // 遍历所有准备好的玩家，为每个玩家分配一个角色
+    // 前面已经验证了 readyPlayers.length === needingCharacters.length
+    readyPlayers.forEach((player, index) => {
       const character = characters[index];
       const gamePlayer: WerewolfPlayerState = {
         id: player.id,

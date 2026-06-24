@@ -1070,6 +1070,21 @@ class AvalonWorker extends BaseGameWorker {
       message: '游戏开始！请查看自己的角色信息',
       game: this.getGameInfo()
     });
+
+    // 为每个玩家发送角色分配信息
+    const state = this.gameState as AvalonGameState;
+    for (const playerId of Object.keys(state.players)) {
+      const secret = this.getSecretForPlayer(playerId);
+      const roomPlayer = this.room.players.find(p => p.id === playerId);
+      if (roomPlayer) {
+        this.sendToPlayer(playerId, 'role_assigned', {
+          role: secret.role,
+          team: secret.team,
+          visions: secret.visions,
+          playerId
+        });
+      }
+    }
   }
 
   private getNextPlayer(currentPlayerId: string): string {
