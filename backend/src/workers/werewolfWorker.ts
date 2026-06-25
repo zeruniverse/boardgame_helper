@@ -327,8 +327,8 @@ class WerewolfWorker extends BaseGameWorker {
 
     if (actionType === 'ready') { this.handleReady(playerId); return; }
     if (actionType === 'unready') { this.handleUnready(playerId); return; }
-    if (actionType === 'start_game') { this.handleStartGame(playerId); return; }
-    if (actionType === 'restart_game') { this.handleRestartGame(playerId); return; }
+    if (actionType === 'startGame') { this.handleStartGame(playerId); return; }
+    if (actionType === 'restartGame') { this.handleRestartGame(playerId); return; }
 
     const gamePlayer = this.gameState.players[playerId];
     if (!gamePlayer) return;

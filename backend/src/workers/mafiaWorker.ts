@@ -58,7 +58,8 @@ interface MafiaGameState {
   inspect: Record<string, string>;    // 警察验人 {警察ID: 被验者ID}
   wantToKill: Record<string, string>; // 杀手杀人 {杀手ID: 被杀者ID}
   wantToSave: Record<string, string>; // 医生救人 {医生ID: 被救者ID}
-  personWillDie: string | null;       // 夜晚将死的人
+  personWillDie: string | null;       // 夜晚将死的人（杀手目标）
+  sniperTarget: string | null;        // 狙击手目标（独立于杀手目标）
   personSaved: string[];             // 夜晚被救的人列表（支持多名医生）
   killerActionLock: boolean;          // 杀手行动锁
   copActionLock: boolean;             // 警察行动锁
@@ -166,6 +167,7 @@ class MafiaWorker extends BaseGameWorker {
       wantToKill: {},
       wantToSave: {},
       personWillDie: null,
+      sniperTarget: null,
       personSaved: [],
       killerActionLock: true,
       copActionLock: true,
@@ -260,7 +262,7 @@ class MafiaWorker extends BaseGameWorker {
         case 'unready':
           this.handleUnready(playerId);
           break;
-        case 'start_game':
+        case 'startGame':
           this.handleStartGame(playerId);
           break;
         case 'inspect_suspect':
@@ -290,7 +292,7 @@ class MafiaWorker extends BaseGameWorker {
         case 'chat_message':
           this.handleChatMessage(playerId, actionData);
           break;
-        case 'restart_game':
+        case 'restartGame':
           this.handleRestartGame(playerId);
           break;
         case 'heartbeat':
@@ -864,7 +866,8 @@ class MafiaWorker extends BaseGameWorker {
     gameState.sniperActionLock = false;
 
     // 狙击手无视医生保护，被狙击者必定死亡
-    gameState.personWillDie = targetId;
+    // 使用独立的 sniperTarget 字段，避免覆盖杀手的 personWillDie
+    gameState.sniperTarget = targetId;
 
     const message = `你狙击了${this.getPlayerName(targetId)}`;
     this.sendToPlayer(playerId, 'snipe_result', { message });
@@ -979,11 +982,16 @@ class MafiaWorker extends BaseGameWorker {
       gameState.killerActionLock = true;
       gameState.copActionLock = true;
       gameState.doctorActionLock = true;
-      gameState.sniperActionLock = gameState.sniperShot;
+      gameState.sniperActionLock = !gameState.sniperShot;
       gameState.inspect = {};
       gameState.wantToKill = {};
       gameState.wantToSave = {};
       gameState.wantToSnipe = {};
+      gameState.sniperTarget = null;
+      // 白天结束，遗言轮数递减
+      if (gameState.lastWordCount > 0) {
+        gameState.lastWordCount -= 1;
+      }
       gameState.operateEndTime = new Date(Date.now() + this.config.nightTime * 1000);
 
       this.setTimer(this.config.nightTime * 1000, () => this.handleTimeout());
@@ -1288,8 +1296,8 @@ class MafiaWorker extends BaseGameWorker {
     gameState.wantToSave = {};
     gameState.wantToSnipe = {};
     
-    if (!gameState.personWillDie) {
-      // 平安夜（杀手没杀人或医生救了人）
+    if (!gameState.personWillDie && !gameState.sniperTarget) {
+      // 平安夜（杀手没杀人或医生救了人，且狙击手没开枪）
       const alivePlayers = this.getAlivePlayers();
       const firstPlayer = alivePlayers[0];
       if (!firstPlayer) {
@@ -1323,10 +1331,19 @@ class MafiaWorker extends BaseGameWorker {
   private endNight(): void {
     const gameState = this.gameState as MafiaGameState;
     
-    if (!gameState.personWillDie) return;
+    // 收集所有死亡目标：杀手目标（可能被医生救）和狙击手目标（必死）
+    const killerTarget = gameState.personWillDie;
+    const sniperTarget = gameState.sniperTarget;
+    
+    if (!killerTarget && !sniperTarget) return;
     
     // 检查医生是否救了被杀的人（支持多名医生各自救不同的人）
-    const isSaved = gameState.personSaved.includes(gameState.personWillDie);
+    const killerTargetSaved = killerTarget ? gameState.personSaved.includes(killerTarget) : false;
+    
+    // 狙击手目标无视医生保护，必定死亡
+    // 如果杀手目标和狙击手目标是同一人，且杀手目标被救，但狙击手使其必死
+    const sniperTargetDies = sniperTarget !== null;
+    const killerTargetDies = killerTarget !== null && !killerTargetSaved;
     
     gameState.killerActionLock = true;
     gameState.copActionLock = true;
@@ -1336,17 +1353,41 @@ class MafiaWorker extends BaseGameWorker {
     gameState.wantToSave = {};
     gameState.step += 1;
 
-    // 在endNight中检查游戏是否结束（确保所有角色完成行动后再检查）
-    if (gameState.personWillDie) {
-      const gameResult = this.checkGameEnd(gameState.personWillDie);
+    // 确定实际死亡的玩家列表
+    const deaths: Array<{playerId: string; reason: string}> = [];
+    
+    if (killerTargetDies) {
+      deaths.push({ playerId: killerTarget!, reason: '被杀手杀害' });
+    }
+    if (sniperTargetDies && sniperTarget !== killerTarget) {
+      // 狙击手目标与杀手目标不同，单独记录
+      deaths.push({ playerId: sniperTarget!, reason: '被狙击手狙杀' });
+    } else if (sniperTargetDies && sniperTarget === killerTarget && killerTargetSaved) {
+      // 同一人，杀手被救但狙击手使其必死
+      deaths.push({ playerId: sniperTarget!, reason: '被杀手杀害并被狙击手狙杀' });
+    }
+
+    // 在endNight中检查游戏是否结束（考虑所有死亡）
+    for (const death of deaths) {
+      const gameResult = this.checkGameEnd(death.playerId);
       if (gameResult) {
-        this.endGame(gameResult, gameState.personWillDie);
+        // 先标记所有死亡玩家
+        for (const d of deaths) {
+          if (!gameState.deathQueue.find(entry => entry.playerId === d.playerId)) {
+            gameState.deathQueue.push({
+              playerId: d.playerId,
+              deathReason: d.reason,
+              deathDay: gameState.day
+            });
+          }
+        }
+        this.endGame(gameResult, death.playerId);
         return;
       }
     }
 
-    if (isSaved) {
-      // 医生救活了被杀的人 - 平安夜
+    // 如果杀手目标被救且没有狙击手击杀，则是平安夜
+    if (killerTarget && killerTargetSaved && !sniperTargetDies) {
       const alivePlayers = this.getAlivePlayers();
       const firstPlayer = alivePlayers[0];
       if (!firstPlayer) {
@@ -1356,9 +1397,10 @@ class MafiaWorker extends BaseGameWorker {
         }
         return;
       }
-      const message = `昨夜${this.getPlayerName(gameState.personWillDie)}被医生救下, 无人遇害, 请${this.getPlayerName(firstPlayer)}发言`;
+      const message = `昨夜${this.getPlayerName(killerTarget)}被医生救下, 无人遇害, 请${this.getPlayerName(firstPlayer)}发言`;
       
       gameState.personWillDie = null;
+      gameState.sniperTarget = null;
       gameState.personSaved = [];
       gameState.status = GameStatus.SPEAK;
       gameState.operators = [firstPlayer];
@@ -1371,34 +1413,82 @@ class MafiaWorker extends BaseGameWorker {
       return;
     }
 
-    const message = `昨夜${this.getPlayerName(gameState.personWillDie)}遇害`;
-    
-    // 记录死亡
-    gameState.deathQueue.push({
-      playerId: gameState.personWillDie,
-      deathReason: '被杀手杀害',
-      deathDay: gameState.day
-    });
-
-    if (gameState.lastWordCount > 0) {
-      // 遗言
-      this.enterLastWord(gameState.personWillDie, message, GameStatus.LAST_WORD);
-    } else {
-      // 直接进入白天
-      const speaker = this.getNextPlayer(gameState.personWillDie);
-      const fullMessage = `${message}, 本轮已没有遗言, 下面请${this.getPlayerName(speaker)}发言`;
+    // 处理死亡情况
+    if (deaths.length === 1) {
+      // 只有一人死亡
+      const death = deaths[0];
+      const message = `昨夜${this.getPlayerName(death.playerId)}遇害`;
       
-      gameState.status = GameStatus.SPEAK;
-      gameState.operators = [speaker];
-      gameState.players[gameState.personWillDie].alive = false;
+      // 记录死亡
+      gameState.deathQueue.push({
+        playerId: death.playerId,
+        deathReason: death.reason,
+        deathDay: gameState.day
+      });
+
+      if (gameState.lastWordCount > 0) {
+        // 遗言
+        gameState.personWillDie = null;
+        gameState.sniperTarget = null;
+        gameState.personSaved = [];
+        this.enterLastWord(death.playerId, message, GameStatus.LAST_WORD);
+      } else {
+        // 直接进入白天
+        const speaker = this.getNextPlayer(death.playerId);
+        const fullMessage = `${message}, 本轮已没有遗言, 下面请${this.getPlayerName(speaker)}发言`;
+        
+        gameState.status = GameStatus.SPEAK;
+        gameState.operators = [speaker];
+        gameState.players[death.playerId].alive = false;
+        gameState.personWillDie = null;
+        gameState.sniperTarget = null;
+        gameState.personSaved = [];
+        gameState.speakingPlayerIndex = 0;
+        gameState.speakedCount = 0;
+        gameState.operateEndTime = new Date(Date.now() + this.config.speakTime * 1000);
+
+        this.setTimer(this.config.speakTime * 1000, () => this.handleTimeout());
+
+        this.sendToRoom('day_start', { message: fullMessage, gameInfo: this.getGameInfo() });
+      }
+    } else if (deaths.length >= 2) {
+      // 多人死亡（杀手杀了一个，狙击手杀了另一个）
+      // 记录所有死亡
+      for (const death of deaths) {
+        gameState.deathQueue.push({
+          playerId: death.playerId,
+          deathReason: death.reason,
+          deathDay: gameState.day
+        });
+      }
+
+      // 多人死亡不进入遗言，直接进入白天
+      const deadNames = deaths.map(d => this.getPlayerName(d.playerId)).join('、');
+      const message = `昨夜多人遇害: ${deadNames}`;
+      
+      // 标记所有死亡玩家
+      for (const death of deaths) {
+        gameState.players[death.playerId].alive = false;
+      }
+      
       gameState.personWillDie = null;
+      gameState.sniperTarget = null;
       gameState.personSaved = [];
+      gameState.status = GameStatus.SPEAK;
+      
+      // 从存活玩家中选出第一个发言者
+      const alivePlayers = this.getAlivePlayers();
+      const firstPlayer = alivePlayers[0] || '';
+      gameState.operators = [firstPlayer];
       gameState.speakingPlayerIndex = 0;
       gameState.speakedCount = 0;
       gameState.operateEndTime = new Date(Date.now() + this.config.speakTime * 1000);
 
       this.setTimer(this.config.speakTime * 1000, () => this.handleTimeout());
 
+      const fullMessage = deaths.length >= 2 
+        ? `${message}, 多人死亡无遗言, 请${this.getPlayerName(firstPlayer)}发言`
+        : `${message}, 本轮已没有遗言, 请${this.getPlayerName(firstPlayer)}发言`;
       this.sendToRoom('day_start', { message: fullMessage, gameInfo: this.getGameInfo() });
     }
   }
@@ -1460,7 +1550,6 @@ class MafiaWorker extends BaseGameWorker {
   private enterLastWord(playerId: string, baseMessage: string, status: GameStatus): void {
     const gameState = this.gameState as MafiaGameState;
     
-    gameState.lastWordCount -= 1;
     gameState.status = status;
     gameState.pkPlayers = [];
     gameState.operators = [playerId];
@@ -1480,6 +1569,11 @@ class MafiaWorker extends BaseGameWorker {
 
   private enterNight(playerId: string, baseMessage: string): void {
     const gameState = this.gameState as MafiaGameState;
+
+    // 白天结束，遗言轮数递减
+    if (gameState.lastWordCount > 0) {
+      gameState.lastWordCount -= 1;
+    }
 
     gameState.status = GameStatus.NIGHT;
     // 夜晚阶段只有特殊角色可以操作（杀手、警察、医生）
@@ -1585,6 +1679,11 @@ class MafiaWorker extends BaseGameWorker {
   private enterNightFromVote(message: string): void {
     const gameState = this.gameState as MafiaGameState;
     
+    // 白天结束，遗言轮数递减
+    if (gameState.lastWordCount > 0) {
+      gameState.lastWordCount -= 1;
+    }
+
     gameState.status = GameStatus.NIGHT;
     gameState.pkPlayers = [];
     gameState.voteResult = {};
@@ -1597,11 +1696,12 @@ class MafiaWorker extends BaseGameWorker {
     gameState.killerActionLock = true;
     gameState.copActionLock = true;
     gameState.doctorActionLock = true;
-    gameState.sniperActionLock = gameState.sniperShot;
+    gameState.sniperActionLock = !gameState.sniperShot;
     gameState.inspect = {};
     gameState.wantToKill = {};
     gameState.wantToSave = {};
     gameState.wantToSnipe = {};
+    gameState.sniperTarget = null;
     gameState.operators = this.getAlivePlayers();
     gameState.operateEndTime = new Date(Date.now() + this.config.nightTime * 1000);
 

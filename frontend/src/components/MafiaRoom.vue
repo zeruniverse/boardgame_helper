@@ -191,6 +191,27 @@ const toggleRoomLock = () => {
 let statusCheckInterval: ReturnType<typeof setInterval> | null = null
 let initialCheckTimeout: ReturnType<typeof setTimeout> | null = null
 
+// 本地倒计时定时器
+let localTimerInterval: ReturnType<typeof setInterval> | null = null
+
+// 启动本地倒计时
+const startLocalTimer = () => {
+  stopLocalTimer()
+  localTimerInterval = setInterval(() => {
+    if (store.timeLeft > 0) {
+      store.timeLeft--
+    }
+  }, 1000)
+}
+
+// 停止本地倒计时
+const stopLocalTimer = () => {
+  if (localTimerInterval) {
+    clearInterval(localTimerInterval)
+    localTimerInterval = null
+  }
+}
+
 // 检查房间状态的函数
 const checkRoomStatus = () => {
   if (store.socket && roomId) {
@@ -229,8 +250,8 @@ onMounted(() => {
     statusCheckInterval = setInterval(checkRoomStatus, 3000)
   }
   
-  // 启动计时器
-  store.startTimer()
+  // 启动本地倒计时
+  startLocalTimer()
 })
 
 onUnmounted(() => {
@@ -245,8 +266,8 @@ onUnmounted(() => {
   }
   // 清理socket事件监听器，防止内存泄漏
   store.socket?.off('room_ready', onRoomReady)
-  // 停止计时器
-  store.clearTimer()
+  // 停止本地倒计时
+  stopLocalTimer()
   store.disconnectFromRoom()
 })
 

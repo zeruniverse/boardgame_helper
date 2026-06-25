@@ -249,7 +249,27 @@ class TexasHoldemWorker extends BaseGameWorker {
           } else {
             // 不是当前回合，直接fold
             gs.folded.push(playerId);
+            if (!gs.acted.includes(playerId)) {
+              gs.acted.push(playerId);
+            }
             this.sendToRoom('chat_broadcast', { message: `${player.nickname} 离线自动弃牌`, type: 'system' });
+            // 检查是否只剩一个活跃玩家
+            const activeIds = this.participants.filter((id: string) => !gs.folded.includes(id));
+            if (activeIds.length === 1) {
+              const winner = this.room.players.find(p => p.id === activeIds[0]);
+              if (winner) {
+                winner.gameMetadata.chips += gs.pot;
+                this.sendToRoom('chat_broadcast', { message: `${winner.nickname} 赢得底池 ${gs.pot}` });
+                this.sendToRoom('room_update', this.room);
+                this.handleGameOver();
+              }
+              return;
+            }
+            if (activeIds.length === 0) {
+              this.sendToRoom('chat_broadcast', { message: '所有玩家都已弃牌，游戏结束' });
+              this.handleGameOver();
+              return;
+            }
           }
         }
       }
@@ -1343,6 +1363,9 @@ class TexasHoldemWorker extends BaseGameWorker {
     if (!gs.folded.includes(playerId)) {
       gs.folded.push(playerId);
     }
+    if (!gs.acted.includes(playerId)) {
+      gs.acted.push(playerId);
+    }
     this.sendToRoom('chat_broadcast', { message: `${player.nickname} 弃牌` });
 
     // 检查是否只剩一个玩家
@@ -1568,24 +1591,28 @@ class TexasHoldemWorker extends BaseGameWorker {
       }
     } else {
       const dealerGlobalIndex = this.room.players.findIndex(p => p.id === dealerPlayer!.id);
+      const dealerInParticipatingIndex = participatingPlayers.findIndex(p => p.id === dealerPlayer!.id);
 
-      let nextPlayerIndex: number;
+      let nextParticipatingIndex: number;
       if (participatingPlayers.length === 2) {
         // 2人局：Dealer(SB)先行动
-        nextPlayerIndex = dealerGlobalIndex;
+        nextParticipatingIndex = dealerInParticipatingIndex;
       } else {
         // 3+人局：Dealer左边(SB)先行动
-        nextPlayerIndex = (dealerGlobalIndex + 1) % this.room.players.length;
+        nextParticipatingIndex = (dealerInParticipatingIndex + 1) % participatingPlayers.length;
       }
       let safetyCount = 0;
-      const maxSafety = Math.max(this.room.players.length * 2, 1);
+      const maxSafety = Math.max(participatingPlayers.length * 2, 1);
+      let nextPlayerIndex = dealerGlobalIndex;
 
       while (safetyCount < maxSafety) {
-        const np = this.room.players[nextPlayerIndex];
-        if (np && activeIds.includes(np.id) && np.gameMetadata.chips > 0) {
+        const nextPlayer = participatingPlayers[nextParticipatingIndex];
+        if (nextPlayer && activeIds.includes(nextPlayer.id) && nextPlayer.gameMetadata.chips > 0) {
+          nextPlayerIndex = this.room.players.findIndex(p => p.id === nextPlayer.id);
           break;
         }
-        nextPlayerIndex = (nextPlayerIndex + 1) % this.room.players.length;
+        nextParticipatingIndex = (nextParticipatingIndex + 1) % participatingPlayers.length;
+        nextPlayerIndex = this.room.players.findIndex(p => p.id === participatingPlayers[nextParticipatingIndex].id);
         safetyCount++;
       }
 
@@ -1704,6 +1731,7 @@ class TexasHoldemWorker extends BaseGameWorker {
       let totalDistributed = 0;
 
       const participatingPlayers = this.room.players.filter(p => this.participants.includes(p.id));
+      const allWinnerIds = new Set<string>();
 
       pots.forEach((pot: SidePot) => {
         if (pot.amount <= 0 || pot.eligibleIds.length === 0) {
@@ -1762,6 +1790,7 @@ class TexasHoldemWorker extends BaseGameWorker {
 
         winners.forEach(w => {
           w.gameMetadata.chips += baseWin;
+          allWinnerIds.add(w.id);
         });
         sbOrder.forEach(pid => {
           if (remainder > 0) {
@@ -1777,6 +1806,7 @@ class TexasHoldemWorker extends BaseGameWorker {
 
       // 显示总分配结果
       this.sendToRoom('chat_broadcast', { message: `总计分配奖池: ${totalDistributed}`, type: 'system' });
+      gs.winners = Array.from(allWinnerIds);
       gs.pot = 0; // 奖池已分配完毕
     } else {
       // 非系统发牌模式，评估手牌确定赢家以验证take操作

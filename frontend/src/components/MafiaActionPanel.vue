@@ -270,11 +270,11 @@ const isMyTurn = computed(() => store.isMyTurn)
 const isAlive = computed(() => store.isAlive)
 
 const isLastWordPlayer = computed(() => {
-  return props.gameState.lastWordPlayer === store.currentUserId
+  return props.gameState?.lastWordPlayer === store.currentUserId
 })
 
 const hasVoted = computed(() => {
-  if (!props.gameState.voteResult) return false
+  if (!props.gameState?.voteResult) return false
   return store.currentUserId in props.gameState.voteResult
 })
 
@@ -364,19 +364,27 @@ const getNightActionDescription = (): string => {
   }
 }
 
-// 游戏操作
-const ready = () => store.ready()
-const unready = () => store.unready()
-const startGame = () => store.startGame()
-const killPerson = (targetId: string) => store.killPerson(targetId)
-const inspectSuspect = (targetId: string) => store.inspectSuspect(targetId)
-const doctorSave = (targetId: string) => store.doctorSave(targetId)
-const sniperShoot = (targetId: string) => store.sniperShoot(targetId)
-const vote = (targetId: string) => store.vote(targetId)
-const endSpeak = () => store.endSpeak()
-const confess = () => store.confess()
-const endLastWord = () => store.endLastWord()
-const restartGame = () => store.restartGame()
+// 游戏操作方法 - 统一包装错误处理
+const safeAction = (action: () => void, actionName: string) => {
+  try {
+    action()
+  } catch (error) {
+    console.error(`[MafiaActionPanel] ${actionName} 失败:`, error)
+  }
+}
+
+const ready = () => safeAction(() => store.ready(), 'ready')
+const unready = () => safeAction(() => store.unready(), 'unready')
+const startGame = () => safeAction(() => store.startGame(), 'startGame')
+const killPerson = (targetId: string) => safeAction(() => store.killPerson(targetId), 'killPerson')
+const inspectSuspect = (targetId: string) => safeAction(() => store.inspectSuspect(targetId), 'inspectSuspect')
+const doctorSave = (targetId: string) => safeAction(() => store.doctorSave(targetId), 'doctorSave')
+const sniperShoot = (targetId: string) => safeAction(() => store.sniperShoot(targetId), 'sniperShoot')
+const vote = (targetId: string) => safeAction(() => store.vote(targetId), 'vote')
+const endSpeak = () => safeAction(() => store.endSpeak(), 'endSpeak')
+const confess = () => safeAction(() => store.confess(), 'confess')
+const endLastWord = () => safeAction(() => store.endLastWord(), 'endLastWord')
+const restartGame = () => safeAction(() => store.restartGame(), 'restartGame')
 </script>
 
 <style scoped>

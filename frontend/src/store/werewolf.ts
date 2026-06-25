@@ -380,10 +380,11 @@ export const useWerewolfStore = defineStore('werewolf', {
       if (this.socket && this.currentRoomId) {
         this.socket.emit('leave_room', { roomId: this.currentRoomId });
       }
-      this.cleanup();
+      // 只清理房间相关状态和监听器，不断开socket连接
+      this.cleanup(false);
     },
 
-    cleanup() {
+    cleanup(disconnectSocket: boolean = true) {
       this.room = null;
       this.gameState = null;
       this.playerSecret = null;
@@ -399,10 +400,19 @@ export const useWerewolfStore = defineStore('werewolf', {
           this.socket.off(event, handler);
         }
         this.socketListeners = [];
-        this.socket.disconnect();
-        this.socket = null;
+        if (disconnectSocket) {
+          this.socket.disconnect();
+          this.socket = null;
+          this.connected = false;
+        }
       }
-      this.connected = false;
+    },
+
+    handleError(error: any) {
+      const msg = typeof error === 'string' ? error : (error?.message || '未知错误');
+      this.errorMessage = msg;
+      this.addSystemMessage(`错误：${msg}`);
+      console.error('WerewolfStore error:', error);
     },
 
     // 统一使用game_action发送，动作类型与后端匹配

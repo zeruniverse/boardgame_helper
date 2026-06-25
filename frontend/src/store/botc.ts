@@ -18,6 +18,11 @@ export const useBOTCGameStore = defineStore('botc', () => {
   const playerRole = ref<any>(null)
   const nightInfo = ref<any>(null)
   const isStoryteller = ref<boolean>(false)
+
+  // 计算属性：是否是房主
+  const isHost = () => {
+    return room.value?.hostId === currentUserId.value
+  }
   const chatMessages = ref<any[]>([])
   const timeLeft = ref<number>(0)
   const socketListeners = ref<Array<[string, (...args: any[]) => void]>>([])
@@ -355,16 +360,22 @@ export const useBOTCGameStore = defineStore('botc', () => {
     }
   }
 
-  // 离开房间
+  // 离开房间 - 移除监听器并清理状态，但保留socket连接以便重连
   const leaveRoom = () => {
     if (socket.value && currentRoomId.value) {
       socket.value.emit('leave_room', { roomId: currentRoomId.value })
-      room.value = null
-      currentRoomId.value = ''
-      gameState.value = null
-      playerRole.value = null
-      chatMessages.value = []
     }
+    // 移除所有socket监听器
+    for (const [event, handler] of socketListeners.value) {
+      socket.value?.off(event, handler)
+    }
+    socketListeners.value = []
+    // 清理房间状态
+    room.value = null
+    currentRoomId.value = ''
+    gameState.value = null
+    playerRole.value = null
+    chatMessages.value = []
   }
 
   // 断开房间连接
@@ -522,6 +533,7 @@ export const useBOTCGameStore = defineStore('botc', () => {
     playerRole,
     nightInfo,
     isStoryteller,
+    isHost,
     chatMessages,
     timeLeft,
 

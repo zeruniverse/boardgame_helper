@@ -230,7 +230,7 @@ export const useAvalonStore = defineStore('avalon', {
     },
 
     connectToRoom(roomId: string, gameType: string = 'avalon') {
-      if (!this.socket) {
+      if (!this.socket || this.socketListeners.length === 0) {
         this.initSocket();
       }
 
@@ -261,16 +261,17 @@ export const useAvalonStore = defineStore('avalon', {
     },
 
     disconnectFromRoom() {
-      if (this.socket) {
+      if (this.socket && this.currentRoomId) {
         this.socket.emit('leave_room', {
           roomId: this.currentRoomId,
           playerId: this.currentUserId
         });
       }
-      this.cleanup();
+      // 只清理房间相关状态和监听器，不断开socket连接
+      this.cleanup(false);
     },
 
-    cleanup() {
+    cleanup(disconnectSocket: boolean = true) {
       if (this.timerInterval) {
         clearInterval(this.timerInterval);
         this.timerInterval = null;
@@ -282,16 +283,19 @@ export const useAvalonStore = defineStore('avalon', {
           this.socket.off(event, handler);
         }
         this.socketListeners = [];
-        this.socket.disconnect();
-        this.socket = null;
+        if (disconnectSocket) {
+          this.socket.disconnect();
+          this.socket = null;
+        }
       }
 
-      this.connected = false;
+      this.connected = disconnectSocket ? false : this.connected;
       this.room = null;
       this.gameState = null;
       this.playerSecret = null;
       this.messages = [];
       this.timeLeft = 0;
+      this.currentRoomId = '';
     },
 
     // 游戏动作

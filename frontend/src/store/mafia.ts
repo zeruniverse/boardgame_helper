@@ -382,7 +382,7 @@ export const useMafiaStore = defineStore('mafia', {
     },
 
     connectToRoom(roomId: string, gameType: string = 'mafia') {
-      if (!this.socket) {
+      if (!this.socket || this.socketListeners.length === 0) {
         this.initSocket();
       }
 
@@ -419,10 +419,11 @@ export const useMafiaStore = defineStore('mafia', {
           userId: this.currentUserId
         });
       }
-      this.cleanup();
+      // 只清理房间相关状态和监听器，不断开socket连接
+      this.cleanup(false);
     },
 
-    cleanup() {
+    cleanup(disconnectSocket: boolean = true) {
       this.clearTimer();
       if (this.socket) {
         // 遍历移除所有追踪的监听器
@@ -430,10 +431,12 @@ export const useMafiaStore = defineStore('mafia', {
           this.socket.off(event, handler);
         }
         this.socketListeners = [];
-        this.socket.disconnect();
-        this.socket = null;
+        if (disconnectSocket) {
+          this.socket.disconnect();
+          this.socket = null;
+        }
       }
-      this.connected = false;
+      this.connected = disconnectSocket ? false : this.connected;
       this.currentRoomId = '';
       this.room = null;
       this.gameState = null;

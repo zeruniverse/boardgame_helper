@@ -148,7 +148,7 @@ onMounted(() => {
     return;
   }
   try {
-    store.initSocket();
+    // connectToRoom 内部会自动调用 initSocket（如果 socket 未初始化）
     store.connectToRoom(roomId.value, 'one-night-werewolf');
   } catch (error) {
     console.error('Failed to connect to room:', error);

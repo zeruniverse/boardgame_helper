@@ -197,13 +197,13 @@ class OnuWerewolfWorker extends BaseGameWorker {
         case 'unready':
           await this.handleUnready(playerId);
           break;
-        case 'start_game':
+        case 'startGame':
           await this.handleStartGame(playerId);
           break;
-        case 'use_skill':
+        case 'useSkill':
           await this.handleUseSkill(playerId, actionData);
           break;
-        case 'skip_skill':
+        case 'skipSkill':
           await this.handleSkipSkill(playerId);
           break;
         case 'vote':
@@ -218,7 +218,7 @@ class OnuWerewolfWorker extends BaseGameWorker {
         case 'chat':
           await this.handleChatMessage(playerId, actionData);
           break;
-        case 'skip_discussion':
+        case 'skipDiscussion':
           await this.handleSkipDiscussion(playerId);
           break;
         default:

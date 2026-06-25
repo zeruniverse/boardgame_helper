@@ -364,6 +364,7 @@ export const WolfKillHandler: StateHandler = {
         gameState.nightActions.wolfKillTarget = unanimousTarget;
 
         // 设置死亡标记（初始状态，可能被救）
+        targetPlayer.isAlive = false;
         targetPlayer.die = {
           at: gameState.currentDay,
           fromIndex: werewolves
@@ -718,18 +719,28 @@ export const BeforeDayDiscussHandler: StateHandler = {
       }
     }
 
-    // 2. 处理女巫毒药
+    // 2. 处理女巫毒药（毒杀目标独立处理，即使与狼杀目标相同）
     const poisonTarget = nightActions.witchPoisonTarget;
     if (poisonTarget) {
       const target = findPlayerByIndex(gameState.players, poisonTarget);
-      if (target && target.isAlive) {
-        target.isAlive = false;
-        target.die = {
-          at: gameState.currentDay,
-          fromIndex: [],
-          fromCharacter: 'WITCH'
-        };
-        dyingPlayers.push(target);
+      if (target) {
+        const alreadyDying = dyingPlayers.includes(target);
+        if (alreadyDying) {
+          // 同杀同毒：更新死亡标记为女巫毒杀（被毒死的猎人不能开枪）
+          target.die = {
+            at: gameState.currentDay,
+            fromIndex: target.die?.fromIndex || [],
+            fromCharacter: 'WITCH'
+          };
+        } else {
+          target.isAlive = false;
+          target.die = {
+            at: gameState.currentDay,
+            fromIndex: [],
+            fromCharacter: 'WITCH'
+          };
+          dyingPlayers.push(target);
+        }
         context.sendToRoom('system_message', {
           message: `${target.index}号 ${target.name} 被女巫毒死`
         });
@@ -833,6 +844,13 @@ export const DayDiscussHandler: StateHandler = {
         context.sendToPlayer(speaker.id, 'system_message', {
           message: '轮到你发言了，请发表你的看法'
         });
+      } else if (speaker && !speaker.isAlive) {
+        // 当前发言者已死亡，跳过并推进到下一个发言者
+        gameState.currentSpeakerIndex = (gameState.currentSpeakerIndex || 0) + 1;
+        setTimeout(() => {
+          DayDiscussHandler.startOfState(gameState, context);
+        }, 1000);
+        return;
       }
     } else {
       // 所有人都发言完毕，进入投票
@@ -883,11 +901,8 @@ export const ExileVoteHandler: StateHandler = {
     const alivePlayers = Object.values(gameState.players).filter(p => p.isAlive);
     gameState.toFinishPlayers = new Set(alivePlayers.map(p => p.index));
 
-    // 重置投票记录
+    // 重置投票记录（hasVotedAt[day] 默认为 undefined，表示未投票）
     gameState.votes = {};
-    Object.values(gameState.players).forEach(p => {
-      p.hasVotedAt[gameState.currentDay] = 0;
-    });
 
     context.sendToRoom('show_message', {
       message: '投票放逐阶段，请选择你要放逐的玩家'

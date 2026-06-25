@@ -715,13 +715,10 @@ class AvalonWorker extends BaseGameWorker {
     // 检查玩家是否在执行任务队伍中
     if (!state.team.includes(playerId)) { return; }
 
-    // 只有红方可以选择失败
+    // 只有红方可以选择失败，蓝方强制成功
     const isRed = state.topSecret.red[playerId] !== undefined;
     if (!success && !isRed) {
-      this.sendToPlayer(playerId, 'game_error', {
-        message: '只有莫德雷德方成员可以选择任务失败'
-      });
-      return;
+      success = true;
     }
 
     // 记录行动（简化处理，实际应该更复杂）
@@ -740,7 +737,7 @@ class AvalonWorker extends BaseGameWorker {
 
   private handleRequestAssassinate(playerId: string): void {
     const state = this.gameState as AvalonGameState;
-    if (state.topSecret.red[playerId] !== Role.ASSASSIN || state.status === GameStatus.ASSASSINATE || state.status === GameStatus.OVER) {
+    if (state.topSecret.red[playerId] !== Role.ASSASSIN || state.status !== GameStatus.ASSASSINATE) {
       return;
     }
 
@@ -867,7 +864,8 @@ class AvalonWorker extends BaseGameWorker {
       state.ladys.push(targetId);
     }
 
-    // 返回队长选择阶段
+    // 返回队长选择阶段，轮换队长
+    state.captain = this.getNextPlayer(state.captain);
     this.updateGameState({
       status: GameStatus.CAPTAIN,
       operators: [state.captain],
@@ -1144,6 +1142,11 @@ class AvalonWorker extends BaseGameWorker {
         break;
       case GameStatus.VOTE:
         // 投票超时，未投票的玩家自动投反对票
+        state.operators.forEach(playerId => {
+          if (!state.voteResult.true.includes(playerId) && !state.voteResult.false.includes(playerId)) {
+            state.voteResult.false.push(playerId);
+          }
+        });
         this.processVoteResult();
         break;
       case GameStatus.ACTION:
@@ -1283,6 +1286,7 @@ class AvalonWorker extends BaseGameWorker {
     state.team = [];
     state.voteResult = { true: [], false: [], system: [] };
     state.actionFailed = 0;
+    state.consecutiveRejections = 0;
     state.operateEndTime = new Date(Date.now() + this.config.actionTime * 1000);
     
     this.setTimer(this.config.actionTime);
