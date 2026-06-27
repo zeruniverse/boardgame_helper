@@ -968,6 +968,13 @@ class MafiaWorker extends BaseGameWorker {
         deathReason: '被投票放逐',
         deathDay: gameState.day
       });
+
+      const gameResult = this.checkGameEnd();
+      if (gameResult) {
+        this.endGame(gameResult, undefined, `${this.getPlayerName(playerId)}被投票放逐\n`);
+        return;
+      }
+
       gameState.status = GameStatus.NIGHT;
       const alivePlayerIds = this.getAlivePlayers();
       const aliveKillers = alivePlayerIds.filter(id => gameState.topSecret.killer.includes(id));
@@ -1315,6 +1322,7 @@ class MafiaWorker extends BaseGameWorker {
         return;
       }
       const savedAny = gameState.personSaved.length > 0;
+      const savedName = savedAny ? this.getPlayerName(gameState.personSaved[0]) : '';
       gameState.step += 1;
       gameState.status = GameStatus.SPEAK;
       gameState.operators = [firstPlayer];
@@ -1324,7 +1332,6 @@ class MafiaWorker extends BaseGameWorker {
       gameState.operateEndTime = new Date(Date.now() + this.config.speakTime * 1000);
 
       this.setTimer(this.config.speakTime * 1000, () => this.handleTimeout());
-      const savedName = savedAny ? this.getPlayerName(gameState.personSaved[0]) : '';
       const message = savedAny
         ? `昨夜${savedName}被医生救下, 无人遇害, 请${this.getPlayerName(firstPlayer)}发言`
         : `昨夜无人遇害, 请${this.getPlayerName(firstPlayer)}发言`;
@@ -1373,23 +1380,23 @@ class MafiaWorker extends BaseGameWorker {
       deaths.push({ playerId: sniperTarget!, reason: '被杀手杀害并被狙击手狙杀' });
     }
 
-    // 在endNight中检查游戏是否结束（考虑所有死亡）
-    for (const death of deaths) {
-      const gameResult = this.checkGameEnd(death.playerId);
-      if (gameResult) {
-        // 先标记所有死亡玩家
-        for (const d of deaths) {
-          if (!gameState.deathQueue.find(entry => entry.playerId === d.playerId)) {
-            gameState.deathQueue.push({
-              playerId: d.playerId,
-              deathReason: d.reason,
-              deathDay: gameState.day
-            });
-          }
+    // 在endNight中检查游戏是否结束（一次性考虑所有夜间死亡）
+    const deathIds = deaths.map(d => d.playerId);
+    const gameResult = this.checkGameEnd(deathIds);
+    if (gameResult) {
+      for (const death of deaths) {
+        if (!gameState.deathQueue.find(entry => entry.playerId === death.playerId)) {
+          gameState.deathQueue.push({
+            playerId: death.playerId,
+            deathReason: death.reason,
+            deathDay: gameState.day
+          });
         }
-        this.endGame(gameResult, death.playerId);
-        return;
+        gameState.players[death.playerId].alive = false;
       }
+      const deathMessage = deaths.map(d => `${this.getPlayerName(d.playerId)}${d.reason}`).join('、');
+      this.endGame(gameResult, undefined, `昨夜${deathMessage}\n`);
+      return;
     }
 
     // 如果杀手目标被救且没有狙击手击杀，则是平安夜
@@ -1499,9 +1506,14 @@ class MafiaWorker extends BaseGameWorker {
     }
   }
 
-  private checkGameEnd(excludePlayerId?: string): Team | null {
+  private checkGameEnd(excludePlayerId?: string | string[]): Team | null {
     const gameState = this.gameState as MafiaGameState;
-    const nextRoundAlivePlayers = this.getAlivePlayers().filter(id => id !== excludePlayerId);
+    const excludedIds = new Set(
+      Array.isArray(excludePlayerId)
+        ? excludePlayerId
+        : (excludePlayerId ? [excludePlayerId] : [])
+    );
+    const nextRoundAlivePlayers = this.getAlivePlayers().filter(id => !excludedIds.has(id));
     
     let killerCount = 0;
     let goodCount = 0;

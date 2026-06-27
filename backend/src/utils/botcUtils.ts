@@ -261,8 +261,6 @@ function shouldWakeWhenDead(roleId: string, isFirstNight: boolean): boolean {
  */
 export function checkGameEnd(gamePlayers: GamePlayer[], checkEvilWin: boolean = true, mastermindTriggered: boolean = false): { isEnded: boolean; winner?: 'good' | 'evil'; reason?: string } {
   const alivePlayers = gamePlayers.filter(p => !p.isDead);
-  const aliveEvil = alivePlayers.filter(p => p.role && (p.role.team === Team.DEMON || p.role.team === Team.MINION));
-  const aliveGood = alivePlayers.filter(p => p.role && (p.role.team === Team.TOWNSFOLK || p.role.team === Team.OUTSIDER));
   const aliveDemon = alivePlayers.filter(p => p.role && p.role.team === Team.DEMON);
 
   // 幕后黑手生效中：恶魔被处决但游戏继续一天，此时不判定好人胜利
@@ -276,9 +274,9 @@ export function checkGameEnd(gamePlayers: GamePlayer[], checkEvilWin: boolean = 
     return { isEnded: true, winner: 'good', reason: '恶魔已死亡' };
   }
 
-  // 邪恶玩家数量等于或超过善良玩家，邪恶阵营获胜（只在白天结束时检查）
-  if (checkEvilWin && aliveEvil.length >= aliveGood.length && aliveGood.length > 0) {
-    return { isEnded: true, winner: 'evil', reason: '邪恶玩家数量占优' };
+  // 邪恶阵营标准胜利条件：恶魔仍存活且只剩2名或更少存活玩家
+  if (checkEvilWin && alivePlayers.length <= 2) {
+    return { isEnded: true, winner: 'evil', reason: '仅剩2名或更少存活玩家' };
   }
 
   // 邪恶双子相关 - 如果善良双子被处决且邪恶双子存活，邪恶获胜
@@ -307,12 +305,11 @@ export function checkGameEnd(gamePlayers: GamePlayer[], checkEvilWin: boolean = 
 
 /**
  * 计算投票结果
- * BOTC规则：不需要超过半数，只要有赞成票且赞成票不少于反对票即可处决
- * 标准规则是简单多数（plurality），不是绝对多数
+ * BOTC标准提名规则：赞成票达到存活玩家数的一半（向上取整）才会成为候选处决目标
  */
 export function calculateVoteResult(nomination: Nomination, alivePlayers: number): boolean {
-  // 赞成票必须严格多于反对票才能处决
-  return nomination.votesFor > nomination.votesAgainst;
+  const requiredVotes = Math.ceil(alivePlayers / 2);
+  return nomination.votesFor >= requiredVotes;
 }
 
 /**

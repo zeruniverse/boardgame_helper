@@ -294,7 +294,7 @@ export class BOTCWorker extends BaseGameWorker {
 
       // 发送角色信息给参与游戏的玩家
       this.gamePlayers.forEach((gamePlayer, playerId) => {
-        this.sendToPlayer(playerId, 'role_assigned', {
+        this.sendToPlayer(playerId, 'roleAssigned', {
           role: gamePlayer.role,
           seat: gamePlayer.seat,
           isEvil: isEvilPlayer(gamePlayer),
@@ -481,10 +481,27 @@ export class BOTCWorker extends BaseGameWorker {
   private async endDay(): Promise<void> {
     this.clearTimers();
 
+    const executionCandidate = this.getExecutionCandidate();
+    if (executionCandidate) {
+      this.gameState.execution = {
+        playerId: executionCandidate.nominee,
+        executedBy: [executionCandidate.nominator],
+        timestamp: Date.now()
+      };
+      await this.executePlayer(executionCandidate.nominee, executionCandidate.nominator);
+      if (this.gameState.phase === GamePhase.ENDED) {
+        return;
+      }
+      await this.startNight(false);
+      return;
+    }
+
+    this.gameState.execution = undefined;
+
     // 检查镇长（Mayor）特殊胜利条件：只剩3名存活且无执行
     const alivePlayers = Array.from(this.gamePlayers.values()).filter(p => !p.isDead);
     const mayor = alivePlayers.find(p => p.role?.id === 'mayor');
-    if (mayor && alivePlayers.length === 3 && !this.gameState.execution) {
+    if (mayor && alivePlayers.length === 3) {
       // 今天没有处决且只剩3人存活（含镇长），善良获胜
       await this.endGame('good', '镇长特殊胜利：仅剩3名存活玩家且无执行');
       return;
@@ -492,7 +509,7 @@ export class BOTCWorker extends BaseGameWorker {
 
     // 检查沃托克斯（Vortox）特殊胜利条件：白天无人被处决
     const vortox = alivePlayers.find(p => p.role?.id === 'vortox' && !p.isDead);
-    if (vortox && !this.gameState.execution && alivePlayers.length > 0) {
+    if (vortox && alivePlayers.length > 0) {
       await this.endGame('evil', '沃托克斯特殊胜利：白天无人被处决');
       return;
     }
@@ -512,6 +529,21 @@ export class BOTCWorker extends BaseGameWorker {
     await this.startNight(false);
   }
 
+  private getExecutionCandidate(): Nomination | undefined {
+    const alivePlayers = Array.from(this.gamePlayers.values()).filter(p => !p.isDead).length;
+    const requiredVotes = Math.ceil(alivePlayers / 2);
+    const eligibleNominations = this.gameState.nominations.filter(n => !n.isOnTrial && n.votesFor >= requiredVotes);
+
+    if (eligibleNominations.length === 0) {
+      return undefined;
+    }
+
+    const highestVotes = Math.max(...eligibleNominations.map(n => n.votesFor));
+    const topNominations = eligibleNominations.filter(n => n.votesFor === highestVotes);
+
+    return topNominations.length === 1 ? topNominations[0] : undefined;
+  }
+
   /**
    * 处理提名
    */
@@ -529,24 +561,23 @@ export class BOTCWorker extends BaseGameWorker {
       return;
     }
 
-    // BOTC规则：死亡玩家仍可提名（只要还有遗言票）
-    if (nominator.isDead && !nominator.canVote) {
-      this.sendToPlayer(playerId, 'actionError', { message: '你的遗言票已用完' });
+    // BOTC标准规则：只有存活玩家可以提名；每名玩家每天只能提名一次
+    if (nominator.isDead) {
+      this.sendToPlayer(playerId, 'actionError', { message: '死亡玩家不能提名' });
       return;
     }
 
-    // 提名者存活时，每天只能提名一次
-    if (!nominator.isDead && nominator.nominations >= 1) {
+    if (nominator.nominations >= 1) {
       this.sendToPlayer(playerId, 'actionError', { message: '每天只能提名一次' });
       return;
     }
 
-    // 死亡玩家提名消耗遗言票
-    if (nominator.isDead) {
-      nominator.canVote = false;
+    // 被提名者可以是死亡或存活，但每天只能被提名一次
+    const alreadyNominated = this.gameState.nominations.some(n => n.nominee === data.nomineeId);
+    if (alreadyNominated) {
+      this.sendToPlayer(playerId, 'actionError', { message: '该玩家今天已经被提名过' });
+      return;
     }
-
-    // 被提名者可以是死亡或存活（BOTC中可以对死亡玩家提名）
 
     // 检查处女（Virgin）能力 - 首次被提名时，若提名者是镇民，提名者立即被处决
     if (nominee.role?.id === 'virgin' && !nominee.isDead && !nominee.reminders.includes('No ability')) {
@@ -582,9 +613,7 @@ export class BOTCWorker extends BaseGameWorker {
     };
 
     this.gameState.nominations.push(nomination);
-    if (!nominator.isDead) {
-      nominator.nominations++;
-    }
+    nominator.nominations++;
 
     this.sendToRoom('nominationCreated', {
       nomination: {
@@ -693,11 +722,18 @@ export class BOTCWorker extends BaseGameWorker {
       activeNomination.votesAgainst++;
     }
 
-    voter.votesUsed++;
-    
-    // 所有玩家投票后消耗投票权
-    // 存活玩家每天只能投票一次，死亡玩家使用遗言票（一生一次）
-    voter.canVote = false;
+    if (!voter.isDead || data.vote === 'for') {
+      voter.votesUsed++;
+    }
+
+    // 存活玩家在本次提名中投票后不可重复投票；死亡玩家只有投赞成票才消耗遗言票
+    if (voter.isDead) {
+      if (data.vote === 'for') {
+        voter.canVote = false;
+      }
+    } else {
+      voter.canVote = false;
+    }
 
     this.sendToRoom('voteSubmitted', {
       playerId,
@@ -729,6 +765,15 @@ export class BOTCWorker extends BaseGameWorker {
 
     const alivePlayers = Array.from(this.gamePlayers.values()).filter(p => !p.isDead).length;
     const shouldExecute = calculateVoteResult(nomination, alivePlayers);
+    const executionCandidate = this.getExecutionCandidate();
+
+    this.gameState.execution = executionCandidate
+      ? {
+          playerId: executionCandidate.nominee,
+          executedBy: [executionCandidate.nominator],
+          timestamp: Date.now()
+        }
+      : undefined;
 
     this.sendToRoom('votingEnded', {
       nomination: {
@@ -744,12 +789,15 @@ export class BOTCWorker extends BaseGameWorker {
       votesFor: nomination.votesFor,
       votesAgainst: nomination.votesAgainst,
       shouldExecute,
-      requiredVotes: Math.floor(alivePlayers / 2) + 1
+      requiredVotes: Math.ceil(alivePlayers / 2),
+      executionCandidate: executionCandidate
+        ? {
+            id: executionCandidate.nominee,
+            name: this.getPlayerName(executionCandidate.nominee),
+            votesFor: executionCandidate.votesFor
+          }
+        : null
     });
-
-    if (shouldExecute) {
-      await this.executePlayer(nomination.nominee, nomination.nominator);
-    }
   }
 
   /**

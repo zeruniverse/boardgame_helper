@@ -93,6 +93,34 @@ function serializeEventData(event: string, data: any): any {
   return data;
 }
 
+function mergePlayerFromWorker(existing: Player, worker?: Player): Player {
+  if (!worker) return existing;
+
+  return {
+    ...existing,
+    name: worker.name || worker.nickname || existing.name,
+    nickname: worker.nickname || existing.nickname,
+    gameMetadata: {
+      ...(existing.gameMetadata || {}),
+      ...(worker.gameMetadata || {})
+    }
+  };
+}
+
+function mergeRoomUpdateFromWorker(existingRoom: Room | undefined, workerRoom: Room): Room {
+  if (!existingRoom) return workerRoom;
+
+  const workerPlayers = new Map((workerRoom.players || []).map(player => [player.id, player]));
+
+  return {
+    ...existingRoom,
+    ...workerRoom,
+    private: existingRoom.private,
+    cleanupTimer: existingRoom.cleanupTimer,
+    players: (existingRoom.players || []).map(player => mergePlayerFromWorker(player, workerPlayers.get(player.id)))
+  };
+}
+
 function defaultWerewolfCharacters(playerCount: number): WerewolfCharacter[] {
   const count = Math.max(6, Math.min(18, Math.floor(playerCount || 6)));
   const roles: WerewolfCharacter[] = [];
@@ -122,6 +150,12 @@ function buildGameConfig(gameType: string, incomingConfig: any): any {
   if (gameType === 'one-night-werewolf' && (!Array.isArray(gameConfig.roles) || gameConfig.roles.length === 0)) {
     gameConfig.roles = defaultOnuRoles(desiredPlayerCount);
     gameConfig.random = gameConfig.random !== false;
+  }
+
+  if (gameType === 'one-night-werewolf') {
+    gameConfig.discussTime = gameConfig.discussTime ?? gameConfig.discussionTime ?? 180;
+    gameConfig.votingTime = gameConfig.votingTime ?? gameConfig.voteTime ?? 300;
+    gameConfig.nightTime = gameConfig.nightTime ?? gameConfig.actionTime ?? 300;
   }
 
   if (gameType === 'avalon') {
@@ -198,9 +232,7 @@ export function roomController(io: Server) {
         if (data.event === 'room_update' && data.data?.id) {
           const existingRoom = rooms.get(data.data.id);
           const oldPrivate = existingRoom?.private;
-          const mergedRoom = existingRoom 
-            ? { ...existingRoom, ...data.data, players: existingRoom.players, private: existingRoom.private }
-            : data.data;
+          const mergedRoom = mergeRoomUpdateFromWorker(existingRoom, data.data);
           rooms.set(data.data.id, mergedRoom);
           threadManager.updateRoomData(data.data.id, mergedRoom);
           // 如果房间的private状态发生变化，广播大厅更新
@@ -215,9 +247,7 @@ export function roomController(io: Server) {
         if (data.event === 'room_update' && data.data?.id) {
           const existingRoom = rooms.get(data.data.id);
           const oldPrivate = existingRoom?.private;
-          const mergedRoom = existingRoom 
-            ? { ...existingRoom, ...data.data, players: existingRoom.players, private: existingRoom.private }
-            : data.data;
+          const mergedRoom = mergeRoomUpdateFromWorker(existingRoom, data.data);
           rooms.set(data.data.id, mergedRoom);
           threadManager.updateRoomData(data.data.id, mergedRoom);
           // 如果房间的private状态发生变化，广播大厅更新
@@ -862,6 +892,36 @@ export function roomController(io: Server) {
     });
 
 
+    // 兼容旧前端直发房主转让事件
+    socket.on('transfer_host', async (data: { roomId: string; targetId?: string; playerId?: string; newHostId?: string }, ack?: (response: any) => void) => {
+      try {
+        const room = rooms.get(data.roomId);
+        if (!room) {
+          socket.emit('error', { message: '房间不存在' });
+          ack?.({ success: false, error: '房间不存在' });
+          return;
+        }
+
+        const player = room.players.find(p => p.socketId === socket.id);
+        if (!player) {
+          socket.emit('error', { message: '您不在此房间中' });
+          ack?.({ success: false, error: '您不在此房间中' });
+          return;
+        }
+
+        const result = await transferHostInRoom(room, player, data.newHostId || data.targetId || data.playerId || '');
+        if (!result.success) {
+          socket.emit('error', { message: result.error || '转让房主失败' });
+        }
+        ack?.(result);
+      } catch (error) {
+        console.error('转让房主失败:', error);
+        socket.emit('error', { message: '转让房主失败' });
+        ack?.({ success: false, error: error instanceof Error ? error.message : '转让房主失败' });
+      }
+    });
+
+
     // 兼容旧前端直发聊天事件
     socket.on('chat_message', async (data: { roomId: string; message: string; channel?: string }, ack?: (response: any) => void) => {
       try {
@@ -879,7 +939,7 @@ export function roomController(io: Server) {
     });
 
     // 踢出玩家
-    socket.on('kick_player', async (data: { roomId: string; targetId: string }, ack?: (response: any) => void) => {
+    socket.on('kick_player', async (data: { roomId: string; targetId?: string; playerId?: string }, ack?: (response: any) => void) => {
       try {
         const room = rooms.get(data.roomId);
         if (!room) {
@@ -891,19 +951,22 @@ export function roomController(io: Server) {
         const player = room.players.find(p => p.socketId === socket.id);
         if (!player) {
           socket.emit('error', { message: '您不在此房间中' });
+          ack?.({ success: false, error: '您不在此房间中' });
           return;
         }
 
-        const targetPlayer = room.players.find(p => p.id === data.targetId);
+        const targetId = data.targetId || data.playerId || '';
+        const targetPlayer = room.players.find(p => p.id === targetId);
         if (!targetPlayer) {
           socket.emit('error', { message: '目标玩家不存在' });
+          ack?.({ success: false, error: '目标玩家不存在' });
           return;
         }
 
         // 如果是房主踢出其他人
-        if (room.hostId === player.id && data.targetId !== player.id) {
+        if (room.hostId === player.id && targetId !== player.id) {
           // 房主可以直接踢出其他玩家；最终是否允许由具体游戏 worker 决定。
-          const kickResponse = await sendTaskToRoom(room.id, 'kick_out_player', { targetId: data.targetId });
+          const kickResponse = await sendTaskToRoom(room.id, 'kick_out_player', { targetId });
           const kickResult = readKickResult(kickResponse);
           if (!kickResult.kicked) {
             socket.emit('error', { message: kickResult.reason || '当前状态不允许踢出该玩家' });
@@ -918,7 +981,7 @@ export function roomController(io: Server) {
         }
 
         // 如果是其他人想踢出房主
-        if (data.targetId === room.hostId && player.id !== room.hostId) {
+        if (targetId === room.hostId && player.id !== room.hostId) {
           // 投票踢出房主
           let voteData = hostKickVotes.get(room.id);
 
@@ -996,6 +1059,7 @@ export function roomController(io: Server) {
       } catch (error) {
         console.error('踢出玩家失败:', error);
         socket.emit('error', { message: '踢出玩家失败' });
+        ack?.({ success: false, error: error instanceof Error ? error.message : '踢出玩家失败' });
       }
     });
 

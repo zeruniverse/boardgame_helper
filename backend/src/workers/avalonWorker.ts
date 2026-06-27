@@ -569,9 +569,9 @@ class AvalonWorker extends BaseGameWorker {
     if (playerId !== this.room.hostId) return;
     
     const readyPlayers = this.room.players.filter(p => p.gameMetadata.ready);
-    if (readyPlayers.length < 5 || readyPlayers.length > 12) {
+    if (readyPlayers.length < 5 || readyPlayers.length > 10) {
       this.sendToPlayer(playerId, 'game_error', {
-        message: '游戏人数必须在5-12人之间'
+        message: '游戏人数必须在5-10人之间'
       });
       return;
     }
@@ -1051,7 +1051,7 @@ class AvalonWorker extends BaseGameWorker {
     const readyPlayers = this.room.players.filter(p => p.gameMetadata.ready);
     const playerCount = readyPlayers.length;
 
-    if (playerCount < 5 || playerCount > 12) {
+    if (playerCount < 5 || playerCount > 10) {
       return;
     }
 
@@ -1207,6 +1207,12 @@ class AvalonWorker extends BaseGameWorker {
     
     // 初始化任务配置
     state.scoreBoard = JSON.parse(JSON.stringify(MISSIONS_CONFIG[players.length]));
+    state.topSecret = { blue: {}, red: {} };
+    state.assassinateInfo = {
+      votes: { true: [], false: [] },
+      approvers: [],
+      reds: []
+    };
     
     // 随机选择第一个队长
     const playerIds = Object.keys(state.players);
@@ -1467,7 +1473,7 @@ class AvalonWorker extends BaseGameWorker {
   private isLakeLadyEnabled(): boolean {
     const state = this.gameState as AvalonGameState;
     const playerCount = state.players ? Object.keys(state.players).length : this.room.players.length;
-    return this.config.lakeLady && playerCount >= 7 && playerCount <= 12;
+    return this.config.lakeLady && playerCount >= 7 && playerCount <= 10;
   }
 
   private shuffleArray<T>(array: T[]): T[] {

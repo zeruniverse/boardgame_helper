@@ -22,6 +22,7 @@ interface TexasHoldemGameState {
   sbIndex: number;
   bbIndex: number;
   currentBet: number;
+  lastRaiseAmount: number;
   folded: string[];
   round: number;
   playerHands: Record<string, string[]>;
@@ -82,6 +83,7 @@ class TexasHoldemWorker extends BaseGameWorker {
       sbIndex: -1,
       bbIndex: -1,
       currentBet: 0,
+      lastRaiseAmount: 10,
       folded: [],
       round: 0,
       playerHands: {},
@@ -149,6 +151,13 @@ class TexasHoldemWorker extends BaseGameWorker {
       bb: config.blinds.bigBlind
     };
     this.gameState.currentBet = config.blinds.bigBlind;
+    this.gameState.lastRaiseAmount = config.blinds.bigBlind;
+
+    if (!this.room.gameMetadata) {
+      this.room.gameMetadata = {};
+    }
+    this.room.gameMetadata.allowSystemDealing = config.allowSystemDealing;
+    this.room.gameMetadata.participants = [...this.participants];
 
     // 为所有已存在的玩家初始化游戏元数据
     room.players.forEach(player => {
@@ -173,8 +182,16 @@ class TexasHoldemWorker extends BaseGameWorker {
       bb: config.blinds.bigBlind
     };
     this.gameState.currentBet = config.blinds.bigBlind;
+    this.gameState.lastRaiseAmount = config.blinds.bigBlind;
+
+    if (!this.room.gameMetadata) {
+      this.room.gameMetadata = {};
+    }
+    this.room.gameMetadata.allowSystemDealing = config.allowSystemDealing;
+    this.room.gameMetadata.participants = [...this.participants];
 
     this.sendToRoom('chat_broadcast', { message: '房间配置已更新' });
+    this.sendToRoom('room_update', this.room);
   }
 
   async joinRoom(player: Player): Promise<void> {
@@ -260,8 +277,8 @@ class TexasHoldemWorker extends BaseGameWorker {
             if (activeIds.length === 1) {
               const winner = this.room.players.find(p => p.id === activeIds[0]);
               if (winner) {
-                winner.gameMetadata.chips += gs.pot;
-                this.sendToRoom('chat_broadcast', { message: `${winner.nickname} 赢得底池 ${gs.pot}` });
+                const won = this.awardCurrentPotToPlayer(winner);
+                this.sendToRoom('chat_broadcast', { message: `${winner.nickname} 赢得底池 ${won}` });
                 this.sendToRoom('room_update', this.room);
                 this.handleGameOver();
               }
@@ -416,6 +433,15 @@ class TexasHoldemWorker extends BaseGameWorker {
 
   // 私有方法 - 德州扑克特有逻辑
 
+  private awardCurrentPotToPlayer(winner: Player): number {
+    const gs = this.gameState as TexasHoldemGameState;
+    const amount = gs.pot || 0;
+    winner.gameMetadata = winner.gameMetadata || {};
+    winner.gameMetadata.chips = (winner.gameMetadata.chips || 0) + amount;
+    gs.pot = 0;
+    return amount;
+  }
+
   private syncGameStateToPlayer(socketId: string, playerId: string) {
     // 先发送房间更新，确保前端有正确的players列表
     parentPort!.postMessage({
@@ -548,8 +574,8 @@ class TexasHoldemWorker extends BaseGameWorker {
         if (activeIds.length === 1) {
           const winner = this.room.players.find(p => p.id === activeIds[0]);
           if (winner) {
-            winner.gameMetadata.chips += gs.pot;
-            this.sendToRoom('chat_broadcast', { message: `${winner.nickname} 赢得底池 ${gs.pot}` });
+            const won = this.awardCurrentPotToPlayer(winner);
+            this.sendToRoom('chat_broadcast', { message: `${winner.nickname} 赢得底池 ${won}` });
             this.sendToRoom('room_update', this.room);
             this.handleGameOver();
           }
@@ -591,6 +617,7 @@ class TexasHoldemWorker extends BaseGameWorker {
     gs.pot = 0;
     gs.bets = {};
     gs.currentBet = gs.blinds.bb;
+    gs.lastRaiseAmount = gs.blinds.bb;
     gs.folded = [];
     gs.round = 0;
     gs.acted = [];
@@ -662,6 +689,7 @@ class TexasHoldemWorker extends BaseGameWorker {
       this.room.gameMetadata = {};
     }
     this.room.gameMetadata.participants = [...this.participants];
+    this.room.gameMetadata.allowSystemDealing = this.config.allowSystemDealing;
 
     // 同步状态
     this.sendToRoom('room_update', this.room);
@@ -1384,8 +1412,8 @@ class TexasHoldemWorker extends BaseGameWorker {
     if (activeIds.length === 1) {
       const winner = this.room.players.find(p => p.id === activeIds[0]);
       if (winner) {
-        winner.gameMetadata.chips += gs.pot;
-        this.sendToRoom('chat_broadcast', { message: `${winner.nickname} 赢得底池 ${gs.pot}` });
+        const won = this.awardCurrentPotToPlayer(winner);
+        this.sendToRoom('chat_broadcast', { message: `${winner.nickname} 赢得底池 ${won}` });
         this.sendToRoom('room_update', this.room);
         this.handleGameOver();
       }
@@ -1444,10 +1472,23 @@ class TexasHoldemWorker extends BaseGameWorker {
 
     const currentBet = gs.bets[playerId] || 0;
     const needToPay = raiseAmount - currentBet;
+    const previousTableBet = gs.currentBet;
+    const minRaiseTo = previousTableBet + gs.lastRaiseAmount;
 
-    if (needToPay > player.gameMetadata.chips) {
-      // 全下
+    if (needToPay >= player.gameMetadata.chips) {
+      // 不足以完成最小加注时，仍允许作为全下处理。
       this.handleAllIn(playerId);
+      return;
+    }
+
+    if (raiseAmount < minRaiseTo) {
+      this.sendToPlayer(playerId, 'error', { message: `最小加注到 ${minRaiseTo}` });
+      this.sendToRoom('action_request', { playerId, seconds: 30 });
+      this.actionDeadline = Date.now() + 30000;
+      this.actionTimer = setTimeout(() => {
+        this.actionDeadline = null;
+        this.handleTimeout();
+      }, 30000);
       return;
     }
 
@@ -1455,6 +1496,7 @@ class TexasHoldemWorker extends BaseGameWorker {
     gs.bets[playerId] = raiseAmount;
     gs.pot += needToPay;
     gs.totalBets[playerId] = (gs.totalBets[playerId] || 0) + needToPay;
+    gs.lastRaiseAmount = raiseAmount - previousTableBet;
     gs.currentBet = raiseAmount;
 
     // 重置已行动列表，除了当前玩家
@@ -1487,8 +1529,15 @@ class TexasHoldemWorker extends BaseGameWorker {
     player.gameMetadata.chips = 0;
 
     if (allInAmount > gs.currentBet) {
+      const raiseDelta = allInAmount - gs.currentBet;
+      const isFullRaise = raiseDelta >= gs.lastRaiseAmount;
       gs.currentBet = allInAmount;
-      gs.acted = [playerId];
+      if (isFullRaise) {
+        gs.lastRaiseAmount = raiseDelta;
+        gs.acted = [playerId];
+      } else if (!gs.acted.includes(playerId)) {
+        gs.acted.push(playerId);
+      }
     } else {
       if (!gs.acted.includes(playerId)) gs.acted.push(playerId);
     }
@@ -1545,6 +1594,7 @@ class TexasHoldemWorker extends BaseGameWorker {
     gs.acted = [];
     gs.bets = {};
     gs.currentBet = 0;
+    gs.lastRaiseAmount = gs.blinds.bb;
     gs.round++;
 
     const activeIds = this.participants.filter((id: string) => !gs.folded.includes(id));
@@ -1554,8 +1604,8 @@ class TexasHoldemWorker extends BaseGameWorker {
       // 游戏结束
       if (activePlayers.length === 1) {
         const winner = activePlayers[0];
-        winner.gameMetadata.chips += gs.pot;
-        this.sendToRoom('chat_broadcast', { message: `${winner.nickname} 赢得底池 ${gs.pot}` });
+        const won = this.awardCurrentPotToPlayer(winner);
+        this.sendToRoom('chat_broadcast', { message: `${winner.nickname} 赢得底池 ${won}` });
       }
       this.sendToRoom('room_update', this.room);
       this.handleGameOver();
@@ -1606,8 +1656,8 @@ class TexasHoldemWorker extends BaseGameWorker {
 
       let nextParticipatingIndex: number;
       if (participatingPlayers.length === 2) {
-        // 2人局：Dealer(SB)先行动
-        nextParticipatingIndex = dealerInParticipatingIndex;
+        // 2人局翻牌后：庄家/小盲后行动，大盲先行动
+        nextParticipatingIndex = (dealerInParticipatingIndex + 1) % participatingPlayers.length;
       } else {
         // 3+人局：Dealer左边(SB)先行动
         nextParticipatingIndex = (dealerInParticipatingIndex + 1) % participatingPlayers.length;

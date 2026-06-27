@@ -252,9 +252,12 @@ export function onuCalculateWinner(
   players: Record<string, OnuWerewolfPlayer>,
   lynched: string[]
 ): OnuWerewolfTeam {
-  // 没有人被处决，村民阵营胜利
+  const allPlayers = Object.values(players);
+  const aliveWerewolves = allPlayers.filter(p => onuIsWerewolf(p.actualRole));
+
+  // 没有人被处决时：场上没有狼人则村民胜利；场上有狼人则狼人阵营胜利
   if (lynched.length === 0) {
-    return OnuWerewolfTeam.Villager;
+    return aliveWerewolves.length === 0 ? OnuWerewolfTeam.Villager : OnuWerewolfTeam.Werewolf;
   }
 
   // 检查是否有皮匠被处决
@@ -278,9 +281,6 @@ export function onuCalculateWinner(
   }
 
   // 如果没有狼人被处决，检查场上是否有狼人
-  const allPlayers = Object.values(players);
-  const aliveWerewolves = allPlayers.filter(p => onuIsWerewolf(p.actualRole));
-
   if (aliveWerewolves.length === 0) {
     // 场上没有狼人，村民胜利
     return OnuWerewolfTeam.Villager;

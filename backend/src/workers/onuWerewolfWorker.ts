@@ -108,9 +108,9 @@ class OnuWerewolfWorker extends BaseGameWorker {
       roles: config.roles,
       random: config.random !== false,
       loneWolf: config.loneWolf === true,
-      nightTime: config.nightTime || 300,
-      votingTime: config.votingTime || 300,
-      discussTime: config.discussTime || 180
+      nightTime: config.nightTime ?? (config as any).actionTime ?? 300,
+      votingTime: config.votingTime ?? (config as any).voteTime ?? 300,
+      discussTime: config.discussTime ?? (config as any).discussionTime ?? 180
     };
 
     this.gameState.config = this.config;
@@ -142,7 +142,14 @@ class OnuWerewolfWorker extends BaseGameWorker {
       }
     }
 
-    this.config = { ...this.config, ...config };
+    const normalizedConfig = {
+      ...config,
+      nightTime: config.nightTime ?? (config as any).actionTime ?? this.config.nightTime,
+      votingTime: config.votingTime ?? (config as any).voteTime ?? this.config.votingTime,
+      discussTime: config.discussTime ?? (config as any).discussionTime ?? this.config.discussTime
+    };
+
+    this.config = { ...this.config, ...normalizedConfig };
     this.gameState.config = this.config;
 
     this.sendToRoom('onu_config_changed', { config: this.config });
@@ -200,10 +207,15 @@ class OnuWerewolfWorker extends BaseGameWorker {
         case 'startGame':
           await this.handleStartGame(playerId);
           break;
+        case 'change_config':
+          await this.changeConfig(actionData || {});
+          break;
         case 'useSkill':
+        case 'use_skill':
           await this.handleUseSkill(playerId, actionData);
           break;
         case 'skipSkill':
+        case 'skip_skill':
           await this.handleSkipSkill(playerId);
           break;
         case 'vote':
@@ -216,9 +228,11 @@ class OnuWerewolfWorker extends BaseGameWorker {
           await this.handleGetRole(playerId);
           break;
         case 'chat':
+        case 'chat_message':
           await this.handleChatMessage(playerId, actionData);
           break;
         case 'skipDiscussion':
+        case 'skip_discussion':
           await this.handleSkipDiscussion(playerId);
           break;
         default:
@@ -1002,6 +1016,7 @@ class OnuWerewolfWorker extends BaseGameWorker {
       this.skillTimeout = null;
     }
     this.initializeGameState();
+    this.gameState.config = this.config;
     
     // 重置房间玩家状态
     this.room.players.forEach(player => {
