@@ -281,29 +281,25 @@ export function checkGameEnd(gamePlayers: GamePlayer[], checkEvilWin: boolean = 
     return { isEnded: true, winner: 'evil', reason: '邪恶玩家数量占优' };
   }
 
-  // 镇长特殊胜利条件 - 只剩3名存活玩家且无执行
-  const mayor = alivePlayers.find(p => p.role?.id === 'mayor');
-  if (mayor && alivePlayers.length === 3) {
-    // 检查今天是否没有执行任何人
-    return { isEnded: false }; // 说书人需要判断，这里不自动结束
-  }
-
-  // 邪恶双子相关 - 如果双子都活着，善良不能获胜（需通过说书人判断）
-  const evilTwin = gamePlayers.find(p => p.role?.id === 'eviltwin' && !p.isDead);
-  if (evilTwin) {
-    // 如果邪恶双子活着，检查是否有善良的"双子"被执行
-    // 这需要游戏记录中的额外逻辑
-  }
-
-  // 只剩2名玩家且其中有恶魔，邪恶阵营获胜
-  if (alivePlayers.length <= 2 && aliveDemon.length > 0) {
-    return { isEnded: true, winner: 'evil', reason: '玩家数量过少' };
+  // 邪恶双子相关 - 如果善良双子被处决且邪恶双子存活，邪恶获胜
+  const evilTwin = gamePlayers.find(p => p.role?.id === 'eviltwin');
+  const goodTwin = gamePlayers.find(p => p.role?.id === 'goodtwin');
+  if (evilTwin && !evilTwin.isDead && goodTwin?.isDead) {
+    return { isEnded: true, winner: 'evil', reason: '善良双子已被处决' };
   }
 
   // Vortox特殊条件 - 如果白天没有人被处决，邪恶获胜
+  // checkEvilWin=false表示这是白天结束时调用，且白天无人被处决
   const vortox = alivePlayers.find(p => p.role?.id === 'vortox' && !p.isDead);
-  if (vortox && alivePlayers.length > 0) {
-    // 需要白天执行信息来判断，这里不自动结束
+  if (vortox && !checkEvilWin) {
+    return { isEnded: true, winner: 'evil', reason: 'Vortox效果：白天无人被处决' };
+  }
+
+  // 镇长特殊胜利条件 - 只剩3名存活玩家且无执行时，需要说书人判断
+  const mayor = alivePlayers.find(p => p.role?.id === 'mayor' && !p.isDead);
+  if (mayor && alivePlayers.length === 3) {
+    // 说书人需要判断，返回待定状态
+    return { isEnded: false }; // 说书人需要判断，这里不自动结束
   }
 
   return { isEnded: false };

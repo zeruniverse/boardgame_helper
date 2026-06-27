@@ -70,7 +70,7 @@ function toClientPlayer(player: Player): any {
 }
 
 function toClientRoom(room: Room): any {
-  const { cleanupTimer, ...safeRoom } = room as any;
+  const { cleanupTimer, ...safeRoom } = room;
   return {
     ...safeRoom,
     players: (room.players || []).map(toClientPlayer),
@@ -199,7 +199,7 @@ export function roomController(io: Server) {
           const existingRoom = rooms.get(data.data.id);
           const oldPrivate = existingRoom?.private;
           const mergedRoom = existingRoom 
-            ? { ...existingRoom, ...data.data, private: existingRoom.private }
+            ? { ...existingRoom, ...data.data, players: existingRoom.players, private: existingRoom.private }
             : data.data;
           rooms.set(data.data.id, mergedRoom);
           threadManager.updateRoomData(data.data.id, mergedRoom);
@@ -216,7 +216,7 @@ export function roomController(io: Server) {
           const existingRoom = rooms.get(data.data.id);
           const oldPrivate = existingRoom?.private;
           const mergedRoom = existingRoom 
-            ? { ...existingRoom, ...data.data, private: existingRoom.private }
+            ? { ...existingRoom, ...data.data, players: existingRoom.players, private: existingRoom.private }
             : data.data;
           rooms.set(data.data.id, mergedRoom);
           threadManager.updateRoomData(data.data.id, mergedRoom);

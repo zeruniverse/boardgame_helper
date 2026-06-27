@@ -594,7 +594,7 @@ export const useOnuWerewolfStore = defineStore('onuWerewolf', {
     },
 
     startGame() {
-      this.sendGameAction('start_game');
+      this.sendGameAction('startGame');
     },
 
     changeConfig(config: any) {

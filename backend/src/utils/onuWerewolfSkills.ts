@@ -110,8 +110,11 @@ export abstract class OnuBaseSkill {
 export class OnuWerewolfSkill extends OnuBaseSkill {
   canUse(selection?: OnuWerewolfSelection): boolean {
     const werewolves = this.getOtherPlayers().filter(p => onuIsWerewolf(p.actualRole));
-    // 如果有其他狼人，无需选择；如果是 lone wolf，支持选择一张中心卡（也允许默认回退）
-    if (werewolves.length === 0 && selection && selection.cards && selection.cards.length === 1) {
+    // 如果有其他狼人，无需选择；如果是 lone wolf，必须选择一张中心卡
+    if (werewolves.length === 0) {
+      if (!selection || !selection.cards || selection.cards.length !== 1) {
+        return false;
+      }
       const pos = selection.cards[0];
       return pos >= 0 && pos <= 2;
     }
@@ -354,7 +357,8 @@ export class OnuMinionSkill extends OnuBaseSkill {
     // 爪牙看到的是狼人的身份，但不知道具体角色
     const maskedWerewolves = werewolves.map(p => ({
       ...p,
-      actualRole: OnuWerewolfRole.Werewolf
+      actualRole: OnuWerewolfRole.Werewolf,
+      revealed: true
     }));
     
     return {
@@ -648,7 +652,7 @@ export class OnuMysticWolfSkill extends OnuBaseSkill {
       return { success: false, error: '目标玩家不存在' };
     }
 
-    let visionPlayers = [...werewolves, target];
+    let visionPlayers = [...werewolves, { ...target, revealed: true }];
     let message = '';
     if (werewolves.length > 0) {
       message = `狼人同伴：${werewolves.map(p => p.name).join(', ')}，`;

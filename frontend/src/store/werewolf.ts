@@ -135,7 +135,8 @@ export const useWerewolfStore = defineStore('werewolf', {
 
       // 辅助函数：追踪监听器
       const on = (event: string, handler: (...args: any[]) => void) => {
-        this.socket!.on(event, handler);
+        if (!this.socket) return;
+        this.socket.on(event, handler);
         this.socketListeners.push([event, handler]);
       };
 
@@ -456,7 +457,7 @@ export const useWerewolfStore = defineStore('werewolf', {
     },
 
     startGame() {
-      this.sendGameAction('start_game', {});
+      this.sendGameAction('startGame', {});
     },
 
     // 狼人杀特有动作 - 直接发送后端支持的动作类型
@@ -501,7 +502,7 @@ export const useWerewolfStore = defineStore('werewolf', {
     },
 
     restartGame() {
-      this.sendGameAction('restart_game', {});
+      this.sendGameAction('restartGame', {});
     },
 
     // 自动发身份

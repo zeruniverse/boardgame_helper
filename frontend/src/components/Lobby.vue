@@ -986,7 +986,7 @@ function confirmJoinRoom() {
     return;
   }
 
-  if (!store.socket || !store.socket.connected) {
+  if (!store.socket?.connected) {
     store.initSocket();
   }
 

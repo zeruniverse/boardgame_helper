@@ -1,7 +1,8 @@
 {
   "server": {
     "maxRooms": 10,
-    "resetPassword": "admin123"
+    "resetPassword": "admin123",
+    "roomCleanupTimeout": 60000
   },
   "games": {
     "texas-holdem": {

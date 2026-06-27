@@ -62,6 +62,7 @@
 
 <script setup lang="ts">
 import { ref, computed, nextTick, watch } from 'vue';
+import type { Socket } from 'socket.io-client';
 import { OnuWerewolfGameStatus } from '../store/onuWerewolf';
 
 interface Message {
@@ -82,7 +83,7 @@ const props = defineProps<{
   messages: Message[];
   roomId: string;
   nickname: string;
-  socket: any;
+  socket?: Socket | null;
   gameState?: GameState | null;
 }>();
 
@@ -153,7 +154,7 @@ const getDisabledReason = () => {
     case OnuWerewolfGameStatus.REVEALING:
       return '结果揭示中';
     case OnuWerewolfGameStatus.COMPLETED:
-      return '游戏已结束 - 可以聊天';
+      return '游戏已结束';
     default:
       return '当前阶段不能聊天';
   }
@@ -168,9 +169,8 @@ const scrollToBottom = () => {
   });
 };
 
-// 监听消息变化，自动滚动（使用deep watcher因为数组是被push的）
+// 监听消息变化，自动滚动
 watch(() => props.messages.length, scrollToBottom, { flush: 'post' });
-watch(() => props.messages, scrollToBottom, { deep: true, flush: 'post' });
 </script>
 
 <style scoped>

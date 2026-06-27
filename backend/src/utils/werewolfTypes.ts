@@ -39,8 +39,9 @@ export interface WerewolfGameState {
   pendingDeaths?: WerewolfPlayerState[];  // 待处理的死亡玩家队列（支持多死亡玩家依次处理）
   nightActions?: {
     wolfKillTarget?: number;   // 狼人击杀目标index
+    wolfKillFromIndex?: number[]; // 参与击杀的狼人index列表
     guardTarget?: number;      // 守卫保护目标index
-    witchSave?: boolean;       // 女巫是否使用解药
+    witchSave?: number;        // 女巫解药目标index（被救玩家）
     witchPoisonTarget?: number; // 女巫毒药目标index
     seerCheckTarget?: number;  // 预言家查验目标index
     seerResult?: boolean;      // 预言家查验结果
@@ -48,6 +49,7 @@ export interface WerewolfGameState {
   votes?: Record<string, string>;  // 投票记录 playerId -> targetId
   speakOrder?: number[];  // 发言顺序（玩家index数组）
   currentSpeakerIndex?: number;  // 当前发言者在speakOrder中的索引
+  deathChainDepth?: number;  // 死亡链递归深度（防止无限连锁）
 }
 
 export interface WerewolfPlayerState {

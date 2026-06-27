@@ -4,7 +4,7 @@
       <h4>玩家列表</h4>
       <div class="player-count">
         {{ players.length }}/{{ maxPlayers }} 人
-        <span v-if="gameState && gameState.config" class="role-count">
+        <span v-if="gameState?.config?.roles" class="role-count">
           (需要 {{ gameState.config.roles.length }} 个角色)
         </span>
       </div>
@@ -107,7 +107,7 @@
         <div class="ready-count">
           已准备: {{ gameState.readyCount || 0 }}/{{ players.length }}
         </div>
-        <div v-if="gameState.config" class="role-requirement">
+        <div v-if="gameState.config?.roles" class="role-requirement">
           角色配置: {{ gameState.config.roles.length }} 个角色
           <br/>
           {{ gameState.config.roles.length === players.length + 3 ? '✓ 符合要求' : '✗ 需要比玩家数多3个角色' }}

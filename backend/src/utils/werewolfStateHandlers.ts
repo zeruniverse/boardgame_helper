@@ -221,7 +221,7 @@ const MAX_DEATH_CHAIN_DEPTH = 10;
 
 function processDeathChain(gameState: WerewolfGameState, context: any, dyingPlayer: WerewolfPlayerState): void {
   // 检查递归深度，防止无限连锁
-  const currentDepth = (gameState as any).deathChainDepth || 0;
+  const currentDepth = gameState.deathChainDepth || 0;
   if (currentDepth >= MAX_DEATH_CHAIN_DEPTH) {
     console.error(`死亡链递归深度超过最大值 ${MAX_DEATH_CHAIN_DEPTH}，强制终止`);
     gameState.curDyingPlayer = undefined;
@@ -229,7 +229,7 @@ function processDeathChain(gameState: WerewolfGameState, context: any, dyingPlay
     continueToNightOrDay(gameState, context);
     return;
   }
-  (gameState as any).deathChainDepth = currentDepth + 1;
+  gameState.deathChainDepth = currentDepth + 1;
 
   gameState.curDyingPlayer = dyingPlayer;
   dyingPlayer.isDying = true;
@@ -268,7 +268,7 @@ function processDeathChain(gameState: WerewolfGameState, context: any, dyingPlay
 // 工具函数 - 从死亡链继续到下一个正常状态
 function continueToNightOrDay(gameState: WerewolfGameState, context: any): void {
   // 重置死亡链深度
-  (gameState as any).deathChainDepth = 0;
+  gameState.deathChainDepth = 0;
 
   // 检查是否还有待处理的死亡玩家
   if (gameState.pendingDeaths && gameState.pendingDeaths.length > 0) {
@@ -359,19 +359,12 @@ export const WolfKillHandler: StateHandler = {
       const targetPlayer = findPlayerByIndex(gameState.players, unanimousTarget);
 
       if (targetPlayer && targetPlayer.isAlive) {
-        // 记录狼人击杀目标
+        // 记录狼人击杀目标（不在此处标记死亡，统一在白天结算阶段处理）
         if (!gameState.nightActions) gameState.nightActions = {};
         gameState.nightActions.wolfKillTarget = unanimousTarget;
-
-        // 设置死亡标记（初始状态，可能被救）
-        targetPlayer.isAlive = false;
-        targetPlayer.die = {
-          at: gameState.currentDay,
-          fromIndex: werewolves
-            .filter(w => w.characterStatus.wantToKills?.[gameState.currentDay] === unanimousTarget)
-            .map(w => w.index),
-          fromCharacter: 'WEREWOLF'
-        };
+        gameState.nightActions.wolfKillFromIndex = werewolves
+          .filter(w => w.characterStatus.wantToKills?.[gameState.currentDay] === unanimousTarget)
+          .map(w => w.index);
 
         // 通知狼人击杀结果（只发送给狼人）
         const aliveWerewolves = Object.values(gameState.players).filter(p => p.character === 'WEREWOLF' && p.isAlive);
@@ -493,6 +486,19 @@ export const GuardProtectHandler: StateHandler = {
   status: GameStatus.GUARD_PROTECT,
 
   startOfState(gameState, context) {
+    // 首夜守卫不可守护（标准规则）
+    if (gameState.currentDay === 1) {
+      context.sendToRoom('show_message', {
+        message: '首夜守卫不可守护，即将进入下一阶段',
+        showTime: 2
+      });
+      // 延迟后直接进入下一阶段
+      setTimeout(() => {
+        GuardProtectHandler.endOfState(gameState, context);
+      }, 2000);
+      return;
+    }
+
     startCurrentState(this, gameState, context);
 
     // 守卫保护提示只发送给守卫
@@ -674,20 +680,21 @@ export const BeforeDayDiscussHandler: StateHandler = {
     const wolfKillTarget = nightActions.wolfKillTarget;
     const guardTarget = nightActions.guardTarget;
     const witchSaved = nightActions.witchSave;
+    const wolfKillFromIndex = nightActions.wolfKillFromIndex || [];
 
     if (wolfKillTarget) {
       const target = findPlayerByIndex(gameState.players, wolfKillTarget);
       if (target && target.isAlive) {
         // 同守同救规则：守卫保护 + 女巫解药同时使用 = 目标死亡
         const guarded = guardTarget === wolfKillTarget;
-        const medicined = witchSaved === true;
+        const medicined = witchSaved === wolfKillTarget;
 
         if (guarded && medicined) {
           // 同守同救，目标死亡
           target.isAlive = false;
           target.die = {
             at: gameState.currentDay,
-            fromIndex: target.die?.fromIndex || [],
+            fromIndex: wolfKillFromIndex,
             fromCharacter: 'WEREWOLF'
           };
           dyingPlayers.push(target);
@@ -695,14 +702,12 @@ export const BeforeDayDiscussHandler: StateHandler = {
             message: `${target.index}号 ${target.name} 在同守同救中死亡`
           });
         } else if (guarded && !medicined) {
-          // 被守卫保护，存活
-          target.die = undefined;
+          // 被守卫保护，存活（平安夜）
           context.sendToRoom('system_message', {
             message: `${target.index}号 ${target.name} 被守卫守护，逃过一劫`
           });
         } else if (!guarded && medicined) {
-          // 被女巫救活
-          target.die = undefined;
+          // 被女巫救活（平安夜）
           context.sendToRoom('system_message', {
             message: `${target.index}号 ${target.name} 被女巫救活`
           });
@@ -711,7 +716,7 @@ export const BeforeDayDiscussHandler: StateHandler = {
           target.isAlive = false;
           target.die = {
             at: gameState.currentDay,
-            fromIndex: target.die?.fromIndex || [],
+            fromIndex: wolfKillFromIndex,
             fromCharacter: 'WEREWOLF'
           };
           dyingPlayers.push(target);
@@ -723,13 +728,13 @@ export const BeforeDayDiscussHandler: StateHandler = {
     const poisonTarget = nightActions.witchPoisonTarget;
     if (poisonTarget) {
       const target = findPlayerByIndex(gameState.players, poisonTarget);
-      if (target) {
+      if (target && target.isAlive) {
         const alreadyDying = dyingPlayers.includes(target);
         if (alreadyDying) {
           // 同杀同毒：更新死亡标记为女巫毒杀（被毒死的猎人不能开枪）
           target.die = {
             at: gameState.currentDay,
-            fromIndex: target.die?.fromIndex || [],
+            fromIndex: wolfKillFromIndex,
             fromCharacter: 'WITCH'
           };
         } else {
@@ -996,6 +1001,10 @@ export const ExileVoteHandler: StateHandler = {
         // 先重置投票记录，再进入PK发言状态，避免竞争条件
         gameState.votes = {};
         Object.values(gameState.players).forEach(p => {
+          // 确保hasVotedAt数组足够长，避免稀疏数组问题
+          while (p.hasVotedAt.length <= gameState.currentDay) {
+            p.hasVotedAt.push(0);
+          }
           p.hasVotedAt[gameState.currentDay] = 0;
         });
 
@@ -1361,7 +1370,12 @@ export const SheriffVoteCheckHandler: StateHandler = {
 export const stateHandlers: Record<GameStatus, StateHandler> = {
   [GameStatus.WAITING]: {
     status: GameStatus.WAITING,
-    startOfState: () => {},
+    startOfState(gameState, context) {
+      // WAITING状态自动推进到WOLF_KILL，避免卡住
+      setTimeout(() => {
+        WolfKillHandler.startOfState(gameState, context, true);
+      }, 1000);
+    },
     endOfState: () => {}
   },
   [GameStatus.WOLF_KILL]: WolfKillHandler,
@@ -1384,7 +1398,14 @@ export const stateHandlers: Record<GameStatus, StateHandler> = {
   [GameStatus.LEAVE_MSG]: LeaveMsgHandler,
   [GameStatus.OVER]: {
     status: GameStatus.OVER,
-    startOfState: () => {},
+    startOfState(gameState, context) {
+      // OVER状态：清理所有定时器，标记游戏结束
+      if (gameState.timer) {
+        clearTimeout(gameState.timer);
+        gameState.timer = undefined;
+      }
+      gameState.operators = [];
+    },
     endOfState: () => {}
   }
 };

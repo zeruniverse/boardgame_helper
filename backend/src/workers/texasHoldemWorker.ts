@@ -248,7 +248,9 @@ class TexasHoldemWorker extends BaseGameWorker {
             this.handleFold(playerId);
           } else {
             // 不是当前回合，直接fold
-            gs.folded.push(playerId);
+            if (!gs.folded.includes(playerId)) {
+              gs.folded.push(playerId);
+            }
             if (!gs.acted.includes(playerId)) {
               gs.acted.push(playerId);
             }
@@ -269,6 +271,15 @@ class TexasHoldemWorker extends BaseGameWorker {
               this.sendToRoom('chat_broadcast', { message: '所有玩家都已弃牌，游戏结束' });
               this.handleGameOver();
               return;
+            }
+            // 如果离线玩家是当前回合之后的下一个应该行动的玩家，
+            // 确保 continueToNextPlayer 能正确跳过他们
+            if (gs.currentTurn >= 0 && gs.currentTurn < this.room.players.length) {
+              // currentTurn 仍然有效，不需要调整
+            } else {
+              // currentTurn 越界，尝试恢复
+              console.log('playerOffline: currentTurn 越界，尝试恢复');
+              this.checkRoundEnd();
             }
           }
         }
@@ -1865,18 +1876,33 @@ class TexasHoldemWorker extends BaseGameWorker {
     }
     const entries = Object.entries(totalBets)
       .map(([pid, amt]) => ({ pid, amt }));
+    // 确保所有活跃玩家都在 entries 中（下注为0的也包含）
+    for (const pid of activeIds) {
+      if (!entries.some(e => e.pid === pid)) {
+        entries.push({ pid, amt: 0 });
+      }
+    }
     const uniqueAmounts = Array.from(new Set(entries.map(e => e.amt))).sort((a, b) => a - b);
     const sidePots: SidePot[] = [];
     let prev = 0;
+    let orphanedPot = 0; // 记录 eligibleActive 为空的边池金额，合并到下一个有效边池
     for (const amt of uniqueAmounts) {
       const eligibleAll = entries.filter(e => e.amt >= amt).map(e => e.pid);
       if (eligibleAll.length === 0) { prev = amt; continue; }
-      const potAmt = (amt - prev) * eligibleAll.length;
+      const potAmt = (amt - prev) * eligibleAll.length + orphanedPot;
+      orphanedPot = 0;
       const eligibleActive = eligibleAll.filter(pid => activeIds.includes(pid));
       if (eligibleActive.length > 0 && potAmt > 0) {
         sidePots.push({ amount: potAmt, eligibleIds: eligibleActive });
+      } else if (potAmt > 0) {
+        // 当前层无活跃玩家，金额暂存合并到下一层
+        orphanedPot = potAmt;
       }
       prev = amt;
+    }
+    // 如果最后还有剩余的孤儿池金额，创建一个所有活跃玩家可赢的边池
+    if (orphanedPot > 0 && activeIds.length > 0) {
+      sidePots.push({ amount: orphanedPot, eligibleIds: [...activeIds] });
     }
     return sidePots;
   }

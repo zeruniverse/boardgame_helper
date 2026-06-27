@@ -1286,7 +1286,7 @@ class AvalonWorker extends BaseGameWorker {
     state.team = [];
     state.voteResult = { true: [], false: [], system: [] };
     state.actionFailed = 0;
-    state.consecutiveRejections = 0;
+    // 注意：consecutiveRejections 不在此处重置，而是在 processVoteResult 中投票通过时重置
     state.operateEndTime = new Date(Date.now() + this.config.actionTime * 1000);
     
     this.setTimer(this.config.actionTime);

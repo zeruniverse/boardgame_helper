@@ -482,7 +482,7 @@ export const useMafiaStore = defineStore('mafia', {
     },
 
     startGame() {
-      this.sendGameAction('start_game', {});
+      this.sendGameAction('startGame', {});
     },
 
     // 杀人游戏特有动作
@@ -519,7 +519,7 @@ export const useMafiaStore = defineStore('mafia', {
     },
 
     restartGame() {
-      this.sendGameAction('restart_game', {});
+      this.sendGameAction('restartGame', {});
     },
 
     // 工具方法

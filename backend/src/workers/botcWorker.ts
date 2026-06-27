@@ -551,18 +551,16 @@ export class BOTCWorker extends BaseGameWorker {
     // 检查处女（Virgin）能力 - 首次被提名时，若提名者是镇民，提名者立即被处决
     if (nominee.role?.id === 'virgin' && !nominee.isDead && !nominee.reminders.includes('No ability')) {
       if (nominator.role?.team === Team.TOWNSFOLK) {
-        // 提名者是镇民，立即被处决
-        nominee.reminders.push('No ability'); // 标记处女能力已使用
+        // 提名者是镇民，Virgin能力成功触发，标记已使用
+        nominee.reminders.push('No ability');
         await this.executePlayer(playerId, data.nomineeId);
         this.sendToRoom('gameMessage', {
           message: `${this.getPlayerName(playerId)} 提名了处女，被立即处决！`,
           type: 'warning'
         });
         return;
-      } else {
-        // 提名者不是镇民， Virgin 能力标记为已使用
-        nominee.reminders.push('No ability');
       }
+      // 提名者不是镇民，Virgin能力不触发（不标记No ability），可后续再次触发
     }
 
     // 检查是否已经有提名在进行
@@ -609,7 +607,14 @@ export class BOTCWorker extends BaseGameWorker {
    * 开始投票
    */
   private async startVoting(nomination: Nomination): Promise<void> {
-    // BOTC规则：存活玩家都可以投票，死亡玩家如果有遗言票也可以投票
+    // BOTC规则：存活玩家在每个新提名中都可以投票，重置所有存活玩家的投票权
+    for (const player of this.gamePlayers.values()) {
+      if (!player.isDead) {
+        player.canVote = true;
+      }
+    }
+
+    // 存活玩家都可以投票，死亡玩家如果有遗言票也可以投票
     const alivePlayers = Array.from(this.gamePlayers.values()).filter(p => !p.isDead);
     const deadWithVotes = Array.from(this.gamePlayers.values()).filter(p => p.isDead && p.canVote);
     
@@ -1354,12 +1359,12 @@ export class BOTCWorker extends BaseGameWorker {
       return;
     }
 
-    // 检查市长效果 - 如果市长夜间死亡，可能另一玩家代替死亡
+    // 检查市长效果 - 如果市长夜间死亡，50%概率另一玩家代替死亡
     if (player.role?.id === 'mayor' && cause === 'demon') {
       const allPlayers = Array.from(this.gamePlayers.values());
       const otherAlive = allPlayers.filter(p => !p.isDead && p.playerId !== playerId);
-      if (otherAlive.length === 2) {
-        // 只剩2个其他存活玩家时，市长可能 redirect 死亡
+      if (otherAlive.length === 2 && Math.random() < 0.5) {
+        // 50%概率：只剩2个其他存活玩家时，市长redirect死亡到另一名玩家
         const redirectTarget = otherAlive[Math.floor(Math.random() * otherAlive.length)];
         if (redirectTarget) {
           player.isProtected = true;

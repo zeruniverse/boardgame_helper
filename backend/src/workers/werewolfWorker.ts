@@ -843,9 +843,9 @@ class WerewolfWorker extends BaseGameWorker {
         return;
       }
 
-      // 记录使用解药
-      witchStatus.MEDICINE = { usedDay: this.gameState.currentDay, usedAt: 0 };
-      this.gameState.nightActions.witchSave = true;
+      // 记录使用解药（usedAt记录被救玩家的index）
+      witchStatus.MEDICINE = { usedDay: this.gameState.currentDay, usedAt: killTarget };
+      this.gameState.nightActions.witchSave = killTarget;
 
       this.sendToPlayer(playerId, 'system_message', {
         message: `你使用解药救了 ${killTarget}号玩家`
@@ -984,6 +984,17 @@ class WerewolfWorker extends BaseGameWorker {
 
   // ==================== 猎人开枪 ====================
   private handleHunterShoot(playerId: string, actionData: any): void {
+    // 被毒死的猎人不能开枪（fromCharacter为'WITCH'表示被女巫毒死）
+    if (this.gameState.curDyingPlayer?.die?.fromCharacter === 'WITCH') {
+      this.sendToPlayer(playerId, 'system_message', { message: '你被女巫毒死，无法开枪' });
+      // 结束猎人开枪阶段，继续死亡链
+      this.saveTimeout(() => {
+        const context = this.createContext();
+        stateHandlers[GameStatus.HUNTER_SHOOT].endOfState(this.gameState, context);
+      }, 1000);
+      return;
+    }
+
     const gamePlayer = this.gameState.players[playerId];
     if (!gamePlayer || gamePlayer.character !== 'HUNTER') {
       this.sendToPlayer(playerId, 'error', { message: '你不是猎人' });

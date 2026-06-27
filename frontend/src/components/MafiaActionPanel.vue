@@ -251,9 +251,31 @@ interface Player {
   role?: 'KILLER' | 'COP' | 'DOCTOR' | 'SNIPER' | 'CIVILIAN'
 }
 
+interface GameState {
+  status: string
+  players: Record<string, Player>
+  alivePlayersOrder?: string[]
+  speakingPlayerIndex?: number
+  voteResult?: Record<string, string>
+  voteCounts?: Record<string, number>
+  pkPlayers?: string[]
+  lastWordPlayer?: string
+  winner?: 'red' | 'blue'
+  day?: number
+  deathQueue?: Array<{ playerId: string; deathReason: string; deathDay: number }>
+}
+
+interface PlayerSecret {
+  role: 'KILLER' | 'COP' | 'DOCTOR' | 'SNIPER' | 'CIVILIAN'
+  team: 'RED' | 'BLUE'
+  teammates?: string[]
+  inspectResults?: Array<{ target: string; day: number; result: 'RED' | 'BLUE' }>
+  sniperShot?: boolean
+}
+
 interface Props {
-  gameState: any
-  playerSecret: any
+  gameState: GameState
+  playerSecret: PlayerSecret | null
   roomId: string
 }
 

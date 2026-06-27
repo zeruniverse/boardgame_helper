@@ -33,7 +33,17 @@ export const useTexasHoldemStore = defineStore('texas_holdem', {
     // 获取主store的socket实例
     socket(): any {
       const mainStore = useMainStore();
-      return mainStore.socket;
+      return mainStore.socket ?? null;
+    },
+
+    // 安全获取底池金额
+    safePot(): number {
+      return this.pot ?? 0;
+    },
+
+    // 安全获取当前下注额
+    safeCurrentBet(): number {
+      return this.currentBet ?? 0;
     },
 
     // 游戏是否处于激活状态
@@ -63,7 +73,8 @@ export const useTexasHoldemStore = defineStore('texas_holdem', {
 
       // 辅助函数：追踪监听器
       const on = (event: string, handler: (...args: any[]) => void) => {
-        mainStore.socket!.on(event, handler);
+        if (!mainStore.socket) return;
+        mainStore.socket.on(event, handler);
         this.socketListeners.push([event, handler]);
       };
 
@@ -233,7 +244,10 @@ export const useTexasHoldemStore = defineStore('texas_holdem', {
     // 移除所有追踪的socket监听器
     removeSocketListeners() {
       const mainStore = useMainStore();
-      if (!mainStore.socket) return;
+      if (!mainStore.socket) {
+        this.socketListeners = [];
+        return;
+      }
       for (const [event, handler] of this.socketListeners) {
         mainStore.socket.off(event, handler);
       }

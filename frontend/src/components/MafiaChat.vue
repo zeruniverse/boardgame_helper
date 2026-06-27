@@ -15,6 +15,7 @@
 
 <script lang="ts" setup>
 import { ref, nextTick, watch, computed } from 'vue';
+import type { Socket } from 'socket.io-client';
 import { safeHtml } from '../utils/html';
 import { useMafiaGameStore } from '../store/mafia';
 
@@ -23,7 +24,6 @@ interface Props {
   roomId?: string
   nickname?: string
   currentUserId?: string
-  socket?: any
   playerRole?: 'KILLER' | 'COP' | 'DOCTOR' | 'SNIPER' | 'CIVILIAN'
   playerTeam?: 'RED' | 'BLUE'
   gameState?: any

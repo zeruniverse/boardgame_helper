@@ -40,7 +40,8 @@ import {
   ElCheckbox,
   ElCheckboxGroup,
   ElSlider,
-  ElProgress
+  ElProgress,
+  ElBacktop
 } from 'element-plus';
 
 // 导入组件样式
@@ -72,6 +73,7 @@ const components = [
   ElCheckboxGroup,
   ElSlider,
   ElProgress,
+  ElBacktop,
 ];
 
 export function registerElementPlus(app: App) {

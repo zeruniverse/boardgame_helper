@@ -410,9 +410,50 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 
+interface GamePlayer {
+  id: string
+  name: string
+  index: number
+  alive: boolean
+  ready?: boolean
+  role?: string
+  isSheriff?: boolean
+}
+
+interface GameConfig {
+  dayDiscussTime?: number
+  voteTime?: number
+  nightActionTime?: number
+  speakTime?: number
+}
+
+interface GameState {
+  status: string
+  players: Record<string, GamePlayer>
+  operators?: string[]
+  currentSpeaker?: string
+  votes?: Record<string, string>
+  timeLeft?: number
+  config?: GameConfig
+  needingCharacters?: string[]
+  winner?: 'werewolf' | 'villager'
+  day?: number
+}
+
+interface PlayerSecret {
+  playerId: string
+  role: string
+  team: 'werewolf' | 'villager'
+  potions?: {
+    poison: boolean
+    antidote: boolean
+  }
+  isSheriff?: boolean
+}
+
 const props = defineProps<{
-  gameState: any
-  playerSecret: any
+  gameState: GameState
+  playerSecret: PlayerSecret | null
   roomId: string
   isReady?: boolean
   isHost?: boolean
@@ -420,7 +461,7 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  gameAction: [actionType: string, actionData: any]
+  gameAction: [actionType: string, actionData: Record<string, unknown>]
 }>()
 
 const selectedTarget = ref<string>('')
@@ -540,7 +581,7 @@ const handleUnready = () => {
 }
 
 const handleStartGame = () => {
-  emit('gameAction', 'start_game', {})
+  emit('gameAction', 'startGame', {})
 }
 
 const handleWolfKill = () => {
@@ -641,7 +682,7 @@ const handleLeaveMsg = () => {
 }
 
 const handleRestartGame = () => {
-  emit('gameAction', 'restart_game', {})
+  emit('gameAction', 'restartGame', {})
 }
 </script>
 

@@ -813,9 +813,11 @@ class MafiaWorker extends BaseGameWorker {
     // 记录救人选择（通过验证后）
     gameState.wantToSave[playerId] = targetId;
 
-    if (!gameState.personSaved.includes(targetId)) {
-      gameState.personSaved.push(targetId);
-    }
+    // 允许多个医生救同一人，各自独立记录
+    // 记录当前轮次所有被救的人（用于平安夜判断）
+    const savedByThisDoctor = Object.values(gameState.wantToSave as Record<string, string>);
+    gameState.personSaved = [...new Set(savedByThisDoctor)];
+
     if (!(gameState as any).doctorSaves) {
       (gameState as any).doctorSaves = {};
     }
@@ -1279,11 +1281,15 @@ class MafiaWorker extends BaseGameWorker {
   private nightTimeout(): void {
     const gameState = this.gameState as MafiaGameState;
     
-    // 处理警察验人结果（如果已完成但未结束夜晚）
-    if (!gameState.copActionLock && gameState.topSecret.copVersion.length > 0) {
-      const lastInspect = gameState.topSecret.copVersion[gameState.topSecret.copVersion.length - 1];
-      const message = `经查证${this.getPlayerName(lastInspect[0])}是${lastInspect[1] ? '<span class="red text">坏人!</span>' : '<span class="blue text">好人!</span>'}`;
-      gameState.topSecret.cop.forEach(copId => this.sendToPlayer(copId, 'inspect_result', { message }));
+    // 处理警察验人结果 - 向每个警察分别发送各自的验人结果
+    const inspectRecords = gameState.inspect as Record<string, string>;
+    if (!gameState.copActionLock || Object.keys(inspectRecords).length > 0) {
+      // 给每个已完成查验的警察发送各自的验人结果
+      for (const [copId, suspectId] of Object.entries(inspectRecords)) {
+        const result = gameState.topSecret.killer.includes(suspectId);
+        const message = `经查证${this.getPlayerName(suspectId)}是${result ? '<span class="red text">坏人!</span>' : '<span class="blue text">好人!</span>'}`;
+        this.sendToPlayer(copId, 'inspect_result', { message });
+      }
     }
     
     // 重置所有行动锁和状态
@@ -1651,25 +1657,26 @@ class MafiaWorker extends BaseGameWorker {
       // 有唯一最高票，放逐该玩家
       const expelledPlayer = maxVotedPlayers[0];
       const message = `${this.getPlayerName(expelledPlayer)}被投票放逐, 得票数: ${maxVotes}\n`;
-      
-      // 检查游戏是否结束
-      const gameResult = this.checkGameEnd(expelledPlayer);
-      if (gameResult) {
-        this.endGame(gameResult, expelledPlayer, message);
-        return;
-      }
 
       // 游戏继续，检查是否有遗言
       if (gameState.lastWordCount > 0) {
         this.enterLastWord(expelledPlayer, message, GameStatus.LAST_WORD_DAYTIME);
       } else {
-        // 没有遗言了，直接进入夜晚
+        // 没有遗言了，先标记玩家死亡，再检查游戏结束
         gameState.players[expelledPlayer].alive = false;
         gameState.deathQueue.push({
           playerId: expelledPlayer,
           deathReason: '被投票放逐',
           deathDay: gameState.day
         });
+
+        // 标记死亡后再检查游戏是否结束
+        const gameResult = this.checkGameEnd(expelledPlayer);
+        if (gameResult) {
+          this.endGame(gameResult, expelledPlayer, message);
+          return;
+        }
+
         const nightMessage = `${message}本轮已没有遗言, 直接进入黑夜`;
         this.enterNight(expelledPlayer, nightMessage);
       }

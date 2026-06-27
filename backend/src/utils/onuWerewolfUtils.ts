@@ -108,6 +108,7 @@ export function onuValidateGameConfig(roles: OnuWerewolfRole[]): {
   const uniqueRoles = [
     OnuWerewolfRole.Doppelganger, 
     OnuWerewolfRole.AlphaWolf, 
+    OnuWerewolfRole.MysticWolf, 
     OnuWerewolfRole.Seer, 
     OnuWerewolfRole.Robber, 
     OnuWerewolfRole.Troublemaker, 

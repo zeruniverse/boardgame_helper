@@ -129,38 +129,42 @@ export class RoomThreadManager {
 
       // 设置消息监听
       worker.on('message', (message: any) => {
-        // 各个游戏 worker 早期实现的消息格式不完全一致，这里统一兼容。
-        const forwardedEvent = this.normalizeWorkerEvent(room.id, message);
-        if (forwardedEvent) {
-          this.onMessage?.(forwardedEvent);
-          return;
-        }
+        try {
+          // 各个游戏 worker 早期实现的消息格式不完全一致，这里统一兼容。
+          const forwardedEvent = this.normalizeWorkerEvent(room.id, message);
+          if (forwardedEvent) {
+            this.onMessage?.(forwardedEvent);
+            return;
+          }
 
-        const response: GameTaskResponse | undefined =
-          message?.type === 'task_response'
-            ? { taskId: message.taskId, success: message.success, data: message.data, error: message.error }
-            : (message?.taskId ? message as GameTaskResponse : undefined);
+          const response: GameTaskResponse | undefined =
+            message?.type === 'task_response'
+              ? { taskId: message.taskId, success: message.success, data: message.data, error: message.error }
+              : (message?.taskId ? message as GameTaskResponse : undefined);
 
-        if (!response?.taskId) {
-          console.warn(`房间 ${room.id} 收到无法识别的Worker消息:`, message);
-          return;
-        }
+          if (!response?.taskId) {
+            console.warn(`房间 ${room.id} 收到无法识别的Worker消息:`, message);
+            return;
+          }
 
-        // 处理任务响应
-        const task = this.tasks.get(response.taskId);
-        if (task) {
-          clearTimeout(task.timeout);
-          task.resolve(response);
-          this.tasks.delete(response.taskId);
+          // 处理任务响应
+          const task = this.tasks.get(response.taskId);
+          if (task) {
+            clearTimeout(task.timeout);
+            task.resolve(response);
+            this.tasks.delete(response.taskId);
 
-          // 清理roomTasks映射
-          const roomTaskSet = this.roomTasks.get(room.id);
-          if (roomTaskSet) {
-            roomTaskSet.delete(response.taskId);
-            if (roomTaskSet.size === 0) {
-              this.roomTasks.delete(room.id);
+            // 清理roomTasks映射
+            const roomTaskSet = this.roomTasks.get(room.id);
+            if (roomTaskSet) {
+              roomTaskSet.delete(response.taskId);
+              if (roomTaskSet.size === 0) {
+                this.roomTasks.delete(room.id);
+              }
             }
           }
+        } catch (error) {
+          console.error(`房间 ${room.id} 处理Worker消息时出错:`, error);
         }
       });
 
@@ -172,9 +176,11 @@ export class RoomThreadManager {
 
       worker.on('exit', (code) => {
         console.log(`房间 ${room.id} 线程退出，代码: ${code}`);
-        // Worker异常退出时，拒绝所有pending tasks
+        // Worker退出时（无论正常还是异常），拒绝所有pending tasks
         if (code !== 0) {
           this.rejectPendingTasksForRoom(room.id, new Error(`房间 ${room.id} Worker异常退出，代码: ${code}`));
+        } else {
+          this.rejectPendingTasksForRoom(room.id, new Error(`房间 ${room.id} Worker正常退出`));
         }
 
         // 先更新房间状态，再删除数据
@@ -258,13 +264,15 @@ export class RoomThreadManager {
   private rejectPendingTasksForRoom(roomId: string, reason: Error): void {
     const roomTaskSet = this.roomTasks.get(roomId);
     if (roomTaskSet) {
-      for (const taskId of roomTaskSet) {
+      const taskIds = Array.from(roomTaskSet);
+      for (const taskId of taskIds) {
         const task = this.tasks.get(taskId);
         if (task) {
           clearTimeout(task.timeout);
           task.reject(reason);
           this.tasks.delete(taskId);
         }
+        roomTaskSet.delete(taskId);
       }
       this.roomTasks.delete(roomId);
     }
@@ -389,7 +397,8 @@ export class RoomThreadManager {
     this.roomTasks.clear();
 
     const stopPromises: Promise<boolean>[] = [];
-    for (const [roomId, _worker] of this.workers.entries()) {
+    const roomIds = Array.from(this.workers.keys());
+    for (const roomId of roomIds) {
       stopPromises.push(this.stopRoomThread(roomId));
     }
 

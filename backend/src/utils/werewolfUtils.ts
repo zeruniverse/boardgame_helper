@@ -193,6 +193,9 @@ export function validatePlayerAction(
         return { valid: false, reason: '你已经死亡，无法操作' };
       }
       break;
+
+    case GameStatus.LEAVE_MSG:
+      break;
   }
 
   return { valid: true };

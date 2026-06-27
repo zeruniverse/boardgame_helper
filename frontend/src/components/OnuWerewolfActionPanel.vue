@@ -474,9 +474,52 @@ const availableRoles = [
 // 必选角色（至少需要的角色）
 const requiredRoles = [OnuWerewolfRole.Werewolf, OnuWerewolfRole.Villager];
 
+interface GamePlayer {
+  id: string;
+  name: string;
+  seat?: number;
+  ready?: boolean;
+}
+
+interface GameConfig {
+  roles: OnuWerewolfRole[];
+  nightTime?: number;
+  discussTime?: number;
+  votingTime?: number;
+  allowRoleReveal?: boolean;
+}
+
+interface GameState {
+  status: number;
+  config?: GameConfig;
+  currentPhase?: string;
+  readyCount?: number;
+}
+
+interface PlayerSecret {
+  myRole?: OnuWerewolfRole;
+  mySeat?: number;
+  skillUsed?: boolean;
+  myVote?: number;
+  vision?: {
+    players?: Array<{ seat: number; role: OnuWerewolfRole }>;
+  };
+  gameResult?: {
+    winner: OnuWerewolfTeam;
+    players: Array<{
+      seat: number;
+      name: string;
+      initialRole: OnuWerewolfRole;
+      finalRole: OnuWerewolfRole;
+      team: OnuWerewolfTeam;
+      won: boolean;
+    }>;
+  };
+}
+
 const props = defineProps<{
-  gameState: any;
-  playerSecret: any;
+  gameState: GameState;
+  playerSecret: PlayerSecret | null;
   roomId: string;
   isHost: boolean;
   isReady: boolean;
@@ -487,7 +530,7 @@ const props = defineProps<{
   mySeat: number | null;
   currentUserId: string;
   playerCount: number;
-  allPlayers: any[];
+  allPlayers: GamePlayer[];
   skipDiscussionCount: number;
   skipDiscussionTotal: number;
 }>();
@@ -650,7 +693,7 @@ const updateConfig = () => {
 
 const ready = () => emit('game-action', 'ready');
 const unready = () => emit('game-action', 'unready');
-const startGame = () => emit('game-action', 'start_game');
+const startGame = () => emit('game-action', 'startGame');
 
 const executeSkill = () => {
   const actionData = buildSkillSelection();

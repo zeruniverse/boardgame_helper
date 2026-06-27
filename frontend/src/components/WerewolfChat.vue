@@ -36,13 +36,14 @@
 
 <script lang="ts" setup>
 import { ref, nextTick, watch, computed } from 'vue';
+import type { Socket } from 'socket.io-client';
 import { safeHtml } from '../utils/html';
 
 interface Props {
   messages: any[]
   roomId?: string
   nickname?: string
-  socket?: any
+  socket?: Socket | null
   playerRole?: string    // 玩家角色
   playerTeam?: string    // 玩家阵营 'werewolf' | 'villager'
   gameState?: any        // 游戏状态
@@ -200,6 +201,15 @@ const getMessageColor = (type: string) => {
   }
 };
 
+// 格式化时间戳
+const formatTime = (timestamp?: number): string => {
+  if (!timestamp || typeof timestamp !== 'number') return '';
+  const date = new Date(timestamp);
+  const hours = date.getHours().toString().padStart(2, '0');
+  const minutes = date.getMinutes().toString().padStart(2, '0');
+  return `${hours}:${minutes}`;
+};
+
 // 格式化消息内容，处理狼人杀特殊内容
 const formatMessage = (msg: any): string => {
   if (!msg) return '';
@@ -217,9 +227,8 @@ const formatMessage = (msg: any): string => {
   }
 
   // 如果有时间戳，显示时间
-  if (msg.timestamp && typeof msg.timestamp === 'number') {
-    const date = new Date(msg.timestamp);
-    const timeStr = `${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`;
+  const timeStr = formatTime(msg.timestamp);
+  if (timeStr) {
     result = `<span style="color: #999; font-size: 11px;">[${timeStr}]</span> ` + result;
   }
 

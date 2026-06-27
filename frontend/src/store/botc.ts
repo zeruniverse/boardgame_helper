@@ -29,7 +29,8 @@ export const useBOTCGameStore = defineStore('botc', () => {
 
   // 辅助函数：追踪监听器
   const on = (event: string, handler: (...args: any[]) => void) => {
-    socket.value!.on(event, handler)
+    if (!socket.value) return;
+    socket.value.on(event, handler)
     socketListeners.value.push([event, handler])
   }
 
