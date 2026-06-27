@@ -211,6 +211,14 @@ export const useOnuWerewolfStore = defineStore('onuWerewolf', {
         this.socketListeners.push([event, handler]);
       };
 
+      const applyIncomingGame = (data: any) => {
+        const incomingGame = data?.gameInfo || data?.game;
+        if (!incomingGame) return;
+        this.gameState = this.gameState
+          ? { ...this.gameState, ...incomingGame } as OnuWerewolfGameState
+          : incomingGame as OnuWerewolfGameState;
+      };
+
       on('connect', () => {
         console.log('OnuWerewolf socket connected');
         this.connected = true;
@@ -283,11 +291,14 @@ export const useOnuWerewolfStore = defineStore('onuWerewolf', {
       });
 
       on('onu_game_started', (data: any) => {
-        this.gameState = data.game;
-        this.playerSecret = data.secret;
+        applyIncomingGame(data);
+        if (data.secret) {
+          this.playerSecret = data.secret;
+        }
         if (this.room) {
           this.room.gameStarted = true;
         }
+        if (data.message) this.addSystemMessage(data.message);
       });
 
       on('onu_game_state', (data: any) => {
@@ -299,20 +310,27 @@ export const useOnuWerewolfStore = defineStore('onuWerewolf', {
       });
 
       on('onu_night_started', (data: any) => {
+        applyIncomingGame(data);
         if (this.gameState) {
           this.gameState.status = OnuWerewolfGameStatus.NIGHT;
           this.gameState.currentPhase = data.message || '夜晚阶段';
+          if (data.timeLeft !== undefined) this.gameState.timeLeft = data.timeLeft;
           this.updateTimer();
         }
       });
 
       // onu_night_ended replaces onu_voting_started (C7 fix)
       on('onu_night_ended', (data: any) => {
+        applyIncomingGame(data);
         if (this.gameState) {
           this.gameState.status = OnuWerewolfGameStatus.VOTING;
           this.gameState.currentPhase = data.message || '投票阶段';
           this.gameState.timeLeft = data.timeLeft || 0;
           this.updateTimer();
+        }
+        if (this.playerSecret) {
+          this.playerSecret.canUseSkill = false;
+          this.playerSecret.canVote = true;
         }
         this.skipDiscussionCount = 0;
         this.skipDiscussionTotal = this.room?.players.length || 0;
@@ -372,6 +390,9 @@ export const useOnuWerewolfStore = defineStore('onuWerewolf', {
           this.gameState.status = OnuWerewolfGameStatus.REVEALING;
           this.gameState.currentPhase = '揭示结果';
         }
+        if (this.playerSecret) {
+          this.playerSecret.canVote = false;
+        }
       });
 
       on('onu_game_completed', (data: any) => {
@@ -382,6 +403,8 @@ export const useOnuWerewolfStore = defineStore('onuWerewolf', {
         if (this.playerSecret) {
           this.playerSecret.vision = data.vision;
           this.playerSecret.gameResult = data.gameResult;
+          this.playerSecret.canUseSkill = false;
+          this.playerSecret.canVote = false;
         }
       });
 
@@ -426,6 +449,13 @@ export const useOnuWerewolfStore = defineStore('onuWerewolf', {
         if (this.room) {
           const player = this.room.players.find(p => p.id === data.playerId);
           if (player) player.voted = true;
+        }
+        if (this.gameState) {
+          const player = this.gameState.players.find(p => p.id === data.playerId);
+          if (player) player.voted = true;
+        }
+        if (data.playerId === this.currentUserId && this.playerSecret) {
+          this.playerSecret.canVote = false;
         }
       });
 

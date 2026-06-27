@@ -135,9 +135,15 @@ export class OnuWerewolfSkill extends OnuBaseSkill {
       };
     }
 
+    const visibleWerewolves = werewolves.map(p => ({
+      ...p,
+      actualRole: OnuWerewolfRole.Werewolf,
+      revealed: true
+    }));
+
     return {
       success: true,
-      vision: onuCreateVision(werewolves),
+      vision: onuCreateVision(visibleWerewolves),
       message: `你看到了其他狼人：${werewolves.map(p => p.name).join(', ')}`
     };
   }
@@ -174,7 +180,7 @@ export class OnuSeerSkill extends OnuBaseSkill {
 
       return {
         success: true,
-        vision: onuCreateVision([target]),
+        vision: onuCreateVision([{ ...target, revealed: true }]),
         message: `你查看了${target.name}的角色`
       };
     }
@@ -319,7 +325,7 @@ export class OnuInsomniacSkill extends OnuBaseSkill {
   execute(): OnuSkillResult {
     return {
       success: true,
-      vision: onuCreateVision([this.owner]),
+      vision: onuCreateVision([{ ...this.owner, revealed: true }]),
       message: '你查看了自己的最终角色'
     };
   }
@@ -334,10 +340,15 @@ export class OnuMasonSkill extends OnuBaseSkill {
   execute(): OnuSkillResult {
     // 石匠查看的是初始分配为Mason的玩家（不论角色是否被交换）
     const masons = this.getOtherPlayers().filter(p => p.initialRole === OnuWerewolfRole.Mason);
+    const visibleMasons = masons.map(p => ({
+      ...p,
+      actualRole: OnuWerewolfRole.Mason,
+      revealed: true
+    }));
 
     return {
       success: true,
-      vision: onuCreateVision(masons),
+      vision: onuCreateVision(visibleMasons),
       message: masons.length > 0 ?
         `你看到了其他石匠：${masons.map(p => p.name).join(', ')}` :
         '没有其他石匠'
@@ -399,7 +410,7 @@ export class OnuDoppelgangerSkill extends OnuBaseSkill {
 
     const result: OnuSkillResult = {
       success: true,
-      vision: onuCreateVision([target]),
+      vision: onuCreateVision([{ ...target, revealed: true }]),
       roleChanges: [
         { playerId: this.owner.id, newRole: targetRole, type: 'actual' },
         { playerId: this.owner.id, newRole: targetRole, type: 'notional' }
@@ -609,11 +620,16 @@ export class OnuAlphaWolfSkill extends OnuBaseSkill {
 
   execute(selection?: OnuWerewolfSelection): OnuSkillResult {
     const werewolves = this.getOtherPlayers().filter(p => onuIsWerewolf(p.actualRole));
+    const visibleWerewolves = werewolves.map(p => ({
+      ...p,
+      actualRole: OnuWerewolfRole.Werewolf,
+      revealed: true
+    }));
 
     // 查看同伴
     const baseResult: OnuSkillResult = {
       success: true,
-      vision: werewolves.length > 0 ? onuCreateVision(werewolves) : onuCreateVision([], [this.centerCards[0]]),
+      vision: werewolves.length > 0 ? onuCreateVision(visibleWerewolves) : onuCreateVision([], [this.centerCards[0]]),
       message: werewolves.length > 0 ?
         `你看到了其他狼人：${werewolves.map(p => p.name).join(', ')}` :
         '你是唯一的狼人，查看了第一张中心卡牌'
@@ -652,7 +668,12 @@ export class OnuMysticWolfSkill extends OnuBaseSkill {
       return { success: false, error: '目标玩家不存在' };
     }
 
-    let visionPlayers = [...werewolves, { ...target, revealed: true }];
+    const visibleWerewolves = werewolves.map(p => ({
+      ...p,
+      actualRole: OnuWerewolfRole.Werewolf,
+      revealed: true
+    }));
+    let visionPlayers = [...visibleWerewolves, { ...target, revealed: true }];
     let message = '';
     if (werewolves.length > 0) {
       message = `狼人同伴：${werewolves.map(p => p.name).join(', ')}，`;

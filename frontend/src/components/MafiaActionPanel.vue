@@ -131,13 +131,13 @@
     <!-- 投票阶段 -->
     <div v-if="gameState.status === 'VOTE'" class="vote-actions">
       <div class="action-header">
-        <h4>投票阶段</h4>
-        <p>请选择要投票淘汰的玩家</p>
+        <h4>{{ gameState.pkPlayers?.length ? 'PK投票阶段' : '投票阶段' }}</h4>
+        <p>{{ gameState.pkPlayers?.length ? '请在PK玩家中投票' : '请选择要投票淘汰的玩家' }}</p>
       </div>
 
       <div class="player-buttons">
         <el-button
-          v-for="player in getAliveOtherPlayers()"
+          v-for="player in getVoteCandidates()"
           :key="player.id"
           @click="vote(player.id)"
           :disabled="!canOperate || hasVoted"
@@ -153,33 +153,6 @@
 
       <div v-if="hasVoted" class="voted-notice">
         <el-tag type="success">已投票</el-tag>
-      </div>
-    </div>
-
-    <!-- PK阶段 -->
-    <div v-if="gameState.status === 'PK'" class="pk-actions">
-      <div class="action-header">
-        <h4>PK阶段</h4>
-        <p>平票玩家进行PK，请重新投票</p>
-      </div>
-
-      <div v-if="gameState.pkPlayers" class="pk-players">
-        <h5>PK玩家:</h5>
-        <div class="player-buttons">
-          <el-button
-            v-for="playerId in gameState.pkPlayers"
-            :key="playerId"
-            @click="vote(playerId)"
-            :disabled="!canOperate || hasVoted"
-            size="small"
-            :type="getVoteButtonType(playerId)"
-          >
-            {{ getPlayerName(playerId) }}
-            <span v-if="gameState.voteCounts?.[playerId]">
-              ({{ gameState.voteCounts[playerId] }})
-            </span>
-          </el-button>
-        </div>
       </div>
     </div>
 
@@ -336,6 +309,21 @@ const getAliveAllPlayers = (): Player[] => {
   if (!props.gameState.players) return []
   return Object.entries(props.gameState.players)
     .filter(([_, player]: [string, any]) => player.alive)
+    .map(([id, player]: [string, any]) => ({ ...player, id }))
+}
+
+const getVoteCandidates = (): Player[] => {
+  if (!props.gameState.players) return []
+  const entries = Object.entries(props.gameState.players)
+  if (props.gameState.pkPlayers?.length) {
+    const pkPlayerIds = new Set(props.gameState.pkPlayers)
+    return entries
+      .filter(([id, player]: [string, any]) => pkPlayerIds.has(id) && player.alive)
+      .map(([id, player]: [string, any]) => ({ ...player, id }))
+  }
+
+  return entries
+    .filter(([id, player]: [string, any]) => player.alive && (props.gameState.day !== 1 || id !== store.currentUserId))
     .map(([id, player]: [string, any]) => ({ ...player, id }))
 }
 

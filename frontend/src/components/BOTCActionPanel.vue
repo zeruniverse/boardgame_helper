@@ -38,7 +38,7 @@
               v-for="player in nominationTargets"
               :key="player.id"
               @click="nominate(player.id)"
-              :disabled="!canNominate || player.isDead"
+              :disabled="!canNominate"
               size="small"
               :type="player.isDead ? 'info' : 'default'"
             >
@@ -251,11 +251,7 @@ const canNominate = computed(() => {
   if (!props.currentUserId) return false
   const myPlayer = props.gameState?.players?.find((p: any) => p.id === props.currentUserId)
   if (!myPlayer) return false
-  // 存活玩家每天可以提名一次
-  if (!myPlayer.isDead && (myPlayer.nominations || 0) < 1) return true
-  // 死亡玩家如果有遗言票可以提名
-  if (myPlayer.isDead && myPlayer.canVote) return true
-  return false
+  return !myPlayer.isDead && (myPlayer.nominations || 0) < 1
 })
 
 const hasVoted = computed(() => {
@@ -265,9 +261,7 @@ const hasVoted = computed(() => {
 })
 
 const nominationTargets = computed(() => {
-  return props.gameState?.players?.filter((p: any) => 
-    p.id !== props.currentUserId
-  ) || []
+  return props.gameState?.players || []
 })
 
 const myNightAction = computed(() => {

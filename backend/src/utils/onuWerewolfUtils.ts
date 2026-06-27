@@ -238,9 +238,9 @@ export function onuCalculateVoteResult(votes: Record<string, string>, players: R
   const maxVotes = Math.max(...Object.values(voteCounts), 0);
   
   // 找出所有获得最高票数的玩家
-  // 标准规则: 如果最高票数为1且多个玩家并列，则无人被处决（分散投票）
+  // 标准规则：无人获得多于1票时无人被处决；最高票并列且大于1票时并列者均被处决
   const tiedPlayers = Object.keys(voteCounts).filter(playerId => voteCounts[playerId] === maxVotes);
-  const lynched = maxVotes <= 1 && tiedPlayers.length > 1 ? [] : tiedPlayers;
+  const lynched = maxVotes <= 1 ? [] : tiedPlayers;
 
   return { voteCounts, lynched, maxVotes };
 }

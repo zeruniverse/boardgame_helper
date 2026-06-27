@@ -353,6 +353,11 @@ class AvalonWorker extends BaseGameWorker {
   }
 
   async kickOutPlayer(targetId: string): Promise<{ kicked: boolean; reason?: string }> {
+    const state = this.gameState as AvalonGameState;
+    if (state.status !== GameStatus.WAITING && state.status !== GameStatus.OVER) {
+      return { kicked: false, reason: '游戏进行中，无法踢出玩家' };
+    }
+
     const targetPlayer = this.room.players.find(p => p.id === targetId);
     if (!targetPlayer) return { kicked: false, reason: '目标玩家不存在' };
 

@@ -391,6 +391,10 @@ class WerewolfWorker extends BaseGameWorker {
   }
 
   async kickOutPlayer(targetId: string): Promise<{ kicked: boolean; reason?: string }> {
+    if (this.gameState.status !== GameStatus.WAITING && this.gameState.status !== GameStatus.OVER) {
+      return { kicked: false, reason: '游戏进行中，无法踢出玩家' };
+    }
+
     const targetPlayer = this.room.players.find(p => p.id === targetId);
     if (!targetPlayer) return { kicked: false, reason: '目标玩家不存在' };
 

@@ -984,11 +984,13 @@ class MafiaWorker extends BaseGameWorker {
       // 记录死亡玩家在alivePlayersOrder中的位置，设置speakingPlayerIndex为该位置
       const deadPlayerPosition = gameState.alivePlayersOrder.indexOf(playerId);
       gameState.players[playerId].alive = false;
-      gameState.deathQueue.push({
-        playerId,
-        deathReason: '被杀手杀害',
-        deathDay: gameState.day
-      });
+      if (!gameState.deathQueue.some(entry => entry.playerId === playerId && entry.deathDay === gameState.day)) {
+        gameState.deathQueue.push({
+          playerId,
+          deathReason: '被杀手杀害',
+          deathDay: gameState.day
+        });
+      }
       gameState.personWillDie = null;
 
       // 更新发言顺序（移除死亡的玩家），从死亡位置的下一位开始发言
@@ -1632,6 +1634,7 @@ class MafiaWorker extends BaseGameWorker {
     }
 
     gameState.status = GameStatus.NIGHT;
+    gameState.day += 1;
     // 先标记死亡，再计算夜晚操作者；否则被放逐/自爆的特殊角色会残留在 operators 中。
     gameState.players[playerId].alive = false;
     gameState.alivePlayersOrder = this.getAlivePlayers();

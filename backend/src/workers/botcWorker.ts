@@ -1098,6 +1098,16 @@ export class BOTCWorker extends BaseGameWorker {
    * 处理夜晚行动结果 - 完整实现
    */
   private async processNightActions(): Promise<void> {
+    if (this.gameState.phase !== GamePhase.NIGHT && this.gameState.phase !== GamePhase.FIRST_NIGHT) {
+      return;
+    }
+
+    const pendingNightTimer = this.dayTimers.get('pendingNightActions');
+    if (pendingNightTimer) {
+      clearTimeout(pendingNightTimer);
+      this.dayTimers.delete('pendingNightActions');
+    }
+
     const allPlayers = Array.from(this.gamePlayers.values());
     const processedActions: any[] = [];
 
@@ -1406,7 +1416,7 @@ export class BOTCWorker extends BaseGameWorker {
 
     // 处理甜心（Sweetheart）死亡效果：随机一名玩家醉酒
     const deadSweetheart = allPlayers.find(p => p.role?.id === 'sweetheart' && p.isDead);
-    if (deadSweetheart && !deadSweetheart.reminders.includes(' sweetheartProcessed')) {
+    if (deadSweetheart && !deadSweetheart.reminders.includes('sweetheartProcessed')) {
       deadSweetheart.reminders.push('sweetheartProcessed');
       const randomAlive = alivePlayers[Math.floor(Math.random() * alivePlayers.length)];
       if (randomAlive) {
@@ -1719,6 +1729,11 @@ export class BOTCWorker extends BaseGameWorker {
       }
 
       // 处理完所有行动后，自动进入白天
+      const pendingNightTimer = this.dayTimers.get('pendingNightActions');
+      if (pendingNightTimer) {
+        clearTimeout(pendingNightTimer);
+        this.dayTimers.delete('pendingNightActions');
+      }
       await this.processNightActions();
     }, delay);
     this.dayTimers.set('autoStoryteller', timer);

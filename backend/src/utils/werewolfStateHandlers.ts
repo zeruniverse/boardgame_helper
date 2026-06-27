@@ -269,6 +269,27 @@ function processDeathChain(gameState: WerewolfGameState, context: any, dyingPlay
   continueToNightOrDay(gameState, context);
 }
 
+function startDayDiscussionAfterDeaths(gameState: WerewolfGameState, context: any): void {
+  Object.values(gameState.players).forEach(p => {
+    p.canBeVoted = p.isAlive;
+  });
+
+  const alivePlayers = Object.values(gameState.players)
+    .filter(p => p.isAlive)
+    .sort((a, b) => a.index - b.index);
+
+  const sheriff = alivePlayers.find(p => p.isSheriff);
+  const others = alivePlayers.filter(p => p !== sheriff);
+
+  gameState.speakOrder = [
+    ...(sheriff ? [sheriff.index] : []),
+    ...others.map(p => p.index)
+  ];
+  gameState.currentSpeakerIndex = 0;
+
+  DayDiscussHandler.startOfState(gameState, context);
+}
+
 // 工具函数 - 从死亡链继续到下一个正常状态
 function continueToNightOrDay(gameState: WerewolfGameState, context: any): void {
   // 重置死亡链深度
@@ -286,8 +307,15 @@ function continueToNightOrDay(gameState: WerewolfGameState, context: any): void 
 
   gameState.curDyingPlayer = undefined;
   gameState.pendingDeaths = undefined;
+  const deathContext = gameState.deathContext;
+  gameState.deathContext = undefined;
 
   if (checkAndHandleGameEnd(gameState, context)) {
+    return;
+  }
+
+  if (deathContext === 'night') {
+    startDayDiscussionAfterDeaths(gameState, context);
     return;
   }
 
@@ -536,9 +564,9 @@ export const SheriffElectHandler: StateHandler = {
     // 注意：天数不再在这里递增，统一在WolfKillHandler中递增
     startCurrentState(this, gameState, context);
 
-    // 所有存活玩家可以参与警长竞选
+    // 初始没有候选人；玩家主动上警后才可被投票
     Object.values(gameState.players).forEach(p => {
-      p.canBeVoted = p.isAlive;
+      p.canBeVoted = false;
     });
 
     context.sendToRoom('show_message', {
@@ -732,8 +760,8 @@ export const BeforeDayDiscussHandler: StateHandler = {
     const poisonTarget = nightActions.witchPoisonTarget;
     if (poisonTarget) {
       const target = findPlayerByIndex(gameState.players, poisonTarget);
-      if (target && target.isAlive) {
-        const alreadyDying = dyingPlayers.includes(target);
+      const alreadyDying = target ? dyingPlayers.includes(target) : false;
+      if (target && (target.isAlive || alreadyDying)) {
         if (alreadyDying) {
           // 同杀同毒：更新死亡标记为女巫毒杀（被毒死的猎人不能开枪）
           target.die = {
@@ -782,6 +810,7 @@ export const BeforeDayDiscussHandler: StateHandler = {
       // 设置待处理死亡队列并处理第一个死亡玩家
       if (dyingPlayers.length > 0) {
         gameState.pendingDeaths = [...dyingPlayers]; // 复制队列
+        gameState.deathContext = 'night';
         const timeoutMs = TIMEOUT[GameStatus.BEFORE_DAY_DISCUSS] > 0
           ? TIMEOUT[GameStatus.BEFORE_DAY_DISCUSS] * 1000
           : 3000; // 不限时模式下使用默认3秒
@@ -959,6 +988,7 @@ export const ExileVoteHandler: StateHandler = {
         });
 
         // 处理死亡链（猎人、遗言、警长传递）
+        gameState.deathContext = 'day';
         setTimeout(() => {
           processDeathChain(gameState, context, target);
         }, 3000);

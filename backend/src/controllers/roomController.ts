@@ -1075,7 +1075,7 @@ export function roomController(io: Server) {
             hostKickVotes.set(room.id, voteData);
 
             io.to(room.id).emit('chat_broadcast', {
-              message: `${player.nickname} 发起踢出房主投票，需要${Math.ceil(room.players.filter(p => p.online).length / 2)}票`,
+              message: `${player.nickname} 发起踢出房主投票，需要${Math.floor(room.players.filter(p => p.online).length / 2) + 1}票`,
               type: 'system'
             });
           } else {
@@ -1090,7 +1090,7 @@ export function roomController(io: Server) {
           }
 
           const onlinePlayerCount = room.players.filter(p => p.online).length;
-          const requiredVotes = Math.ceil(onlinePlayerCount / 2);
+          const requiredVotes = Math.floor(onlinePlayerCount / 2) + 1;
 
           if (voteData.voters.size >= requiredVotes) {
             // 投票通过，踢出房主
