@@ -21,6 +21,7 @@
 <script lang="ts" setup>
 import { ref, nextTick, watch, computed } from 'vue';
 import { safeHtml } from '../utils/html';
+import { emitChatAction } from '../utils/gameSocket';
 
 interface Props {
   messages: any[]
@@ -154,11 +155,7 @@ watch(
 function send() {
   if (canSend.value) {
     const msg = `${props.nickname}: ${input.value}`;
-    props.socket.emit('game_action', {
-      roomId: props.roomId,
-      actionType: 'chat',
-      actionData: { message: msg }
-    });
+    emitChatAction(props.socket, props.roomId, undefined, msg);
     input.value = '';
   }
 }

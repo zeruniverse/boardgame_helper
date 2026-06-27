@@ -1,6 +1,9 @@
 import { defineStore } from 'pinia';
 import { io, Socket } from 'socket.io-client';
 import { SOCKET_URL } from '../config';
+import { ensureGameSession, rememberGameSession } from '../utils/gameSession';
+import { emitChatAction, emitGameAction } from '../utils/gameSocket';
+import { appendLimitedMessage, createSystemMessage, normalizeIncomingMessage } from '../utils/messages';
 
 // 角色枚举
 export enum OnuWerewolfRole {
@@ -247,8 +250,7 @@ export const useOnuWerewolfStore = defineStore('onuWerewolf', {
             }))
           };
         }
-        if (this.currentUserId) localStorage.setItem('onu_werewolf_userId', this.currentUserId);
-        if (data.player?.nickname || data.player?.name) localStorage.setItem('onu_werewolf_nickname', data.player.nickname || data.player.name);
+        rememberGameSession(data.room, data.player || (data.playerId ? { id: data.playerId } : null));
       });
 
       on('room_update', (room: OnuWerewolfRoomState) => {
@@ -439,17 +441,14 @@ export const useOnuWerewolfStore = defineStore('onuWerewolf', {
 
       // 聊天事件
       on('onu_chat_message', (message: any) => {
-        this.messages.push({
+        this.messages = appendLimitedMessage(this.messages, normalizeIncomingMessage({
           id: Date.now(),
           playerId: message.playerId,
           playerName: message.playerName,
           message: message.message,
           timestamp: message.timestamp,
           type: 'chat'
-        });
-        if (this.messages.length > 500) {
-          this.messages = this.messages.slice(-500);
-        }
+        }));
       });
 
       on('system_message', (message: string) => {
@@ -492,19 +491,9 @@ export const useOnuWerewolfStore = defineStore('onuWerewolf', {
         this.initSocket();
       }
 
-      // 生成或获取用户ID
-      let userId = localStorage.getItem('onu_werewolf_userId');
-      if (!userId) {
-        userId = `player_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-        localStorage.setItem('onu_werewolf_userId', userId);
-      }
-
-      // 生成或获取昵称
-      let nickname = localStorage.getItem('onu_werewolf_nickname');
-      if (!nickname) {
-        nickname = `玩家${Math.floor(Math.random() * 1000)}`;
-        localStorage.setItem('onu_werewolf_nickname', nickname);
-      }
+      const session = ensureGameSession(gameType, undefined, roomId);
+      const userId = session.playerId;
+      const nickname = session.nickname;
 
       this.currentUserId = userId;
       this.currentRoomId = roomId;
@@ -554,21 +543,11 @@ export const useOnuWerewolfStore = defineStore('onuWerewolf', {
 
     // 游戏操作方法
     sendGameAction(actionType: string, actionData: any = {}) {
-      if (!this.socket || !this.currentRoomId) return;
-
-      this.socket.emit('game_action', {
-        roomId: this.currentRoomId,
-        playerId: this.currentUserId,
-        gameType: 'one-night-werewolf',
-        actionType: actionType,
-        actionData: actionData
-      });
+      emitGameAction(this.socket, this.currentRoomId, this.currentUserId, actionType, actionData);
     },
 
     sendMessage(message: string) {
-      if (!message.trim()) return;
-      
-      this.sendGameAction('chat', { message: message.trim() });
+      emitChatAction(this.socket, this.currentRoomId, this.currentUserId, message);
     },
 
     transferHost(newHostId: string) {
@@ -618,15 +597,7 @@ export const useOnuWerewolfStore = defineStore('onuWerewolf', {
     },
 
     addSystemMessage(message: string) {
-      this.messages.push({
-        id: Date.now(),
-        message,
-        timestamp: Date.now(),
-        type: 'system'
-      });
-      if (this.messages.length > 500) {
-        this.messages = this.messages.slice(-500);
-      }
+      this.messages = appendLimitedMessage(this.messages, createSystemMessage(message));
     },
 
     updateTimer() {

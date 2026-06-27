@@ -524,4 +524,70 @@ const handleSendMessage = (message: string, channel: string) => {
   backdrop-filter: blur(10px);
   border-left: 1px solid rgba(255, 255, 255, 0.2);
 }
+
+/* Unified tabletop room theme overrides */
+.avalon-room {
+  min-height: 100vh;
+  height: auto;
+  background: var(--app-bg);
+  color: var(--app-text);
+}
+
+.room-header {
+  min-height: 72px;
+  height: auto;
+  padding: 0 var(--app-space-6);
+  background: var(--app-panel);
+  border-bottom: 1px solid var(--app-border);
+  box-shadow: var(--app-shadow-sm);
+}
+
+.room-name,
+.room-id,
+.status-title,
+.mission-board h4 {
+  color: var(--app-text);
+}
+
+.room-id,
+.status-info {
+  color: var(--app-text-secondary);
+}
+
+.game-container {
+  min-height: calc(100vh - 72px);
+  height: auto;
+}
+
+.game-main {
+  padding: var(--app-space-6);
+  background: transparent;
+}
+
+.game-status,
+.mission-board,
+.role-info,
+.game-info-card,
+.chat-section {
+  background: var(--app-panel);
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius);
+  box-shadow: var(--app-shadow-sm);
+  color: var(--app-text);
+}
+
+@media (max-width: 768px) {
+  .room-header,
+  .header-left,
+  .header-right,
+  .status-info {
+    flex-wrap: wrap;
+    gap: var(--app-space-3);
+  }
+
+  .game-main {
+    padding: var(--app-space-4);
+  }
+}
+
 </style> 

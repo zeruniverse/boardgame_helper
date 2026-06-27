@@ -1,6 +1,9 @@
 import { defineStore } from 'pinia';
 import { io, Socket } from 'socket.io-client';
 import { SOCKET_URL } from '../config';
+import { ensureGameSession, rememberGameSession } from '../utils/gameSession';
+import { emitChatAction, emitGameAction } from '../utils/gameSocket';
+import { appendLimitedMessage, createSystemMessage, normalizeIncomingMessage } from '../utils/messages';
 
 interface MafiaPlayer {
   id: string;
@@ -202,8 +205,7 @@ export const useMafiaStore = defineStore('mafia', {
         this.room = data.room;
         this.currentUserId = data.player?.id || data.playerId || this.currentUserId;
         this.currentRoomId = data.room.id;
-        if (this.currentUserId) localStorage.setItem('mafia_userId', this.currentUserId);
-        if (data.player?.nickname || data.player?.name) localStorage.setItem('mafia_nickname', data.player.nickname || data.player.name);
+        rememberGameSession(data.room, data.player || (data.playerId ? { id: data.playerId } : null));
       });
 
       on('room_update', (room: MafiaRoomState) => {
@@ -343,10 +345,7 @@ export const useMafiaStore = defineStore('mafia', {
 
       // 聊天事件
       on('chat_message', (message: any) => {
-        this.messages.push(message);
-        if (this.messages.length > 500) {
-          this.messages = this.messages.slice(-500);
-        }
+        this.messages = appendLimitedMessage(this.messages, normalizeIncomingMessage(message));
       });
 
       on('system_message', (message: string) => {
@@ -386,19 +385,9 @@ export const useMafiaStore = defineStore('mafia', {
         this.initSocket();
       }
 
-      // 生成或获取用户ID
-      let userId = localStorage.getItem('mafia_userId');
-      if (!userId) {
-        userId = `player_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-        localStorage.setItem('mafia_userId', userId);
-      }
-
-      // 生成或获取昵称
-      let nickname = localStorage.getItem('mafia_nickname');
-      if (!nickname) {
-        nickname = `玩家${Math.floor(Math.random() * 1000)}`;
-        localStorage.setItem('mafia_nickname', nickname);
-      }
+      const session = ensureGameSession(gameType, undefined, roomId);
+      const userId = session.playerId;
+      const nickname = session.nickname;
 
       this.currentUserId = userId;
       this.currentRoomId = roomId;
@@ -448,19 +437,12 @@ export const useMafiaStore = defineStore('mafia', {
 
     // 游戏动作
     sendGameAction(actionType: string, actionData: any) {
-      if (!this.socket || !this.currentRoomId) return;
-      
-      this.socket.emit('game_action', {
-        roomId: this.currentRoomId,
-        userId: this.currentUserId,
-        actionType,
-        actionData
-      });
+      emitGameAction(this.socket, this.currentRoomId, this.currentUserId, actionType, actionData);
     },
 
     // 聊天
     sendMessage(message: string) {
-      this.sendGameAction('chat_message', { message });
+      emitChatAction(this.socket, this.currentRoomId, this.currentUserId, message);
     },
 
     // 房间管理
@@ -524,15 +506,7 @@ export const useMafiaStore = defineStore('mafia', {
 
     // 工具方法
     addSystemMessage(message: string) {
-      this.messages.push({
-        id: Date.now().toString(),
-        type: 'system',
-        content: message,
-        timestamp: new Date()
-      });
-      if (this.messages.length > 500) {
-        this.messages = this.messages.slice(-500);
-      }
+      this.messages = appendLimitedMessage(this.messages, createSystemMessage(message));
     },
 
     updateTimer() {

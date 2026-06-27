@@ -3,6 +3,9 @@ import { ref } from 'vue'
 import { io, Socket } from 'socket.io-client'
 import { ElMessage } from 'element-plus'
 import { SOCKET_URL } from '../config'
+import { ensureGameSession, rememberGameSession } from '../utils/gameSession'
+import { emitChatAction, emitGameAction } from '../utils/gameSocket'
+import { appendLimitedMessage, normalizeIncomingMessage } from '../utils/messages'
 
 export const useBOTCGameStore = defineStore('botc', () => {
   // 状态
@@ -36,10 +39,7 @@ export const useBOTCGameStore = defineStore('botc', () => {
 
   // 辅助函数：添加聊天消息（限制500条）
   const addChatMessage = (data: any) => {
-    chatMessages.value.push(data)
-    if (chatMessages.value.length > 500) {
-      chatMessages.value = chatMessages.value.slice(-500)
-    }
+    chatMessages.value = appendLimitedMessage(chatMessages.value, normalizeIncomingMessage(data))
   }
 
   // 连接到服务器
@@ -96,8 +96,7 @@ export const useBOTCGameStore = defineStore('botc', () => {
           room.value = data.room
           currentRoomId.value = data.room.id
           currentUserId.value = data.player?.id || data.playerId || currentUserId.value
-          if (currentUserId.value) localStorage.setItem('botc_userId', currentUserId.value)
-          if (data.player?.nickname || data.player?.name) localStorage.setItem('botc_nickname', data.player.nickname || data.player.name)
+          rememberGameSession(data.room, data.player || (data.playerId ? { id: data.playerId } : null))
         })
 
         on('room_left', () => {
@@ -340,16 +339,9 @@ export const useBOTCGameStore = defineStore('botc', () => {
 
       if (!socket.value) throw new Error('Socket not connected')
 
-      let userId = localStorage.getItem('botc_userId')
-      if (!userId) {
-        userId = `player_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`
-        localStorage.setItem('botc_userId', userId)
-      }
-      let nickname = localStorage.getItem('botc_nickname')
-      if (!nickname) {
-        nickname = `玩家${Math.floor(Math.random() * 1000)}`
-        localStorage.setItem('botc_nickname', nickname)
-      }
+      const session = ensureGameSession(gameType, undefined, roomId)
+      const userId = session.playerId
+      const nickname = session.nickname
 
       currentUserId.value = userId
       currentRoomId.value = roomId
@@ -386,35 +378,17 @@ export const useBOTCGameStore = defineStore('botc', () => {
 
   // 发送游戏操作
   const sendGameAction = (action: string, data: any) => {
-    if (socket.value && currentRoomId.value) {
-      socket.value.emit('game_action', {
-        roomId: currentRoomId.value,
-        actionType: action,
-        actionData: data
-      })
-    }
+    emitGameAction(socket.value, currentRoomId.value, currentUserId.value, action, data)
   }
 
   // 发送聊天消息
   const sendChatMessage = (message: string, channel: string = 'all', targetId?: string) => {
-    if (socket.value && currentRoomId.value) {
-      socket.value.emit('game_action', {
-        roomId: currentRoomId.value,
-        actionType: 'chat',
-        actionData: { message, channel, targetId }
-      })
-    }
+    emitChatAction(socket.value, currentRoomId.value, currentUserId.value, message, channel, targetId)
   }
 
   // 发送私聊消息
   const sendPrivateMessage = (targetId: string, message: string) => {
-    if (socket.value && currentRoomId.value) {
-      socket.value.emit('game_action', {
-        roomId: currentRoomId.value,
-        actionType: 'private_message',
-        actionData: { targetId, message }
-      })
-    }
+    emitGameAction(socket.value, currentRoomId.value, currentUserId.value, 'private_message', { targetId, message })
   }
 
   // 房间管理

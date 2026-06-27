@@ -739,12 +739,12 @@ class TexasHoldemWorker extends BaseGameWorker {
 
     const participants = this.room.players.filter(p => {
       const gm = p.gameMetadata || {};
-      return gm.inGame !== false;
+      return p.online !== false && gm.inGame !== false && Number(gm.chips || 0) > 0;
     }).map(p => p.id);
 
     if (participants.length < 2) {
       this.sendToRoom('chat_broadcast', {
-        message: '至少需要2名玩家才能开始游戏'
+        message: '至少需要2名在线且有筹码的玩家才能开始游戏'
       });
       return;
     }

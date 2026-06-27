@@ -1,6 +1,9 @@
 import { defineStore } from 'pinia';
 import { io, Socket } from 'socket.io-client';
 import { SOCKET_URL } from '../config';
+import { ensureGameSession, rememberGameSession } from '../utils/gameSession';
+import { emitChatAction, emitGameAction } from '../utils/gameSocket';
+import { appendLimitedMessage, createSystemMessage, normalizeIncomingMessage } from '../utils/messages';
 
 interface AvalonPlayer {
   id: string;
@@ -134,8 +137,7 @@ export const useAvalonStore = defineStore('avalon', {
         this.room = data.room;
         this.currentUserId = data.player?.id || data.playerId || this.currentUserId;
         this.currentRoomId = data.room.id;
-        if (this.currentUserId) localStorage.setItem('avalon_userId', this.currentUserId);
-        if (data.player?.nickname || data.player?.name) localStorage.setItem('avalon_nickname', data.player.nickname || data.player.name);
+        rememberGameSession(data.room, data.player || (data.playerId ? { id: data.playerId } : null));
       });
 
       on('room_update', (room: AvalonRoomState) => {
@@ -170,23 +172,17 @@ export const useAvalonStore = defineStore('avalon', {
 
       // 聊天事件
       on('chat_broadcast', (message: any) => {
-        this.messages.push(message);
-        if (this.messages.length > 500) {
-          this.messages = this.messages.slice(-500);
-        }
+        this.messages = appendLimitedMessage(this.messages, normalizeIncomingMessage(message));
       });
 
       // 游戏消息事件
       on('game_message', (data: { message: string; timestamp: number }) => {
-        this.messages.push({
+        this.messages = appendLimitedMessage(this.messages, normalizeIncomingMessage({
           id: `gm_${Date.now()}`,
           type: 'game',
           message: data.message,
           timestamp: data.timestamp
-        });
-        if (this.messages.length > 500) {
-          this.messages = this.messages.slice(-500);
-        }
+        }, 'game'));
       });
 
       on('system_message', (message: string) => {
@@ -234,19 +230,9 @@ export const useAvalonStore = defineStore('avalon', {
         this.initSocket();
       }
 
-      // 生成或获取用户ID
-      let userId = localStorage.getItem('avalon_userId');
-      if (!userId) {
-        userId = `player_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-        localStorage.setItem('avalon_userId', userId);
-      }
-
-      // 生成或获取昵称
-      let nickname = localStorage.getItem('avalon_nickname');
-      if (!nickname) {
-        nickname = `玩家${Math.floor(Math.random() * 1000)}`;
-        localStorage.setItem('avalon_nickname', nickname);
-      }
+      const session = ensureGameSession(gameType, undefined, roomId);
+      const userId = session.playerId;
+      const nickname = session.nickname;
 
       this.currentUserId = userId;
       this.currentRoomId = roomId;
@@ -300,21 +286,12 @@ export const useAvalonStore = defineStore('avalon', {
 
     // 游戏动作
     sendGameAction(actionType: string, actionData: any) {
-      if (!this.socket || !this.currentRoomId) return;
-
-      this.socket.emit('game_action', {
-        roomId: this.currentRoomId,
-        playerId: this.currentUserId,
-        actionType,
-        actionData
-      });
+      emitGameAction(this.socket, this.currentRoomId, this.currentUserId, actionType, actionData);
     },
 
     // 房间动作
     sendMessage(message: string, channel: string = 'all') {
-      if (!this.socket || !this.currentRoomId) return;
-
-      this.sendGameAction('chat', { message, channel });
+      emitChatAction(this.socket, this.currentRoomId, this.currentUserId, message, channel);
     },
 
     transferHost(newHostId: string) {
@@ -380,15 +357,7 @@ export const useAvalonStore = defineStore('avalon', {
 
     // 辅助方法
     addSystemMessage(message: string) {
-      this.messages.push({
-        id: Date.now().toString(),
-        type: 'system',
-        content: message,
-        timestamp: new Date().toISOString()
-      });
-      if (this.messages.length > 500) {
-        this.messages = this.messages.slice(-500);
-      }
+      this.messages = appendLimitedMessage(this.messages, createSystemMessage(message));
     },
 
     updateTimer() {

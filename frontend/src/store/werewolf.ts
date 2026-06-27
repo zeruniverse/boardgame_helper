@@ -1,6 +1,9 @@
 import { defineStore } from 'pinia';
 import { io, Socket } from 'socket.io-client';
 import { SOCKET_URL } from '../config';
+import { ensureGameSession, rememberGameSession } from '../utils/gameSession';
+import { emitChatAction, emitGameAction } from '../utils/gameSocket';
+import { appendLimitedMessage, createSystemMessage, normalizeIncomingMessage } from '../utils/messages';
 
 interface WerewolfPlayer {
   id: string;
@@ -161,8 +164,7 @@ export const useWerewolfStore = defineStore('werewolf', {
         this.room = data.room;
         this.currentUserId = data.player?.id || data.playerId || this.currentUserId;
         this.currentRoomId = data.room.id;
-        if (this.currentUserId) localStorage.setItem('werewolf_userId', this.currentUserId);
-        if (data.player?.nickname || data.player?.name) localStorage.setItem('werewolf_nickname', data.player.nickname || data.player.name);
+        rememberGameSession(data.room, data.player || (data.playerId ? { id: data.playerId } : null));
       });
 
       on('room_update', (data: any) => {
@@ -258,10 +260,7 @@ export const useWerewolfStore = defineStore('werewolf', {
 
       // 聊天事件
       on('chat_message', (message: any) => {
-        this.messages.push(message);
-        if (this.messages.length > 500) {
-          this.messages = this.messages.slice(-500);
-        }
+        this.messages = appendLimitedMessage(this.messages, normalizeIncomingMessage(message));
       });
 
       // 系统消息
@@ -352,19 +351,9 @@ export const useWerewolfStore = defineStore('werewolf', {
         this.initSocket();
       }
 
-      // 生成或获取用户ID
-      let userId = localStorage.getItem('werewolf_userId');
-      if (!userId) {
-        userId = `player_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-        localStorage.setItem('werewolf_userId', userId);
-      }
-
-      // 生成或获取昵称
-      let nickname = localStorage.getItem('werewolf_nickname');
-      if (!nickname) {
-        nickname = `玩家${Math.floor(Math.random() * 1000)}`;
-        localStorage.setItem('werewolf_nickname', nickname);
-      }
+      const session = ensureGameSession(gameType, undefined, roomId);
+      const userId = session.playerId;
+      const nickname = session.nickname;
 
       this.currentUserId = userId;
       this.currentRoomId = roomId;
@@ -418,26 +407,11 @@ export const useWerewolfStore = defineStore('werewolf', {
 
     // 统一使用game_action发送，动作类型与后端匹配
     sendGameAction(actionType: string, actionData: any) {
-      if (!this.socket) return;
-
-      this.socket.emit('game_action', {
-        roomId: this.currentRoomId,
-        actionType,
-        actionData
-      });
+      emitGameAction(this.socket, this.currentRoomId, this.currentUserId, actionType, actionData);
     },
 
     sendMessage(message: string, channel: string = 'all') {
-      if (!this.socket || !message.trim()) return;
-
-      this.socket.emit('game_action', {
-        roomId: this.currentRoomId,
-        actionType: 'chat_message',
-        actionData: {
-          message: message.trim(),
-          channel
-        }
-      });
+      emitChatAction(this.socket, this.currentRoomId, this.currentUserId, message, channel);
     },
 
     transferHost(newHostId: string) {
@@ -602,15 +576,7 @@ export const useWerewolfStore = defineStore('werewolf', {
     },
 
     addSystemMessage(message: string) {
-      this.messages.push({
-        type: 'system',
-        message,
-        timestamp: Date.now(),
-        channel: 'all'
-      });
-      if (this.messages.length > 500) {
-        this.messages = this.messages.slice(-500);
-      }
+      this.messages = appendLimitedMessage(this.messages, createSystemMessage(message));
     },
 
     startTimer() {

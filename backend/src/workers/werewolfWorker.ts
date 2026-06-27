@@ -459,7 +459,7 @@ class WerewolfWorker extends BaseGameWorker {
       return;
     }
 
-    const readyPlayers = this.room.players.filter(p => p.gameMetadata?.ready);
+    const readyPlayers = this.room.players.filter(p => p.online !== false && p.gameMetadata?.ready);
 
     if (readyPlayers.length !== this.gameState.needingCharacters.length) {
       this.sendToPlayer(playerId, 'error', {

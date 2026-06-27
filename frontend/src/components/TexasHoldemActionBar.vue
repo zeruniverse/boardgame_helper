@@ -42,6 +42,7 @@
 <script lang="ts" setup>
 import { ref, computed } from 'vue';
 import { useTexasHoldemStore } from '../store';
+import { emitGameAction } from '../utils/gameSocket';
 
 const store = useTexasHoldemStore();
 const raiseAmount = ref(0);
@@ -61,11 +62,7 @@ const canRaise = computed(() => isMyTurn.value && ((ownPlayer.value?.gameMetadat
 // 使用game_action统一格式发送玩家操作
 function action(type: string) {
   if (!store.socket || !store.currentRoom || !store.gameActive || !isInGame.value) return;
-  store.socket.emit('game_action', {
-    roomId: store.currentRoom,
-    actionType: 'playerAction',
-    actionData: { action: type }
-  });
+  emitGameAction(store.socket, store.currentRoom, store.playerId, 'playerAction', { action: type });
 }
 
 // Raise操作使用game_action统一格式
@@ -89,11 +86,7 @@ function raise() {
   // 计算新总下注额 = 当前已下注 + 需要跟注 + 额外加注
   const currentBet = store.bets[store.playerId] || 0;
   const totalRaiseAmount = currentBet + callAmount + val;
-  store.socket.emit('game_action', {
-    roomId: store.currentRoom,
-    actionType: 'playerAction',
-    actionData: { action: 'raise', amount: totalRaiseAmount }
-  });
+  emitGameAction(store.socket, store.currentRoom, store.playerId, 'playerAction', { action: 'raise', amount: totalRaiseAmount });
 }
 
 function extendTime() {

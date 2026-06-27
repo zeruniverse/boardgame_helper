@@ -668,4 +668,71 @@ const handleStartGame = (config: any) => {
   display: flex;
   flex-direction: column;
 }
+
+/* Unified tabletop room theme overrides */
+.botc-room {
+  min-height: 100vh;
+  height: auto;
+  background: var(--app-bg);
+  color: var(--app-text);
+}
+
+.room-header {
+  min-height: 72px;
+  height: auto;
+  padding: 0 var(--app-space-6);
+  background: var(--app-panel);
+  border-bottom: 1px solid var(--app-border);
+  box-shadow: var(--app-shadow-sm);
+}
+
+.room-name,
+.edition-info-card h4,
+.status-title {
+  color: var(--app-text);
+}
+
+.header-right,
+.edition-description,
+.status-info {
+  color: var(--app-text-secondary);
+}
+
+.game-container {
+  min-height: calc(100vh - 72px);
+  height: auto;
+}
+
+.game-main {
+  padding: var(--app-space-6);
+  background: transparent;
+}
+
+.game-status,
+.edition-info-card,
+.role-info,
+.players-section,
+.storyteller-panel,
+.chat-section {
+  background: var(--app-panel);
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius);
+  box-shadow: var(--app-shadow-sm);
+  color: var(--app-text);
+}
+
+@media (max-width: 768px) {
+  .room-header,
+  .header-left,
+  .header-right,
+  .status-info {
+    flex-wrap: wrap;
+    gap: var(--app-space-3);
+  }
+
+  .game-main {
+    padding: var(--app-space-4);
+  }
+}
+
 </style>

@@ -365,6 +365,15 @@ class OnuWerewolfWorker extends BaseGameWorker {
     return { players, cards };
   }
 
+  private getOnlinePlayers(): Player[] {
+    return this.room.players.filter(player => player.online !== false);
+  }
+
+  private getOnlineReadyPlayerCount(): number {
+    const onlinePlayerIds = new Set(this.getOnlinePlayers().map(player => player.id));
+    return Array.from(this.gameState.readyPlayers).filter(playerId => onlinePlayerIds.has(playerId)).length;
+  }
+
   private async handleReady(playerId: string): Promise<void> {
     if (this.gameState.status !== OnuWerewolfGameStatus.WAITING) {
       throw new Error('游戏已开始，无法准备');
@@ -378,8 +387,8 @@ class OnuWerewolfWorker extends BaseGameWorker {
 
     this.sendToRoom('onu_player_ready', {
       playerId,
-      readyCount: this.gameState.readyPlayers.size,
-      playerCount: this.room.players.length
+      readyCount: this.getOnlineReadyPlayerCount(),
+      playerCount: this.getOnlinePlayers().length
     });
     this.sendToRoom('room_update', this.room);
   }
@@ -397,8 +406,8 @@ class OnuWerewolfWorker extends BaseGameWorker {
 
     this.sendToRoom('onu_player_unready', {
       playerId,
-      readyCount: this.gameState.readyPlayers.size,
-      playerCount: this.room.players.length
+      readyCount: this.getOnlineReadyPlayerCount(),
+      playerCount: this.getOnlinePlayers().length
     });
     this.sendToRoom('room_update', this.room);
   }
@@ -419,14 +428,14 @@ class OnuWerewolfWorker extends BaseGameWorker {
       throw new Error(validation.error);
     }
 
-    const playerCount = this.room.players.length;
+    const playerCount = this.getOnlinePlayers().length;
     if (playerCount !== validation.playerCount) {
       throw new Error(`需要 ${validation.playerCount} 个玩家，当前只有 ${playerCount} 个玩家`);
     }
 
-    // 检查所有玩家是否都已准备
-    if (this.gameState.readyPlayers.size !== playerCount) {
-      throw new Error('还有玩家未准备就绪');
+    // 检查所有在线玩家是否都已准备；离线玩家保留在房间中但不应参与新局。
+    if (this.getOnlineReadyPlayerCount() !== playerCount) {
+      throw new Error('还有在线玩家未准备就绪');
     }
 
     await this.startGame();
@@ -437,7 +446,8 @@ class OnuWerewolfWorker extends BaseGameWorker {
     this.gameState.currentPhase = '分发角色';
 
     // 分配角色和座位
-    const playerCount = this.room.players.length;
+    const activePlayers = this.getOnlinePlayers();
+    const playerCount = activePlayers.length;
     // 修复Bug 5.3: 将loneWolf配置存储到gameState中供后续使用
     this.gameState.config.loneWolf = this.config.loneWolf;
     const { playerRoles, centerCards } = onuDistributeRoles(
@@ -447,7 +457,7 @@ class OnuWerewolfWorker extends BaseGameWorker {
     );
 
     // 创建游戏玩家
-    this.room.players.forEach((player, index) => {
+    activePlayers.forEach((player, index) => {
       const gamePlayer: OnuWerewolfPlayer = {
         id: player.id,
         name: player.nickname,

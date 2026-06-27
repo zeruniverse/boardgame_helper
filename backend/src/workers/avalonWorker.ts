@@ -564,7 +564,7 @@ class AvalonWorker extends BaseGameWorker {
   private handleStartGame(playerId: string): void {
     if (playerId !== this.room.hostId) return;
 
-    const readyPlayers = this.room.players.filter(p => p.gameMetadata.ready);
+    const readyPlayers = this.room.players.filter(p => p.online !== false && p.gameMetadata?.ready);
     if (readyPlayers.length < 5 || readyPlayers.length > 10) {
       this.sendToPlayer(playerId, 'game_error', {
         message: '游戏人数必须在5-10人之间'
@@ -1032,8 +1032,9 @@ class AvalonWorker extends BaseGameWorker {
   }
 
   private checkAutoStart(): void {
-    const readyPlayers = this.room.players.filter(p => p.gameMetadata.ready);
-    const totalPlayers = this.room.players.length;
+    const onlinePlayers = this.room.players.filter(p => p.online !== false);
+    const readyPlayers = onlinePlayers.filter(p => p.gameMetadata?.ready);
+    const totalPlayers = onlinePlayers.length;
 
     // 可以添加自动开始逻辑
     if (readyPlayers.length === totalPlayers && totalPlayers >= 5) {
@@ -1045,7 +1046,7 @@ class AvalonWorker extends BaseGameWorker {
   }
 
   private startGame(): void {
-    const readyPlayers = this.room.players.filter(p => p.gameMetadata.ready);
+    const readyPlayers = this.room.players.filter(p => p.online !== false && p.gameMetadata?.ready);
     const playerCount = readyPlayers.length;
 
     if (playerCount < 5 || playerCount > 10) {

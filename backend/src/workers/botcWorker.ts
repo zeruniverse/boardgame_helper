@@ -282,8 +282,14 @@ export class BOTCWorker extends BaseGameWorker {
       return;
     }
 
+    const storyteller = this.room.players.find(p => p.id === this.gameConfig.storytellerId);
+    if (!storyteller || storyteller.online === false) {
+      this.sendToPlayer(playerId, 'actionError', { message: '说书人必须在线才能开始游戏' });
+      return;
+    }
+
     // 排除说书人后计算参与游戏的玩家数
-    const gamePlayerCount = this.room.players.filter(p => p.id !== this.gameConfig.storytellerId).length;
+    const gamePlayerCount = this.room.players.filter(p => p.online !== false && p.id !== this.gameConfig.storytellerId).length;
     if (gamePlayerCount < 5) {
       this.sendToPlayer(playerId, 'actionError', { message: `排除说书人后至少需要5名玩家才能开始游戏，当前只有${gamePlayerCount}名` });
       return;
@@ -299,7 +305,9 @@ export class BOTCWorker extends BaseGameWorker {
     try {
       // 分配角色 - 排除说书人（说书人作为观察者/主持人，不参与游戏）
       const storytellerId = this.gameConfig.storytellerId;
-      const playerIds = this.room.players.map(p => p.id).filter(id => id !== storytellerId);
+      const playerIds = this.room.players
+        .filter(p => p.online !== false && p.id !== storytellerId)
+        .map(p => p.id);
       
       if (playerIds.length < 5) {
         this.sendToRoom('gameError', { message: `需要至少5名非说书人玩家才能开始游戏，当前只有${playerIds.length}名` });

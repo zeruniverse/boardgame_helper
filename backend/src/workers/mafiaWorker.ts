@@ -626,8 +626,9 @@ class MafiaWorker extends BaseGameWorker {
       return;
     }
 
-    // 检查准备状态和人数
-    const readyPlayers = this.room.players.filter(p => p.gameMetadata.ready);
+    // 检查在线玩家的准备状态和人数
+    const onlinePlayers = this.room.players.filter(p => p.online !== false);
+    const readyPlayers = onlinePlayers.filter(p => p.gameMetadata?.ready);
     const readyCount = readyPlayers.length;
     
     if (readyCount < MIN_PLAYER_COUNT || readyCount > MAX_PLAYER_COUNT) {
@@ -637,9 +638,9 @@ class MafiaWorker extends BaseGameWorker {
       return;
     }
 
-    if (readyCount !== this.room.players.length) {
+    if (readyCount !== onlinePlayers.length) {
       this.sendToPlayer(playerId, 'game_error', {
-        message: '所有玩家都必须准备才能开始游戏'
+        message: '所有在线玩家都必须准备才能开始游戏'
       });
       return;
     }

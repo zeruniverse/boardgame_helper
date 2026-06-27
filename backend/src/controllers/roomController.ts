@@ -837,43 +837,68 @@ export function roomController(io: Server) {
           return;
         }
 
-        const playerIndex = room.players.findIndex(p => p.socketId === socket.id);
-        if (playerIndex === -1) {
+        const player = room.players.find(p => p.socketId === socket.id);
+        if (!player) {
           return;
         }
 
-        const player = room.players[playerIndex];
-        
-        // 从房间中移除玩家
-        room.players.splice(playerIndex, 1);
+        // 先将玩家标记为离线并通知 worker；多数游戏需要在玩家仍存在于房间时
+        // 处理自动弃牌、死亡/托管、阶段推进等逻辑，然后控制层再真正移出玩家。
+        player.online = false;
+        player.lastHeartbeat = Date.now();
         room.lastActiveTime = Date.now();
+        rooms.set(room.id, room);
+        threadManager.updateRoomData(room.id, room);
+
+        if (threadManager.getRoomThreadStatus(room.id) !== 'not_found') {
+          try {
+            await sendTaskToRoom(room.id, 'update_room_data', { room });
+            await sendTaskToRoom(room.id, 'player_offline', { playerId: player.id });
+          } catch (error) {
+            console.error(`通知房间线程玩家离开失败: ${room.id}`, error);
+          }
+        }
 
         // 离开房间频道
         await socket.leave(room.id);
 
+        // worker 可能在 player_offline 中推进了状态，因此移除前重新读取最新房间快照。
+        const latestRoom = rooms.get(room.id) || room;
+        const playerIndex = latestRoom.players.findIndex(p => p.id === player.id);
+        if (playerIndex !== -1) {
+          latestRoom.players.splice(playerIndex, 1);
+        }
+        latestRoom.lastActiveTime = Date.now();
+
         // 如果房间为空，删除房间
-        if (room.players.length === 0) {
-          await threadManager.stopRoomThread(room.id);
-          rooms.delete(room.id);
-          hostKickVotes.delete(room.id);
+        if (latestRoom.players.length === 0) {
+          await threadManager.stopRoomThread(latestRoom.id);
+          rooms.delete(latestRoom.id);
+          hostKickVotes.delete(latestRoom.id);
           
           // 更新大厅
-          if (!room.private) {
+          if (!latestRoom.private) {
             broadcastLobbyUpdate();
           }
         } else {
-          // 如果离开的是房主，指定新的房主
-          if (room.hostId === player.id) {
-            room.hostId = room.players[0].id;
+          // 如果离开的是房主，优先指定在线玩家为新房主
+          if (latestRoom.hostId === player.id) {
+            const nextHost = latestRoom.players.find(p => p.online) || latestRoom.players[0];
+            latestRoom.hostId = nextHost?.id || '';
           }
 
-          // 通知房间线程玩家离线
-          threadManager.updateRoomData(room.id, room);
-          await sendTaskToRoom(room.id, 'update_room_data', { room });
-          await sendTaskToRoom(room.id, 'player_offline', { playerId: player.id });
+          rooms.set(latestRoom.id, latestRoom);
+          threadManager.updateRoomData(latestRoom.id, latestRoom);
+          try {
+            await sendTaskToRoom(latestRoom.id, 'update_room_data', { room: latestRoom });
+          } catch (error) {
+            console.error(`同步玩家离开后的房间状态失败: ${latestRoom.id}`, error);
+          }
+
+          io.to(latestRoom.id).emit('room_update', toClientRoom(latestRoom));
 
           // 更新大厅
-          if (!room.private) {
+          if (!latestRoom.private) {
             broadcastLobbyUpdate();
           }
         }

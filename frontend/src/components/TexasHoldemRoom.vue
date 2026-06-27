@@ -197,6 +197,9 @@ import { Loading, House } from '@element-plus/icons-vue';
 import TexasHoldemChat from './TexasHoldemChat.vue';
 import TexasHoldemPlayerList from './TexasHoldemPlayerList.vue';
 import TexasHoldemActionBar from './TexasHoldemActionBar.vue';
+import { emitGameAction } from '../utils/gameSocket';
+import { GAME_STORAGE_KEYS } from '../utils/gameMeta';
+import { rememberGameSession } from '../utils/gameSession';
 
 const store = useTexasHoldemStore();
 // 使用playerId而不是nickname来判断是否在房间
@@ -214,6 +217,10 @@ const roomName = ref('');
 // 显示的房间号（优先使用服务器返回的名称，否则使用URL中的ID）
 const displayRoomName = computed(() => roomName.value || roomId);
 const isHost = computed(() => store.isHost);
+
+function sendTexasAction(actionType: string, actionData: Record<string, any> = {}) {
+  emitGameAction(store.socket, store.currentRoom || roomId, store.playerId, actionType, actionData);
+}
 
 // 房间状态检查定时器
 let statusCheckInterval: ReturnType<typeof setInterval> | null = null;
@@ -283,8 +290,8 @@ onMounted(() => {
     // 保存后端分配的playerId
     if (data.player && data.player.id) {
       store.playerId = data.player.id;
-      localStorage.setItem('texas_playerId', data.player.id);
     }
+    rememberGameSession(data.room, data.player);
     // 保存房间名称
     if (data.room.name) {
       roomName.value = data.room.name;
@@ -327,27 +334,19 @@ function goToLobby() {
 // Cash In - 使用game_action统一格式
 function onCashIn() {
   if (confirm('确定要充值1000筹码吗？')) {
-    store.socket?.emit('game_action', {
-      roomId,
-      actionType: 'cashin',
-      actionData: { amount: 1000 }
-    });
+    sendTexasAction('cashin', { amount: 1000 });
   }
 }
 // Cash Out - 使用game_action统一格式
 function onCashOut() {
   if (confirm('确定要 Cash Out 并退出房间吗？')) {
-    store.socket?.emit('game_action', {
-      roomId,
-      actionType: 'cashout',
-      actionData: {}
-    });
+    sendTexasAction('cashout');
     
     // 清理所有状态
     store.resetGameState();
     
-    // 清理本地存储
-    localStorage.removeItem('texas_currentRoom');
+    // 清理当前房间记忆，保留昵称与玩家ID便于下次加入
+    localStorage.removeItem(GAME_STORAGE_KEYS['texas-holdem'].room || 'texas_currentRoom');
     store.currentRoom = null;
     router.push({ name: 'Lobby' });
   }
@@ -355,33 +354,21 @@ function onCashOut() {
 // 开始游戏 - 使用game_action统一格式
 function onStartGame() {
   if (store.socket && store.currentRoom) {
-    store.socket.emit('game_action', {
-      roomId: store.currentRoom,
-      actionType: 'startGame',
-      actionData: {}
-    });
+    sendTexasAction('startGame');
   }
 }
 
 // 切换自动开始 - 使用game_action统一格式
 function toggleAutoStart() {
   if (store.socket && store.currentRoom) {
-    store.socket.emit('game_action', {
-      roomId: store.currentRoom,
-      actionType: 'toggleAutoStart',
-      actionData: {}
-    });
+    sendTexasAction('toggleAutoStart');
   }
 }
 
 // 切换房间锁定 - 使用game_action统一格式
 function toggleRoomLock() {
   if (store.socket && store.currentRoom) {
-    store.socket.emit('game_action', {
-      roomId: store.currentRoom,
-      actionType: 'toggleRoomLock',
-      actionData: {}
-    });
+    sendTexasAction('toggleRoomLock');
   }
 }
 
@@ -461,20 +448,12 @@ function handleSecondQuickButton() {
     const chips = ownPlayer.value?.gameMetadata?.chips || 0;
     if (betAmount >= chips) {
       // All-in
-      store.socket.emit('game_action', {
-        roomId: store.currentRoom,
-        actionType: 'playerAction',
-        actionData: { action: 'allin' }
-      });
+      sendTexasAction('playerAction', { action: 'allin' });
     } else {
       // 使用raise，amount为新总下注额
       const currentBet = store.bets[store.playerId] || 0;
       const totalBetAmount = currentBet + betAmount;
-      store.socket.emit('game_action', {
-        roomId: store.currentRoom,
-        actionType: 'playerAction',
-        actionData: { action: 'raise', amount: totalBetAmount }
-      });
+      sendTexasAction('playerAction', { action: 'raise', amount: totalBetAmount });
     }
   } else {
     // 玩家不能check的情况，执行 Call X 或 All-in
@@ -482,18 +461,10 @@ function handleSecondQuickButton() {
     const chips = ownPlayer.value?.gameMetadata?.chips || 0;
     if (callAmount >= chips) {
       // All-in
-      store.socket.emit('game_action', {
-        roomId: store.currentRoom,
-        actionType: 'playerAction',
-        actionData: { action: 'allin' }
-      });
+      sendTexasAction('playerAction', { action: 'allin' });
     } else {
       // Call
-      store.socket.emit('game_action', {
-        roomId: store.currentRoom,
-        actionType: 'playerAction',
-        actionData: { action: 'call' }
-      });
+      sendTexasAction('playerAction', { action: 'call' });
     }
   }
 }
@@ -504,18 +475,10 @@ function handleThirdQuickButton() {
   
   if (canCheck.value) {
     // Check
-    store.socket.emit('game_action', {
-      roomId: store.currentRoom,
-      actionType: 'playerAction',
-      actionData: { action: 'check' }
-    });
+    sendTexasAction('playerAction', { action: 'check' });
   } else {
     // Fold
-    store.socket.emit('game_action', {
-      roomId: store.currentRoom,
-      actionType: 'playerAction',
-      actionData: { action: 'fold' }
-    });
+    sendTexasAction('playerAction', { action: 'fold' });
   }
 }
 
@@ -532,21 +495,13 @@ function onTake() {
       alert('Take金额不能超过奖池');
       return;
     }
-    store.socket.emit('game_action', {
-      roomId: store.currentRoom,
-      actionType: 'take',
-      actionData: { amount: val }
-    });
+    sendTexasAction('take', { amount: val });
     takeAmount.value = 0;
   }
 }
 function onTakeAll() {
   if (store.socket && store.currentRoom) {
-    store.socket.emit('game_action', {
-      roomId: store.currentRoom,
-      actionType: 'takeAll',
-      actionData: {}
-    });
+    sendTexasAction('takeAll');
   }
 }
 
@@ -845,4 +800,51 @@ function formatCards(cards: string[]): string {
   font-size: 16px;
   color: #666;
 }
+
+/* Unified tabletop room theme overrides */
+.room-container {
+  min-height: 100vh;
+  background: var(--app-bg);
+  color: var(--app-text);
+}
+
+.floating-header {
+  min-height: 72px;
+  padding: var(--app-space-3) var(--app-space-6);
+  background: rgba(255, 255, 255, 0.94);
+  border-bottom: 1px solid var(--app-border);
+  box-shadow: var(--app-shadow-sm);
+  backdrop-filter: blur(10px);
+}
+
+.game-main {
+  padding: var(--app-space-6);
+  padding-top: 92px;
+  background: transparent;
+}
+
+.game-info,
+.desktop-layout .left-panel,
+.desktop-layout .chat-container,
+.mobile-section,
+.take-controls,
+.control-buttons {
+  background: var(--app-panel);
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius);
+  box-shadow: var(--app-shadow-sm);
+  padding: var(--app-space-4);
+}
+
+@media (max-width: 768px) {
+  .floating-header {
+    padding: var(--app-space-3);
+  }
+
+  .game-main {
+    padding: var(--app-space-4);
+    padding-top: 120px;
+  }
+}
+
 </style>

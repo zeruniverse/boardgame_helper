@@ -261,4 +261,63 @@ onUnmounted(() => {
     max-height: 500px;
   }
 }
+
+/* Unified tabletop room theme overrides */
+.onu-werewolf-room {
+  min-height: 100vh;
+  height: auto;
+  background: var(--app-bg);
+  color: var(--app-text);
+}
+
+.room-header {
+  min-height: 72px;
+  height: auto;
+  padding: 0 var(--app-space-6);
+  background: var(--app-panel);
+  border-bottom: 1px solid var(--app-border);
+  box-shadow: var(--app-shadow-sm);
+  color: var(--app-text);
+}
+
+.room-info h2,
+.room-id {
+  color: var(--app-text);
+}
+
+.room-id,
+.connection-status {
+  border: 1px solid var(--app-border);
+  background: var(--app-panel-strong);
+}
+
+.game-layout {
+  gap: var(--app-space-5);
+  padding: var(--app-space-6);
+  background: transparent;
+}
+
+.left-panel,
+.center-panel,
+.right-panel {
+  background: var(--app-panel);
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius);
+  box-shadow: var(--app-shadow-sm);
+  padding: var(--app-space-4);
+}
+
+@media (max-width: 992px) {
+  .room-header,
+  .room-info,
+  .header-actions {
+    flex-wrap: wrap;
+    gap: var(--app-space-3);
+  }
+
+  .game-layout {
+    padding: var(--app-space-4);
+  }
+}
+
 </style>

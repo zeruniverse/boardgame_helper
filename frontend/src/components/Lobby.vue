@@ -1,10 +1,17 @@
 <template>
-  <el-container>
-    <el-header><h2>房间列表</h2></el-header>
-    <el-main>
+  <el-container class="lobby-container app-page">
+    <el-header class="lobby-header">
+      <div class="lobby-header__content">
+        <div>
+          <h2>房间列表</h2>
+          <p>统一大厅入口，创建或加入任意桌游房间</p>
+        </div>
+      </div>
+    </el-header>
+    <el-main class="lobby-main">
       <el-row :gutter="20">
         <el-col v-for="room in rooms" :key="room.id" :xs="24" :sm="24" :md="8">
-          <el-card>
+          <el-card class="room-card app-panel">
             <h3>{{ room.name }}</h3>
             <p>人数: {{ room.playerCount }} / {{ room.maxPlayers }}{{ room.locked ? ' 🔒' : '' }}</p>
             <p>类型: {{ room.displayName }}</p>
@@ -781,6 +788,8 @@ import { storeToRefs } from 'pinia';
 import { useRouter } from 'vue-router';
 import { ElMessage } from 'element-plus';
 import { SOCKET_URL } from '../config';
+import { GAME_ROUTES } from '../utils/gameMeta';
+import { ensureGameSession, rememberGameSession } from '../utils/gameSession';
 
 const store = useMainStore();
 const texasStore = useTexasHoldemStore();
@@ -821,26 +830,10 @@ const createRoomForm = ref({
 const createRoomStep = ref(0);
 const creatingRoom = ref(false);
 
-const gameStorageKeys: Record<string, { id: string; nickname: string; room?: string }> = {
-  'texas-holdem': { id: 'texas_playerId', nickname: 'texas_nickname', room: 'texas_currentRoom' },
-  'avalon': { id: 'avalon_userId', nickname: 'avalon_nickname' },
-  'mafia': { id: 'mafia_userId', nickname: 'mafia_nickname' },
-  'werewolf': { id: 'werewolf_userId', nickname: 'werewolf_nickname' },
-  'one-night-werewolf': { id: 'onu_werewolf_userId', nickname: 'onu_werewolf_nickname' },
-  'blood-on-the-clocktower': { id: 'botc_userId', nickname: 'botc_nickname' }
-};
+const gameRoutes = GAME_ROUTES;
 
 function ensureLocalPlayer(gameType: string, nickname: string, roomId?: string) {
-  const keys = gameStorageKeys[gameType];
-  if (!keys) return undefined;
-  let playerId = localStorage.getItem(keys.id);
-  if (!playerId) {
-    playerId = `player_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
-    localStorage.setItem(keys.id, playerId);
-  }
-  localStorage.setItem(keys.nickname, nickname);
-  if (keys.room && roomId) localStorage.setItem(keys.room, roomId);
-  return playerId;
+  return ensureGameSession(gameType, nickname, roomId).playerId;
 }
 
 // Bug L1+L2: 使用作用域变量存储处理器引用，便于在onUnmounted中清理
@@ -866,26 +859,12 @@ onMounted(() => {
   handleRoomJoined = (data: { room: any; player: any; isHost: boolean }) => {
     console.log('大厅收到room_joined事件', data);
     
+    rememberGameSession(data.room, data.player);
     ensureLocalPlayer(data.room.type, data.player?.nickname || data.player?.name || '', data.room.id);
-    if (data.player?.id) {
-      const keys = gameStorageKeys[data.room.type];
-      if (keys) localStorage.setItem(keys.id, data.player.id);
-    }
-    // 根据游戏类型跳转到对应房间页面
-    if (data.room.type === 'texas-holdem') {
-      router.push({ name: 'TexasHoldemRoom', params: { id: data.room.id } });
-    } else if (data.room.type === 'avalon') {
-      router.push({ name: 'AvalonRoom', params: { id: data.room.id } });
-    } else if (data.room.type === 'mafia') {
-      router.push({ name: 'MafiaRoom', params: { id: data.room.id } });
-    } else if (data.room.type === 'werewolf') {
-      router.push({ name: 'WerewolfRoom', params: { id: data.room.id } });
-    } else if (data.room.type === 'one-night-werewolf') {
-      router.push({ name: 'OnuWerewolfRoom', params: { id: data.room.id } });
-    } else if (data.room.type === 'blood-on-the-clocktower') {
-      router.push({ name: 'BOTCRoom', params: { id: data.room.id } });
+    const routeName = gameRoutes[data.room.type];
+    if (routeName) {
+      router.push({ name: routeName, params: { id: data.room.id } });
     } else {
-      // 其他游戏类型的处理
       console.warn('未知的游戏类型:', data.room.type);
     }
   };
@@ -917,15 +896,7 @@ function enter(roomId: string) {
 
   const playerId = ensureLocalPlayer(room.type, nickname, roomId);
   
-  const routeMap: Record<string, string> = {
-    'texas-holdem': 'TexasHoldemRoom',
-    'avalon': 'AvalonRoom',
-    'mafia': 'MafiaRoom',
-    'werewolf': 'WerewolfRoom',
-    'one-night-werewolf': 'OnuWerewolfRoom',
-    'blood-on-the-clocktower': 'BOTCRoom'
-  };
-  const routeName = routeMap[room.type];
+  const routeName = gameRoutes[room.type];
   if (!routeName) {
     ElMessage.warning('暂不支持该游戏类型');
     return;
@@ -1153,7 +1124,7 @@ function nextStep() {
   margin-top: 40px;
   text-align: center;
   padding: 20px 0;
-  border-top: 1px solid #ebeef5;
+  border-top: 1px solid var(--app-border);
 }
 
 .reset-server-btn {
@@ -1183,18 +1154,18 @@ function nextStep() {
 .help-content {
   padding: 20px;
   line-height: 1.6;
-  color: #333;
+  color: var(--app-text);
 }
 
 .help-content h3 {
-  color: #409eff;
-  border-bottom: 2px solid #409eff;
+  color: var(--app-primary);
+  border-bottom: 2px solid var(--app-primary);
   padding-bottom: 8px;
   margin-bottom: 16px;
 }
 
 .help-content h4 {
-  color: #e6a23c;
+  color: var(--app-warning);
   margin: 20px 0 12px 0;
   font-size: 18px;
 }
@@ -1202,9 +1173,9 @@ function nextStep() {
 .game-help-section {
   margin-bottom: 30px;
   padding: 20px;
-  background-color: #f8f9fa;
+  background: var(--app-panel-strong);
   border-radius: 8px;
-  border-left: 4px solid #409eff;
+  border-left: 4px solid var(--app-primary);
 }
 
 .game-help-section p {
@@ -1221,7 +1192,7 @@ function nextStep() {
 }
 
 .game-help-section strong {
-  color: #303133;
+  color: var(--app-text);
 }
 
 /* 滚动条样式 */
@@ -1230,17 +1201,17 @@ function nextStep() {
 }
 
 .help-content::-webkit-scrollbar-track {
-  background: #f1f1f1;
+  background: var(--app-bg-soft);
   border-radius: 4px;
 }
 
 .help-content::-webkit-scrollbar-thumb {
-  background: #c1c1c1;
+  background: var(--app-border);
   border-radius: 4px;
 }
 
 .help-content::-webkit-scrollbar-thumb:hover {
-  background: #a8a8a8;
+  background: var(--app-text-secondary);
 }
 
 .game-selection {
@@ -1257,8 +1228,8 @@ function nextStep() {
 }
 
 .game-card.selected {
-  border: 2px solid #409eff;
-  box-shadow: 0 4px 12px rgba(64, 158, 255, 0.3);
+  border: 2px solid var(--app-primary);
+  box-shadow: var(--app-shadow);
 }
 
 .game-info {
@@ -1268,13 +1239,13 @@ function nextStep() {
 
 .game-info h4 {
   margin: 0 0 10px 0;
-  color: #303133;
+  color: var(--app-text);
   font-size: 18px;
 }
 
 .game-info p {
   margin: 5px 0;
-  color: #606266;
+  color: var(--app-text-secondary);
   font-size: 14px;
 }
 
@@ -1284,15 +1255,15 @@ function nextStep() {
 
 .script-details {
   padding: 10px 15px;
-  background-color: #fcfcfc;
+  background: var(--app-panel-strong);
 }
 
 .script-details h5 {
   margin-top: 15px;
   margin-bottom: 10px;
-  color: #606266;
+  color: var(--app-text-secondary);
   font-size: 16px;
-  border-bottom: 1px solid #e4e7ed;
+  border-bottom: 1px solid var(--app-border);
   padding-bottom: 5px;
 }
 </style>

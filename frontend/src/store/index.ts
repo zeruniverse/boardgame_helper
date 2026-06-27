@@ -3,37 +3,13 @@ import { io, Socket } from 'socket.io-client';
 import { SOCKET_URL } from '../config';
 import { useTexasHoldemStore } from './texas_holdem';
 import router from '../router';
+import { GAME_ROUTES } from '../utils/gameMeta';
+import { rememberGameSession, clearAllGameSessions } from '../utils/gameSession';
 
 // 重新导出游戏特定的store
 export { useTexasHoldemStore } from './texas_holdem';
 export { useAvalonStore } from './avalon';
 export { useBOTCGameStore } from './botc';
-
-const gameRoutes: Record<string, string> = {
-  'texas-holdem': 'TexasHoldemRoom',
-  'avalon': 'AvalonRoom',
-  'mafia': 'MafiaRoom',
-  'werewolf': 'WerewolfRoom',
-  'one-night-werewolf': 'OnuWerewolfRoom',
-  'blood-on-the-clocktower': 'BOTCRoom'
-};
-
-const gameStorageKeys: Record<string, { id: string; nickname: string; room?: string }> = {
-  'texas-holdem': { id: 'texas_playerId', nickname: 'texas_nickname', room: 'texas_currentRoom' },
-  'avalon': { id: 'avalon_userId', nickname: 'avalon_nickname' },
-  'mafia': { id: 'mafia_userId', nickname: 'mafia_nickname' },
-  'werewolf': { id: 'werewolf_userId', nickname: 'werewolf_nickname' },
-  'one-night-werewolf': { id: 'onu_werewolf_userId', nickname: 'onu_werewolf_nickname' },
-  'blood-on-the-clocktower': { id: 'botc_userId', nickname: 'botc_nickname' }
-};
-
-function rememberGameSession(room: any, player: any) {
-  const keys = gameStorageKeys[room?.type];
-  if (!keys || !player) return;
-  if (player.id) localStorage.setItem(keys.id, player.id);
-  if (player.nickname || player.name) localStorage.setItem(keys.nickname, player.nickname || player.name);
-  if (keys.room && room?.id) localStorage.setItem(keys.room, room.id);
-}
 
 interface RoomInfo {
   id: string;
@@ -131,7 +107,7 @@ export const useMainStore = defineStore('main', {
       const roomJoinedHandler = (data: { room: any; player: any; playerId?: string; isHost: boolean }) => {
         rememberGameSession(data.room, data.player);
         // 根据房间类型导航到对应的游戏页面
-        const routeName = gameRoutes[data.room?.type];
+        const routeName = GAME_ROUTES[data.room?.type];
         if (data.room?.type === 'texas-holdem' && data.player) {
           const texasStore = useTexasHoldemStore();
           texasStore.setNicknameAndRoom(data.player.nickname, data.room.id, data.player.id);
@@ -152,11 +128,8 @@ export const useMainStore = defineStore('main', {
       const serverResetHandler = (data: { message: string }) => {
         alert(data.message);
         
-        // 清理本地存储
-        localStorage.removeItem('texas_currentRoom');
-        localStorage.removeItem('texas_nickname');
-        localStorage.removeItem('avalon_userId');
-        localStorage.removeItem('avalon_nickname');
+        // 清理所有游戏的本地会话，避免重置后进入旧房间
+        clearAllGameSessions();
         
         // 断开连接
         this.disconnectSocket();

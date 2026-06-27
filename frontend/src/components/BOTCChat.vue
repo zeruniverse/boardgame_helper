@@ -66,6 +66,7 @@
 
 <script lang="ts" setup>
 import { ref, nextTick, watch, computed } from 'vue';
+import { emitChatAction } from '../utils/gameSocket';
 
 interface Props {
   messages: any[]
@@ -279,14 +280,7 @@ const send = () => {
       message: message
     });
   } else {
-    // 发送普通消息 - 通过socket直接发送
-    if (props.socket) {
-      props.socket.emit('game_action', {
-        roomId: props.roomId,
-        actionType: 'chat',
-        actionData: { message, channel: currentChannel.value }
-      });
-    }
+    emitChatAction(props.socket, props.roomId, undefined, message, currentChannel.value);
   }
   
   input.value = '';
