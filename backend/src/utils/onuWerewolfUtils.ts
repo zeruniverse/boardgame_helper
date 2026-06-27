@@ -280,14 +280,9 @@ export function onuCalculateWinner(
     return OnuWerewolfTeam.Villager;
   }
 
-  // 如果没有狼人被处决，检查场上是否有狼人
-  if (aliveWerewolves.length === 0) {
-    // 场上没有狼人，村民胜利
-    return OnuWerewolfTeam.Villager;
-  } else {
-    // 场上有狼人且没有被处决，狼人胜利
-    return OnuWerewolfTeam.Werewolf;
-  }
+  // 只要有人被处决且没有真正的狼人被处决，村民阵营没有达成目标。
+  // 特别注意：如果最终场上无狼人，村民只有在无人被处决时才获胜。
+  return OnuWerewolfTeam.Werewolf;
 }
 
 /**

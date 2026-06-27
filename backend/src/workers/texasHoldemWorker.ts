@@ -1153,36 +1153,40 @@ class TexasHoldemWorker extends BaseGameWorker {
       }
     }
 
-    // 清除动作定时器
-    this.clearActionTimer();
-
     const currentBet = gs.bets[playerId] || 0;
     const toCall = gs.currentBet - currentBet;
+    const normalizedAction = typeof action === 'string' ? action.toLowerCase() : '';
 
-    switch (action.toLowerCase()) {
+    // 先完成合法性校验，再清除计时器；否则非法操作会把当前玩家计时器清掉，导致牌局卡死。
+    switch (normalizedAction) {
       case 'fold':
+        this.clearActionTimer();
         this.handleFold(playerId);
         break;
       case 'check':
         if (toCall > 0) {
           return;
         }
+        this.clearActionTimer();
         this.handleCheck(playerId);
         break;
       case 'call':
         if (toCall <= 0) {
           return;
         }
+        this.clearActionTimer();
         this.handleCall(playerId, toCall);
         break;
       case 'raise':
         if (!amount || amount <= gs.currentBet) {
           return;
         }
+        this.clearActionTimer();
         this.handleRaise(playerId, amount);
         break;
       case 'all-in':
       case 'allin':
+        this.clearActionTimer();
         this.handleAllIn(playerId);
         break;
       default:

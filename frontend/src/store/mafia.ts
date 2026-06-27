@@ -465,11 +465,11 @@ export const useMafiaStore = defineStore('mafia', {
 
     // 房间管理
     transferHost(newHostId: string) {
-      this.sendGameAction('transfer_host', { targetId: newHostId });
+      this.sendGameAction('transferHost', { targetId: newHostId });
     },
 
     kickPlayer(playerId: string) {
-      this.sendGameAction('kick_player', { playerId });
+      this.sendGameAction('kickPlayer', { targetId: playerId });
     },
 
     // 游戏准备

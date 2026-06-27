@@ -1453,10 +1453,11 @@ class MafiaWorker extends BaseGameWorker {
         gameState.status = GameStatus.SPEAK;
         gameState.operators = [speaker];
         gameState.players[death.playerId].alive = false;
+        gameState.alivePlayersOrder = this.getAlivePlayers();
         gameState.personWillDie = null;
         gameState.sniperTarget = null;
         gameState.personSaved = [];
-        gameState.speakingPlayerIndex = 0;
+        gameState.speakingPlayerIndex = Math.max(0, gameState.alivePlayersOrder.indexOf(speaker));
         gameState.speakedCount = 0;
         gameState.operateEndTime = new Date(Date.now() + this.config.speakTime * 1000);
 
@@ -1483,6 +1484,7 @@ class MafiaWorker extends BaseGameWorker {
       for (const death of deaths) {
         gameState.players[death.playerId].alive = false;
       }
+      gameState.alivePlayersOrder = this.getAlivePlayers();
       
       gameState.personWillDie = null;
       gameState.sniperTarget = null;
@@ -1490,7 +1492,7 @@ class MafiaWorker extends BaseGameWorker {
       gameState.status = GameStatus.SPEAK;
       
       // 从存活玩家中选出第一个发言者
-      const alivePlayers = this.getAlivePlayers();
+      const alivePlayers = gameState.alivePlayersOrder;
       const firstPlayer = alivePlayers[0] || '';
       gameState.operators = [firstPlayer];
       gameState.speakingPlayerIndex = 0;
@@ -1594,8 +1596,12 @@ class MafiaWorker extends BaseGameWorker {
     }
 
     gameState.status = GameStatus.NIGHT;
-    // 夜晚阶段只有特殊角色可以操作（杀手、警察、医生）
-    const alivePlayers = this.getAlivePlayers();
+    // 先标记死亡，再计算夜晚操作者；否则被放逐/自爆的特殊角色会残留在 operators 中。
+    gameState.players[playerId].alive = false;
+    gameState.alivePlayersOrder = this.getAlivePlayers();
+
+    // 夜晚阶段只有特殊角色可以操作（杀手、警察、医生、狙击手）
+    const alivePlayers = gameState.alivePlayersOrder;
     const aliveKillers = alivePlayers.filter(id => gameState.topSecret.killer.includes(id));
     const aliveCops = alivePlayers.filter(id => gameState.topSecret.cop.includes(id));
     const aliveDoctors = alivePlayers.filter(id => gameState.topSecret.doctor.includes(id));
@@ -1607,7 +1613,6 @@ class MafiaWorker extends BaseGameWorker {
     gameState.systemVote = [];
     gameState.speakedCount = 0;
     gameState.step += 1;
-    gameState.players[playerId].alive = false;
 
     this.setTimer(this.config.nightTime * 1000, () => this.handleTimeout());
 
@@ -1721,7 +1726,13 @@ class MafiaWorker extends BaseGameWorker {
     gameState.wantToSave = {};
     gameState.wantToSnipe = {};
     gameState.sniperTarget = null;
-    gameState.operators = this.getAlivePlayers();
+    gameState.alivePlayersOrder = this.getAlivePlayers();
+    const alivePlayers = gameState.alivePlayersOrder;
+    const aliveKillers = alivePlayers.filter(id => gameState.topSecret.killer.includes(id));
+    const aliveCops = alivePlayers.filter(id => gameState.topSecret.cop.includes(id));
+    const aliveDoctors = alivePlayers.filter(id => gameState.topSecret.doctor.includes(id));
+    const aliveSnipers = alivePlayers.filter(id => gameState.topSecret.sniper.includes(id));
+    gameState.operators = [...aliveKillers, ...aliveCops, ...aliveDoctors, ...aliveSnipers];
     gameState.operateEndTime = new Date(Date.now() + this.config.nightTime * 1000);
 
     this.setTimer(this.config.nightTime * 1000, () => this.handleTimeout());

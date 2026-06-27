@@ -54,6 +54,44 @@ export class BOTCWorker extends BaseGameWorker {
     return player?.name || player?.nickname || '未知玩家';
   }
 
+  private broadcastGameState(): void {
+    this.sendToRoom('game_update', this.getPublicGameState());
+  }
+
+  private promoteScarletWomanIfNeeded(): boolean {
+    const allPlayers = Array.from(this.gamePlayers.values());
+    const alivePlayers = allPlayers.filter(p => !p.isDead);
+    const aliveDemon = alivePlayers.find(p => p.role?.team === Team.DEMON);
+    if (aliveDemon) {
+      return false;
+    }
+
+    const scarletWoman = alivePlayers.find(p => p.role?.id === 'scarletwoman');
+    const aliveNonTravelerCount = alivePlayers.filter(p => p.role?.team !== Team.TRAVELER).length;
+    if (!scarletWoman || aliveNonTravelerCount < 5) {
+      return false;
+    }
+
+    const edition = getEditionById(this.gameConfig.edition);
+    const demonRoleId = edition?.roles.find(roleId => getRoleById(roleId)?.team === Team.DEMON);
+    const newDemonRole = demonRoleId ? getRoleById(demonRoleId) : null;
+    if (!newDemonRole) {
+      return false;
+    }
+
+    scarletWoman.role = { ...newDemonRole };
+    scarletWoman.reminders.push('成为恶魔');
+    this.sendToPlayer(scarletWoman.playerId, 'nightInfo', {
+      role: scarletWoman.role.id,
+      information: { message: '你成为了新的恶魔！' }
+    });
+    this.sendToRoom('gameMessage', {
+      message: '红颜成为了新的恶魔',
+      type: 'warning'
+    });
+    return true;
+  }
+
   async prepareRoom(room: Room, config: GameConfig): Promise<void> {
     this.room = room;
     this.gameConfig = {
@@ -157,6 +195,11 @@ export class BOTCWorker extends BaseGameWorker {
     // 房间锁定切换特殊处理（不需要游戏进行中）
     if (actionType === 'toggleRoomLock') {
       this.toggleRoomLock(playerId);
+      return;
+    }
+
+    if (actionType === 'storytellerAction') {
+      await this.handleStoryteller(playerId, actionData);
       return;
     }
 
@@ -356,6 +399,7 @@ export class BOTCWorker extends BaseGameWorker {
         roleName: getRoleName(this.gamePlayers.get(playerId)?.role?.id || '')
       }))
     });
+    this.broadcastGameState();
 
     // 发送说书人信息
     this.sendToPlayer(this.gameConfig.storytellerId, 'storytellerNightInfo', {
@@ -465,6 +509,7 @@ export class BOTCWorker extends BaseGameWorker {
       isFirstDay: this.gameState.isFirstDay,
       alivePlayers: Array.from(this.gamePlayers.values()).filter(p => !p.isDead).length
     });
+    this.broadcastGameState();
 
     // 设置白天计时器
     if (this.gameConfig.enableTimers) {
@@ -798,6 +843,7 @@ export class BOTCWorker extends BaseGameWorker {
           }
         : null
     });
+    this.broadcastGameState();
   }
 
   /**
@@ -839,9 +885,10 @@ export class BOTCWorker extends BaseGameWorker {
       role: player.role,
       executedBy: this.getPlayerName(executedBy)
     });
+    this.broadcastGameState();
 
     // 检查幕后黑手 - 如果恶魔被处决且幕后黑手存活，游戏继续一天（不立即结束）
-    if (player.role?.team === 'demon') {
+    if (player.role?.team === Team.DEMON) {
       const mastermind = Array.from(this.gamePlayers.values()).find(p => p.role?.id === 'mastermind' && !p.isDead);
       if (mastermind) {
         this.gameState.grimoire.mastermindTriggered = true;
@@ -852,6 +899,11 @@ export class BOTCWorker extends BaseGameWorker {
         // 幕后黑手生效时不检查游戏结束，继续推进游戏流程
         return;
       }
+    }
+
+    if (player.role?.team === Team.DEMON) {
+      this.promoteScarletWomanIfNeeded();
+      this.broadcastGameState();
     }
 
     // 检查游戏是否结束（传递幕后黑手状态）
@@ -941,9 +993,18 @@ export class BOTCWorker extends BaseGameWorker {
           await this.processNightActions();
         }
         break;
-      case 'killPlayer':
+      case 'killPlayer': {
         await this.killPlayer(data.playerId, data.cause || 'storyteller');
+        const gameEnd = checkGameEnd(
+          Array.from(this.gamePlayers.values()),
+          true,
+          !!this.gameState.grimoire.mastermindTriggered
+        );
+        if (gameEnd.isEnded) {
+          await this.endGame(gameEnd.winner!, gameEnd.reason!);
+        }
         break;
+      }
       case 'revivePlayer':
         await this.revivePlayer(data.playerId);
         break;
@@ -994,10 +1055,21 @@ export class BOTCWorker extends BaseGameWorker {
         if (!isDebuffed && target.role?.team === Team.DEMON) {
           // 目标是恶魔，立即击杀
           await this.killPlayer(targetId, 'slayer');
+          this.promoteScarletWomanIfNeeded();
+          this.broadcastGameState();
           this.sendToRoom('gameMessage', {
             message: `${this.getPlayerName(playerId)} 使用杀手能力击杀了 ${this.getPlayerName(targetId)}（恶魔）！`,
             type: 'success'
           });
+          const gameEnd = checkGameEnd(
+            Array.from(this.gamePlayers.values()),
+            true,
+            !!this.gameState.grimoire.mastermindTriggered
+          );
+          if (gameEnd.isEnded) {
+            await this.endGame(gameEnd.winner!, gameEnd.reason!);
+            return;
+          }
         } else {
           // 不是恶魔或已中毒/醉酒，击杀失败
           this.sendToRoom('gameMessage', {
@@ -1079,10 +1151,10 @@ export class BOTCWorker extends BaseGameWorker {
       summary: `处理了 ${processedActions.length} 个夜晚行动`
     });
 
-    // 检查游戏是否结束（夜晚只检查善良胜利条件，邪恶胜利在白天结束时检查）
+    // 夜晚结束也要检查“只剩2名存活玩家”的邪恶胜利条件。
     const gameEnd = checkGameEnd(
       Array.from(this.gamePlayers.values()),
-      false,
+      true,
       !!this.gameState.grimoire.mastermindTriggered
     );
     if (gameEnd.isEnded) {
@@ -1298,33 +1370,7 @@ export class BOTCWorker extends BaseGameWorker {
     const alivePlayers = allPlayers.filter(p => !p.isDead);
 
     // 检查红颜（Scarlet Woman）- 恶魔死亡时成为恶魔
-    const aliveDemon = alivePlayers.find(p => p.role?.team === Team.DEMON);
-    if (!aliveDemon) {
-      const scarletWoman = alivePlayers.find(p => p.role?.id === 'scarletwoman');
-      // 红颜触发条件：5+存活非旅行者玩家
-      const aliveNonTravelerCount = alivePlayers.filter(p => p.role?.team !== Team.TRAVELER).length;
-      if (scarletWoman && aliveNonTravelerCount >= 5) {
-        // 红颜成为新的恶魔 - 使用当前剧本的恶魔角色
-        const edition = getEditionById(this.gameConfig.edition);
-        const demonRoleId = edition?.roles.find(r => {
-          const role = getRoleById(r);
-          return role?.team === Team.DEMON;
-        });
-        const newDemonRole = demonRoleId ? getRoleById(demonRoleId) : null;
-        if (newDemonRole) {
-          scarletWoman.role = { ...newDemonRole };
-          scarletWoman.reminders.push('成为恶魔');
-          this.sendToPlayer(scarletWoman.playerId, 'nightInfo', {
-            role: scarletWoman.role.id,
-            information: { message: '你成为了新的恶魔！' }
-          });
-          this.sendToRoom('gameMessage', {
-            message: '红颜成为了新的恶魔',
-            type: 'warning'
-          });
-        }
-      }
-    }
+    this.promoteScarletWomanIfNeeded();
 
     // 处理士兵的免疫（士兵始终免疫恶魔攻击）
     const soldier = alivePlayers.find(p => p.role?.id === 'soldier');
@@ -1435,6 +1481,10 @@ export class BOTCWorker extends BaseGameWorker {
         cause,
         hasDeathAbility: true
       });
+      if (player.role?.team === Team.DEMON) {
+        this.promoteScarletWomanIfNeeded();
+      }
+      this.broadcastGameState();
 
       const allPlayers = Array.from(this.gamePlayers.values());
       const aliveEvil = allPlayers.filter(p => !p.isDead && isEvilPlayer(p) && p.playerId !== playerId);
@@ -1486,6 +1536,10 @@ export class BOTCWorker extends BaseGameWorker {
         cause,
         hasDeathAbility: true
       });
+      if (player.role?.team === Team.DEMON) {
+        this.promoteScarletWomanIfNeeded();
+      }
+      this.broadcastGameState();
 
       // 乌鸦饲养员可以选一名玩家学习其角色
       const allPlayers = Array.from(this.gamePlayers.values());
@@ -1532,6 +1586,10 @@ export class BOTCWorker extends BaseGameWorker {
       playerName: this.getPlayerName(playerId),
       cause
     });
+    if (player.role?.team === Team.DEMON) {
+      this.promoteScarletWomanIfNeeded();
+    }
+    this.broadcastGameState();
   }
 
   /**
@@ -1551,6 +1609,7 @@ export class BOTCWorker extends BaseGameWorker {
       playerId,
       playerName: this.getPlayerName(playerId)
     });
+    this.broadcastGameState();
   }
 
   /**

@@ -574,20 +574,22 @@ class OnuWerewolfWorker extends BaseGameWorker {
       clearTimeout(this.skillTimeout);
       this.skillTimeout = null;
     }
-    // 修复Bug 5.2: 使用配置的夜间时间平分每个技能时间，避免硬编码30秒
-    const perSkillTime = Math.max(10000, Math.floor((this.config.nightTime * 1000) / Math.max(this.skillQueue.length, 1)));
-    this.skillTimeout = setTimeout(() => {
-      try {
-        if (!player.skillUsed) {
-          this.handleSkipSkill(player.id);
+    // 使用配置的夜间时间平分每个技能时间；nightTime 为 0 时表示不限时，不应再给单个技能强制 10 秒超时。
+    if (this.config.nightTime > 0) {
+      const perSkillTime = Math.max(10000, Math.floor((this.config.nightTime * 1000) / Math.max(this.skillQueue.length, 1)));
+      this.skillTimeout = setTimeout(() => {
+        try {
+          if (!player.skillUsed) {
+            this.handleSkipSkill(player.id);
+          }
+        } catch (err) {
+          console.error('技能超时处理失败:', err);
+          // 强制推进队列防止卡住
+          this.currentSkillIndex++;
+          this.processNextSkill();
         }
-      } catch (err) {
-        console.error('技能超时处理失败:', err);
-        // 强制推进队列防止卡住
-        this.currentSkillIndex++;
-        this.processNextSkill();
-      }
-    }, perSkillTime);
+      }, perSkillTime);
+    }
   }
 
   private async handleUseSkill(playerId: string, actionData: any): Promise<void> {

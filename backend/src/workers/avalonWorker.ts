@@ -1081,6 +1081,8 @@ class AvalonWorker extends BaseGameWorker {
           visions: secret.visions,
           playerId
         });
+        // 前端实际依赖 secret_update/game_state_sync 中的 secret；仅发送 role_assigned 会导致玩家视角一直是游客。
+        this.sendToPlayer(playerId, 'secret_update', secret);
       }
     }
   }
@@ -1181,6 +1183,8 @@ class AvalonWorker extends BaseGameWorker {
   }
 
   private sendGameMessage(message: string): void {
+    // 很多流程节点直接修改 state 后只发送消息；同步一次完整公开状态，避免前端停留在旧阶段。
+    this.sendToRoom('game_update', this.getGameInfo());
     this.sendToRoom('game_message', {
       message,
       timestamp: Date.now()

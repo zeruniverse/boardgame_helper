@@ -138,10 +138,14 @@ function updateOperators(gameState: WerewolfGameState): void {
       break;
 
     case GameStatus.SHERIFF_ASSIGN:
-      // 只有警长可以指派
-      operators = players
-        .filter(p => p.isSheriff && p.isAlive)
-        .map(p => p.id);
+      // 警长死亡后仍需要由死亡警长传递/撕毁警徽，因此不能只筛选存活警长。
+      if (gameState.curDyingPlayer?.isSheriff) {
+        operators = [gameState.curDyingPlayer.id];
+      } else {
+        operators = players
+          .filter(p => p.isSheriff)
+          .map(p => p.id);
+      }
       break;
 
     case GameStatus.SHERIFF_ELECT:
@@ -350,10 +354,10 @@ export const WolfKillHandler: StateHandler = {
       voteAt: p.characterStatus.wantToKills?.[gameState.currentDay] || 0
     }));
 
-    // 检查是否所有狼人都投票给同一个有效目标（要求全员一致）
-    const nonZeroVotes = votes.filter(v => v.voteAt > 0);
-    const allWolvesAgree = nonZeroVotes.length > 0 && nonZeroVotes.every(v => v.voteAt === nonZeroVotes[0].voteAt);
-    const unanimousTarget = allWolvesAgree ? nonZeroVotes[0].voteAt : 0;
+    // 检查是否所有存活狼人都投票给同一个有效目标（要求全员一致；未投票/放弃不算一致）
+    const allWolvesVotedValidTarget = votes.length > 0 && votes.every(v => v.voteAt > 0);
+    const allWolvesAgree = allWolvesVotedValidTarget && votes.every(v => v.voteAt === votes[0].voteAt);
+    const unanimousTarget = allWolvesAgree ? votes[0].voteAt : 0;
 
     if (unanimousTarget > 0) {
       const targetPlayer = findPlayerByIndex(gameState.players, unanimousTarget);
@@ -1229,9 +1233,6 @@ export const SheriffAssignHandler: StateHandler = {
 
     const dyingSheriff = Object.values(gameState.players).find(p => p.isSheriff && !p.isAlive);
     if (dyingSheriff) {
-      // 清除死亡警长的警徽
-      dyingSheriff.isSheriff = false;
-
       context.sendToPlayer(dyingSheriff.id, 'system_message', {
         message: '你是警长，请选择一名玩家继承警徽。如果不选则警徽将被销毁。'
       });
@@ -1251,6 +1252,11 @@ export const SheriffAssignHandler: StateHandler = {
       clearTimeout(gameState.timer);
       gameState.timer = undefined;
     }
+
+    // 如果警长没有在限时内完成指派，清除死亡警长的警徽，避免警徽状态残留在死人身上。
+    Object.values(gameState.players)
+      .filter(p => p.isSheriff && !p.isAlive)
+      .forEach(p => { p.isSheriff = false; });
 
     // 找到新警长
     const newSheriff = Object.values(gameState.players).find(p => p.isSheriff && p.isAlive);
