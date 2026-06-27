@@ -386,13 +386,12 @@
           >
             投票给 {{ player.name }} (座位{{ player.seat }})
           </el-button>
-          <el-button
-            @click="vote(mySeat || 0)"
-            type="danger"
-            size="large"
-          >
-            投票给自己 (座位{{ mySeat }})
-          </el-button>
+          <el-alert
+            title="规则提示：不能投票给自己；若想无人被处决，需要让所有人协商分票，使每名玩家最多获得1票。"
+            type="info"
+            :closable="false"
+            show-icon
+          />
         </div>
       </div>
 

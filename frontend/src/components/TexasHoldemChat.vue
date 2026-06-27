@@ -3,7 +3,7 @@
     <el-card ref="chatContainer" class="chat-messages">
       <div v-for="(msg, idx) in messages" :key="idx"
            :style="{ color: getMessageColor(msg.type) }">
-        <span v-html="safeHtml(formatMessage(msg.message || msg))"></span>
+        <span v-html="safeHtml(formatMessage(getDisplayMessage(msg)))"></span>
       </div>
     </el-card>
     <div class="chat-input">
@@ -70,6 +70,17 @@ const getMessageColor = (type: string) => {
     default:
       return undefined; // 默认颜色
   }
+};
+
+const getDisplayMessage = (msg: any): string => {
+  if (typeof msg === 'string') return msg;
+  if (!msg) return '';
+
+  if (msg.type === 'chat' && msg.sender && msg.message) {
+    return `${msg.sender}: ${msg.message}`;
+  }
+
+  return msg.message || '';
 };
 
 // HTML转义函数，防止XSS攻击
@@ -154,8 +165,7 @@ watch(
 // 使用game_action统一格式发送聊天消息
 function send() {
   if (canSend.value) {
-    const msg = `${props.nickname}: ${input.value}`;
-    emitChatAction(props.socket, props.roomId, undefined, msg);
+    emitChatAction(props.socket, props.roomId, undefined, input.value.trim());
     input.value = '';
   }
 }

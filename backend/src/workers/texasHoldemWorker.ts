@@ -4,7 +4,7 @@ import { Room } from '../models/Room';
 import { Player } from '../models/Player';
 import { createDeck, shuffleDeck } from '../utils/deck';
 import { evaluateHand } from '../utils/handEvaluator';
-import { normalizeChatText } from '../utils/chat';
+import { buildChatPayload, normalizeChatText } from '../utils/chat';
 
 if (!parentPort) {
   throw new Error('这个文件只能在Worker线程中运行');
@@ -1172,10 +1172,13 @@ class TexasHoldemWorker extends BaseGameWorker {
   }
 
   private handleChatMessage(playerId: string, data: any) {
+    const player = this.room.players.find(p => p.id === playerId);
+    if (!player) return;
+
     const message = normalizeChatText(data?.message);
     if (!message) return;
 
-    this.sendToRoom('chat_broadcast', { message });
+    this.sendToRoom('chat_broadcast', buildChatPayload(player, message, 'all', { type: 'chat' }));
   }
 
   private handleHeartbeat(playerId: string) {

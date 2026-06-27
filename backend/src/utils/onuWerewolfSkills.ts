@@ -408,6 +408,17 @@ export class OnuDoppelgangerSkill extends OnuBaseSkill {
     const copiedSkill = OnuSkillFactory.createSkill(targetRole, this.owner, this.players, this.centerCards);
     const hasFollowUpSkill = copiedSkill !== null && targetRole !== OnuWerewolfRole.Doppelganger;
 
+    const immediateFollowUpRoles = [
+      OnuWerewolfRole.Seer,
+      OnuWerewolfRole.Robber,
+      OnuWerewolfRole.Troublemaker,
+      OnuWerewolfRole.Drunk,
+      OnuWerewolfRole.Minion
+    ];
+    const followUpHint = hasFollowUpSkill
+      ? (immediateFollowUpRoles.includes(targetRole) ? '，请立即执行该角色的技能' : '，将在该角色的正常夜晚阶段执行技能')
+      : '';
+
     const result: OnuSkillResult = {
       success: true,
       vision: onuCreateVision([{ ...target, revealed: true }]),
@@ -415,7 +426,7 @@ export class OnuDoppelgangerSkill extends OnuBaseSkill {
         { playerId: this.owner.id, newRole: targetRole, type: 'actual' },
         { playerId: this.owner.id, newRole: targetRole, type: 'notional' }
       ],
-      message: `你复制了${target.name}的角色，现在你是${targetRoleName}${hasFollowUpSkill ? '，接下来将执行该角色的技能' : ''}`
+      message: `你复制了${target.name}的角色，现在你是${targetRoleName}${followUpHint}`
     };
 
     // 如果被复制的角色有技能且不是化身本身，需要保存后续技能数据

@@ -151,8 +151,9 @@ export function onuDistributeRoles(roles: OnuWerewolfRole[], playerCount: number
   const allRoles = random ? onuShuffle(roles) : [...roles];
   
   return {
-    centerCards: allRoles.slice(0, 3),
-    playerRoles: allRoles.slice(3, 3 + playerCount)
+    // 先给玩家发牌，再把剩余3张作为中心牌；random=false 时也保持和实体游戏一致的顺序语义。
+    playerRoles: allRoles.slice(0, playerCount),
+    centerCards: allRoles.slice(playerCount, playerCount + 3)
   };
 }
 

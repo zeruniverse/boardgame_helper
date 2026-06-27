@@ -561,6 +561,42 @@ class OnuWerewolfWorker extends BaseGameWorker {
     });
   }
 
+  private shouldResolveDoppelgangerFollowUpImmediately(role: OnuWerewolfRole): boolean {
+    return [
+      OnuWerewolfRole.Seer,
+      OnuWerewolfRole.Robber,
+      OnuWerewolfRole.Troublemaker,
+      OnuWerewolfRole.Drunk,
+      OnuWerewolfRole.Minion
+    ].includes(role);
+  }
+
+  private findDoppelgangerFollowUpInsertIndex(priority: number): number {
+    let index = this.currentSkillIndex;
+    while (index < this.skillQueue.length && this.skillQueue[index].skill.getPriority() <= priority) {
+      index++;
+    }
+    return index;
+  }
+
+  private enqueueDoppelgangerFollowUp(player: OnuWerewolfPlayer, copiedRole: OnuWerewolfRole): void {
+    const followUpSkill = OnuSkillFactory.createSkill(
+      copiedRole,
+      player,
+      this.gameState.players,
+      this.gameState.centerCards
+    );
+    if (!followUpSkill) return;
+
+    const insertIndex = this.shouldResolveDoppelgangerFollowUpImmediately(copiedRole)
+      ? this.currentSkillIndex
+      : this.findDoppelgangerFollowUpInsertIndex(followUpSkill.getPriority());
+
+    this.skillQueue.splice(insertIndex, 0, { player, skill: followUpSkill });
+    player.skillUsed = false;
+    player.skillReady = true;
+  }
+
   private processNextSkill(): void {
     if (this.currentSkillIndex >= this.skillQueue.length) {
       // 所有技能处理完毕，如果 nightTime 为 0（不限时），自动结束夜间阶段
@@ -655,19 +691,10 @@ class OnuWerewolfWorker extends BaseGameWorker {
     // 进入下一个技能
     this.currentSkillIndex++;
 
-    // 处理Doppelganger的后续技能：如果复制了有夜间技能的角色，在队列中插入该技能
+    // 化身(Doppelganger)的复制技能需要按官方夜晚顺序处理：
+    // 预言家/强盗/捣蛋鬼/酒鬼/爪牙立即执行；狼人/石匠/失眠者等在对应阶段执行。
     if (result.skillData?.needsFollowUp) {
-      const copiedRole = result.skillData.copiedRole;
-      const followUpSkill = OnuSkillFactory.createSkill(
-        copiedRole,
-        player,
-        this.gameState.players,
-        this.gameState.centerCards
-      );
-      if (followUpSkill) {
-        this.skillQueue.splice(this.currentSkillIndex, 0, { player, skill: followUpSkill });
-        player.skillUsed = false; // 重置技能使用状态以便执行后续技能
-      }
+      this.enqueueDoppelgangerFollowUp(player, result.skillData.copiedRole);
     }
 
     // 修复Bug 5.1: 为后续技能显式重置超时定时器，确保processNextSkill设置新的定时器
@@ -808,6 +835,10 @@ class OnuWerewolfWorker extends BaseGameWorker {
     const target = Object.values(this.gameState.players).find(p => p.seat === targetSeat);
     if (!target) {
       throw new Error('投票目标不存在');
+    }
+
+    if (target.id === playerId) {
+      throw new Error('不能投票给自己；如果想无人被处决，请通过分票让每名玩家最多获得1票');
     }
 
     // 记录投票
