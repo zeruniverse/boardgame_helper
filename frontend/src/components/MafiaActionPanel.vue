@@ -246,7 +246,7 @@ import { useMafiaGameStore } from '../store/mafia'
 interface Player {
   id: string
   name: string
-  alive: boolean
+  alive?: boolean
   team?: 'RED' | 'BLUE'
   role?: 'KILLER' | 'COP' | 'DOCTOR' | 'SNIPER' | 'CIVILIAN'
 }

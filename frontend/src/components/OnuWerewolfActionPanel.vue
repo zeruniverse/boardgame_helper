@@ -477,7 +477,7 @@ const requiredRoles = [OnuWerewolfRole.Werewolf, OnuWerewolfRole.Villager];
 interface GamePlayer {
   id: string;
   name: string;
-  seat?: number;
+  seat: number;
   ready?: boolean;
 }
 
@@ -518,7 +518,7 @@ interface PlayerSecret {
 }
 
 const props = defineProps<{
-  gameState: GameState;
+  gameState: GameState | null;
   playerSecret: PlayerSecret | null;
   roomId: string;
   isHost: boolean;

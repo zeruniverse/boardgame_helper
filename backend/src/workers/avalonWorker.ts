@@ -2,6 +2,7 @@ import { parentPort, workerData } from 'worker_threads';
 import { BaseGameWorker } from './baseGameWorker';
 import { Room } from '../models/Room';
 import { Player } from '../models/Player';
+import { normalizeChatChannel, normalizeChatText } from '../utils/chat';
 
 if (!parentPort) {
   throw new Error('这个文件只能在Worker线程中运行');
@@ -13,7 +14,7 @@ enum GameStatus {
   CAPTAIN = 1,      // 队长选择发言顺序
   SPEAK = 2,        // 发言阶段
   PICK = 3,         // 队长选队
-  VOTE = 4,         // 投票阶段  
+  VOTE = 4,         // 投票阶段
   ACTION = 5,       // 行动阶段
   ASSASSINATE = 6,  // 刺杀阶段
   LADY = 7,         // 湖上夫人验人
@@ -119,9 +120,7 @@ const AVALON_TEAM_CONFIG: Record<number, [Role[], Role[]]> = {
   7: [[Role.MERLIN, Role.PERCIVAL, Role.GOOD, Role.GOOD], [Role.MORGANA, Role.ASSASSIN, Role.OBERON]],
   8: [[Role.MERLIN, Role.PERCIVAL, Role.GOOD, Role.GOOD, Role.GOOD], [Role.MORGANA, Role.ASSASSIN, Role.BAD]],
   9: [[Role.MERLIN, Role.PERCIVAL, Role.GOOD, Role.GOOD, Role.GOOD, Role.GOOD], [Role.MORGANA, Role.ASSASSIN, Role.MORDRED]],
-  10: [[Role.MERLIN, Role.PERCIVAL, Role.GOOD, Role.GOOD, Role.GOOD, Role.GOOD], [Role.MORGANA, Role.ASSASSIN, Role.MORDRED, Role.OBERON]],
-  11: [[Role.MERLIN, Role.PERCIVAL, Role.GOOD, Role.GOOD, Role.GOOD, Role.GOOD, Role.GOOD], [Role.MORGANA, Role.ASSASSIN, Role.MORDRED, Role.OBERON]],
-  12: [[Role.MERLIN, Role.PERCIVAL, Role.GOOD, Role.GOOD, Role.GOOD, Role.GOOD, Role.GOOD, Role.GOOD], [Role.MORGANA, Role.ASSASSIN, Role.MORDRED, Role.OBERON]]
+  10: [[Role.MERLIN, Role.PERCIVAL, Role.GOOD, Role.GOOD, Role.GOOD, Role.GOOD], [Role.MORGANA, Role.ASSASSIN, Role.MORDRED, Role.OBERON]]
 };
 
 // 湖上夫人模式的角色配置（湖上夫人机制不改变角色配置，与标准配置一致）
@@ -131,9 +130,7 @@ const AVALON_LADY_TEAM_CONFIG: Record<number, [Role[], Role[]]> = {
   7: [[Role.MERLIN, Role.PERCIVAL, Role.GOOD, Role.GOOD], [Role.MORGANA, Role.ASSASSIN, Role.OBERON]],
   8: [[Role.MERLIN, Role.PERCIVAL, Role.GOOD, Role.GOOD, Role.GOOD], [Role.MORGANA, Role.ASSASSIN, Role.BAD]],
   9: [[Role.MERLIN, Role.PERCIVAL, Role.GOOD, Role.GOOD, Role.GOOD, Role.GOOD], [Role.MORGANA, Role.ASSASSIN, Role.MORDRED]],
-  10: [[Role.MERLIN, Role.PERCIVAL, Role.GOOD, Role.GOOD, Role.GOOD, Role.GOOD], [Role.MORGANA, Role.ASSASSIN, Role.MORDRED, Role.OBERON]],
-  11: [[Role.MERLIN, Role.PERCIVAL, Role.GOOD, Role.GOOD, Role.GOOD, Role.GOOD, Role.GOOD], [Role.MORGANA, Role.ASSASSIN, Role.MORDRED, Role.OBERON]],
-  12: [[Role.MERLIN, Role.PERCIVAL, Role.GOOD, Role.GOOD, Role.GOOD, Role.GOOD, Role.GOOD, Role.GOOD], [Role.MORGANA, Role.ASSASSIN, Role.MORDRED, Role.OBERON]]
+  10: [[Role.MERLIN, Role.PERCIVAL, Role.GOOD, Role.GOOD, Role.GOOD, Role.GOOD], [Role.MORGANA, Role.ASSASSIN, Role.MORDRED, Role.OBERON]]
 };
 
 // 任务人数配置 [任务参与人数, 失败所需人数, 实际结果]
@@ -143,15 +140,13 @@ const MISSIONS_CONFIG: Record<number, number[][]> = {
   7: [[2, 1, -1], [3, 1, -1], [3, 1, -1], [4, 2, -1], [4, 1, -1]],
   8: [[3, 1, -1], [4, 1, -1], [4, 1, -1], [5, 2, -1], [5, 1, -1]],
   9: [[3, 1, -1], [4, 1, -1], [4, 1, -1], [5, 2, -1], [5, 1, -1]],
-  10: [[3, 1, -1], [4, 1, -1], [4, 1, -1], [5, 2, -1], [5, 1, -1]],
-  11: [[3, 1, -1], [4, 1, -1], [5, 1, -1], [6, 2, -1], [6, 1, -1]],
-  12: [[3, 1, -1], [4, 1, -1], [5, 1, -1], [6, 2, -1], [6, 1, -1]]
+  10: [[3, 1, -1], [4, 1, -1], [4, 1, -1], [5, 2, -1], [5, 1, -1]]
 };
 
 // 角色中文名映射
 const ROLE_NAMES: Record<Role, string> = {
   [Role.MERLIN]: '梅林',
-  [Role.PERCIVAL]: '派西维尔', 
+  [Role.PERCIVAL]: '派西维尔',
   [Role.GOOD]: '忠臣',
   [Role.MORGANA]: '莫甘娜',
   [Role.ASSASSIN]: '刺客',
@@ -201,7 +196,7 @@ class AvalonWorker extends BaseGameWorker {
     this.room = room;
     this.config = {
       speakTime: config.speakTime || 60,
-      actionTime: config.actionTime || 60, 
+      actionTime: config.actionTime || 60,
       speakRound: config.speakRound || 1,
       lakeLady: config.lakeLady || false
     };
@@ -215,7 +210,7 @@ class AvalonWorker extends BaseGameWorker {
     });
 
     this.sendToRoom('room_update', room);
-    this.sendToRoom('chat_broadcast', { 
+    this.sendToRoom('chat_broadcast', {
       message: '阿瓦隆房间已准备就绪，请点击准备开始游戏',
       type: 'system'
     });
@@ -228,8 +223,8 @@ class AvalonWorker extends BaseGameWorker {
       speakRound: config.speakRound || this.config.speakRound,
       lakeLady: config.lakeLady !== undefined ? config.lakeLady : this.config.lakeLady
     };
-    
-    this.sendToRoom('chat_broadcast', { 
+
+    this.sendToRoom('chat_broadcast', {
       message: '房间配置已更新',
       type: 'system'
     });
@@ -243,12 +238,12 @@ class AvalonWorker extends BaseGameWorker {
     // 如果房间没有房主，将新加入的玩家设为房主
     if (!this.room.hostId) {
       this.room.hostId = roomPlayer.id;
-      this.sendToRoom('chat_broadcast', { 
-        message: `${roomPlayer.nickname} 成为房主并加入了房间`, 
-        type: 'system' 
+      this.sendToRoom('chat_broadcast', {
+        message: `${roomPlayer.nickname} 成为房主并加入了房间`,
+        type: 'system'
       });
     } else {
-      this.sendToRoom('chat_broadcast', { 
+      this.sendToRoom('chat_broadcast', {
         message: `${roomPlayer.nickname} 加入了房间`,
         type: 'system'
       });
@@ -265,17 +260,17 @@ class AvalonWorker extends BaseGameWorker {
       // 如果房间没有房主，将重连的玩家设为房主
       if (!this.room.hostId) {
         this.room.hostId = player.id;
-        this.sendToRoom('chat_broadcast', { 
-          message: `${player.nickname} 重新连接并成为房主`, 
-          type: 'system' 
+        this.sendToRoom('chat_broadcast', {
+          message: `${player.nickname} 重新连接并成为房主`,
+          type: 'system'
         });
       } else {
-        this.sendToRoom('chat_broadcast', { 
+        this.sendToRoom('chat_broadcast', {
           message: `${player.nickname} 重新连接`,
           type: 'system'
         });
       }
-      
+
       // 同步游戏状态
       this.syncGameStateToPlayer(player.socketId, playerId);
     }
@@ -284,7 +279,7 @@ class AvalonWorker extends BaseGameWorker {
   async playerOffline(playerId: string): Promise<void> {
     const player = this.room.players.find(p => p.id === playerId);
     if (player) {
-      this.sendToRoom('chat_broadcast', { 
+      this.sendToRoom('chat_broadcast', {
         message: `${player.nickname} 断开连接`,
         type: 'system'
       });
@@ -334,6 +329,7 @@ class AvalonWorker extends BaseGameWorker {
           this.handleLadyInspect(playerId, actionData.targetId);
           break;
         case 'chat':
+        case 'chat_message':
           this.handleChatMessage(playerId, actionData);
           break;
         case 'restartGame':
@@ -362,17 +358,17 @@ class AvalonWorker extends BaseGameWorker {
 
     // 从房间中移除玩家
     this.room.players = this.room.players.filter(p => p.id !== targetId);
-    
+
     // 如果是房主被踢出，重新分配房主
     if (this.room.hostId === targetId) {
       this.reassignHost();
     }
 
-    this.sendToRoom('chat_broadcast', { 
+    this.sendToRoom('chat_broadcast', {
       message: `${targetPlayer.nickname} 被踢出房间`,
       type: 'system'
     });
-    
+
     this.sendToRoom('room_update', this.room);
     return { kicked: true };
   }
@@ -410,7 +406,7 @@ class AvalonWorker extends BaseGameWorker {
   private syncGameStateToPlayer(socketId: string, playerId: string): void {
     const gameInfo = this.getGameInfo();
     const secret = this.getSecretForPlayer(playerId);
-    
+
     parentPort!.postMessage({
       taskId: 'emit',
       success: true,
@@ -463,15 +459,15 @@ class AvalonWorker extends BaseGameWorker {
   // 获取玩家的秘密信息
   private getSecretForPlayer(playerId: string): any {
     const state = this.gameState as AvalonGameState;
-    
+
     // 湖上夫人视野
     const ladyVision = this.getLadyVision(playerId);
-    
+
     // 红方成员
     if (state.topSecret.red[playerId]) {
       const role = state.topSecret.red[playerId];
       let visions: string[] = [];
-      
+
       if (role === Role.OBERON) {
         // 奥伯伦只能看到自己
         visions = [playerId];
@@ -479,7 +475,7 @@ class AvalonWorker extends BaseGameWorker {
         // 其他红方成员可以看到除奥伯伦外的所有红方
         visions = this.getRedVisions();
       }
-      
+
       return {
         playerId,
         team: Team.RED,
@@ -540,12 +536,12 @@ class AvalonWorker extends BaseGameWorker {
     const player = this.room.players.find(p => p.id === playerId);
     if (player && !player.gameMetadata.ready) {
       player.gameMetadata.ready = true;
-      
+
       this.sendToRoom('chat_broadcast', {
         message: `${player.nickname} 已准备`,
         type: 'system'
       });
-      
+
       this.sendToRoom('room_update', this.room);
       this.checkAutoStart();
     }
@@ -555,19 +551,19 @@ class AvalonWorker extends BaseGameWorker {
     const player = this.room.players.find(p => p.id === playerId);
     if (player && player.gameMetadata.ready) {
       player.gameMetadata.ready = false;
-      
+
       this.sendToRoom('chat_broadcast', {
         message: `${player.nickname} 取消准备`,
         type: 'system'
       });
-      
+
       this.sendToRoom('room_update', this.room);
     }
   }
 
   private handleStartGame(playerId: string): void {
     if (playerId !== this.room.hostId) return;
-    
+
     const readyPlayers = this.room.players.filter(p => p.gameMetadata.ready);
     if (readyPlayers.length < 5 || readyPlayers.length > 10) {
       this.sendToPlayer(playerId, 'game_error', {
@@ -584,7 +580,7 @@ class AvalonWorker extends BaseGameWorker {
     if (state.status !== GameStatus.CAPTAIN || !state.operators.includes(playerId)) return;
 
     const nextSpeaker = speakFirst ? playerId : this.getNextPlayer(playerId);
-    const message = speakFirst 
+    const message = speakFirst
       ? `队长${this.getPlayerName(playerId)}选择了[首先发言]`
       : `队长${this.getPlayerName(playerId)}选择了[最后发言]`;
 
@@ -665,7 +661,7 @@ class AvalonWorker extends BaseGameWorker {
     });
 
     this.setTimer(this.config.actionTime);
-    
+
     const teamNames = team.map(id => this.getPlayerName(id)).join(', ');
     this.sendGameMessage(`队长${this.getPlayerName(playerId)}提名队伍: ${teamNames}，请所有玩家投票`);
   }
@@ -783,7 +779,7 @@ class AvalonWorker extends BaseGameWorker {
   private handleApproveAssassination(playerId: string, agree: boolean): void {
     const state = this.gameState as AvalonGameState;
     const info = state.assassinateInfo;
-    
+
     if (!info.approvers.includes(playerId) || state.status === GameStatus.OVER) {
       return;
     }
@@ -839,16 +835,17 @@ class AvalonWorker extends BaseGameWorker {
       return;
     }
 
-    // 检查目标是否有效（不能是自己、不能验已经被验过的人、不能验当前队长）
-    if (targetId === playerId || state.ladys.includes(targetId) || targetId === state.captain) {
+    // 官方湖上夫人只限制不能查自己、不能查曾经持有过湖上夫人标记的玩家。
+    if (targetId === playerId || !state.players[targetId] || state.ladys.includes(targetId)) {
       this.sendToPlayer(playerId, 'game_error', {
-        message: '无效的验人目标（不能查验自己、已查验过的玩家或当前队长）'
+        message: '无效的验人目标（不能查验自己或已持有过湖上夫人标记的玩家）'
       });
       return;
     }
 
-    // 记录验人
+    // 记录验人并传递湖上夫人。
     state.ladyLog.push([playerId, targetId]);
+    state.ladys.push(targetId);
 
     // 发送验人结果（只给验人者）
     const isBlue = state.topSecret.blue[targetId] !== undefined;
@@ -858,40 +855,40 @@ class AvalonWorker extends BaseGameWorker {
       team
     });
 
-    // 继续游戏流程
-    if (state.mission < 5) {
-      // 不是最后一轮，传递湖上夫人
-      state.ladys.push(targetId);
-    }
+    const inspectMessage = `湖上夫人${this.getPlayerName(playerId)}查看了${this.getPlayerName(targetId)}的身份`;
 
-    // 返回队长选择阶段，轮换队长
+    // 湖上夫人发生在第2/3/4个任务结束后；查验完成后才进入下一轮任务。
+    state.mission += 1;
     state.captain = this.getNextPlayer(state.captain);
-    this.updateGameState({
-      status: GameStatus.CAPTAIN,
-      operators: [state.captain],
-      operateEndTime: new Date(Date.now() + this.config.actionTime * 1000),
-      step: state.step + 1
-    });
-
-    this.setTimer(this.config.actionTime);
-    this.sendGameMessage(`湖上夫人${this.getPlayerName(playerId)}查看了${this.getPlayerName(targetId)}的身份，请队长${this.getPlayerName(state.captain)}操作`);
+    this.startNewRound();
+    this.sendGameMessage(`${inspectMessage}，请队长${this.getPlayerName(state.captain)}操作`);
   }
 
   private handleChatMessage(playerId: string, data: any): void {
     const player = this.room.players.find(p => p.id === playerId);
     if (!player) return;
 
+    const state = this.gameState as AvalonGameState;
+    const message = normalizeChatText(data?.message);
+    if (!message) return;
+
+    const channel = normalizeChatChannel(data?.channel, ['all', 'evil']);
     const messagePayload = {
       playerId,
       playerName: player.nickname,
-      message: data.message,
-      channel: data.channel || 'all',
+      message,
+      channel,
       timestamp: Date.now()
     };
 
-    if (data.channel === 'evil') {
+    if (channel === 'evil') {
+      const senderRole = state.topSecret.red[playerId];
+      if (!senderRole || senderRole === Role.OBERON) {
+        this.sendToPlayer(playerId, 'game_error', { message: '你不能使用邪恶方频道' });
+        return;
+      }
+
       // 邪恶方密聊只发送给红方成员（奥伯伦除外，他看不到其他坏人）
-      const state = this.gameState as AvalonGameState;
       const redPlayers = Object.keys(state.topSecret.red).filter(
         id => state.topSecret.red[id] !== Role.OBERON
       );
@@ -1021,7 +1018,7 @@ class AvalonWorker extends BaseGameWorker {
   private getRedVisions(): string[] {
     const state = this.gameState as AvalonGameState;
     const redPlayers = Object.keys(state.topSecret.red);
-    
+
     // 如果有奥伯伦，其他红方看不到奥伯伦
     const hasOberon = Object.values(state.topSecret.red).includes(Role.OBERON);
     if (hasOberon) {
@@ -1037,7 +1034,7 @@ class AvalonWorker extends BaseGameWorker {
   private checkAutoStart(): void {
     const readyPlayers = this.room.players.filter(p => p.gameMetadata.ready);
     const totalPlayers = this.room.players.length;
-    
+
     // 可以添加自动开始逻辑
     if (readyPlayers.length === totalPlayers && totalPlayers >= 5) {
       this.sendToRoom('chat_broadcast', {
@@ -1057,13 +1054,13 @@ class AvalonWorker extends BaseGameWorker {
 
     // 初始化游戏状态
     this.initializeGame(readyPlayers);
-    
+
     // 分配角色
     this.assignRoles();
-    
+
     // 开始第一轮
     this.startNewRound();
-    
+
     this.sendToRoom('game_start', {
       message: '游戏开始！请查看自己的角色信息',
       game: this.getGameInfo()
@@ -1089,13 +1086,28 @@ class AvalonWorker extends BaseGameWorker {
 
   private getNextPlayer(currentPlayerId: string): string {
     const state = this.gameState as AvalonGameState;
-    const playerIds = Object.keys(state.players).sort((a, b) => 
+    const playerIds = Object.keys(state.players).sort((a, b) =>
       state.players[a].index - state.players[b].index
     );
-    
+    if (playerIds.length === 0) return '';
+
     const currentIndex = playerIds.indexOf(currentPlayerId);
-    const nextIndex = (currentIndex + 1) % playerIds.length;
+    const nextIndex = currentIndex >= 0 ? (currentIndex + 1) % playerIds.length : 0;
     return playerIds[nextIndex];
+  }
+
+  private getPreviousPlayer(currentPlayerId: string): string {
+    const state = this.gameState as AvalonGameState;
+    const playerIds = Object.keys(state.players).sort((a, b) =>
+      state.players[a].index - state.players[b].index
+    );
+    if (playerIds.length === 0) return '';
+
+    const currentIndex = playerIds.indexOf(currentPlayerId);
+    const previousIndex = currentIndex >= 0
+      ? (currentIndex - 1 + playerIds.length) % playerIds.length
+      : playerIds.length - 1;
+    return playerIds[previousIndex];
   }
 
   private getPlayerName(playerId: string): string {
@@ -1117,7 +1129,7 @@ class AvalonWorker extends BaseGameWorker {
     if (this.actionTimer) {
       clearTimeout(this.actionTimer);
     }
-    
+
     this.actionTimer = setTimeout(() => {
       this.handleTimeout();
     }, seconds * 1000);
@@ -1125,7 +1137,7 @@ class AvalonWorker extends BaseGameWorker {
 
   private handleTimeout(): void {
     const state = this.gameState as AvalonGameState;
-    
+
     switch (state.status) {
       case GameStatus.CAPTAIN:
         // 队长超时，默认选择首先发言
@@ -1169,14 +1181,18 @@ class AvalonWorker extends BaseGameWorker {
         }
         break;
       case GameStatus.LADY:
-        // 湖上夫人超时，随机选择目标（排除自己、已查验过的人、当前队长）
+        // 湖上夫人超时，随机选择目标（排除自己和已持有过湖上夫人标记的人）
         const ladyPlayer = state.operators[0];
         const availableTargets = Object.keys(state.players).filter(
-          id => id !== ladyPlayer && !state.ladys.includes(id) && id !== state.captain
+          id => id !== ladyPlayer && !state.ladys.includes(id)
         );
         if (availableTargets.length > 0) {
           const randomTarget = availableTargets[Math.floor(Math.random() * availableTargets.length)];
           this.handleLadyInspect(ladyPlayer, randomTarget);
+        } else {
+          state.mission += 1;
+          state.captain = this.getNextPlayer(state.captain);
+          this.startNewRound();
         }
         break;
     }
@@ -1193,13 +1209,13 @@ class AvalonWorker extends BaseGameWorker {
 
   private initializeGame(players: Player[]): void {
     const state = this.gameState as AvalonGameState;
-    
+
     // 重置游戏状态
     state.status = GameStatus.CAPTAIN;
     state.mission = 1;
     state.step = 0;
     state.winner = undefined;
-    
+
     // 初始化玩家信息
     state.players = {};
     players.forEach((player, index) => {
@@ -1208,7 +1224,7 @@ class AvalonWorker extends BaseGameWorker {
         index: index + 1
       };
     });
-    
+
     // 初始化任务配置
     state.scoreBoard = JSON.parse(JSON.stringify(MISSIONS_CONFIG[players.length]));
     state.topSecret = { blue: {}, red: {} };
@@ -1217,69 +1233,60 @@ class AvalonWorker extends BaseGameWorker {
       approvers: [],
       reds: []
     };
-    
+
     // 随机选择第一个队长
     const playerIds = Object.keys(state.players);
     state.captain = playerIds[Math.floor(Math.random() * playerIds.length)];
-    
+
     // 初始化其他状态
     state.team = [];
     state.operators = [state.captain];
     state.speakedCount = 0;
     state.voteResult = { true: [], false: [], system: [] };
     state.actionFailed = 0;
-    state.ladys = [];
+    // 湖上夫人标记初始给第一任队长右手边玩家（按玩家顺序为前一位）。
+    state.ladys = this.isLakeLadyEnabled() ? [this.getPreviousPlayer(state.captain)] : [];
     state.ladyLog = [];
     state.consecutiveRejections = 0;
 
     // 设置操作时间
     state.operateEndTime = new Date(Date.now() + this.config.actionTime * 1000);
-    
-    // 如果启用湖上夫人，设置第一个湖上夫人
-    if (this.isLakeLadyEnabled()) {
-      const lastPlayerIndex = Math.max(...Object.values(state.players).map(p => p.index));
-      const firstLady = Object.keys(state.players).find(
-        id => state.players[id].index === lastPlayerIndex
-      );
-      if (firstLady) {
-        state.ladys.push(firstLady);
-      }
-    }
+
   }
 
   private assignRoles(): void {
     const state = this.gameState as AvalonGameState;
     const playerIds = Object.keys(state.players);
     const playerCount = playerIds.length;
-    
+
     // 获取角色配置
-    const roleConfig = this.isLakeLadyEnabled() 
+    const roleConfig = this.isLakeLadyEnabled()
       ? AVALON_LADY_TEAM_CONFIG[playerCount]
       : AVALON_TEAM_CONFIG[playerCount];
-    
+
     if (!roleConfig) {
       throw new Error(`不支持的玩家数量: ${playerCount}`);
     }
-    
+
     const [blueRoles, redRoles] = roleConfig;
     state.roles = [blueRoles, redRoles];
-    
+
     // 随机分配角色
     const shuffledPlayers = this.shuffleArray([...playerIds]);
     const blueCount = blueRoles.length;
-    
+
     // 分配蓝方角色
     const shuffledBlueRoles = this.shuffleArray([...blueRoles]);
     for (let i = 0; i < blueCount; i++) {
       state.topSecret.blue[shuffledPlayers[i]] = shuffledBlueRoles[i];
     }
-    
+
     // 分配红方角色
     const shuffledRedRoles = this.shuffleArray([...redRoles]);
     for (let i = 0; i < redRoles.length; i++) {
       state.topSecret.red[shuffledPlayers[blueCount + i]] = shuffledRedRoles[i];
     }
-    
+
     // 初始化刺杀信息
     state.assassinateInfo = {
       votes: { true: [], false: [] },
@@ -1290,7 +1297,7 @@ class AvalonWorker extends BaseGameWorker {
 
   private startNewRound(): void {
     const state = this.gameState as AvalonGameState;
-    
+
     state.status = GameStatus.CAPTAIN;
     state.operators = [state.captain];
     state.team = [];
@@ -1298,7 +1305,7 @@ class AvalonWorker extends BaseGameWorker {
     state.actionFailed = 0;
     // 注意：consecutiveRejections 不在此处重置，而是在 processVoteResult 中投票通过时重置
     state.operateEndTime = new Date(Date.now() + this.config.actionTime * 1000);
-    
+
     this.setTimer(this.config.actionTime);
     this.sendGameMessage(`第${state.mission}轮任务开始，请队长${this.getPlayerName(state.captain)}选择发言顺序`);
   }
@@ -1308,7 +1315,7 @@ class AvalonWorker extends BaseGameWorker {
     const agreeCount = state.voteResult.true.length;
     const totalPlayers = Object.keys(state.players).length;
     const majorityNeeded = Math.floor(totalPlayers / 2) + 1;
-    
+
     if (agreeCount >= majorityNeeded) {
       // 投票通过，进入行动阶段，重置连续否决计数
       state.consecutiveRejections = 0;
@@ -1340,14 +1347,14 @@ class AvalonWorker extends BaseGameWorker {
     const requiredFails = state.scoreBoard[state.mission - 1][1];
     const actualFails = state.actionFailed;
     const missionSuccess = actualFails < requiredFails;
-    
+
     // 更新任务结果
     state.scoreBoard[state.mission - 1][2] = missionSuccess ? 0 : actualFails;
-    
+
     // 检查游戏结束条件
     const successCount = state.scoreBoard.filter(mission => mission[2] === 0).length;
     const failCount = state.scoreBoard.filter(mission => mission[2] > 0).length;
-    
+
     if (successCount >= 3) {
       // 蓝方完成3个任务，进入刺杀阶段
       this.startAssassinatePhase();
@@ -1365,51 +1372,51 @@ class AvalonWorker extends BaseGameWorker {
     const assassin = Object.keys(state.topSecret.red).find(
       id => state.topSecret.red[id] === Role.ASSASSIN
     );
-    
+
     if (!assassin) {
       // 没有刺客，蓝方胜利
       this.endGame(Team.BLUE, '亚瑟方完成了3个任务');
       return;
     }
-    
+
     state.status = GameStatus.ASSASSINATE;
     state.operators = [assassin];
     state.operateEndTime = new Date(Date.now() + this.config.actionTime * 1000);
-    
+
     this.setTimer(this.config.actionTime);
     this.sendGameMessage(`刺客${this.getPlayerName(assassin)}准备刺杀梅林`);
   }
 
   private nextMission(): void {
     const state = this.gameState as AvalonGameState;
-    state.mission++;
-    
-    // 检查是否需要湖上夫人验人
-    if (this.shouldUseLakeLady()) {
+    const completedMission = state.mission;
+
+    // 湖上夫人应在第2、3、4个任务完成后触发，而不是在进入第2轮任务前触发。
+    if (this.shouldUseLakeLadyAfterMission(completedMission)) {
       this.startLadyPhase();
     } else {
+      state.mission += 1;
       // 更换队长并开始新任务
       state.captain = this.getNextPlayer(state.captain);
       this.startNewRound();
     }
   }
 
-  private shouldUseLakeLady(): boolean {
-    const state = this.gameState as AvalonGameState;
-    return this.isLakeLadyEnabled() && 
-           state.mission >= 2 && 
-           state.mission <= 4 && 
-           state.ladys.length > 0;
+  private shouldUseLakeLadyAfterMission(completedMission: number): boolean {
+    return this.isLakeLadyEnabled() &&
+           completedMission >= 2 &&
+           completedMission <= 4 &&
+           (this.gameState as AvalonGameState).ladys.length > 0;
   }
 
   private startLadyPhase(): void {
     const state = this.gameState as AvalonGameState;
     const currentLady = state.ladys[state.ladys.length - 1];
-    
+
     state.status = GameStatus.LADY;
     state.operators = [currentLady];
     state.operateEndTime = new Date(Date.now() + this.config.actionTime * 1000);
-    
+
     this.setTimer(this.config.actionTime);
     this.sendGameMessage(`湖上夫人${this.getPlayerName(currentLady)}查验玩家`);
   }
@@ -1419,7 +1426,7 @@ class AvalonWorker extends BaseGameWorker {
     const info = state.assassinateInfo;
     const agreeCount = info.votes.true.length;
     const totalCount = info.votes.true.length + info.votes.false.length;
-    
+
     if (agreeCount > totalCount / 2) {
       // 刺杀通过
       this.startAssassinatePhase();
@@ -1432,7 +1439,7 @@ class AvalonWorker extends BaseGameWorker {
 
   private autoApproveAssassination(): void {
     const state = this.gameState as AvalonGameState;
-    
+
     // 将所有未投票的玩家设为同意
     state.assassinateInfo.approvers.forEach(playerId => {
       this.handleApproveAssassination(playerId, true);
@@ -1441,31 +1448,31 @@ class AvalonWorker extends BaseGameWorker {
 
   private endGame(winner: Team, reason: string): void {
     const state = this.gameState as AvalonGameState;
-    
+
     state.status = GameStatus.OVER;
     state.winner = winner;
     state.operateEndTime = new Date(Date.now() + 10000); // 10秒后可以重新开始
-    
+
     this.sendGameMessage(`${reason}，${winner === Team.BLUE ? '亚瑟方' : '莫德雷德方'}胜利！`);
     this.sendGameOverInfo();
   }
 
   private sendGameOverInfo(): void {
     const state = this.gameState as AvalonGameState;
-    
+
     // 生成角色列表
     const blueTeam = Object.keys(state.topSecret.blue).map(id => ({
       id,
       name: this.getPlayerName(id),
       role: ROLE_NAMES[state.topSecret.blue[id]]
     }));
-    
+
     const redTeam = Object.keys(state.topSecret.red).map(id => ({
       id,
       name: this.getPlayerName(id),
       role: ROLE_NAMES[state.topSecret.red[id]]
     }));
-    
+
     this.sendToRoom('game_over', {
       winner: state.winner,
       blueTeam,
@@ -1563,4 +1570,4 @@ parentPort.on('message', async (task: GameTask) => {
       error: error instanceof Error ? error.message : String(error)
     });
   }
-}); 
+});

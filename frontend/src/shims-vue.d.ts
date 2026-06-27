@@ -4,6 +4,8 @@ declare module '*.vue' {
   export default component;
 }
 
+import 'vue';
+
 declare module 'vue' {
   export interface ComponentCustomProperties {
     $message: typeof import('element-plus')['ElMessage'];

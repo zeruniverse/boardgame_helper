@@ -388,9 +388,11 @@ function toggleRoomLock() {
 // 快捷操作计算属性和方法
 // 使用playerId比较，而不是nickname
 const isMyTurn = computed(() => store.currentTurn === store.playerId);
-const toCall = computed(() => store.currentBet - (store.bets[store.playerId] || 0));
+const toCall = computed(() => Math.max(store.currentBet - (store.bets[store.playerId] || 0), 0));
 const ownPlayer = computed(() => store.players.find((p: any) => p.id === store.playerId));
 const canCheck = computed(() => isMyTurn.value && toCall.value === 0);
+const minRaiseDelta = computed(() => Math.max(1, store.lastRaiseAmount || 0));
+const quickBetAmount = computed(() => Math.max(minRaiseDelta.value, Math.floor(store.pot / 2)));
 const canStartGame = computed(() => {
   // 修复：游戏开始前participants为空，应直接检查有多少玩家有筹码
   const playersWithChips = store.players.filter((p: any) => p.gameMetadata?.chips > 0);
@@ -420,13 +422,14 @@ const secondQuickButtonText = computed(() => {
   if (!isMyTurn.value || !isInGame.value) return '';
   
   if (canCheck.value) {
-    // 玩家可以check的情况，显示 Bet X
-    const betAmount = Math.floor(store.pot / 2);
-    // 检查筹码是否足够下注这个金额
-    if (betAmount >= (ownPlayer.value?.gameMetadata?.chips || 0)) {
+    // 玩家可以check的情况，显示 Bet/Raise X（不低于后端最小加注）
+    const betAmount = quickBetAmount.value;
+    const chips = ownPlayer.value?.gameMetadata?.chips || 0;
+    if (betAmount >= chips) {
       return 'All-in';
     }
-    return `Bet ${betAmount}`;
+    const label = store.currentBet > 0 ? 'Raise' : 'Bet';
+    return `${label} ${betAmount}`;
   } else {
     // 玩家不能check的情况，显示 Call X
     const callAmount = toCall.value;
@@ -453,8 +456,8 @@ function handleSecondQuickButton() {
   if (!store.socket || !store.currentRoom || !isMyTurn.value || !isInGame.value) return;
   
   if (canCheck.value) {
-    // 玩家可以check的情况，执行 Bet X 或 All-in
-    const betAmount = Math.floor(store.pot / 2);
+    // 玩家可以check的情况，执行 Bet/Raise X 或 All-in
+    const betAmount = quickBetAmount.value;
     const chips = ownPlayer.value?.gameMetadata?.chips || 0;
     if (betAmount >= chips) {
       // All-in
@@ -464,8 +467,7 @@ function handleSecondQuickButton() {
         actionData: { action: 'allin' }
       });
     } else {
-      // Bet X - 使用raise，amount为新总下注额
-      // 在check情况下currentBet为0，所以总下注额就是betAmount
+      // 使用raise，amount为新总下注额
       const currentBet = store.bets[store.playerId] || 0;
       const totalBetAmount = currentBet + betAmount;
       store.socket.emit('game_action', {

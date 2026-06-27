@@ -16,6 +16,8 @@ export const useTexasHoldemStore = defineStore('texas_holdem', {
     participants: [] as string[],
     round: 0,
     currentBet: 0,
+    lastRaiseAmount: 0,
+    minRaiseTo: 0,
     timeLeft: 0,
     timerId: null as ReturnType<typeof setInterval> | null,
     gameActive: false,
@@ -94,6 +96,8 @@ export const useTexasHoldemStore = defineStore('texas_holdem', {
         bets: Record<string, number>; 
         round: number; 
         currentBet: number; 
+        lastRaiseAmount?: number;
+        minRaiseTo?: number;
         currentTurn: number | string; 
         stage?: 'idle' | 'playing' | 'distribution' 
       }) => {
@@ -102,6 +106,8 @@ export const useTexasHoldemStore = defineStore('texas_holdem', {
         this.bets = data.bets;
         this.round = data.round;
         this.currentBet = data.currentBet;
+        this.lastRaiseAmount = data.lastRaiseAmount ?? this.lastRaiseAmount;
+        this.minRaiseTo = data.minRaiseTo ?? (this.currentBet + this.lastRaiseAmount);
         // 同步stage状态
         if (data.stage !== undefined) {
           this.stage = data.stage;
@@ -131,6 +137,8 @@ export const useTexasHoldemStore = defineStore('texas_holdem', {
         this.currentTurn = '';
         this.round = 0;
         this.currentBet = 0;
+        this.lastRaiseAmount = 0;
+        this.minRaiseTo = 0;
         this.gameActive = true;
         this.distributionActive = false;
         this.stage = 'playing';
@@ -228,6 +236,10 @@ export const useTexasHoldemStore = defineStore('texas_holdem', {
 
       // 监听加入房间成功事件，获取后端分配的playerId
       on('room_joined', (data: { room: any; player: any; isHost: boolean }) => {
+        if (data.room?.id) {
+          this.currentRoom = data.room.id;
+          localStorage.setItem('texas_currentRoom', data.room.id);
+        }
         if (data.player && data.player.id) {
           this.playerId = data.player.id;
           localStorage.setItem('texas_playerId', data.player.id);
@@ -266,40 +278,52 @@ export const useTexasHoldemStore = defineStore('texas_holdem', {
     joinRoom(roomId: string, nickname: string) {
       const mainStore = useMainStore();
       if (!mainStore.socket) return;
-      
+
+      const rememberedRoomId = localStorage.getItem('texas_currentRoom');
+      const rememberedPlayerId = rememberedRoomId === roomId
+        ? (this.playerId || localStorage.getItem('texas_playerId') || '')
+        : '';
+
       // 切换房间时重置所有状态
       this.messages = [];
       this.resetGameState();
-      
+
       this.currentRoom = roomId;
       this.nickname = nickname;
-      // playerId由后端在room_joined事件中分配，临时使用nickname
-      // 后端会用socket.id关联玩家
+      if (rememberedPlayerId) this.playerId = rememberedPlayerId;
       localStorage.setItem('texas_nickname', nickname);
       localStorage.setItem('texas_currentRoom', roomId);
-      
+
       // 设置新加入标记，避免Room组件重复reconnect
       sessionStorage.setItem('texas_newJoin', 'true');
-      
-      mainStore.socket.emit('join_room', { roomId, nickname });
+
+      mainStore.socket.emit('join_room', { roomId, nickname, playerId: rememberedPlayerId || undefined });
     },
-    
+
     // 通过房间名加入房间
     joinRoomByName(roomName: string, nickname: string) {
       const mainStore = useMainStore();
       if (!mainStore.socket) return;
-      
+
+      const rememberedRoomId = localStorage.getItem('texas_currentRoom');
+      const rememberedPlayerId = rememberedRoomId === roomName
+        ? (this.playerId || localStorage.getItem('texas_playerId') || '')
+        : '';
+
       // 切换房间时重置所有状态
       this.messages = [];
       this.resetGameState();
-      
+
+      this.currentRoom = roomName;
       this.nickname = nickname;
+      if (rememberedPlayerId) this.playerId = rememberedPlayerId;
       localStorage.setItem('texas_nickname', nickname);
-      
+      localStorage.setItem('texas_currentRoom', roomName);
+
       // 设置新加入标记，避免Room组件重复reconnect
       sessionStorage.setItem('texas_newJoin', 'true');
-      
-      mainStore.socket.emit('join_room_by_name', { roomName, nickname });
+
+      mainStore.socket.emit('join_room', { roomName, nickname, playerId: rememberedPlayerId || undefined });
     },
 
     // 启动计时器
@@ -335,6 +359,8 @@ export const useTexasHoldemStore = defineStore('texas_holdem', {
       this.participants = [];
       this.round = 0;
       this.currentBet = 0;
+      this.lastRaiseAmount = 0;
+      this.minRaiseTo = 0;
       this.timeLeft = 0;
       this.gameActive = false;
       this.autoStart = false;

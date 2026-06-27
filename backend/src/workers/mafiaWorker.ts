@@ -2,6 +2,7 @@ import { parentPort, workerData } from 'worker_threads';
 import { BaseGameWorker } from './baseGameWorker';
 import { Room } from '../models/Room';
 import { Player } from '../models/Player';
+import { normalizeChatText } from '../utils/chat';
 
 if (!parentPort) {
   throw new Error('这个文件只能在Worker线程中运行');
@@ -45,7 +46,7 @@ interface MafiaGameState {
     doctor: string[];
     sniper: string[];
     civilian: string[];
-    copVersion: [string, boolean][];   // 警察验人记录 [被验者ID, 是否是杀手]
+    copVersion: [string, boolean, number][];   // 警察验人记录 [被验者ID, 是否是杀手, 查验天数]
   };
   operators: string[];                // 当前操作者
   operateEndTime: Date;               // 操作截止时间
@@ -289,6 +290,7 @@ class MafiaWorker extends BaseGameWorker {
         case 'confess':
           this.handleConfess(playerId);
           break;
+        case 'chat':
         case 'chat_message':
           this.handleChatMessage(playerId, actionData);
           break;
@@ -465,10 +467,10 @@ class MafiaWorker extends BaseGameWorker {
         team: 'BLUE',
         teammates: gameState.topSecret.cop,
         actionLock: gameState.copActionLock,
-        inspectResults: gameState.topSecret.copVersion.map(([target, result]) => ({
+        inspectResults: gameState.topSecret.copVersion.map(([target, result, day]) => ({
           target,
           result: result ? 'RED' : 'BLUE',
-          day: gameState.day
+          day
         })),
         inspect: gameState.inspect
       };
@@ -742,9 +744,21 @@ class MafiaWorker extends BaseGameWorker {
     const gameState = this.gameState as MafiaGameState;
     
     // 检查游戏状态和玩家身份
-    if (gameState.status !== GameStatus.NIGHT || 
+    if (gameState.status !== GameStatus.NIGHT ||
+        !gameState.copActionLock ||
         !gameState.topSecret.cop.includes(playerId) ||
         !gameState.players[playerId]?.alive) {
+      return;
+    }
+
+    const target = gameState.players[suspectId];
+    if (!target || !target.alive) {
+      this.sendToPlayer(playerId, 'inspect_rejected', { message: '验人目标无效或已死亡' });
+      return;
+    }
+
+    if (playerId in gameState.inspect) {
+      this.sendToPlayer(playerId, 'inspect_pending', { message: '你已经选择过验人目标' });
       return;
     }
 
@@ -759,7 +773,7 @@ class MafiaWorker extends BaseGameWorker {
 
     // 执行验人（每个警察独立查验，无需达成一致）
     const result = gameState.topSecret.killer.includes(suspectId);
-    gameState.topSecret.copVersion.push([suspectId, result]);
+    gameState.topSecret.copVersion.push([suspectId, result, gameState.day]);
 
     const message = `经查证${this.getPlayerName(suspectId)}是${result ? '<span class="red text">坏人!</span>' : '<span class="blue text">好人!</span>'}`;
     this.sendToPlayer(playerId, 'inspect_result', { message });
@@ -787,8 +801,20 @@ class MafiaWorker extends BaseGameWorker {
 
     // 检查游戏状态和玩家身份
     if (gameState.status !== GameStatus.NIGHT ||
+        !gameState.doctorActionLock ||
         !gameState.topSecret.doctor.includes(playerId) ||
         !gameState.players[playerId]?.alive) {
+      return;
+    }
+
+    const target = gameState.players[targetId];
+    if (!target || !target.alive) {
+      this.sendToPlayer(playerId, 'save_rejected', { message: '救人目标无效或已死亡' });
+      return;
+    }
+
+    if (playerId in gameState.wantToSave) {
+      this.sendToPlayer(playerId, 'save_pending', { message: '你已经选择过救人目标' });
       return;
     }
 
@@ -849,8 +875,15 @@ class MafiaWorker extends BaseGameWorker {
 
     // 检查游戏状态和玩家身份
     if (gameState.status !== GameStatus.NIGHT ||
+        !gameState.sniperActionLock ||
         !gameState.topSecret.sniper.includes(playerId) ||
         !gameState.players[playerId]?.alive) {
+      return;
+    }
+
+    const target = gameState.players[targetId];
+    if (!target || !target.alive || targetId === playerId) {
+      this.sendToPlayer(playerId, 'snipe_rejected', { message: '狙击目标无效' });
       return;
     }
 
@@ -884,9 +917,21 @@ class MafiaWorker extends BaseGameWorker {
     const gameState = this.gameState as MafiaGameState;
     
     // 检查游戏状态和玩家身份
-    if (gameState.status !== GameStatus.NIGHT || 
+    if (gameState.status !== GameStatus.NIGHT ||
+        !gameState.killerActionLock ||
         !gameState.topSecret.killer.includes(playerId) ||
         !gameState.players[playerId]?.alive) {
+      return;
+    }
+
+    const target = gameState.players[targetId];
+    if (!target || !target.alive || gameState.topSecret.killer.includes(targetId)) {
+      this.sendToPlayer(playerId, 'kill_rejected', { message: '杀人目标无效' });
+      return;
+    }
+
+    if (playerId in gameState.wantToKill) {
+      this.sendToPlayer(playerId, 'kill_pending', { message: '你已经选择过杀人目标' });
       return;
     }
 
@@ -1154,11 +1199,12 @@ class MafiaWorker extends BaseGameWorker {
 
   private handleChatMessage(playerId: string, data: any): void {
     const player = this.room.players.find(p => p.id === playerId);
-    if (player && data.message) {
+    const message = normalizeChatText(data?.message);
+    if (player && message) {
       this.sendToRoom('chat_message', {
         playerId,
         playerName: player.nickname,
-        message: data.message,
+        message,
         timestamp: Date.now()
       });
     }
@@ -1241,10 +1287,10 @@ class MafiaWorker extends BaseGameWorker {
   }
 
   private getNextPlayer(currentPlayerId: string): string {
-    const gameState = this.gameState as MafiaGameState;
     const alivePlayers = this.getAlivePlayers();
+    if (alivePlayers.length === 0) return '';
     const currentIndex = alivePlayers.indexOf(currentPlayerId);
-    const nextIndex = (currentIndex + 1) % alivePlayers.length;
+    const nextIndex = currentIndex >= 0 ? (currentIndex + 1) % alivePlayers.length : 0;
     return alivePlayers[nextIndex];
   }
 
@@ -1287,17 +1333,6 @@ class MafiaWorker extends BaseGameWorker {
 
   private nightTimeout(): void {
     const gameState = this.gameState as MafiaGameState;
-    
-    // 处理警察验人结果 - 向每个警察分别发送各自的验人结果
-    const inspectRecords = gameState.inspect as Record<string, string>;
-    if (!gameState.copActionLock || Object.keys(inspectRecords).length > 0) {
-      // 给每个已完成查验的警察发送各自的验人结果
-      for (const [copId, suspectId] of Object.entries(inspectRecords)) {
-        const result = gameState.topSecret.killer.includes(suspectId);
-        const message = `经查证${this.getPlayerName(suspectId)}是${result ? '<span class="red text">坏人!</span>' : '<span class="blue text">好人!</span>'}`;
-        this.sendToPlayer(copId, 'inspect_result', { message });
-      }
-    }
     
     // 重置所有行动锁和状态
     gameState.killerActionLock = true;

@@ -4,6 +4,7 @@ import { Room } from '../models/Room';
 import { Player } from '../models/Player';
 import { createDeck, shuffleDeck } from '../utils/deck';
 import { evaluateHand } from '../utils/handEvaluator';
+import { normalizeChatText } from '../utils/chat';
 
 if (!parentPort) {
   throw new Error('这个文件只能在Worker线程中运行');
@@ -322,6 +323,7 @@ class TexasHoldemWorker extends BaseGameWorker {
           this.handlePlayerAction(playerId, actionData);
           break;
         case 'chat':
+        case 'chat_message':
           this.handleChatMessage(playerId, actionData);
           break;
         case 'heartbeat':
@@ -431,6 +433,29 @@ class TexasHoldemWorker extends BaseGameWorker {
     }
   }
 
+  private getCurrentTurnPlayerId(): string {
+    const gs = this.gameState as TexasHoldemGameState;
+    return gs.currentTurn >= 0 && gs.currentTurn < this.room.players.length
+      ? this.room.players[gs.currentTurn]?.id || ''
+      : '';
+  }
+
+  private buildPublicGameState() {
+    const gs = this.gameState as TexasHoldemGameState;
+    return {
+      communityCards: gs.communityCards,
+      pot: gs.pot,
+      bets: gs.bets,
+      currentTurn: this.getCurrentTurnPlayerId(),
+      dealerIndex: gs.dealerIndex,
+      round: gs.round,
+      currentBet: gs.currentBet,
+      lastRaiseAmount: gs.lastRaiseAmount,
+      minRaiseTo: gs.currentBet + gs.lastRaiseAmount,
+      stage: gs.stage
+    };
+  }
+
   // 私有方法 - 德州扑克特有逻辑
 
   private awardCurrentPotToPlayer(winner: Player): number {
@@ -477,7 +502,6 @@ class TexasHoldemWorker extends BaseGameWorker {
     }
 
     // 发送游戏状态（将currentTurn从索引转换为playerId）
-    const syncCurrentTurnPlayerId = gs.currentTurn >= 0 && gs.currentTurn < this.room.players.length ? this.room.players[gs.currentTurn]?.id || '' : '';
     parentPort!.postMessage({
       taskId: 'emit',
       success: true,
@@ -485,16 +509,7 @@ class TexasHoldemWorker extends BaseGameWorker {
         type: 'emit_to_socket',
         event: 'game_state',
         socketId,
-        data: {
-          communityCards: gs.communityCards,
-          pot: gs.pot,
-          bets: gs.bets,
-          currentTurn: syncCurrentTurnPlayerId,
-          dealerIndex: gs.dealerIndex,
-          round: gs.round,
-          currentBet: gs.currentBet,
-          stage: gs.stage
-        }
+        data: this.buildPublicGameState()
       }
     });
 
@@ -694,17 +709,7 @@ class TexasHoldemWorker extends BaseGameWorker {
     // 同步状态
     this.sendToRoom('room_update', this.room);
     this.sendToRoom('game_started', {});
-    const startGameTurnPlayerId = this.room.players[gs.currentTurn]?.id || '';
-    this.sendToRoom('game_state', {
-      communityCards: gs.communityCards,
-      pot: gs.pot,
-      bets: gs.bets,
-      currentTurn: startGameTurnPlayerId,
-      dealerIndex: gs.dealerIndex,
-      round: gs.round,
-      currentBet: gs.currentBet,
-      stage: gs.stage
-    });
+    this.sendToRoom('game_state', this.buildPublicGameState());
 
     // 请求第一个玩家行动
     this.sendToRoom('action_request', { playerId: nextPlayer.id, seconds: 30 });
@@ -912,17 +917,7 @@ class TexasHoldemWorker extends BaseGameWorker {
     }
 
     if (attempts >= participatingPlayers.length) {
-      const currentTurnPlayerId = gs.currentTurn >= 0 && gs.currentTurn < this.room.players.length ? this.room.players[gs.currentTurn]?.id || '' : '';
-      this.sendToRoom('game_state', {
-        communityCards: gs.communityCards,
-        pot: gs.pot,
-        bets: gs.bets,
-        currentTurn: currentTurnPlayerId,
-        dealerIndex: gs.dealerIndex,
-        round: gs.round,
-        currentBet: gs.currentBet,
-        stage: gs.stage
-      });
+      this.sendToRoom('game_state', this.buildPublicGameState());
       this.checkRoundEnd();
       return;
     }
@@ -936,17 +931,7 @@ class TexasHoldemWorker extends BaseGameWorker {
     gs.currentTurn = nextGlobalIdx;
 
     // 广播游戏状态更新并请求下一个玩家行动
-    const currentTurnPlayerId = this.room.players[gs.currentTurn]?.id || '';
-    this.sendToRoom('game_state', {
-      communityCards: gs.communityCards,
-      pot: gs.pot,
-      bets: gs.bets,
-      currentTurn: currentTurnPlayerId,
-      dealerIndex: gs.dealerIndex,
-      round: gs.round,
-      currentBet: gs.currentBet,
-      stage: gs.stage
-    });
+    this.sendToRoom('game_state', this.buildPublicGameState());
     this.sendToRoom('action_request', { playerId: this.room.players[gs.currentTurn].id, seconds: 30 });
 
     // 清除已有定时器并立即启动新的
@@ -976,17 +961,7 @@ class TexasHoldemWorker extends BaseGameWorker {
 
     // 同步最终的游戏状态（包括完整的公共牌）
     const gs = this.gameState as TexasHoldemGameState;
-    const gameOverTurnPlayerId = gs.currentTurn >= 0 && gs.currentTurn < this.room.players.length ? this.room.players[gs.currentTurn]?.id || '' : '';
-    this.sendToRoom('game_state', {
-      communityCards: gs.communityCards,
-      pot: gs.pot,
-      bets: gs.bets,
-      currentTurn: gameOverTurnPlayerId,
-      dealerIndex: gs.dealerIndex,
-      round: gs.round,
-      currentBet: gs.currentBet,
-      stage: gs.stage
-    });
+    this.sendToRoom('game_state', this.buildPublicGameState());
 
     if (!this.room.gameMetadata) {
       this.room.gameMetadata = {};
@@ -1197,7 +1172,9 @@ class TexasHoldemWorker extends BaseGameWorker {
   }
 
   private handleChatMessage(playerId: string, data: any) {
-    const { message } = data;
+    const message = normalizeChatText(data?.message);
+    if (!message) return;
+
     this.sendToRoom('chat_broadcast', { message });
   }
 
@@ -1334,17 +1311,7 @@ class TexasHoldemWorker extends BaseGameWorker {
 
     this.sendToRoom('chat_broadcast', { message: `[玩家${player.nickname} take ${takeAmt}]` });
     this.sendToRoom('room_update', this.room);
-    const takeTurnPlayerId = gs.currentTurn >= 0 && gs.currentTurn < this.room.players.length ? this.room.players[gs.currentTurn]?.id || '' : '';
-    this.sendToRoom('game_state', {
-      communityCards: gs.communityCards,
-      pot: gs.pot,
-      bets: gs.bets,
-      currentTurn: takeTurnPlayerId,
-      dealerIndex: gs.dealerIndex,
-      round: gs.round,
-      currentBet: gs.currentBet,
-      stage: gs.stage
-    });
+    this.sendToRoom('game_state', this.buildPublicGameState());
 
     if (gs.pot === 0) {
       this.handleGameOver();
@@ -1378,17 +1345,7 @@ class TexasHoldemWorker extends BaseGameWorker {
 
     this.sendToRoom('chat_broadcast', { message: `[玩家${player.nickname} take all ${takeAmt}]` });
     this.sendToRoom('room_update', this.room);
-    const takeAllTurnPlayerId = gs.currentTurn >= 0 && gs.currentTurn < this.room.players.length ? this.room.players[gs.currentTurn]?.id || '' : '';
-    this.sendToRoom('game_state', {
-      communityCards: gs.communityCards,
-      pot: gs.pot,
-      bets: gs.bets,
-      currentTurn: takeAllTurnPlayerId,
-      dealerIndex: gs.dealerIndex,
-      round: gs.round,
-      currentBet: gs.currentBet,
-      stage: gs.stage
-    });
+    this.sendToRoom('game_state', this.buildPublicGameState());
 
     this.handleGameOver();
   }
@@ -1694,17 +1651,7 @@ class TexasHoldemWorker extends BaseGameWorker {
     }
 
     // 广播游戏状态（将currentTurn从索引转换为playerId）
-    const currentTurnPlayerId = gs.currentTurn >= 0 && gs.currentTurn < this.room.players.length ? this.room.players[gs.currentTurn]?.id || '' : '';
-    this.sendToRoom('game_state', {
-      communityCards: gs.communityCards,
-      pot: gs.pot,
-      bets: gs.bets,
-      currentTurn: currentTurnPlayerId,
-      dealerIndex: gs.dealerIndex,
-      round: gs.round,
-      currentBet: gs.currentBet,
-      stage: gs.stage
-    });
+    this.sendToRoom('game_state', this.buildPublicGameState());
 
     this.clearActionTimer();
     this.actionDeadline = Date.now() + 30000;

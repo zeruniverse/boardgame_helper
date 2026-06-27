@@ -2,6 +2,7 @@ import { parentPort, workerData } from 'worker_threads';
 import { BaseGameWorker } from './baseGameWorker';
 import { Room } from '../models/Room';
 import { Player } from '../models/Player';
+import { normalizeChatText } from '../utils/chat';
 
 import {
   OnuWerewolfRole,
@@ -952,8 +953,8 @@ class OnuWerewolfWorker extends BaseGameWorker {
     const player = this.room.players.find(p => p.id === playerId);
     if (!player) return;
 
-    const message = actionData.message;
-    if (!message || typeof message !== 'string') return;
+    const message = normalizeChatText(actionData?.message);
+    if (!message) return;
 
     // 在投票阶段和游戏结束阶段允许聊天
     if (this.gameState.status === OnuWerewolfGameStatus.VOTING ||

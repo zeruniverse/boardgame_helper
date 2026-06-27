@@ -93,11 +93,15 @@ function serializeEventData(event: string, data: any): any {
   return data;
 }
 
-function mergePlayerFromWorker(existing: Player, worker?: Player): Player {
-  if (!worker) return existing;
+function mergePlayerFromWorker(existing: Player | undefined, worker: Player): Player {
+  if (!existing) return worker;
 
   return {
-    ...existing,
+    ...worker,
+    // socket/online/heartbeat are owned by the controller thread; worker room snapshots can be stale.
+    socketId: existing.socketId || worker.socketId,
+    online: existing.online,
+    lastHeartbeat: existing.lastHeartbeat || worker.lastHeartbeat,
     name: worker.name || worker.nickname || existing.name,
     nickname: worker.nickname || existing.nickname,
     gameMetadata: {
@@ -110,14 +114,15 @@ function mergePlayerFromWorker(existing: Player, worker?: Player): Player {
 function mergeRoomUpdateFromWorker(existingRoom: Room | undefined, workerRoom: Room): Room {
   if (!existingRoom) return workerRoom;
 
-  const workerPlayers = new Map((workerRoom.players || []).map(player => [player.id, player]));
+  const existingPlayers = new Map((existingRoom.players || []).map(player => [player.id, player]));
 
   return {
     ...existingRoom,
     ...workerRoom,
     private: existingRoom.private,
     cleanupTimer: existingRoom.cleanupTimer,
-    players: (existingRoom.players || []).map(player => mergePlayerFromWorker(player, workerPlayers.get(player.id)))
+    lastActiveTime: Math.max(existingRoom.lastActiveTime || 0, workerRoom.lastActiveTime || 0),
+    players: (workerRoom.players || []).map(player => mergePlayerFromWorker(existingPlayers.get(player.id), player))
   };
 }
 
@@ -695,7 +700,7 @@ export function roomController(io: Server) {
     });
 
     // 通过房间名或ID加入房间（用于直接链接）
-    socket.on('join_room_by_name', async (data: { roomName: string; nickname: string }, ack?: (response: any) => void) => {
+    socket.on('join_room_by_name', async (data: { roomName: string; nickname?: string; playerId?: string; userId?: string }, ack?: (response: any) => void) => {
       try {
         // 通过房间名查找房间
         const room = Array.from(rooms.values()).find(r => r.name === data.roomName);
@@ -703,6 +708,44 @@ export function roomController(io: Server) {
         if (!room) {
           socket.emit('error', { message: '房间不存在' });
           ack?.({ success: false, error: '房间不存在' });
+          return;
+        }
+
+        const requestedPlayerId = data.playerId || data.userId;
+        let player = requestedPlayerId ? room.players.find(p => p.id === requestedPlayerId) : undefined;
+
+        // 旧版直接链接接口也支持按 playerId 重连，避免刷新/分享链接后重复占座。
+        if (player) {
+          player.socketId = socket.id;
+          player.nickname = data.nickname || player.nickname;
+          player.name = player.nickname;
+          player.online = true;
+          player.lastHeartbeat = Date.now();
+          room.lastActiveTime = Date.now();
+
+          if (room.cleanupTimer) {
+            clearTimeout(room.cleanupTimer);
+            room.cleanupTimer = undefined;
+          }
+
+          await socket.join(room.id);
+          const gameConfig = config.games[room.type]?.gameSpecificConfig || {};
+          await threadManager.ensureRoomThreadRunning(room, gameConfig);
+          threadManager.updateRoomData(room.id, room);
+          await sendTaskToRoom(room.id, 'update_room_data', { room });
+          await sendTaskToRoom(room.id, 'player_online', { playerId: player.id });
+
+          const latestRoom = rooms.get(room.id) || room;
+          const latestPlayer = latestRoom.players.find(p => p.id === player!.id) || player;
+          const payload = { room: toClientRoom(latestRoom), player: toClientPlayer(latestPlayer), playerId: latestPlayer!.id, isHost: latestRoom.hostId === latestPlayer!.id };
+          socket.emit('room_joined', payload);
+          socket.emit('room_update', toClientRoom(latestRoom));
+          ack?.({ success: true, ...payload });
+
+          if (!room.private) {
+            broadcastLobbyUpdate();
+          }
+          console.log(`玩家 ${player.nickname} 通过链接重新进入了房间 ${room.name}`);
           return;
         }
 
@@ -728,10 +771,11 @@ export function roomController(io: Server) {
         }
 
         // 创建玩家
-        const player: Player = {
-          id: uuidv4(),
-          nickname: data.nickname,
-          name: data.nickname, // 默认使用nickname作为显示名称
+        const nickname = data.nickname || `玩家${socket.id.substring(0, 6)}`;
+        player = {
+          id: requestedPlayerId || uuidv4(),
+          nickname,
+          name: nickname, // 默认使用nickname作为显示名称
           socketId: socket.id,
           lastHeartbeat: Date.now(),
           online: true,
@@ -741,6 +785,10 @@ export function roomController(io: Server) {
         // 将玩家添加到房间
         room.players.push(player);
         room.lastActiveTime = Date.now();
+        if (room.cleanupTimer) {
+          clearTimeout(room.cleanupTimer);
+          room.cleanupTimer = undefined;
+        }
 
         // 玩家加入房间频道
         await socket.join(room.id);
@@ -758,13 +806,15 @@ export function roomController(io: Server) {
 
         const latestRoom = rooms.get(room.id) || room;
         const latestPlayer = latestRoom.players.find(p => p.id === player.id) || player;
-        socket.emit('room_joined', { 
+        const payload = {
           room: toClientRoom(latestRoom),
           player: toClientPlayer(latestPlayer),
           playerId: latestPlayer.id,
           isHost: latestRoom.hostId === latestPlayer.id
-        });
-        ack?.({ success: true, room: toClientRoom(latestRoom), player: toClientPlayer(latestPlayer), playerId: latestPlayer.id, isHost: latestRoom.hostId === latestPlayer.id });
+        };
+        socket.emit('room_joined', payload);
+        socket.emit('room_update', toClientRoom(latestRoom));
+        ack?.({ success: true, ...payload });
 
         // 更新大厅
         if (!room.private) {

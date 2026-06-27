@@ -402,7 +402,7 @@ export function validatePlayerAction(
   gamePlayers: GamePlayer[]
 ): { valid: boolean; error?: string } {
   // 聊天操作任何人都可执行（包括SETUP阶段）
-  if (actionType === 'chat' || actionType === 'private_message') {
+  if (actionType === 'chat' || actionType === 'chat_message' || actionType === 'private_message' || actionType === 'privateMessage') {
     return { valid: true };
   }
 

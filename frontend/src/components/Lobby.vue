@@ -990,10 +990,17 @@ function confirmJoinRoom() {
     store.initSocket();
   }
 
+  const roomId = joinRoomForm.value.roomName.trim().toUpperCase();
+  const nickname = joinRoomForm.value.nickname.trim();
+  const room = rooms.value.find(r => r.id === roomId || r.name === roomId);
+  const playerId = room ? ensureLocalPlayer(room.type, nickname, room.id) : undefined;
+
   // Bug L4: 参数名使用roomId与后端期望一致（用户输入的是房间号）
   store.socket?.emit('join_room', {
-    roomId: joinRoomForm.value.roomName.trim().toUpperCase(),
-    nickname: joinRoomForm.value.nickname.trim()
+    roomId,
+    nickname,
+    playerId,
+    userId: playerId
   });
   joinRoomDialogVisible.value = false;
 }

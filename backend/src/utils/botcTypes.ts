@@ -154,6 +154,6 @@ export const PLAYER_COUNTS: { [key: number]: PlayerSetup } = {
 };
 
 export interface BOTCGameAction {
-  type: 'nominate' | 'vote' | 'nightAction' | 'storytellerAction' | 'chat' | 'ready' | 'private_message';
+  type: 'nominate' | 'vote' | 'nightAction' | 'storytellerAction' | 'chat' | 'chat_message' | 'ready' | 'private_message' | 'privateMessage';
   data: any;
-} 
+}

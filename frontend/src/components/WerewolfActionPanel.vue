@@ -469,7 +469,8 @@ const leaveMsg = ref<string>('')
 
 // 计算属性
 const canOperate = computed(() => {
-  return props.gameState.operators?.includes(props.playerSecret?.playerId)
+  const playerId = props.playerSecret?.playerId
+  return !!playerId && !!props.gameState.operators?.includes(playerId)
 })
 
 const isCurrentSpeaker = computed(() => {
@@ -500,9 +501,10 @@ const getAlivePlayers = (): any[] => {
 
 // 获取存活的其他玩家（排除自己）
 const getAliveOtherPlayers = (): any[] => {
-  if (!props.gameState.players || !props.playerSecret?.playerId) return []
+  const playerId = props.playerSecret?.playerId
+  if (!props.gameState.players || !playerId) return []
   return (Object.values(props.gameState.players) as any[]).filter((p: any) =>
-    p.alive && p.id !== props.playerSecret.playerId
+    p.alive && p.id !== playerId
   )
 }
 

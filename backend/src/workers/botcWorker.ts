@@ -31,6 +31,7 @@ import {
 } from '../utils/botcUtils';
 import { EDITIONS, getEditionById, getRoleById } from '../utils/botcData';
 import { processFirstNightInfo, processNightAction, processDeathAbility } from '../utils/botcSkills';
+import { normalizeChatText } from '../utils/chat';
 
 /**
  * 血染钟楼游戏 Worker
@@ -187,7 +188,7 @@ export class BOTCWorker extends BaseGameWorker {
 
   async gameAction(playerId: string, actionType: string, actionData: any): Promise<void> {
     // 私聊消息特殊处理
-    if (actionType === 'private_message') {
+    if (actionType === 'private_message' || actionType === 'privateMessage') {
       await this.handlePrivateChat(playerId, actionData);
       return;
     }
@@ -238,6 +239,7 @@ export class BOTCWorker extends BaseGameWorker {
         await this.handleDayAbility(playerId, actionData);
         break;
       case 'chat':
+      case 'chat_message':
         await this.handleChat(playerId, actionData);
         break;
       default:
@@ -1617,12 +1619,13 @@ export class BOTCWorker extends BaseGameWorker {
    */
   private async handleChat(playerId: string, data: { message: string }): Promise<void> {
     const player = this.room.players.find(p => p.id === playerId);
-    if (!player) return;
+    const message = normalizeChatText(data?.message);
+    if (!player || !message) return;
 
     this.sendToRoom('chatMessage', {
       playerId,
       playerName: this.getPlayerName(player.id),
-      message: data.message,
+      message,
       timestamp: Date.now()
     });
   }
@@ -1633,7 +1636,8 @@ export class BOTCWorker extends BaseGameWorker {
   private async handlePrivateChat(playerId: string, data: { targetId: string; message: string }): Promise<void> {
     const sender = this.room.players.find(p => p.id === playerId);
     const target = this.room.players.find(p => p.id === data.targetId);
-    if (!sender || !target) return;
+    const message = normalizeChatText(data?.message);
+    if (!sender || !target || !message) return;
 
     // 验证不能发给自己
     if (playerId === data.targetId) return;
@@ -1654,7 +1658,7 @@ export class BOTCWorker extends BaseGameWorker {
     this.sendToPlayer(data.targetId, 'privateMessage', {
       from: playerId,
       fromName: this.getPlayerName(playerId),
-      message: data.message,
+      message,
       timestamp: Date.now()
     });
 
@@ -1662,7 +1666,7 @@ export class BOTCWorker extends BaseGameWorker {
     this.sendToPlayer(playerId, 'privateMessageSent', {
       to: data.targetId,
       toName: this.getPlayerName(data.targetId),
-      message: data.message,
+      message,
       timestamp: Date.now()
     });
   }

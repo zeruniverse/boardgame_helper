@@ -21,6 +21,7 @@ import {
   shuffleArray
 } from '../utils/werewolfUtils';
 import { stateHandlers } from '../utils/werewolfStateHandlers';
+import { normalizeChatChannel, normalizeChatText } from '../utils/chat';
 
 if (!parentPort) {
   throw new Error('这个文件只能在Worker线程中运行');
@@ -329,6 +330,8 @@ class WerewolfWorker extends BaseGameWorker {
     if (actionType === 'unready') { this.handleUnready(playerId); return; }
     if (actionType === 'startGame') { this.handleStartGame(playerId); return; }
     if (actionType === 'restartGame') { this.handleRestartGame(playerId); return; }
+    if (actionType === 'chat' || actionType === 'chat_message') { this.handleChatMessage(playerId, actionData); return; }
+    if (actionType === 'heartbeat') { this.handleHeartbeat(playerId); return; }
 
     const gamePlayer = this.gameState.players[playerId];
     if (!gamePlayer) return;
@@ -370,6 +373,7 @@ class WerewolfWorker extends BaseGameWorker {
         case 'leave_msg':
           this.handleLeaveMsg(playerId, actionData);
           break;
+        case 'chat':
         case 'chat_message':
           this.handleChatMessage(playerId, actionData);
           break;
@@ -681,6 +685,14 @@ class WerewolfWorker extends BaseGameWorker {
       }
     }
 
+    const target = targetIndex > 0
+      ? (Object.values(this.gameState.players) as WerewolfPlayerState[]).find(p => p.index === targetIndex)
+      : undefined;
+    if (targetIndex > 0 && (!target || !target.isAlive || target.character === 'WEREWOLF')) {
+      this.sendToPlayer(playerId, 'error', { message: '狼人击杀目标无效' });
+      return;
+    }
+
     // 记录杀人意向
     if (!gamePlayer.characterStatus.wantToKills) {
       gamePlayer.characterStatus.wantToKills = [];
@@ -689,7 +701,6 @@ class WerewolfWorker extends BaseGameWorker {
 
     // 通知该狼人操作已记录
     if (targetIndex > 0) {
-      const target = (Object.values(this.gameState.players) as WerewolfPlayerState[]).find(p => p.index === targetIndex);
       this.sendToPlayer(playerId, 'system_message', {
         message: `你选择击杀 ${targetIndex}号${target ? '（' + target.name + '）' : ''}`
       });
@@ -700,7 +711,7 @@ class WerewolfWorker extends BaseGameWorker {
     }
 
     // 广播狼人投票给所有狼人
-    const allWerewolves = (Object.values(this.gameState.players) as WerewolfPlayerState[]).filter(p => p.character === 'WEREWOLF');
+    const allWerewolves = (Object.values(this.gameState.players) as WerewolfPlayerState[]).filter(p => p.character === 'WEREWOLF' && p.isAlive);
     const votedCount = allWerewolves.filter(w =>
       w.characterStatus.wantToKills && w.characterStatus.wantToKills[this.gameState.currentDay] !== undefined
     ).length;
@@ -757,8 +768,8 @@ class WerewolfWorker extends BaseGameWorker {
     }
 
     const target = (Object.values(this.gameState.players) as WerewolfPlayerState[]).find(p => p.index === targetIndex);
-    if (!target) {
-      this.sendToPlayer(playerId, 'error', { message: '目标玩家不存在' });
+    if (!target || !target.isAlive) {
+      this.sendToPlayer(playerId, 'error', { message: '目标玩家不存在或已死亡' });
       return;
     }
 
@@ -885,8 +896,8 @@ class WerewolfWorker extends BaseGameWorker {
       }
 
       const target = (Object.values(this.gameState.players) as WerewolfPlayerState[]).find(p => p.index === targetIndex);
-      if (!target) {
-        this.sendToPlayer(playerId, 'error', { message: '目标玩家不存在' });
+      if (!target || !target.isAlive) {
+        this.sendToPlayer(playerId, 'error', { message: '目标玩家不存在或已死亡' });
         return;
       }
 
@@ -959,6 +970,10 @@ class WerewolfWorker extends BaseGameWorker {
       }
 
       const target = (Object.values(this.gameState.players) as WerewolfPlayerState[]).find(p => p.index === targetIndex);
+      if (!target || !target.isAlive) {
+        this.sendToPlayer(playerId, 'error', { message: '保护目标不存在或已死亡' });
+        return;
+      }
 
       // 记录保护
       if (!gamePlayer.characterStatus.protects) {
@@ -1024,6 +1039,14 @@ class WerewolfWorker extends BaseGameWorker {
       }
     }
 
+    const target = targetIndex > 0
+      ? (Object.values(this.gameState.players) as WerewolfPlayerState[]).find(p => p.index === targetIndex)
+      : undefined;
+    if (targetIndex > 0 && (!target || !target.isAlive || target.id === playerId)) {
+      this.sendToPlayer(playerId, 'error', { message: '猎人开枪目标无效' });
+      return;
+    }
+
     // 记录开枪目标
     gamePlayer.characterStatus.shootAt = {
       day: this.gameState.currentDay,
@@ -1031,7 +1054,6 @@ class WerewolfWorker extends BaseGameWorker {
     };
 
     if (targetIndex > 0) {
-      const target = (Object.values(this.gameState.players) as WerewolfPlayerState[]).find(p => p.index === targetIndex);
       this.sendToPlayer(playerId, 'system_message', {
         message: `你选择开枪带走 ${targetIndex}号${target ? '（' + target.name + '）' : ''}`
       });
@@ -1273,17 +1295,21 @@ class WerewolfWorker extends BaseGameWorker {
 
     const gamePlayer = this.gameState.players[playerId];
 
-    const message = actionData?.message || '';
-    const channel = actionData?.channel || 'all';
+    const message = normalizeChatText(actionData?.message);
+    const channel = normalizeChatChannel(actionData?.channel, ['all', 'werewolf']);
 
-    if (!message.trim()) return;
+    if (!message) return;
+    if (gamePlayer && !gamePlayer.isAlive) {
+      this.sendToPlayer(playerId, 'error', { message: '死亡玩家无法发送消息' });
+      return;
+    }
 
     // 构建聊天消息
     const chatMsg = {
       sender: player.nickname,
       senderId: playerId,
       playerIndex: gamePlayer?.index || 0,
-      message: message.trim(),
+      message,
       channel: channel,
       timestamp: Date.now(),
       type: 'chat'
@@ -1291,9 +1317,9 @@ class WerewolfWorker extends BaseGameWorker {
 
     if (channel === 'werewolf') {
       // 狼人频道：只发送给狼人
-      if (gamePlayer && gamePlayer.character === 'WEREWOLF') {
+      if (gamePlayer && gamePlayer.character === 'WEREWOLF' && gamePlayer.isAlive) {
         const werewolfIds = (Object.values(this.gameState.players) as WerewolfPlayerState[])
-          .filter(p => p.character === 'WEREWOLF')
+          .filter(p => p.character === 'WEREWOLF' && p.isAlive)
           .map(p => p.id);
 
         werewolfIds.forEach(wid => {

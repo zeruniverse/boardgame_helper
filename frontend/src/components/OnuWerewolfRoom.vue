@@ -64,7 +64,7 @@
           :messages="messages"
           :roomId="roomId"
           :nickname="nickname"
-          :socket="socket"
+          :socket="store.socket as any"
           :gameState="gameState"
           @send-message="handleSendMessage"
         />

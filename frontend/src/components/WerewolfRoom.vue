@@ -126,7 +126,7 @@
           :messages="messages"
           :room-id="roomId"
           :nickname="currentUserNickname"
-          :socket="store.socket"
+          :socket="store.socket as any"
           :player-role="playerSecret?.role"
           :player-team="playerSecret?.team"
           :game-state="gameState"
