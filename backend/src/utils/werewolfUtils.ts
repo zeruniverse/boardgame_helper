@@ -69,33 +69,19 @@ export function getVoteSituation(votes: Vote[]): VoteSituation {
  * @param players 玩家列表
  * @returns 获胜方或null
  */
-/**
- * 判断角色是否属于神职
- */
-function isGod(character: WerewolfCharacter): boolean {
-  const godChars: WerewolfCharacter[] = ['WITCH', 'SEER', 'HUNTER', 'GUARD'];
-  return godChars.includes(character);
-}
-
-/**
- * 判断角色是否属于平民
- */
-function isVillager(character: WerewolfCharacter): boolean {
-  return character === 'VILLAGER';
-}
-
 export function checkGameEnd(players: Record<string, WerewolfPlayerState>): 'WEREWOLF' | 'VILLAGER' | null {
   const alivePlayers = Object.values(players).filter(p => p.isAlive);
   const aliveWerewolves = alivePlayers.filter(p => p.character === 'WEREWOLF');
-  const aliveGods = alivePlayers.filter(p => isGod(p.character));
-  const aliveVillagers = alivePlayers.filter(p => isVillager(p.character));
+  const aliveGoodPlayers = alivePlayers.filter(p => p.character !== 'WEREWOLF');
 
   if (aliveWerewolves.length === 0) {
-    return 'VILLAGER'; // 村民胜利
+    return 'VILLAGER'; // 所有狼人已死亡，村民阵营胜利
   }
 
-  if (aliveGods.length === 0 || aliveVillagers.length === 0) {
-    return 'WEREWOLF'; // 狼人胜利（屠边规则）
+  // 项目文档采用“好人数量 <= 狼人数量”的狼人胜利条件；
+  // 不应因没有神职或没有普通村民而提前结束，否则纯村民局/基础局会在首夜后误判。
+  if (aliveWerewolves.length >= aliveGoodPlayers.length) {
+    return 'WEREWOLF';
   }
 
   return null; // 游戏继续

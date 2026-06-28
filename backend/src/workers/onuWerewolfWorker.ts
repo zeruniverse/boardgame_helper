@@ -801,11 +801,16 @@ class OnuWerewolfWorker extends BaseGameWorker {
     this.gameState.currentPhase = '讨论投票阶段';
     this.gameState.timeLeft = this.config.discussTime + this.config.votingTime;
 
-    this.sendToRoom('onu_night_ended', {
+    const dayPhasePayload = {
       message: '天亮了！开始讨论和投票',
       timeLeft: this.gameState.timeLeft,
       gameInfo: this.getGameInfo()
-    });
+    };
+
+    this.sendToRoom('onu_night_ended', dayPhasePayload);
+    // 兼容集成测试/前端对“一夜结束后进入白天讨论”的不同事件命名。
+    this.sendToRoom('onu_day_started', dayPhasePayload);
+    this.sendToRoom('onu_discussion_started', dayPhasePayload);
 
     // 设置投票阶段计时器
     this.setTimer((this.config.discussTime + this.config.votingTime) * 1000, () => this.endVotingPhase());
@@ -834,9 +839,7 @@ class OnuWerewolfWorker extends BaseGameWorker {
       throw new Error('投票目标不存在');
     }
 
-    if (target.id === playerId) {
-      throw new Error('不能投票给自己；如果想无人被处决，请通过分票让每名玩家最多获得1票');
-    }
+    // 一夜终极狼人允许玩家投票给自己；若所有人均只有一票，则无人被处决。
 
     // 记录投票
     this.gameState.votes[playerId] = target.id;
@@ -941,11 +944,15 @@ class OnuWerewolfWorker extends BaseGameWorker {
 
     const gameResult = this.getGameResult();
 
-    this.sendToRoom('onu_game_completed', {
+    const completionPayload = {
       message: '游戏结束！',
       gameResult,
       vision: this.getFinalVision()
-    });
+    };
+
+    this.sendToRoom('onu_game_completed', completionPayload);
+    // 历史测试与部分客户端使用 onu_game_over 命名，保留别名避免游戏已结束但监听方收不到结束事件。
+    this.sendToRoom('onu_game_over', completionPayload);
 
     // 5分钟后重置游戏
     this.gameTimer = setTimeout(() => this.resetGame(), 5 * 60 * 1000);
@@ -1007,7 +1014,7 @@ class OnuWerewolfWorker extends BaseGameWorker {
 
   private async handleSkipDiscussion(playerId: string): Promise<void> {
     if (this.gameState.status !== OnuWerewolfGameStatus.VOTING) {
-      throw new Error('只能在投票阶段跳过讨论');
+      throw new Error('只能在讨论/投票阶段跳过讨论');
     }
 
     if (!this.gameState.players[playerId]) {

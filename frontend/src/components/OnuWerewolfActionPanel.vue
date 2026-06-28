@@ -378,16 +378,16 @@
         <h4>选择要投票的玩家:</h4>
         <div class="vote-buttons">
           <el-button
-            v-for="player in otherPlayers"
+            v-for="player in allPlayersList"
             :key="player.id"
             @click="vote(player.seat)"
             type="primary"
             size="large"
           >
-            投票给 {{ player.name }} (座位{{ player.seat }})
+            投票给 {{ player.name }} (座位{{ player.seat }}){{ player.id === currentUserId ? '（你自己）' : '' }}
           </el-button>
           <el-alert
-            title="规则提示：不能投票给自己；若想无人被处决，需要让所有人协商分票，使每名玩家最多获得1票。"
+            title="规则提示：可以投票给自己；若每名玩家最多获得1票，则无人被处决。"
             type="info"
             :closable="false"
             show-icon
@@ -584,7 +584,7 @@ const allPlayersList = computed(() => {
   return props.allPlayers || [];
 });
 
-// 排除自己的其他玩家列表
+// 技能选择仍然排除自己；投票阶段允许自票，因此单独使用 allPlayersList。
 const otherPlayers = computed(() => {
   return props.allPlayers?.filter((p: any) => p.id !== props.currentUserId) || [];
 });

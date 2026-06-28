@@ -38,8 +38,11 @@ function getTimeoutForStatus(handler: StateHandler, context: any): number {
         return config.actionTime !== undefined ? config.actionTime : baseTimeout;
       case GameStatus.DAY_DISCUSS:
       case GameStatus.SHERIFF_SPEECH:
-        // 使用 dayTime 或 speakTime，0 表示不限时
-        return config.dayTime !== undefined ? config.dayTime : baseTimeout;
+        // 发言/讨论是逐个玩家推进的状态，应优先使用 speakTime；dayTime 仅作为兼容兜底。
+        // 保留 0=不限时，便于房间配置显式关闭自动推进。
+        return config.speakTime !== undefined
+          ? config.speakTime
+          : (config.dayTime !== undefined ? config.dayTime : baseTimeout);
       case GameStatus.EXILE_VOTE:
       case GameStatus.SHERIFF_VOTE:
       case GameStatus.SHERIFF_ELECT:
@@ -447,7 +450,14 @@ export const WolfKillHandler: StateHandler = {
       if (hasWitch) {
         WitchActHandler.startOfState(gameState, context);
       } else {
-        GuardProtectHandler.startOfState(gameState, context);
+        const hasGuard = hasAliveCharacter(gameState.players, 'GUARD');
+        if (hasGuard) {
+          GuardProtectHandler.startOfState(gameState, context);
+        } else if (gameState.currentDay <= 1) {
+          SheriffElectHandler.startOfState(gameState, context);
+        } else {
+          BeforeDayDiscussHandler.startOfState(gameState, context);
+        }
       }
     }
   }
@@ -479,7 +489,14 @@ export const SeerCheckHandler: StateHandler = {
     if (hasWitch) {
       WitchActHandler.startOfState(gameState, context);
     } else {
-      GuardProtectHandler.startOfState(gameState, context);
+      const hasGuard = hasAliveCharacter(gameState.players, 'GUARD');
+      if (hasGuard) {
+        GuardProtectHandler.startOfState(gameState, context);
+      } else if (gameState.currentDay <= 1) {
+        SheriffElectHandler.startOfState(gameState, context);
+      } else {
+        BeforeDayDiscussHandler.startOfState(gameState, context);
+      }
     }
   }
 };
@@ -680,14 +697,12 @@ export const SheriffVoteHandler: StateHandler = {
   status: GameStatus.SHERIFF_VOTE,
 
   startOfState(gameState, context) {
-    startCurrentState(this, gameState, context);
-
-    // 所有存活玩家（包括退水的）都可以投票
+    // 先设置操作者和投票数据，再广播状态，避免前端收到旧 operators/votes。
     const alivePlayers = Object.values(gameState.players).filter(p => p.isAlive);
     gameState.toFinishPlayers = new Set(alivePlayers.map(p => p.index));
-
-    // 重置投票
     gameState.votes = {};
+
+    startCurrentState(this, gameState, context);
 
     context.sendToRoom('show_message', {
       message: '请所有存活玩家投票选出警长'
@@ -978,14 +993,12 @@ export const ExileVoteHandler: StateHandler = {
   status: GameStatus.EXILE_VOTE,
 
   startOfState(gameState, context) {
-    startCurrentState(this, gameState, context);
-
-    // 所有存活玩家可以投票
+    // 先设置操作者和投票数据，再广播状态，避免前端/测试在 status_changed 后立即投票时读取旧状态。
     const alivePlayers = Object.values(gameState.players).filter(p => p.isAlive);
     gameState.toFinishPlayers = new Set(alivePlayers.map(p => p.index));
-
-    // 重置投票记录（hasVotedAt[day] 默认为 undefined，表示未投票）
     gameState.votes = {};
+
+    startCurrentState(this, gameState, context);
 
     context.sendToRoom('show_message', {
       message: '投票放逐阶段，请选择你要放逐的玩家'

@@ -395,7 +395,7 @@ export const useOnuWerewolfStore = defineStore('onuWerewolf', {
         }
       });
 
-      on('onu_game_completed', (data: any) => {
+      const handleGameCompleted = (data: any) => {
         if (this.gameState) {
           this.gameState.status = OnuWerewolfGameStatus.COMPLETED;
           this.gameState.currentPhase = '游戏结束';
@@ -406,7 +406,10 @@ export const useOnuWerewolfStore = defineStore('onuWerewolf', {
           this.playerSecret.canUseSkill = false;
           this.playerSecret.canVote = false;
         }
-      });
+      };
+
+      on('onu_game_completed', handleGameCompleted);
+      on('onu_game_over', handleGameCompleted);
 
       on('onu_game_reset', (data: any) => {
         this.gameState = null;

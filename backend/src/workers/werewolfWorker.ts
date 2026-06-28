@@ -78,11 +78,12 @@ class WerewolfWorker extends BaseGameWorker {
   async prepareRoom(room: Room, config: WerewolfConfig): Promise<void> {
     this.room = room;
     this.config = {
-      speakTime: config.speakTime || 60,
-      actionTime: config.actionTime || 60,
-      nightTime: config.nightTime || 60,
-      dayTime: config.dayTime || 120,
-      voteTime: config.voteTime || 60,
+      // 使用 nullish 合并，保留 0=不限时；同时兼容 dayTime/nightTime 与 speakTime/actionTime 的别名。
+      speakTime: config.speakTime ?? config.dayTime ?? 60,
+      actionTime: config.actionTime ?? config.nightTime ?? 60,
+      nightTime: config.nightTime ?? config.actionTime ?? 60,
+      dayTime: config.dayTime ?? config.speakTime ?? 120,
+      voteTime: config.voteTime ?? 60,
       characters: config.characters || []
     };
 
