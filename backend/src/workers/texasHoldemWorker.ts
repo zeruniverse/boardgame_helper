@@ -1684,6 +1684,35 @@ class TexasHoldemWorker extends BaseGameWorker {
     }
   }
 
+  // 拆分奖池时，每个奖池的奇数筹码从按钮左侧最近的获胜玩家开始分配。
+  private getOddChipWinnerOrder(winners: Player[]): string[] {
+    const gs = this.gameState as TexasHoldemGameState;
+    const participatingPlayers = this.room.players.filter(p => this.participants.includes(p.id));
+
+    if (winners.length === 0 || participatingPlayers.length === 0) {
+      return winners.map(w => w.id);
+    }
+
+    const dealerIndex = gs.dealerIndex >= 0 && gs.dealerIndex < participatingPlayers.length ? gs.dealerIndex : 0;
+    const winnerIds = new Set(winners.map(w => w.id));
+    const orderedWinnerIds: string[] = [];
+
+    for (let offset = 1; offset <= participatingPlayers.length && orderedWinnerIds.length < winners.length; offset++) {
+      const player = participatingPlayers[(dealerIndex + offset) % participatingPlayers.length];
+      if (player && winnerIds.has(player.id) && !orderedWinnerIds.includes(player.id)) {
+        orderedWinnerIds.push(player.id);
+      }
+    }
+
+    winners.forEach(w => {
+      if (!orderedWinnerIds.includes(w.id)) {
+        orderedWinnerIds.push(w.id);
+      }
+    });
+
+    return orderedWinnerIds;
+  }
+
   // 发社区牌
   private dealCommunityCards() {
     const gs = this.gameState as TexasHoldemGameState;
@@ -1767,7 +1796,6 @@ class TexasHoldemWorker extends BaseGameWorker {
       const pots = splitPotSidePots(gs.totalBets, activeIds);
       let totalDistributed = 0;
 
-      const participatingPlayers = this.room.players.filter(p => this.participants.includes(p.id));
       const allWinnerIds = new Set<string>();
 
       pots.forEach((pot: SidePot) => {
@@ -1811,25 +1839,13 @@ class TexasHoldemWorker extends BaseGameWorker {
           this.sendToRoom('chat_broadcast', { message: `${winnerNames} 平分池子 ${pot.amount}`, type: 'system' });
         }
 
-        const sbIndex = gs.sbIndex < participatingPlayers.length ? gs.sbIndex : 0;
-        const sbOrder: string[] = [];
-        let idx = sbIndex;
-        const maxIterations = Math.max(participatingPlayers.length * 2, 1);
-        let iterations = 0;
-        while (sbOrder.length < winners.length && iterations < maxIterations) {
-          const p = participatingPlayers[idx % participatingPlayers.length];
-          if (p && winners.some(w => w.id === p.id) && !sbOrder.includes(p.id)) {
-            sbOrder.push(p.id);
-          }
-          idx++;
-          iterations++;
-        }
+        const oddChipWinnerOrder = this.getOddChipWinnerOrder(winners);
 
         winners.forEach(w => {
           w.gameMetadata.chips += baseWin;
           allWinnerIds.add(w.id);
         });
-        sbOrder.forEach(pid => {
+        oddChipWinnerOrder.forEach(pid => {
           if (remainder > 0) {
             const p = this.room.players.find(p => p.id === pid);
             if (p) {
