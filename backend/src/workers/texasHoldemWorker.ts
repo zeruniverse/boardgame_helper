@@ -25,6 +25,8 @@ interface TexasHoldemGameState {
   bbIndex: number;
   currentBet: number;
   lastRaiseAmount: number;
+  lastFullBet: number;
+  raiseLocked: string[];
   folded: string[];
   round: number;
   playerHands: Record<string, string[]>;
@@ -82,6 +84,8 @@ class TexasHoldemWorker extends BaseGameWorker {
       bbIndex: -1,
       currentBet: 0,
       lastRaiseAmount: 10,
+      lastFullBet: 0,
+      raiseLocked: [],
       folded: [],
       round: 0,
       playerHands: {},
@@ -150,6 +154,8 @@ class TexasHoldemWorker extends BaseGameWorker {
     };
     this.gameState.currentBet = config.blinds.bigBlind;
     this.gameState.lastRaiseAmount = config.blinds.bigBlind;
+    this.gameState.lastFullBet = config.blinds.bigBlind;
+    this.gameState.raiseLocked = [];
 
     if (!this.room.gameMetadata) {
       this.room.gameMetadata = {};
@@ -181,6 +187,8 @@ class TexasHoldemWorker extends BaseGameWorker {
     };
     this.gameState.currentBet = config.blinds.bigBlind;
     this.gameState.lastRaiseAmount = config.blinds.bigBlind;
+    this.gameState.lastFullBet = config.blinds.bigBlind;
+    this.gameState.raiseLocked = [];
 
     if (!this.room.gameMetadata) {
       this.room.gameMetadata = {};
@@ -644,6 +652,8 @@ class TexasHoldemWorker extends BaseGameWorker {
     gs.bets = {};
     gs.currentBet = gs.blinds.bb;
     gs.lastRaiseAmount = gs.blinds.bb;
+    gs.lastFullBet = gs.blinds.bb;
+    gs.raiseLocked = [];
     gs.folded = [];
     gs.round = 0;
     gs.acted = [];
@@ -705,6 +715,7 @@ class TexasHoldemWorker extends BaseGameWorker {
     gs.totalBets[sbPlayer.id] = gs.blinds.sb;
     gs.totalBets[bbPlayer.id] = gs.blinds.bb;
     gs.currentBet = gs.blinds.bb;
+    gs.lastFullBet = gs.blinds.bb;
 
     // 下一个行动的玩家是大盲后的第一个参与者
     const nextPlayerIndex = (bbIndex + 1) % participatingPlayers.length;
@@ -966,6 +977,7 @@ class TexasHoldemWorker extends BaseGameWorker {
     this.gameState.currentTurn = -1;
     this.gameState.acted = [];
     this.gameState.folded = [];
+    this.gameState.raiseLocked = [];
     this.gameState.stage = 'idle';
     this.gameState.totalBets = {};
     this.gameState.winners = [];
@@ -1369,6 +1381,20 @@ class TexasHoldemWorker extends BaseGameWorker {
     return;
   }
 
+  private unlockRaiseForPlayer(playerId: string) {
+    const gs = this.gameState as TexasHoldemGameState;
+    gs.raiseLocked = (gs.raiseLocked || []).filter(id => id !== playerId);
+  }
+
+  private restartActionTimerForPlayer(playerId: string) {
+    this.sendToRoom('action_request', { playerId, seconds: 30 });
+    this.actionDeadline = Date.now() + 30000;
+    this.actionTimer = setTimeout(() => {
+      this.actionDeadline = null;
+      this.handleTimeout();
+    }, 30000);
+  }
+
   private handleFold(playerId: string) {
     const gs = this.gameState as TexasHoldemGameState;
     const player = this.room.players.find(p => p.id === playerId);
@@ -1380,6 +1406,7 @@ class TexasHoldemWorker extends BaseGameWorker {
     if (!gs.acted.includes(playerId)) {
       gs.acted.push(playerId);
     }
+    this.unlockRaiseForPlayer(playerId);
     this.sendToRoom('chat_broadcast', { message: `${player.nickname} 弃牌` });
 
     // 检查是否只剩一个玩家
@@ -1411,6 +1438,7 @@ class TexasHoldemWorker extends BaseGameWorker {
     if (!player) return;
     const gs = this.gameState as TexasHoldemGameState;
     if (!gs.acted.includes(playerId)) gs.acted.push(playerId);
+    this.unlockRaiseForPlayer(playerId);
     this.sendToRoom('chat_broadcast', { message: `${player.nickname} 看牌` });
     this.continueToNextPlayer();
   }
@@ -1434,6 +1462,7 @@ class TexasHoldemWorker extends BaseGameWorker {
     }
 
     if (!gs.acted.includes(playerId)) gs.acted.push(playerId);
+    this.unlockRaiseForPlayer(playerId);
 
     this.sendToRoom('room_update', this.room);
     this.continueToNextPlayer();
@@ -1450,6 +1479,12 @@ class TexasHoldemWorker extends BaseGameWorker {
     const previousTableBet = gs.currentBet;
     const minRaiseTo = previousTableBet + gs.lastRaiseAmount;
 
+    if ((gs.raiseLocked || []).includes(playerId)) {
+      this.sendToPlayer(playerId, 'error', { message: '短码全下未构成完整加注，不能再加注' });
+      this.restartActionTimerForPlayer(playerId);
+      return;
+    }
+
     if (needToPay >= player.gameMetadata.chips) {
       // 不足以完成最小加注时，仍允许作为全下处理。
       this.handleAllIn(playerId);
@@ -1458,12 +1493,7 @@ class TexasHoldemWorker extends BaseGameWorker {
 
     if (raiseAmount < minRaiseTo) {
       this.sendToPlayer(playerId, 'error', { message: `最小加注到 ${minRaiseTo}` });
-      this.sendToRoom('action_request', { playerId, seconds: 30 });
-      this.actionDeadline = Date.now() + 30000;
-      this.actionTimer = setTimeout(() => {
-        this.actionDeadline = null;
-        this.handleTimeout();
-      }, 30000);
+      this.restartActionTimerForPlayer(playerId);
       return;
     }
 
@@ -1473,6 +1503,8 @@ class TexasHoldemWorker extends BaseGameWorker {
     gs.totalBets[playerId] = (gs.totalBets[playerId] || 0) + needToPay;
     gs.lastRaiseAmount = raiseAmount - previousTableBet;
     gs.currentBet = raiseAmount;
+    gs.lastFullBet = raiseAmount;
+    gs.raiseLocked = [];
 
     // 重置已行动列表，除了当前玩家
     gs.acted = [playerId];
@@ -1498,23 +1530,44 @@ class TexasHoldemWorker extends BaseGameWorker {
     const currentBet = gs.bets[playerId] || 0;
     const allInAmount = currentBet + player.gameMetadata.chips;
 
+    if ((gs.raiseLocked || []).includes(playerId) && allInAmount > gs.currentBet) {
+      this.sendToPlayer(playerId, 'error', { message: '短码全下未构成完整加注，不能再加注' });
+      this.restartActionTimerForPlayer(playerId);
+      return;
+    }
+
     gs.pot += player.gameMetadata.chips;
     gs.totalBets[playerId] = (gs.totalBets[playerId] || 0) + player.gameMetadata.chips;
     gs.bets[playerId] = allInAmount;
     player.gameMetadata.chips = 0;
 
     if (allInAmount > gs.currentBet) {
-      const raiseDelta = allInAmount - gs.currentBet;
+      const previousFullBet = gs.lastFullBet ?? gs.currentBet;
+      const raiseDelta = allInAmount - previousFullBet;
       const isFullRaise = raiseDelta >= gs.lastRaiseAmount;
       gs.currentBet = allInAmount;
       if (isFullRaise) {
         gs.lastRaiseAmount = raiseDelta;
+        gs.lastFullBet = allInAmount;
+        gs.raiseLocked = [];
         gs.acted = [playerId];
-      } else if (!gs.acted.includes(playerId)) {
-        gs.acted.push(playerId);
+      } else {
+        const callOnlyIds = this.participants.filter((id: string) => {
+          if (id === playerId || gs.folded.includes(id) || !gs.acted.includes(id)) return false;
+          const other = this.room.players.find(p => p.id === id);
+          if (!other || other.gameMetadata.chips <= 0) return false;
+          return (gs.bets[id] || 0) < allInAmount;
+        });
+        gs.acted = gs.acted.filter((id: string) => !callOnlyIds.includes(id));
+        gs.raiseLocked = Array.from(new Set([...(gs.raiseLocked || []), ...callOnlyIds]));
+        if (!gs.acted.includes(playerId)) {
+          gs.acted.push(playerId);
+        }
+        this.unlockRaiseForPlayer(playerId);
       }
     } else {
       if (!gs.acted.includes(playerId)) gs.acted.push(playerId);
+      this.unlockRaiseForPlayer(playerId);
     }
 
     this.sendToRoom('chat_broadcast', { message: `${player.nickname} 全下 ${allInAmount}` });
@@ -1570,6 +1623,8 @@ class TexasHoldemWorker extends BaseGameWorker {
     gs.bets = {};
     gs.currentBet = 0;
     gs.lastRaiseAmount = gs.blinds.bb;
+    gs.lastFullBet = 0;
+    gs.raiseLocked = [];
     gs.round++;
 
     const activeIds = this.participants.filter((id: string) => !gs.folded.includes(id));
