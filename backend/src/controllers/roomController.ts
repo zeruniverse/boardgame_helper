@@ -1013,7 +1013,15 @@ export function roomController(io: Server) {
         if (!room) { socket.emit('error', { message: '房间不存在' }); ack?.({ success: false, error: '房间不存在' }); return; }
         const player = room.players.find(p => p.socketId === socket.id);
         if (!player) { socket.emit('error', { message: '您不在此房间中' }); ack?.({ success: false, error: '您不在此房间中' }); return; }
-        const normalizedChannel = normalizeChatChannel(data.channel, ['all', 'team', 'werewolf', 'villager']);
+        const normalizedChannel = normalizeChatChannel(data.channel, [
+          'all',
+          'team',
+          'werewolf',
+          'villager',
+          'evil',
+          'storyteller',
+          'dead'
+        ]);
         await sendTaskToRoom(room.id, 'game_action', { actionType: 'chat_message', actionData: { message: data.message, channel: normalizedChannel } }, socket.id, player.id);
         ack?.({ success: true });
       } catch (error) {

@@ -200,6 +200,19 @@ export function validatePlayerAction(
 export function validateCharacterConfig(characters: WerewolfCharacter[]): boolean {
   if (!characters || characters.length === 0) return false;
 
+  // 只允许当前流程已实现完整技能与胜负结算的角色。
+  // CUPID 类型曾被保留在类型定义中，但恋人链路/胜负条件未实现；
+  // 若允许配置进入游戏，会被当作普通好人分配，造成规则错误。
+  const implementedCharacters = new Set<WerewolfCharacter>([
+    'WEREWOLF',
+    'VILLAGER',
+    'WITCH',
+    'SEER',
+    'HUNTER',
+    'GUARD'
+  ]);
+  if (characters.some(char => !implementedCharacters.has(char))) return false;
+
   // 最少需要6人
   if (characters.length < 6) return false;
 

@@ -1176,10 +1176,14 @@ class WerewolfWorker extends BaseGameWorker {
       }
     }
 
-    if (this.gameState.status === GameStatus.EXILE_VOTE && targetIndex > 0) {
+    if (targetIndex > 0 && (this.gameState.status === GameStatus.EXILE_VOTE || this.gameState.status === GameStatus.SHERIFF_VOTE)) {
       const target = (Object.values(this.gameState.players) as WerewolfPlayerState[]).find(p => p.index === targetIndex);
       if (!target?.canBeVoted) {
-        this.sendToPlayer(playerId, 'error', { message: '该玩家当前不在可投票范围内' });
+        this.sendToPlayer(playerId, 'error', {
+          message: this.gameState.status === GameStatus.SHERIFF_VOTE
+            ? '该玩家不是警长候选人'
+            : '该玩家当前不在可投票范围内'
+        });
         return;
       }
     }
