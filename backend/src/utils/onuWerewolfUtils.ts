@@ -261,13 +261,16 @@ export function onuCalculateWinner(
     return aliveWerewolves.length === 0 ? OnuWerewolfTeam.Villager : OnuWerewolfTeam.Werewolf;
   }
 
-  // 检查是否有皮匠被处决
-  const lynchedTanners = lynched.filter(playerId => {
-    const player = players[playerId];
-    return player && onuIsTannerTeam(player.actualRole);
-  });
+  // 检查是否有皮匠/皮匠学徒达成独立胜利。
+  // 官方规则：皮匠死则皮匠获胜；皮匠学徒在有皮匠时跟随“皮匠死亡”获胜，
+  // 若本局没有皮匠，皮匠学徒才按皮匠处理（自己死亡获胜）。
+  const hasTanner = allPlayers.some(p => p.actualRole === OnuWerewolfRole.Tanner);
+  const tannerExecuted = lynched.some(playerId => players[playerId]?.actualRole === OnuWerewolfRole.Tanner);
+  const apprenticeTannerExecutedWithoutTanner = !hasTanner && lynched.some(playerId =>
+    players[playerId]?.actualRole === OnuWerewolfRole.ApprenticeTanner
+  );
 
-  if (lynchedTanners.length > 0) {
+  if (tannerExecuted || apprenticeTannerExecutedWithoutTanner) {
     return OnuWerewolfTeam.Tanner;
   }
 
@@ -302,27 +305,42 @@ export function onuCalculateWinner(
 /**
  * 检查玩家是否胜利
  */
-export function onuIsPlayerWinner(player: OnuWerewolfPlayer, winner: OnuWerewolfTeam, lynched: string[]): boolean {
+export function onuIsPlayerWinner(
+  player: OnuWerewolfPlayer,
+  winner: OnuWerewolfTeam,
+  lynched: string[],
+  players?: Record<string, OnuWerewolfPlayer>
+): boolean {
   const playerTeam = onuGetRoleTeam(player.actualRole);
-  
-  // 皮匠需要被处决才能胜利
-  if (playerTeam === OnuWerewolfTeam.Tanner) {
+  const allPlayers = players ? Object.values(players) : [player];
+  const hasTanner = allPlayers.some(p => p.actualRole === OnuWerewolfRole.Tanner);
+  const tannerDied = lynched.some(playerId => players?.[playerId]?.actualRole === OnuWerewolfRole.Tanner);
+  const werewolfDied = lynched.some(playerId => {
+    const lynchedPlayer = players?.[playerId];
+    return Boolean(lynchedPlayer && onuIsWerewolf(lynchedPlayer.actualRole));
+  });
+
+  // 皮匠：自己死亡即胜利。
+  if (player.actualRole === OnuWerewolfRole.Tanner) {
     return lynched.includes(player.id);
   }
-  
-  // 猎人：如果被处决且不是皮匠胜利，可以开枪带走投票者
-  // 猎人属于村民阵营，村民胜利时猎人也胜利
-  if (player.actualRole === OnuWerewolfRole.Hunter && lynched.includes(player.id) && winner !== OnuWerewolfTeam.Tanner) {
-    // 猎人被处决时，如果村民阵营胜利，猎人胜利；如果狼人阵营胜利，猎人失败
-    return winner === OnuWerewolfTeam.Villager;
+
+  // 皮匠学徒：有皮匠时随皮匠死亡获胜；没有皮匠时才需要自己死亡。
+  if (player.actualRole === OnuWerewolfRole.ApprenticeTanner) {
+    return hasTanner ? tannerDied : lynched.includes(player.id);
   }
-  
-  // 猎人未被处决时，按正常阵营判断
-  if (player.actualRole === OnuWerewolfRole.Hunter && !lynched.includes(player.id)) {
+
+  // 皮匠死亡且狼人也死亡时，村民阵营也获胜；若只有皮匠死亡，村民不获胜。
+  if (winner === OnuWerewolfTeam.Tanner) {
+    return playerTeam === OnuWerewolfTeam.Villager && werewolfDied;
+  }
+
+  // 猎人属于村民阵营，胜负仍按最终阵营判断。
+  if (player.actualRole === OnuWerewolfRole.Hunter) {
     return playerTeam === winner;
   }
-  
-  // 其他角色：根据团队胜利情况判断
+
+  // 其他角色：根据团队胜利情况判断。
   return playerTeam === winner;
 }
 

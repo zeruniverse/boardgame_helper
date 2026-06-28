@@ -980,7 +980,7 @@ class OnuWerewolfWorker extends BaseGameWorker {
         .map(pid => this.gameState.players[pid]?.seat)
         .filter((s): s is number => s > 0);
       this.sendToRoom('onu_tanner_victory', {
-        message: `皮匠死亡！皮匠单独胜利！死亡玩家：${lynchedSeats.join('号, ')}号`,
+        message: `皮匠死亡！皮匠阵营达成胜利条件！死亡玩家：${lynchedSeats.join('号, ')}号`,
         executedPlayers: lynchedSeats
       });
     } else {
@@ -1029,7 +1029,7 @@ class OnuWerewolfWorker extends BaseGameWorker {
       initialRole: player.initialRole,
       finalRole: player.actualRole,
       team: onuGetRoleTeam(player.actualRole),
-      won: onuIsPlayerWinner(player, winner, lynched)
+      won: onuIsPlayerWinner(player, winner, lynched, this.gameState.players)
     }));
 
     const votes = Object.entries(this.gameState.votes).map(([voterId, targetId]) => {

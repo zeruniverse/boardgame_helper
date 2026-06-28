@@ -129,7 +129,7 @@ export const ONU_WEREWOLF_PRESETS: Record<string, OnuWerewolfPreset> = {
   // 8人游戏（含皮匠）
   'tanner_8': {
     name: '皮匠8人局',
-    description: '包含皮匠的8人配置：2狼人、爪牙、预言家、强盗、捣蛋鬼、酒鬼、失眠者、猎人 + 1村民 + 3张中心卡',
+    description: '包含皮匠的8人配置：2狼人、爪牙、预言家、强盗、捣蛋鬼、酒鬼、失眠者、猎人、皮匠 + 3张中心卡',
     playerCount: 8,
     roles: [
       OnuWerewolfRole.Werewolf,
@@ -141,7 +141,7 @@ export const ONU_WEREWOLF_PRESETS: Record<string, OnuWerewolfPreset> = {
       OnuWerewolfRole.Drunk,
       OnuWerewolfRole.Insomniac,
       OnuWerewolfRole.Hunter,
-      OnuWerewolfRole.Villager,
+      OnuWerewolfRole.Tanner,
       OnuWerewolfRole.Villager
     ],
     config: {

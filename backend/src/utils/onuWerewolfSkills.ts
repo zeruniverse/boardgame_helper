@@ -727,6 +727,29 @@ export class OnuAuraSeerSkill extends OnuBaseSkill {
   }
 }
 
+// 皮匠学徒技能 - 查看本局是否有皮匠以及皮匠是谁
+export class OnuApprenticeTannerSkill extends OnuBaseSkill {
+  canUse(): boolean {
+    return true;
+  }
+
+  execute(): OnuSkillResult {
+    const tanners = this.getOtherPlayers().filter(p => p.actualRole === OnuWerewolfRole.Tanner);
+    const visibleTanners = tanners.map(p => ({
+      ...p,
+      revealed: true
+    }));
+
+    return {
+      success: true,
+      vision: onuCreateVision(visibleTanners),
+      message: tanners.length > 0
+        ? `你看到了皮匠：${tanners.map(p => p.name).join(', ')}`
+        : '本局没有其他皮匠；若你死亡则你获胜'
+    };
+  }
+}
+
 // 狼王技能 - 像狼人查看同伴 + 可移动狼人标记
 export class OnuAlphaWolfSkill extends OnuBaseSkill {
   canUse(selection?: OnuWerewolfSelection): boolean {
@@ -876,6 +899,9 @@ export class OnuSkillFactory {
       case OnuWerewolfRole.AuraSeer:
         return new OnuAuraSeerSkill(role, owner, players, centerCards);
 
+      case OnuWerewolfRole.ApprenticeTanner:
+        return new OnuApprenticeTannerSkill(role, owner, players, centerCards);
+
       default:
         return null; // 不需要技能的角色
     }
@@ -901,7 +927,8 @@ export class OnuSkillFactory {
       OnuWerewolfRole.Revealer,
       OnuWerewolfRole.Curator,
       OnuWerewolfRole.Sentinel,
-      OnuWerewolfRole.AuraSeer
+      OnuWerewolfRole.AuraSeer,
+      OnuWerewolfRole.ApprenticeTanner
     ];
 
     return skillRoles.includes(role);
