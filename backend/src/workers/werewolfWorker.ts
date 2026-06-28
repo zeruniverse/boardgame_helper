@@ -1442,8 +1442,15 @@ class WerewolfWorker extends BaseGameWorker {
   }
 
   private saveTimeout(callback: () => void, ms: number): NodeJS.Timeout {
+    const expectedStatus = this.gameState.status;
+    const expectedSeq = (this.gameState as any).stateSeq;
     const timer = setTimeout(() => {
       this.timers = this.timers.filter(t => t !== timer);
+      if (this.gameState.status !== expectedStatus ||
+          (this.gameState as any).stateSeq !== expectedSeq ||
+          (this.gameState as any).endingStateSeq === expectedSeq) {
+        return;
+      }
       callback();
     }, ms);
     this.timers.push(timer);

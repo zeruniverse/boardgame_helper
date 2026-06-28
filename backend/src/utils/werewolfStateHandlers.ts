@@ -60,9 +60,14 @@ function getTimeoutForStatus(handler: StateHandler, context: any): number {
 }
 
 function scheduleStateTask(gameState: WerewolfGameState, callback: () => void, ms: number): NodeJS.Timeout {
-  const state = gameState as WerewolfGameState & { scheduledTimers?: NodeJS.Timeout[] };
+  const state = gameState as WerewolfGameState & { scheduledTimers?: NodeJS.Timeout[]; stateSeq?: number };
+  const expectedStatus = gameState.status;
+  const expectedSeq = state.stateSeq;
   const timer = setTimeout(() => {
     state.scheduledTimers = (state.scheduledTimers || []).filter(t => t !== timer);
+    if (gameState.status !== expectedStatus || state.stateSeq !== expectedSeq) {
+      return;
+    }
     callback();
   }, ms);
   state.scheduledTimers = [...(state.scheduledTimers || []), timer];
@@ -73,6 +78,16 @@ export function clearScheduledStateTasks(gameState: WerewolfGameState): void {
   const state = gameState as WerewolfGameState & { scheduledTimers?: NodeJS.Timeout[] };
   (state.scheduledTimers || []).forEach(timer => clearTimeout(timer));
   state.scheduledTimers = [];
+}
+
+function beginEndState(handler: StateHandler, gameState: WerewolfGameState): boolean {
+  const state = gameState as WerewolfGameState & { stateSeq?: number; endingStateSeq?: number };
+  const currentSeq = state.stateSeq || 0;
+  if (gameState.status !== handler.status || state.endingStateSeq === currentSeq) {
+    return false;
+  }
+  state.endingStateSeq = currentSeq;
+  return true;
 }
 
 // 工具函数 - 开始当前状态
@@ -86,6 +101,11 @@ export function startCurrentState(
     gameState.status = handler.status;
   }
 
+  const state = gameState as WerewolfGameState & { stateSeq?: number; endingStateSeq?: number };
+  state.stateSeq = (state.stateSeq || 0) + 1;
+  state.endingStateSeq = undefined;
+  const stateSeq = state.stateSeq;
+
   const timeout = getTimeoutForStatus(handler, context);
 
   // 清理之前的定时器
@@ -93,11 +113,16 @@ export function startCurrentState(
     clearTimeout(gameState.timer);
     gameState.timer = undefined;
   }
+  clearScheduledStateTasks(gameState);
 
   // 只有超时时间大于0才设置定时器（支持不限时模式）
   if (timeout > 0) {
     gameState.timer = setTimeout(() => {
       try {
+        const currentState = gameState as WerewolfGameState & { stateSeq?: number; endingStateSeq?: number };
+        if (gameState.status !== handler.status || currentState.stateSeq !== stateSeq || currentState.endingStateSeq === stateSeq) {
+          return;
+        }
         handler.endOfState(gameState, context);
       } catch (error) {
         console.error(`状态 ${handler.status} 结束处理出错:`, error);
@@ -236,6 +261,7 @@ function checkAndHandleGameEnd(gameState: WerewolfGameState, context: any): bool
       clearTimeout(gameState.timer);
       gameState.timer = undefined;
     }
+    clearScheduledStateTasks(gameState);
     context.sendToRoom('game_end', {
       winner: winner === 'WEREWOLF' ? 'werewolf' : 'villager',
       reason: winner === 'WEREWOLF' ? '狼人数量大于或等于好人数量' : '所有狼人已死亡'
@@ -392,6 +418,7 @@ export const WolfKillHandler: StateHandler = {
   },
 
   endOfState(gameState, context) {
+    if (!beginEndState(this, gameState)) return;
     // 清理定时器
     if (gameState.timer) {
       clearTimeout(gameState.timer);
@@ -479,6 +506,7 @@ export const SeerCheckHandler: StateHandler = {
   },
 
   endOfState(gameState, context) {
+    if (!beginEndState(this, gameState)) return;
     if (gameState.timer) {
       clearTimeout(gameState.timer);
       gameState.timer = undefined;
@@ -533,6 +561,7 @@ export const WitchActHandler: StateHandler = {
   },
 
   endOfState(gameState, context) {
+    if (!beginEndState(this, gameState)) return;
     if (gameState.timer) {
       clearTimeout(gameState.timer);
       gameState.timer = undefined;
@@ -569,6 +598,7 @@ export const GuardProtectHandler: StateHandler = {
   },
 
   endOfState(gameState, context) {
+    if (!beginEndState(this, gameState)) return;
     if (gameState.timer) {
       clearTimeout(gameState.timer);
       gameState.timer = undefined;
@@ -602,6 +632,7 @@ export const SheriffElectHandler: StateHandler = {
   },
 
   endOfState(gameState, context) {
+    if (!beginEndState(this, gameState)) return;
     if (gameState.timer) {
       clearTimeout(gameState.timer);
       gameState.timer = undefined;
@@ -673,6 +704,7 @@ export const SheriffSpeechHandler: StateHandler = {
   },
 
   endOfState(gameState, context) {
+    if (!beginEndState(this, gameState)) return;
     if (gameState.timer) {
       clearTimeout(gameState.timer);
       gameState.timer = undefined;
@@ -710,6 +742,7 @@ export const SheriffVoteHandler: StateHandler = {
   },
 
   endOfState(gameState, context) {
+    if (!beginEndState(this, gameState)) return;
     if (gameState.timer) {
       clearTimeout(gameState.timer);
       gameState.timer = undefined;
@@ -914,6 +947,7 @@ export const BeforeDayDiscussHandler: StateHandler = {
   },
 
   endOfState(gameState, context) {
+    if (!beginEndState(this, gameState)) return;
     // 在startOfState中已经处理了所有逻辑
   }
 };
@@ -965,6 +999,7 @@ export const DayDiscussHandler: StateHandler = {
   },
 
   endOfState(gameState, context) {
+    if (!beginEndState(this, gameState)) return;
     if (gameState.timer) {
       clearTimeout(gameState.timer);
       gameState.timer = undefined;
@@ -1006,6 +1041,7 @@ export const ExileVoteHandler: StateHandler = {
   },
 
   endOfState(gameState, context) {
+    if (!beginEndState(this, gameState)) return;
     if (gameState.timer) {
       clearTimeout(gameState.timer);
       gameState.timer = undefined;
@@ -1126,6 +1162,7 @@ export const ExileVoteCheckHandler: StateHandler = {
   },
 
   endOfState(gameState, context) {
+    if (!beginEndState(this, gameState)) return;
     if (gameState.timer) {
       clearTimeout(gameState.timer);
       gameState.timer = undefined;
@@ -1163,6 +1200,7 @@ export const HunterShootHandler: StateHandler = {
   },
 
   endOfState(gameState, context) {
+    if (!beginEndState(this, gameState)) return;
     if (gameState.timer) {
       clearTimeout(gameState.timer);
       gameState.timer = undefined;
@@ -1247,6 +1285,7 @@ export const HunterCheckHandler: StateHandler = {
   },
 
   endOfState(gameState, context) {
+    if (!beginEndState(this, gameState)) return;
     if (gameState.timer) {
       clearTimeout(gameState.timer);
       gameState.timer = undefined;
@@ -1288,6 +1327,7 @@ export const LeaveMsgHandler: StateHandler = {
   },
 
   endOfState(gameState, context) {
+    if (!beginEndState(this, gameState)) return;
     if (gameState.timer) {
       clearTimeout(gameState.timer);
       gameState.timer = undefined;
@@ -1336,6 +1376,7 @@ export const SheriffAssignHandler: StateHandler = {
   },
 
   endOfState(gameState, context) {
+    if (!beginEndState(this, gameState)) return;
     if (gameState.timer) {
       clearTimeout(gameState.timer);
       gameState.timer = undefined;
@@ -1380,6 +1421,7 @@ export const SheriffAssignCheckHandler: StateHandler = {
   },
 
   endOfState(gameState, context) {
+    if (!beginEndState(this, gameState)) return;
     if (gameState.timer) {
       clearTimeout(gameState.timer);
       gameState.timer = undefined;
@@ -1417,6 +1459,7 @@ export const WolfKillCheckHandler: StateHandler = {
   },
 
   endOfState(gameState, context) {
+    if (!beginEndState(this, gameState)) return;
     if (gameState.timer) {
       clearTimeout(gameState.timer);
       gameState.timer = undefined;
@@ -1449,6 +1492,7 @@ export const SheriffVoteCheckHandler: StateHandler = {
   },
 
   endOfState(gameState, context) {
+    if (!beginEndState(this, gameState)) return;
     if (gameState.timer) {
       clearTimeout(gameState.timer);
       gameState.timer = undefined;
