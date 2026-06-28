@@ -17,6 +17,7 @@ import {
 import {
   onuIsWerewolf,
   onuIsWerewolfTeam,
+  onuIsTannerTeam,
   onuCreateVision
 } from './onuWerewolfUtils';
 
@@ -36,6 +37,10 @@ export interface OnuSkillResult {
   shieldChanges?: Array<{
     playerId: string;
     shielded: boolean;
+  }>;
+  revealChanges?: Array<{
+    playerId: string;
+    revealed: boolean;
   }>;
   artifactChanges?: Array<{
     playerId: string;
@@ -499,7 +504,101 @@ export class OnuWitchSkill extends OnuBaseSkill {
   }
 }
 
-// 揭示者技能 - 揭示一名玩家的角色卡
+// 超自然调查员技能 - 依次查看最多两名玩家；若看到狼人或皮匠，自己变成对应角色并停止查看
+export class OnuParanormalInvestigatorSkill extends OnuBaseSkill {
+  canUse(selection?: OnuWerewolfSelection): boolean {
+    if (!selection || !selection.players || selection.players.length < 1 || selection.players.length > 2) {
+      return false;
+    }
+
+    const uniqueSeats = new Set(selection.players);
+    if (uniqueSeats.size !== selection.players.length) return false;
+
+    return selection.players.every(seat => {
+      const target = this.getPlayerBySeat(seat);
+      return target !== undefined && target.id !== this.owner.id && !target.shielded;
+    });
+  }
+
+  execute(selection: OnuWerewolfSelection): OnuSkillResult {
+    const selectedSeats = selection.players || [];
+    const seenPlayers: OnuWerewolfPlayer[] = [];
+    let transformedRole: OnuWerewolfRole | null = null;
+
+    for (const seat of selectedSeats) {
+      const target = this.getPlayerBySeat(seat);
+      if (!target) {
+        return { success: false, error: '目标玩家不存在' };
+      }
+
+      seenPlayers.push({ ...target, revealed: true });
+
+      if (onuIsWerewolf(target.actualRole) || onuIsTannerTeam(target.actualRole)) {
+        transformedRole = target.actualRole;
+        break;
+      }
+    }
+
+    const roleChanges = transformedRole !== null
+      ? [
+          { playerId: this.owner.id, newRole: transformedRole, type: 'actual' as const },
+          { playerId: this.owner.id, newRole: transformedRole, type: 'notional' as const }
+        ]
+      : undefined;
+
+    return {
+      success: true,
+      vision: onuCreateVision(seenPlayers),
+      roleChanges,
+      message: transformedRole !== null
+        ? `你查看了${seenPlayers.map(p => p.name).join('、')}，并变成了${ONU_WEREWOLF_ROLE_NAMES[transformedRole] || '未知角色'}`
+        : `你查看了${seenPlayers.map(p => p.name).join('、')}，没有变更角色`
+    };
+  }
+}
+
+// 村庄白痴技能 - 将除自己和被护盾保护玩家外的所有玩家角色卡整体左移或右移一格
+export class OnuVillageIdiotSkill extends OnuBaseSkill {
+  canUse(selection?: OnuWerewolfSelection): boolean {
+    if (!selection || !selection.cards || selection.cards.length === 0) return true;
+    return selection.cards.length === 1 && (selection.cards[0] === 0 || selection.cards[0] === 1);
+  }
+
+  execute(selection?: OnuWerewolfSelection): OnuSkillResult {
+    const direction = selection?.cards?.[0] === 1 ? 'right' : 'left';
+    const movablePlayers = this.getOtherPlayers()
+      .filter(p => !p.shielded)
+      .sort((a, b) => a.seat - b.seat);
+
+    if (movablePlayers.length < 2) {
+      return {
+        success: true,
+        message: '可移动的其他玩家不足两名，村庄白痴没有移动任何角色卡'
+      };
+    }
+
+    const rolesBeforeMove = movablePlayers.map(p => p.actualRole);
+    const count = movablePlayers.length;
+    const roleChanges = movablePlayers.map((player, index) => {
+      const sourceIndex = direction === 'left'
+        ? (index + 1) % count
+        : (index - 1 + count) % count;
+      return {
+        playerId: player.id,
+        newRole: rolesBeforeMove[sourceIndex],
+        type: 'actual' as const
+      };
+    });
+
+    return {
+      success: true,
+      roleChanges,
+      message: `你将除自己${movablePlayers.length}名可移动玩家的角色卡整体${direction === 'left' ? '左移' : '右移'}了一格`
+    };
+  }
+}
+
+// 揭示者技能 - 公开揭示一名玩家的村民阵营角色卡；非村民阵营看后须盖回去
 export class OnuRevealerSkill extends OnuBaseSkill {
   canUse(selection?: OnuWerewolfSelection): boolean {
     if (!selection || !selection.players || selection.players.length !== 1) {
@@ -516,10 +615,17 @@ export class OnuRevealerSkill extends OnuBaseSkill {
       return { success: false, error: '目标玩家不存在' };
     }
 
+    const shouldStayRevealed = !onuIsWerewolfTeam(target.actualRole) && !onuIsTannerTeam(target.actualRole);
+
     return {
       success: true,
       vision: onuCreateVision([{ ...target, revealed: true }]),
-      message: `你揭示了${target.name}的角色卡`
+      revealChanges: shouldStayRevealed
+        ? [{ playerId: target.id, revealed: true }]
+        : undefined,
+      message: shouldStayRevealed
+        ? `你公开揭示了${target.name}的角色卡`
+        : `你查看了${target.name}的角色卡，但该角色不是村民阵营，必须盖回去`
     };
   }
 }
@@ -752,6 +858,12 @@ export class OnuSkillFactory {
       case OnuWerewolfRole.Witch:
         return new OnuWitchSkill(role, owner, players, centerCards);
 
+      case OnuWerewolfRole.ParanormalInvestigator:
+        return new OnuParanormalInvestigatorSkill(role, owner, players, centerCards);
+
+      case OnuWerewolfRole.VillageIdiot:
+        return new OnuVillageIdiotSkill(role, owner, players, centerCards);
+
       case OnuWerewolfRole.Revealer:
         return new OnuRevealerSkill(role, owner, players, centerCards);
 
@@ -784,6 +896,8 @@ export class OnuSkillFactory {
       OnuWerewolfRole.Minion,
       OnuWerewolfRole.Doppelganger,
       OnuWerewolfRole.Witch,
+      OnuWerewolfRole.ParanormalInvestigator,
+      OnuWerewolfRole.VillageIdiot,
       OnuWerewolfRole.Revealer,
       OnuWerewolfRole.Curator,
       OnuWerewolfRole.Sentinel,

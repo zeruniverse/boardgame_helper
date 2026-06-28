@@ -92,6 +92,8 @@ interface OnuWerewolfPlayer {
   ready: boolean;
   voted: boolean;
   skillUsed: boolean;
+  revealed?: boolean;
+  revealedRole?: OnuWerewolfRole;
 }
 
 interface OnuWerewolfGameState {
@@ -219,6 +221,29 @@ export const useOnuWerewolfStore = defineStore('onuWerewolf', {
           : incomingGame as OnuWerewolfGameState;
       };
 
+      const mergeVision = (incomingVision: any) => {
+        if (!incomingVision) return;
+        if (!this.playerSecret) this.playerSecret = {};
+        const existingVision = this.playerSecret.vision || {};
+        const mergedPlayers = [...(existingVision.players || [])];
+
+        for (const incomingPlayer of incomingVision.players || []) {
+          const index = mergedPlayers.findIndex((p: any) => p.seat === incomingPlayer.seat);
+          if (index >= 0) {
+            mergedPlayers[index] = { ...mergedPlayers[index], ...incomingPlayer };
+          } else {
+            mergedPlayers.push(incomingPlayer);
+          }
+        }
+
+        this.playerSecret.vision = {
+          ...existingVision,
+          ...incomingVision,
+          players: mergedPlayers,
+          cards: incomingVision.cards || existingVision.cards
+        };
+      };
+
       on('connect', () => {
         console.log('OnuWerewolf socket connected');
         this.connected = true;
@@ -272,7 +297,9 @@ export const useOnuWerewolfStore = defineStore('onuWerewolf', {
             seat: p.seat || 0,
             ready: p.ready || false,
             voted: p.voted || false,
-            skillUsed: p.skillUsed || false
+            skillUsed: p.skillUsed || false,
+            revealed: p.revealed || false,
+            revealedRole: p.revealedRole
           }));
         }
       });
@@ -358,7 +385,7 @@ export const useOnuWerewolfStore = defineStore('onuWerewolf', {
         this.playerSecret.canUseSkill = false;
         this.playerSecret.skillUsed = true;
         if (data.vision) {
-          this.playerSecret.vision = data.vision;
+          mergeVision(data.vision);
         }
         this.addSystemMessage(data.message || '技能使用完成');
       });
@@ -373,9 +400,15 @@ export const useOnuWerewolfStore = defineStore('onuWerewolf', {
 
       // Board info (C4 fix)
       on('onu_board_info', (data: any) => {
-        if (data.vision && this.playerSecret) {
-          this.playerSecret.vision = data.vision;
+        if (data.vision) {
+          mergeVision(data.vision);
         }
+      });
+
+      on('onu_cards_revealed', (data: any) => {
+        applyIncomingGame(data);
+        mergeVision(data.vision);
+        if (data.message) this.addSystemMessage(data.message);
       });
 
       // Role info (C4 fix)

@@ -318,7 +318,9 @@ class OnuWerewolfWorker extends BaseGameWorker {
         seat: p.seat,
         ready: p.ready,
         voted: p.voted,
-        skillUsed: p.skillUsed
+        skillUsed: p.skillUsed,
+        revealed: p.revealed,
+        revealedRole: p.revealed ? p.actualRole : undefined
       }))
     };
   }
@@ -686,6 +688,18 @@ class OnuWerewolfWorker extends BaseGameWorker {
       vision: result.vision
     });
 
+    if (result.revealChanges?.some(change => change.revealed)) {
+      const revealedPlayers = result.revealChanges
+        .map(change => this.gameState.players[change.playerId])
+        .filter((p): p is OnuWerewolfPlayer => Boolean(p && p.revealed));
+
+      this.sendToRoom('onu_cards_revealed', {
+        message: `${revealedPlayers.map(p => p.name).join('、')}的角色卡已被公开揭示`,
+        vision: onuCreateVision(revealedPlayers),
+        gameInfo: this.getGameInfo()
+      });
+    }
+
     // 进入下一个技能
     this.currentSkillIndex++;
 
@@ -766,6 +780,16 @@ class OnuWerewolfWorker extends BaseGameWorker {
         const player = this.gameState.players[change.playerId];
         if (player) {
           player.shielded = change.shielded;
+        }
+      });
+    }
+
+    // 应用公开揭示变化
+    if (result.revealChanges) {
+      result.revealChanges.forEach(change => {
+        const player = this.gameState.players[change.playerId];
+        if (player) {
+          player.revealed = change.revealed;
         }
       });
     }
@@ -869,12 +893,16 @@ class OnuWerewolfWorker extends BaseGameWorker {
     let vision: OnuWerewolfVision = {};
 
     if (this.gameState.status === OnuWerewolfGameStatus.VOTING) {
-      // 投票阶段显示所有玩家信息（不显示角色）
+      // 投票阶段只公开已经被揭示者翻开的角色，其他玩家角色仍隐藏。
       vision = onuCreateVision(
-        Object.values(this.gameState.players).map(p => ({
-          ...p,
-          actualRole: OnuWerewolfRole.Unknown
-        }))
+        Object.values(this.gameState.players).map(p => p.revealed
+          ? p
+          : {
+              ...p,
+              actualRole: OnuWerewolfRole.Unknown,
+              revealed: false
+            }
+        )
       );
     } else if (this.gameState.status === OnuWerewolfGameStatus.COMPLETED) {
       // 游戏结束显示完整信息

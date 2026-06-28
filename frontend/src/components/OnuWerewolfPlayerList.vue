@@ -48,6 +48,10 @@
             </span>
           </div>
 
+          <div v-if="gameState?.status === 3 && getPlayerVisibleRole(player) !== OnuWerewolfRole.Unknown" class="role-info revealed-role">
+            已公开: {{ getRoleName(getPlayerVisibleRole(player)) }}
+          </div>
+
           <!-- 显示玩家的角色信息（仅游戏结束时） -->
           <div v-if="gameState?.status === 5 && playerSecret?.vision" class="role-info">
             <div class="initial-role">
@@ -131,6 +135,8 @@ interface Player {
   skillUsed: boolean;
   initialRole?: number;
   finalRole?: number;
+  revealed?: boolean;
+  revealedRole?: OnuWerewolfRole;
 }
 
 interface GameState {
@@ -226,6 +232,11 @@ const getRoleName = (role: OnuWerewolfRole) => {
   return ONU_WEREWOLF_ROLE_NAMES[role] || '未知';
 };
 
+const getPlayerVisibleRole = (player?: Player) => {
+  if (!player?.revealedRole) return OnuWerewolfRole.Unknown;
+  return player.revealedRole;
+};
+
 const getPlayerInitialRole = (seat?: number) => {
   if (!seat || !props.playerSecret?.vision?.players) return OnuWerewolfRole.Unknown;
   const player = props.playerSecret.vision.players.find(p => p.seat === seat);
@@ -288,6 +299,11 @@ const handlePlayerAction = (command: { action: string; playerId: string }) => {
 .player-count {
   font-size: 14px;
   font-weight: 500;
+}
+
+.revealed-role {
+  color: #d97706;
+  font-weight: 600;
 }
 
 .role-count {

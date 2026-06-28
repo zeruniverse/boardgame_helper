@@ -25,7 +25,7 @@
       <!-- 左侧：玩家列表 -->
       <div class="left-panel">
         <OnuWerewolfPlayerList
-          :players="room?.players || []"
+          :players="gameState?.players || room?.players || []"
           :hostId="room?.hostId || ''"
           :currentUserId="currentUserId"
           :gameState="gameState"
@@ -51,7 +51,7 @@
           :mySeat="mySeat"
           :currentUserId="currentUserId"
           :playerCount="room?.players?.length || 0"
-          :allPlayers="room?.players || []"
+          :allPlayers="gameState?.players || room?.players || []"
           :skipDiscussionCount="skipDiscussionCount"
           :skipDiscussionTotal="skipDiscussionTotal"
           @game-action="handleGameAction"

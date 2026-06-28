@@ -260,6 +260,29 @@
             </div>
           </div>
 
+          <!-- 超自然调查员: 选择最多两名其他玩家依次查看 -->
+          <div v-else-if="myRole === OnuWerewolfRole.ParanormalInvestigator" class="player-select">
+            <p>选择1-2名玩家依次查看；若看到狼人或皮匠会立即变成该角色并停止查看:</p>
+            <el-checkbox-group v-model="selectedPlayers" :max="2">
+              <el-checkbox-button
+                v-for="p in otherPlayers"
+                :key="p.seat"
+                :value="p.seat"
+              >
+                座位{{ p.seat }} - {{ p.name }}
+              </el-checkbox-button>
+            </el-checkbox-group>
+          </div>
+
+          <!-- 村庄白痴: 选择整体移动方向 -->
+          <div v-else-if="myRole === OnuWerewolfRole.VillageIdiot" class="selection-options">
+            <p>选择将除自己外的其他可移动玩家角色卡整体移动方向:</p>
+            <el-radio-group v-model="villageIdiotDirection">
+              <el-radio-button label="left">左移</el-radio-button>
+              <el-radio-button label="right">右移</el-radio-button>
+            </el-radio-group>
+          </div>
+
           <!-- 揭示者: 选择1名玩家揭示角色 -->
           <div v-else-if="myRole === OnuWerewolfRole.Revealer" class="player-select">
             <p>选择一名玩家揭示其角色:</p>
@@ -464,10 +487,13 @@ const availableRoles = [
   { value: OnuWerewolfRole.AlphaWolf, label: '狼王', description: '与其他狼人互相认识，可将一名非狼人玩家变为狼人' },
   { value: OnuWerewolfRole.MysticWolf, label: '神秘狼', description: '与其他狼人互相认识，还可查看一名非狼人玩家的角色' },
   { value: OnuWerewolfRole.ApprenticeSeer, label: '预言家学徒', description: '可以查看一张中心卡牌' },
+  { value: OnuWerewolfRole.ParanormalInvestigator, label: '超自然调查员', description: '可依次查看最多两名玩家，若看到狼人或皮匠则变成该角色' },
   { value: OnuWerewolfRole.Witch, label: '女巫', description: '查看一张中心卡牌，可选择与一名玩家交换' },
-  { value: OnuWerewolfRole.Revealer, label: '揭示者', description: '揭示一名玩家的角色卡' },
+  { value: OnuWerewolfRole.VillageIdiot, label: '村庄白痴', description: '将除自己外的其他玩家角色卡整体左移或右移' },
+  { value: OnuWerewolfRole.Revealer, label: '揭示者', description: '公开揭示一名村民阵营玩家的角色卡' },
   { value: OnuWerewolfRole.Curator, label: '馆长', description: '给一名玩家放置文物标记' },
-  { value: OnuWerewolfRole.Sentinel, label: '哨兵', description: '保护一名玩家不被查看或交换角色' }
+  { value: OnuWerewolfRole.Sentinel, label: '哨兵', description: '保护一名玩家不被查看或交换角色' },
+  { value: OnuWerewolfRole.AuraSeer, label: '光环预言家', description: '查看哪些玩家的角色被变动过' }
 ];
 
 // 必选角色（至少需要的角色）
@@ -548,8 +574,10 @@ const seerMode = ref<'player' | 'cards'>('player');
 const selectedPlayer = ref<number | undefined>(undefined);
 const selectedPlayer1 = ref<number | undefined>(undefined);
 const selectedPlayer2 = ref<number | undefined>(undefined);
+const selectedPlayers = ref<number[]>([]);
 const selectedCard = ref<number | undefined>(undefined);
 const selectedCards = ref<number[]>([]);
+const villageIdiotDirection = ref<'left' | 'right'>('left');
 const skillResult = ref<string>('');
 
 // 计算属性
@@ -611,6 +639,10 @@ const canExecuteSkill = computed(() => {
       return !!selectedPlayer1.value && !!selectedPlayer2.value && selectedPlayer1.value !== selectedPlayer2.value;
     case OnuWerewolfRole.Witch:
       return selectedCard.value !== undefined;
+    case OnuWerewolfRole.ParanormalInvestigator:
+      return selectedPlayers.value.length >= 1 && selectedPlayers.value.length <= 2;
+    case OnuWerewolfRole.VillageIdiot:
+      return true;
     case OnuWerewolfRole.AlphaWolf:
       return true; // 可选目标
     case OnuWerewolfRole.Werewolf:
@@ -655,6 +687,12 @@ const buildSkillSelection = (): any => {
         return { selection: { cards: [selectedCard.value!], players: [selectedPlayer.value] } };
       }
       return { selection: { cards: [selectedCard.value!] } };
+
+    case OnuWerewolfRole.ParanormalInvestigator:
+      return { selection: { players: selectedPlayers.value.slice(0, 2) } };
+
+    case OnuWerewolfRole.VillageIdiot:
+      return { selection: { cards: [villageIdiotDirection.value === 'right' ? 1 : 0] } };
     
     case OnuWerewolfRole.AlphaWolf:
       if (selectedPlayer.value !== undefined) {
@@ -776,8 +814,10 @@ const watchRole = watch(() => props.myRole, () => {
   selectedPlayer.value = undefined;
   selectedPlayer1.value = undefined;
   selectedPlayer2.value = undefined;
+  selectedPlayers.value = [];
   selectedCard.value = undefined;
   selectedCards.value = [];
+  villageIdiotDirection.value = 'left';
   skillResult.value = '';
 });
 
