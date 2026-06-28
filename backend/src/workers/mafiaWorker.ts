@@ -440,9 +440,14 @@ class MafiaWorker extends BaseGameWorker {
       speakingPlayerIndex,
       deathQueue: gameState.deathQueue,
       nightActions: {
-        killTargets: Object.values(gameState.wantToKill),
-        inspectTargets: Object.values(gameState.inspect),
-        sniperTarget: gameState.wantToSnipe[gameState.topSecret.sniper[0]] || null,
+        killSubmitted: Object.keys(gameState.wantToKill).length,
+        killRequired: this.getAlivePlayers().filter(id => gameState.topSecret.killer.includes(id)).length,
+        inspectSubmitted: Object.keys(gameState.inspect).length,
+        inspectRequired: this.getAlivePlayers().filter(id => gameState.topSecret.cop.includes(id)).length,
+        saveSubmitted: Object.keys(gameState.wantToSave).length,
+        saveRequired: this.getAlivePlayers().filter(id => gameState.topSecret.doctor.includes(id)).length,
+        snipeSubmitted: Object.keys(gameState.wantToSnipe).length,
+        snipeRequired: gameState.sniperShot ? 0 : this.getAlivePlayers().filter(id => gameState.topSecret.sniper.includes(id)).length,
         sniperShot: gameState.sniperShot
       }
     };

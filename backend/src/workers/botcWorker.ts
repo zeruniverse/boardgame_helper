@@ -57,6 +57,13 @@ export class BOTCWorker extends BaseGameWorker {
 
   private broadcastGameState(): void {
     this.sendToRoom('game_update', this.getPublicGameState());
+
+    this.room.players.forEach(player => {
+      if (player.online === false) {
+        return;
+      }
+      this.sendToPlayer(player.id, 'game_update', this.getGameStateForViewer(player.id));
+    });
   }
 
   private promoteScarletWomanIfNeeded(): boolean {
@@ -150,7 +157,7 @@ export class BOTCWorker extends BaseGameWorker {
 
     // 发送当前游戏状态给新玩家
     this.sendToPlayer(roomPlayer.id, 'gameState', {
-      gameState: this.getPublicGameState(),
+      gameState: this.getGameStateForViewer(roomPlayer.id),
       isStoryteller: roomPlayer.id === this.gameConfig.storytellerId
     });
   }
@@ -160,7 +167,7 @@ export class BOTCWorker extends BaseGameWorker {
     
     // 重新发送游戏状态
     this.sendToPlayer(playerId, 'gameState', {
-      gameState: this.getPublicGameState(),
+      gameState: this.getGameStateForViewer(playerId),
       isStoryteller: playerId === this.gameConfig.storytellerId
     });
   }
@@ -402,12 +409,7 @@ export class BOTCWorker extends BaseGameWorker {
     }
 
     this.sendToRoom('nightStarted', {
-      isFirstNight,
-      nightOrder: this.gameState.nightOrder.map(playerId => ({
-        playerId,
-        playerName: this.getPlayerName(playerId),
-        roleName: getRoleName(this.gamePlayers.get(playerId)?.role?.id || '')
-      }))
+      isFirstNight
     });
     this.broadcastGameState();
 
@@ -2044,8 +2046,44 @@ export class BOTCWorker extends BaseGameWorker {
   /**
    * 获取公开的游戏状态
    */
-  private getPublicGameState(): any {
+  private getGameStateForViewer(playerId: string): any {
+    if (playerId === this.gameConfig.storytellerId) {
+      return this.getStorytellerGameState();
+    }
+
+    return this.getPublicGameState(playerId);
+  }
+
+  private getStorytellerGameState(): any {
     const allPlayers = Array.from(this.gamePlayers.values());
+    return {
+      ...this.getPublicGameState(this.gameConfig.storytellerId),
+      players: allPlayers.map(p => ({
+        id: p.playerId,
+        playerId: p.playerId,
+        name: this.getPlayerName(p.playerId),
+        isDead: p.isDead,
+        isAlive: !p.isDead,
+        canVote: p.canVote,
+        seat: p.seat,
+        hasActed: p.hasActed,
+        role: p.role,
+        reminders: p.reminders,
+        nominations: p.nominations
+      })),
+      nightOrder: this.gameState.nightOrder.map(playerId => ({
+        playerId,
+        playerName: this.getPlayerName(playerId),
+        roleName: getRoleName(this.gamePlayers.get(playerId)?.role?.id || ''),
+        hasActed: this.gamePlayers.get(playerId)?.hasActed || false
+      }))
+    };
+  }
+
+  private getPublicGameState(viewerId?: string): any {
+    const allPlayers = Array.from(this.gamePlayers.values());
+    const viewerNightOrder = viewerId && this.gameState.nightOrder.includes(viewerId) ? [viewerId] : [];
+
     return {
       phase: this.gameState.phase,
       day: this.gameState.day,
@@ -2064,11 +2102,10 @@ export class BOTCWorker extends BaseGameWorker {
         hasActed: p.hasActed,
         // 血染钟楼死亡后仍不公开真实角色；角色身份只给说书人/终局揭示。
         role: undefined,
-        reminders: p.reminders,
         nominations: p.nominations
       })),
       playerCount: this.room.players.length,
-      nightOrder: this.gameState.nightOrder
+      nightOrder: viewerNightOrder
     };
   }
 

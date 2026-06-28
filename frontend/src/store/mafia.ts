@@ -42,8 +42,15 @@ interface MafiaGameState {
   doctorCount?: number;
   sniperCount?: number;
   nightActions?: {
-    killTargets?: string[];
-    inspectTargets?: string[];
+    killSubmitted?: number;
+    killRequired?: number;
+    inspectSubmitted?: number;
+    inspectRequired?: number;
+    saveSubmitted?: number;
+    saveRequired?: number;
+    snipeSubmitted?: number;
+    snipeRequired?: number;
+    sniperShot?: boolean;
   };
 }
 
