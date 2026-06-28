@@ -334,7 +334,26 @@ function checkAndHandleGameEnd(gameState: WerewolfGameState, context: any): bool
 // 工具函数 - 处理死亡玩家队列中的下一个玩家（支持多死亡玩家依次处理）
 const MAX_DEATH_CHAIN_DEPTH = 10;
 
+function removePendingDeath(gameState: WerewolfGameState, playerId: string): void {
+  if (!gameState.pendingDeaths) return;
+  gameState.pendingDeaths = gameState.pendingDeaths.filter(p => p.id !== playerId);
+}
+
+function clearCurrentDayVoteMarks(gameState: WerewolfGameState, voteType: 'exile' | 'sheriff'): void {
+  Object.values(gameState.players).forEach(p => {
+    if (voteType === 'exile') {
+      delete p.hasVotedAt?.[gameState.currentDay];
+    } else {
+      delete p.sheriffVotes?.[gameState.currentDay];
+    }
+  });
+}
+
 function processDeathChain(gameState: WerewolfGameState, context: any, dyingPlayer: WerewolfPlayerState): void {
+  // 当前死亡玩家一旦进入处理，就从等待队列移除。否则猎人连锁开枪等插队死亡会让
+  // 已处理的原死亡玩家再次被队列 shift 到，重复触发猎人/警徽/遗言流程。
+  removePendingDeath(gameState, dyingPlayer.id);
+
   // 检查递归深度，防止无限连锁
   const currentDepth = gameState.deathChainDepth || 0;
   if (currentDepth >= MAX_DEATH_CHAIN_DEPTH) {
@@ -406,14 +425,12 @@ function continueToNightOrDay(gameState: WerewolfGameState, context: any): void 
   // 重置死亡链深度
   gameState.deathChainDepth = 0;
 
-  // 检查是否还有待处理的死亡玩家
+  // 检查是否还有待处理的死亡玩家。当前玩家已在 processDeathChain 入口移除，
+  // 这里不能再 shift，否则插队死亡或手动调用会误删下一名待处理玩家。
   if (gameState.pendingDeaths && gameState.pendingDeaths.length > 0) {
-    gameState.pendingDeaths.shift(); // 移除已处理的
-    if (gameState.pendingDeaths.length > 0) {
-      const nextDyingPlayer = gameState.pendingDeaths[0];
-      processDeathChain(gameState, context, nextDyingPlayer);
-      return;
-    }
+    const nextDyingPlayer = gameState.pendingDeaths[0];
+    processDeathChain(gameState, context, nextDyingPlayer);
+    return;
   }
 
   gameState.curDyingPlayer = undefined;
@@ -793,6 +810,7 @@ export const SheriffVoteHandler: StateHandler = {
     const alivePlayers = Object.values(gameState.players).filter(p => p.isAlive);
     gameState.toFinishPlayers = new Set(alivePlayers.map(p => p.index));
     gameState.votes = {};
+    clearCurrentDayVoteMarks(gameState, 'sheriff');
 
     startCurrentState(this, gameState, context);
 
@@ -1093,6 +1111,7 @@ export const ExileVoteHandler: StateHandler = {
     const alivePlayers = Object.values(gameState.players).filter(p => p.isAlive);
     gameState.toFinishPlayers = new Set(alivePlayers.map(p => p.index));
     gameState.votes = {};
+    clearCurrentDayVoteMarks(gameState, 'exile');
 
     startCurrentState(this, gameState, context);
 
@@ -1195,15 +1214,10 @@ export const ExileVoteHandler: StateHandler = {
 
       // PK发言后重新投票
       scheduleStateTask(gameState, () => {
-        // 先重置投票记录，再进入PK发言状态，避免竞争条件
+        // 先重置投票记录，再进入PK发言状态，避免竞争条件。不能写入 0；
+        // 0 是弃票，也会被 allAlivePlayersVoted 视为已投票，导致 PK 后重投提前结束。
         gameState.votes = {};
-        Object.values(gameState.players).forEach(p => {
-          // 确保hasVotedAt数组足够长，避免稀疏数组问题
-          while (p.hasVotedAt.length <= gameState.currentDay) {
-            p.hasVotedAt.push(0);
-          }
-          p.hasVotedAt[gameState.currentDay] = 0;
-        });
+        clearCurrentDayVoteMarks(gameState, 'exile');
 
         // PK发言结束后重新投票（在DayDiscuss的endOfState中处理）
         DayDiscussHandler.startOfState(gameState, context);
@@ -1276,7 +1290,7 @@ export const HunterShootHandler: StateHandler = {
     }
 
     const hunter = gameState.curDyingPlayer;
-    let shotNewDying = false;
+    let shotTarget: WerewolfPlayerState | undefined;
 
     if (hunter) {
       const shootAt = hunter.characterStatus.shootAt;
@@ -1293,14 +1307,9 @@ export const HunterShootHandler: StateHandler = {
             message: `${hunter.index}号猎人开枪带走了${target.index}号 ${target.name}`
           });
 
-          // 被带走的如果是猎人，加入死亡队列头部优先处理
-          if (target.character === 'HUNTER') {
-            if (!gameState.pendingDeaths) {
-              gameState.pendingDeaths = [];
-            }
-            gameState.pendingDeaths.unshift(target);
-            shotNewDying = true;
-          }
+          // 被猎人带走的玩家同样进入死亡链：若其也是猎人/警长，或有遗言资格，
+          // 后续流程不能被跳过。
+          shotTarget = target;
         }
       } else {
         context.sendToRoom('show_message', {
@@ -1312,8 +1321,23 @@ export const HunterShootHandler: StateHandler = {
       hunter.isDying = false; // 标记当前猎人死亡处理完成
     }
 
-    // 如果猎人开枪带走了另一个猎人，优先处理那个猎人
-    if (shotNewDying) {
+    const hunterNeedsFollowUp = !!hunter && (
+      hunter.isSheriff ||
+      hunter.die?.fromCharacter === 'VILLAGER' ||
+      gameState.currentDay <= 1
+    );
+
+    // 如果猎人开枪带走了其他玩家，优先处理被带走者；当前猎人仍需警徽/遗言时，
+    // 排在被带走者之后继续处理。
+    if (shotTarget) {
+      const remainingDeaths = (gameState.pendingDeaths || [])
+        .filter(p => p.id !== shotTarget!.id && p.id !== hunter?.id);
+      gameState.pendingDeaths = [
+        shotTarget,
+        ...(hunter && hunterNeedsFollowUp ? [hunter] : []),
+        ...remainingDeaths
+      ];
+
       scheduleStateTask(gameState, () => {
         processDeathChain(gameState, context, gameState.pendingDeaths![0]);
       }, 3000);
@@ -1330,7 +1354,7 @@ export const HunterShootHandler: StateHandler = {
     }
 
     // 检查遗言
-    if (hunter && gameState.currentDay <= 1) {
+    if (hunter && (hunter.die?.fromCharacter === 'VILLAGER' || gameState.currentDay <= 1)) {
       scheduleStateTask(gameState, () => {
         LeaveMsgHandler.startOfState(gameState, context);
       }, 3000);
