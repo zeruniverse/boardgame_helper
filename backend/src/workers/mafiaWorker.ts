@@ -1612,15 +1612,6 @@ class MafiaWorker extends BaseGameWorker {
       return Team.RED; // 杀手获胜（杀手数量大于等于好人）
     }
 
-    // 检查是否所有特殊角色都已死亡（只剩下平民和杀手）
-    const specialRoleKeys = ['cop', 'doctor', 'sniper'] as const;
-    const aliveSpecialRoles = nextRoundAlivePlayers.filter(id => {
-      return specialRoleKeys.some(key => gameState.topSecret[key].includes(id));
-    });
-    if (aliveSpecialRoles.length === 0 && killerCount > 0) {
-      return Team.RED;
-    }
-
     return null; // 游戏继续
   }
 
