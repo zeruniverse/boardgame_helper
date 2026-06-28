@@ -1534,13 +1534,12 @@ export class BOTCWorker extends BaseGameWorker {
       return;
     }
 
-    // 检查市长效果 - 如果市长夜间死亡，50%概率另一玩家代替死亡
+    // 检查市长效果 - 如果市长被恶魔夜间杀死，可能由另一名存活玩家代替死亡
     if (player.role?.id === 'mayor' && cause === 'demon') {
       const allPlayers = Array.from(this.gamePlayers.values());
-      const otherAlive = allPlayers.filter(p => !p.isDead && p.playerId !== playerId);
-      if (otherAlive.length === 2 && Math.random() < 0.5) {
-        // 50%概率：只剩2个其他存活玩家时，市长redirect死亡到另一名玩家
-        const redirectTarget = otherAlive[Math.floor(Math.random() * otherAlive.length)];
+      const redirectCandidates = allPlayers.filter(p => !p.isDead && p.playerId !== playerId);
+      if (redirectCandidates.length > 0 && Math.random() < 0.5) {
+        const redirectTarget = redirectCandidates[Math.floor(Math.random() * redirectCandidates.length)];
         if (redirectTarget) {
           player.isProtected = true;
           await this.killPlayer(redirectTarget.playerId, cause);

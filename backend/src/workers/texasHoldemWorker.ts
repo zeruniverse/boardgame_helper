@@ -553,13 +553,27 @@ class TexasHoldemWorker extends BaseGameWorker {
       return;
     }
 
-    const amount = data.amount || this.config.defaultStack;
+    const defaultStack = Number(this.config.defaultStack) || 1000;
+    const rawAmount = data?.amount ?? defaultStack;
+    const amount = Math.floor(Number(rawAmount));
+    if (!Number.isFinite(amount) || amount <= 0) {
+      this.sendToPlayer(playerId, 'error', { message: '充值金额必须是正整数' });
+      return;
+    }
+
+    const maxCashIn = Math.max(defaultStack * 100, 1000000);
+    if (amount > maxCashIn) {
+      this.sendToPlayer(playerId, 'error', { message: `单次充值金额不能超过 ${maxCashIn}` });
+      return;
+    }
+
     if (!player.gameMetadata) {
       player.gameMetadata = {};
     }
 
-    player.gameMetadata.chips = (player.gameMetadata.chips || 0) + amount;
-    player.gameMetadata.cashinCount = (player.gameMetadata.cashinCount || 0) + 1;
+    const currentChips = Number(player.gameMetadata.chips) || 0;
+    player.gameMetadata.chips = currentChips + amount;
+    player.gameMetadata.cashinCount = (Number(player.gameMetadata.cashinCount) || 0) + 1;
 
     this.sendToRoom('room_update', this.room);
     this.sendToRoom('chat_broadcast', {
