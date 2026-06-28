@@ -414,6 +414,7 @@ export class OnuDoppelgangerSkill extends OnuBaseSkill {
     const hasFollowUpSkill = copiedSkill !== null && targetRole !== OnuWerewolfRole.Doppelganger;
 
     const immediateFollowUpRoles = [
+      OnuWerewolfRole.Minion,
       OnuWerewolfRole.Seer,
       OnuWerewolfRole.Robber,
       OnuWerewolfRole.Troublemaker,

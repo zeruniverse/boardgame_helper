@@ -563,6 +563,7 @@ class OnuWerewolfWorker extends BaseGameWorker {
 
   private shouldResolveDoppelgangerFollowUpImmediately(role: OnuWerewolfRole): boolean {
     return [
+      OnuWerewolfRole.Minion,
       OnuWerewolfRole.Seer,
       OnuWerewolfRole.Robber,
       OnuWerewolfRole.Troublemaker,
