@@ -175,10 +175,10 @@
         <label>说书人:</label>
         <el-select v-model="selectedStoryteller" placeholder="选择说书人">
           <el-option 
-            v-for="player in players"
-            :key="player.id"
-            :label="player.name"
-            :value="player.id"
+            v-for="option in storytellerOptions"
+            :key="option.id"
+            :label="option.name"
+            :value="option.id"
           />
         </el-select>
       </div>
@@ -187,7 +187,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { ElMessageBox, ElMessage } from 'element-plus'
 import { ChatDotRound, Close, MoreFilled } from '@element-plus/icons-vue'
 
@@ -221,6 +221,12 @@ const emit = defineEmits<Emits>()
 const selectedEdition = ref('tb')
 const selectedStoryteller = ref('')
 
+const computerStorytellers = [
+  { id: 'computer_neutral', name: '电脑说书人（平衡）' },
+  { id: 'computer_good', name: '电脑说书人（偏好好人）' },
+  { id: 'computer_evil', name: '电脑说书人（偏好邪恶）' }
+]
+
 // 可用剧本
 const availableEditions = [
   { id: 'tb', name: 'Trouble Brewing', level: 'Beginner' },
@@ -243,6 +249,25 @@ const storytellerId = computed(() => {
   // 优先使用props传入的说书人ID，其次是游戏配置中的说书人ID
   return props.storytellerId || props.gameConfig?.storytellerId || selectedStoryteller.value || ''
 })
+
+const storytellerOptions = computed(() => [
+  ...computerStorytellers,
+  ...props.players.map(player => ({
+    id: player.id,
+    name: player.name || player.nickname || player.id
+  }))
+])
+
+const syncConfigSelection = () => {
+  selectedEdition.value = props.gameConfig?.edition || selectedEdition.value || 'tb'
+  selectedStoryteller.value = props.storytellerId || props.gameConfig?.storytellerId || props.hostId || props.currentUserId || selectedStoryteller.value
+}
+
+watch(
+  () => [props.storytellerId, props.gameConfig?.storytellerId, props.gameConfig?.edition, props.hostId, props.currentUserId],
+  syncConfigSelection,
+  { immediate: true }
+)
 
 // 获取玩家在游戏中的信息 - 使用playerId匹配
 const getGamePlayer = (playerId: string) => {
@@ -351,9 +376,15 @@ const startGame = () => {
     return
   }
   
+  const isComputer = selectedStoryteller.value.startsWith('computer_')
+  const aiBias = selectedStoryteller.value.includes('good') ? 'good' :
+    selectedStoryteller.value.includes('evil') ? 'evil' : 'neutral'
+
   const config = {
     edition: selectedEdition.value,
-    storytellerId: selectedStoryteller.value
+    storytellerId: selectedStoryteller.value,
+    storytellerMode: isComputer ? 'ai' : 'player',
+    aiBias
   }
   
   emit('start-game', config)

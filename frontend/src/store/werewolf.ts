@@ -63,6 +63,25 @@ interface WerewolfRoomState {
   };
 }
 
+function normalizePlayersRecord(gameInfo: any): Record<string, WerewolfPlayer> {
+  const source = gameInfo?.playersById ?? gameInfo?.players ?? {};
+
+  if (Array.isArray(source)) {
+    return source.reduce((acc: Record<string, WerewolfPlayer>, player: WerewolfPlayer) => {
+      if (player?.id) {
+        acc[player.id] = player;
+      }
+      return acc;
+    }, {});
+  }
+
+  if (source && typeof source === 'object') {
+    return source as Record<string, WerewolfPlayer>;
+  }
+
+  return {};
+}
+
 export const useWerewolfStore = defineStore('werewolf', {
   state: () => ({
     socket: null as Socket | null,
@@ -315,7 +334,7 @@ export const useWerewolfStore = defineStore('werewolf', {
         this.gameState = {
           status: gameInfo.status || 'preparing',
           day: gameInfo.day || 0,
-          players: gameInfo.players || {},
+          players: normalizePlayersRecord(gameInfo),
           operators: gameInfo.operators || [],
           votes: gameInfo.votes || {},
           currentSpeaker: gameInfo.currentSpeaker,
@@ -327,7 +346,7 @@ export const useWerewolfStore = defineStore('werewolf', {
       } else {
         this.gameState.status = gameInfo.status || this.gameState.status;
         this.gameState.day = gameInfo.day !== undefined ? gameInfo.day : this.gameState.day;
-        if (gameInfo.players) this.gameState.players = gameInfo.players;
+        if (gameInfo.players || gameInfo.playersById) this.gameState.players = normalizePlayersRecord(gameInfo);
         if (gameInfo.operators) this.gameState.operators = gameInfo.operators;
         if (gameInfo.votes) this.gameState.votes = gameInfo.votes;
         if (gameInfo.currentSpeaker !== undefined) this.gameState.currentSpeaker = gameInfo.currentSpeaker;

@@ -56,6 +56,10 @@ export class BOTCWorker extends BaseGameWorker {
     return player?.name || player?.nickname || '未知玩家';
   }
 
+  private isComputerStoryteller(storytellerId: string | undefined = this.gameConfig?.storytellerId): boolean {
+    return Boolean(storytellerId?.startsWith('computer_'));
+  }
+
   private broadcastGameState(): void {
     this.sendToRoom('game_update', this.getPublicGameState());
 
@@ -106,7 +110,7 @@ export class BOTCWorker extends BaseGameWorker {
     this.gameConfig = {
       edition: config.edition || 'tb',
       // 如果没有指定说书人，默认使用房主
-      storytellerId: config.storytellerId || room.hostId,
+      storytellerId: config.storytellerId || (config.storytellerMode === 'ai' ? `computer_${config.aiBias || 'neutral'}` : room.hostId),
       allowSpectators: config.allowSpectators !== undefined ? config.allowSpectators : true,
       isPrivate: config.isPrivate || false,
       maxPlayers: config.maxPlayers || 15,
@@ -290,10 +294,13 @@ export class BOTCWorker extends BaseGameWorker {
       return;
     }
 
-    const storyteller = this.room.players.find(p => p.id === this.gameConfig.storytellerId);
-    if (!storyteller || storyteller.online === false) {
-      this.sendToPlayer(playerId, 'actionError', { message: '说书人必须在线才能开始游戏' });
-      return;
+    const isComputerStoryteller = this.isComputerStoryteller();
+    if (!isComputerStoryteller) {
+      const storyteller = this.room.players.find(p => p.id === this.gameConfig.storytellerId);
+      if (!storyteller || storyteller.online === false) {
+        this.sendToPlayer(playerId, 'actionError', { message: '说书人必须在线才能开始游戏' });
+        return;
+      }
     }
 
     // 排除说书人后计算参与游戏的玩家数
@@ -1586,7 +1593,7 @@ export class BOTCWorker extends BaseGameWorker {
       if (aliveEvil.length > 0 && aliveGood.length > 0) {
         const randomEvil = aliveEvil[Math.floor(Math.random() * aliveEvil.length)];
         const randomGood = aliveGood[Math.floor(Math.random() * aliveGood.length)];
-        const isComputerStoryteller = this.gameConfig.storytellerId?.startsWith('computer_') || false;
+        const isComputerStoryteller = this.isComputerStoryteller();
         
         if (isComputerStoryteller) {
           // AI模式下随机排序并返回
@@ -1648,7 +1655,7 @@ export class BOTCWorker extends BaseGameWorker {
       const aliveOthers = allPlayers.filter(p => !p.isDead && p.playerId !== playerId);
       if (aliveOthers.length > 0) {
         // 检查是否是AI说书人模式
-        const isComputerStoryteller = this.gameConfig.storytellerId?.startsWith('computer_') || false;
+        const isComputerStoryteller = this.isComputerStoryteller();
         if (isComputerStoryteller) {
           // AI模式下随机选择
           const randomPlayer = aliveOthers[Math.floor(Math.random() * aliveOthers.length)];
@@ -1818,7 +1825,7 @@ export class BOTCWorker extends BaseGameWorker {
    */
   private autoStorytellerProcess(): void {
     // 检查是否配置了电脑说书人
-    const isComputerStoryteller = this.gameConfig.storytellerId?.startsWith('computer_') || false;
+    const isComputerStoryteller = this.isComputerStoryteller();
     if (!isComputerStoryteller) return;
 
     const delay = 3000 + Math.random() * 3000; // 3-6秒随机延迟

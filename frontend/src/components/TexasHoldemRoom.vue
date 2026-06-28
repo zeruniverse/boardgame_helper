@@ -10,7 +10,7 @@
       </div>
     </div>
 
-    <!-- 快捷操作按钮 - 固定在顶部 -->
+    <!-- 快捷操作按钮 - 顶部吸附但保留在文档流中，避免遮挡下方交互区 -->
     <div v-else class="floating-header">
       <!-- 返回大厅按钮 - 始终显示 -->
       <el-button type="info" @click="goToLobby" :class="{ 'colored-border': true }">
@@ -543,24 +543,21 @@ function formatCards(cards: string[]): string {
   border: 2px solid #c0c4cc !important;
 }
 
-/* 浮动快捷操作按钮 */
+/* 顶部快捷操作按钮 */
 .floating-header {
-  position: fixed !important;
+  position: sticky !important;
   top: 0;
   left: 0;
   right: 0;
-  z-index: 1000;
+  z-index: 20;
   padding: 8px 16px;
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  /* 移除背景，让按钮真正浮在上面 */
-  background: transparent;
-  pointer-events: none; /* 让背景区域不拦截点击 */
-}
-
-.floating-header > * {
-  pointer-events: auto; /* 恢复按钮的点击功能 */
+  background: rgba(255, 255, 255, 0.94);
+  border-bottom: 1px solid var(--app-border);
+  box-shadow: var(--app-shadow-sm);
+  backdrop-filter: blur(10px);
 }
 
 /* 容器基础样式 */
@@ -573,7 +570,7 @@ function formatCards(cards: string[]): string {
   display: flex;
   flex-direction: column;
   padding: 16px;
-  padding-top: 70px; /* 为浮动按钮留出空间 */
+  padding-top: 16px;
 }
 
 .game-info {
@@ -705,7 +702,7 @@ function formatCards(cards: string[]): string {
   
   /* 移动端调整主内容区域的padding-top */
   .game-main {
-    padding-top: 60px; /* 适应缩小后的快捷按钮高度 */
+    padding-top: 16px;
   }
 
   /* 移动端快捷按钮优化 */
@@ -819,7 +816,7 @@ function formatCards(cards: string[]): string {
 
 .game-main {
   padding: var(--app-space-6);
-  padding-top: 92px;
+  padding-top: var(--app-space-6);
   background: transparent;
 }
 
@@ -843,7 +840,7 @@ function formatCards(cards: string[]): string {
 
   .game-main {
     padding: var(--app-space-4);
-    padding-top: 120px;
+    padding-top: var(--app-space-4);
   }
 }
 

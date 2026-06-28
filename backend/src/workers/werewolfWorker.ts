@@ -197,20 +197,22 @@ class WerewolfWorker extends BaseGameWorker {
   private getGameInfo(): any {
     const players = this.getPublicPlayerInfo();
 
-    // 将players数组转换为Record（适配前端期望的格式）
+    const publicPlayers = players.map(p => ({
+      id: p.id,
+      name: p.nickname,
+      index: p.index,
+      alive: p.isAlive,
+      role: undefined, // 不公开角色
+      ready: p.ready ?? false,
+      isSheriff: p.isSheriff,
+      isDying: p.isDying,
+      canBeVoted: p.canBeVoted
+    }));
+
+    // 兼容两类消费者：集成测试按数组遍历 players，前端可继续使用 playersById 作为索引表。
     const playersRecord: Record<string, any> = {};
-    players.forEach(p => {
-      playersRecord[p.id] = {
-        id: p.id,
-        name: p.nickname,
-        index: p.index,
-        alive: p.isAlive,
-        role: undefined, // 不公开角色
-        ready: p.ready ?? false,
-        isSheriff: p.isSheriff,
-        isDying: p.isDying,
-        canBeVoted: p.canBeVoted
-      };
+    publicPlayers.forEach(p => {
+      playersRecord[p.id] = p;
     });
 
     // 转换votes格式
@@ -238,7 +240,8 @@ class WerewolfWorker extends BaseGameWorker {
       day: this.gameState.currentDay,
       timeLeft: this.getTimeLeft(),
       statusMessage: (StatusDisplayMessages as any)[this.gameState.status] || this.gameState.status,
-      players: playersRecord,
+      players: publicPlayers,
+      playersById: playersRecord,
       needingCharacters: this.gameState.needingCharacters,
       operators: this.gameState.operators || [],
       votes: votesRecord,
@@ -1163,14 +1166,8 @@ class WerewolfWorker extends BaseGameWorker {
         const targetId = String(actionData.targetId);
         const target = this.gameState.players[targetId];
         if (target && !target.isAlive) {
-          // 客户端/集成测试可能持有上一轮计算出的过期 targetId。
-          // 放逐投票阶段把“投给已死亡玩家”按弃票落盘，避免玩家已提交操作却因目标过期
-          // 而无法计入已投票人数，最终只能等 EXILE_VOTE 超时。
-          if (this.gameState.status !== GameStatus.EXILE_VOTE) {
-            this.sendToPlayer(playerId, 'error', { message: '目标玩家已经死亡，无法投票' });
-            return;
-          }
-          targetIndex = 0;
+          this.sendToPlayer(playerId, 'error', { message: '目标玩家已经死亡，无法投票' });
+          return;
         } else if (target) {
           targetIndex = target.index;
         }
