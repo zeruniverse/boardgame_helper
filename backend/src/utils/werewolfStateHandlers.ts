@@ -351,7 +351,7 @@ export const WolfKillHandler: StateHandler = {
   status: GameStatus.WOLF_KILL,
 
   startOfState(gameState, context, showCloseEye = true) {
-    // 递增回合计数器（currentDay在白天和夜晚都会递增，所以实际天数 = Math.ceil(currentDay / 2)）
+    // 递增回合计数器（currentDay按夜递增）
     gameState.currentDay++;
 
     // 清除之前的发言顺序
@@ -374,7 +374,7 @@ export const WolfKillHandler: StateHandler = {
 
     if (showCloseEye) {
       context.sendToRoom('show_message', {
-        message: `第${Math.ceil(gameState.currentDay / 2)}夜，天黑请闭眼`,
+        message: `第${gameState.currentDay}夜，天黑请闭眼`,
         showTime: 3
       });
 
@@ -795,6 +795,11 @@ export const BeforeDayDiscussHandler: StateHandler = {
       }
     }
 
+    // 狼刀在先原则：狼杀结算后立即检查游戏结束
+    if (checkAndHandleGameEnd(gameState, context)) {
+      return;
+    }
+
     // 2. 处理女巫毒药（毒杀目标独立处理，即使与狼杀目标相同）
     const poisonTarget = nightActions.witchPoisonTarget;
     if (poisonTarget) {
@@ -831,7 +836,7 @@ export const BeforeDayDiscussHandler: StateHandler = {
 
     if (dyingPlayers.length === 0) {
       context.sendToRoom('show_message', {
-        message: `第${Math.ceil(gameState.currentDay / 2)}天白天，昨晚是个平安夜`,
+        message: `第${gameState.currentDay}天白天，昨晚是个平安夜`,
         showTime: TIMEOUT[GameStatus.BEFORE_DAY_DISCUSS]
       });
     } else {

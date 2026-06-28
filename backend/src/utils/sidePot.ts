@@ -13,7 +13,14 @@ export function splitPotSidePots(
   totalBets: Record<string, number>,
   activeIds: string[]
 ): SidePot[] {
-  if (!activeIds || activeIds.length === 0) return [];
+  if (!activeIds || activeIds.length === 0) {
+    const totalPot = Object.values(totalBets).reduce((sum, amt) => sum + Math.max(0, Number(amt) || 0), 0);
+    const allPids = Object.keys(totalBets).filter(pid => (totalBets[pid] || 0) > 0);
+    if (totalPot > 0 && allPids.length > 0) {
+      return [{ amount: totalPot, eligibleIds: allPids }];
+    }
+    return [];
+  }
 
   const activeIdSet = new Set(activeIds);
   const entries = Object.entries(totalBets)

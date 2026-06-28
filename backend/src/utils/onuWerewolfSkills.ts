@@ -109,15 +109,6 @@ export abstract class OnuBaseSkill {
 // 狼人技能
 export class OnuWerewolfSkill extends OnuBaseSkill {
   canUse(selection?: OnuWerewolfSelection): boolean {
-    const werewolves = this.getOtherPlayers().filter(p => onuIsWerewolf(p.actualRole));
-    // 如果有其他狼人，无需选择；如果是 lone wolf，必须选择一张中心卡
-    if (werewolves.length === 0) {
-      if (!selection || !selection.cards || selection.cards.length !== 1) {
-        return false;
-      }
-      const pos = selection.cards[0];
-      return pos >= 0 && pos <= 2;
-    }
     return true;
   }
 
@@ -125,8 +116,14 @@ export class OnuWerewolfSkill extends OnuBaseSkill {
     const werewolves = this.getOtherPlayers().filter(p => onuIsWerewolf(p.actualRole));
     
     if (werewolves.length === 0) {
-      // 如果没有其他狼人，可以查看一张中心卡牌（自己选择）
-      const cardPos = selection?.cards?.[0] ?? 0;
+      // 如果没有其他狼人，可以选择查看一张中心卡牌
+      if (!selection || !selection.cards || selection.cards.length !== 1) {
+        return {
+          success: true,
+          message: '你选择不查看中心卡'
+        };
+      }
+      const cardPos = selection.cards[0];
       const card = this.centerCards[cardPos];
       return {
         success: true,
@@ -624,7 +621,7 @@ export class OnuAlphaWolfSkill extends OnuBaseSkill {
     // 如果要移动标记，需要选择一名非狼人且未被保护的玩家
     if (selection.players && selection.players.length === 1) {
       const target = this.getPlayerBySeat(selection.players[0]);
-      return target !== undefined && target.id !== this.owner.id && !onuIsWerewolf(target.initialRole) && !target.shielded;
+      return target !== undefined && target.id !== this.owner.id && !onuIsWerewolf(target.actualRole) && !target.shielded;
     }
     return true;
   }
@@ -649,7 +646,7 @@ export class OnuAlphaWolfSkill extends OnuBaseSkill {
     // 如果选择了目标玩家，将其变为狼人
     if (selection?.players && selection.players.length === 1) {
       const target = this.getPlayerBySeat(selection.players[0]);
-      if (target && !onuIsWerewolf(target.initialRole)) {
+      if (target && !onuIsWerewolf(target.actualRole)) {
         baseResult.roleChanges = [
           { playerId: target.id, newRole: OnuWerewolfRole.Werewolf, type: 'actual' }
         ];

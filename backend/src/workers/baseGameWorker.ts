@@ -104,10 +104,7 @@ export abstract class BaseGameWorker {
    * @param event 事件名称
    * @param data 数据
    */
-  protected sendToRoom(event: string, data: any): void {
-    // 这里需要通过主线程来发送消息
-    // 具体实现在子类中通过parentPort来实现
-  }
+  protected abstract sendToRoom(event: string, data: unknown): void;
 
   /**
    * 发送消息到特定玩家
@@ -115,10 +112,7 @@ export abstract class BaseGameWorker {
    * @param event 事件名称
    * @param data 数据
    */
-  protected sendToPlayer(playerId: string, event: string, data: any): void {
-    // 这里需要通过主线程来发送消息
-    // 具体实现在子类中通过parentPort来实现
-  }
+  protected abstract sendToPlayer(playerId: string, event: string, data: unknown): void;
 
   /**
    * 切换房间锁定状态

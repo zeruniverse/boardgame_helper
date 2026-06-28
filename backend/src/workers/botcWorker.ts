@@ -46,6 +46,7 @@ export class BOTCWorker extends BaseGameWorker {
   private privateChatMessages: Map<string, any[]> = new Map();
   private nightRound: number = 0;
   private previouslyPukkaTarget: string | null = null;
+  private noExecutionToday: boolean = true;
 
   /**
    * 获取玩家显示名称的辅助函数
@@ -504,6 +505,7 @@ export class BOTCWorker extends BaseGameWorker {
     this.gameState.nominations = [];
     this.gameState.votes = [];
     this.gameState.execution = undefined;
+    this.noExecutionToday = true;
 
     // 重置玩家状态
     this.gamePlayers.forEach(player => {
@@ -593,7 +595,7 @@ export class BOTCWorker extends BaseGameWorker {
 
     // 检查沃托克斯（Vortox）特殊胜利条件：白天无人被处决
     const vortox = alivePlayers.find(p => p.role?.id === 'vortox' && !p.isDead);
-    if (vortox && alivePlayers.length > 0) {
+    if (vortox && this.noExecutionToday) {
       await this.endGame('evil', '沃托克斯特殊胜利：白天无人被处决');
       return;
     }
@@ -645,6 +647,11 @@ export class BOTCWorker extends BaseGameWorker {
       return;
     }
 
+    // 检查女巫（Witch）诅咒 - 被诅咒的玩家被提名时立即死亡
+    if (nominee.reminders?.includes('被诅咒')) {
+      await this.killPlayer(data.nomineeId, 'witch');
+    }
+
     // BOTC标准规则：只有存活玩家可以提名；每名玩家每天只能提名一次
     if (nominator.isDead) {
       this.sendToPlayer(playerId, 'actionError', { message: '死亡玩家不能提名' });
@@ -665,9 +672,10 @@ export class BOTCWorker extends BaseGameWorker {
 
     // 检查处女（Virgin）能力 - 首次被提名时，若提名者是镇民，提名者立即被处决
     if (nominee.role?.id === 'virgin' && !nominee.isDead && !nominee.reminders.includes('No ability')) {
+      // Virgin 只要被提名就失去能力
+      nominee.reminders.push('No ability');
       if (nominator.role?.team === Team.TOWNSFOLK) {
-        // 提名者是镇民，Virgin能力成功触发，标记已使用
-        nominee.reminders.push('No ability');
+        // 提名者是镇民，Virgin能力成功触发
         await this.executePlayer(playerId, data.nomineeId);
         this.sendToRoom('gameMessage', {
           message: `${this.getPlayerName(playerId)} 提名了处女，被立即处决！`,
@@ -675,7 +683,7 @@ export class BOTCWorker extends BaseGameWorker {
         });
         return;
       }
-      // 提名者不是镇民，Virgin能力不触发（不标记No ability），可后续再次触发
+      // 提名者不是镇民，Virgin能力已失去但不触发处决
     }
 
     // 检查是否已经有提名在进行
@@ -810,11 +818,9 @@ export class BOTCWorker extends BaseGameWorker {
       voter.votesUsed++;
     }
 
-    // 存活玩家在本次提名中投票后不可重复投票；死亡玩家只有投赞成票才消耗遗言票
+    // 存活玩家在本次提名中投票后不可重复投票；死亡玩家只要参与投票就消耗遗言票
     if (voter.isDead) {
-      if (data.vote === 'for') {
-        voter.canVote = false;
-      }
+      voter.canVote = false;
     } else {
       voter.canVote = false;
     }
@@ -908,7 +914,6 @@ export class BOTCWorker extends BaseGameWorker {
       this.sendToRoom('playerExecuted', {
         playerId,
         playerName: this.getPlayerName(playerId),
-        role: player.role,
         executedBy: this.getPlayerName(executedBy),
         alreadyDead: true
       });
@@ -927,6 +932,7 @@ export class BOTCWorker extends BaseGameWorker {
     player.deathCause = 'execution';
     player.canVote = true; // 刚死亡的玩家获得遗言票
     this.gameState.livingPlayers--;
+    this.noExecutionToday = false;
 
     // 处理死亡时的能力
     const deathResult = processDeathAbility(playerId, Array.from(this.gamePlayers.values()), 'execution');
@@ -946,7 +952,6 @@ export class BOTCWorker extends BaseGameWorker {
     this.sendToRoom('playerExecuted', {
       playerId,
       playerName: this.getPlayerName(playerId),
-      role: player.role,
       executedBy: this.getPlayerName(executedBy)
     });
     this.broadcastGameState();
@@ -1515,6 +1520,13 @@ export class BOTCWorker extends BaseGameWorker {
     const player = this.gamePlayers.get(playerId);
     if (!player || player.isDead) return;
 
+    // 检查愚者（Fool）免死效果
+    if (player.role?.id === 'fool' && !player.reminders?.includes('foolUsed')) {
+      player.reminders.push('foolUsed');
+      this.sendToRoom('gameMessage', { message: `${this.getPlayerName(playerId)} 使用了愚者的免死能力！`, type: 'info' });
+      return;
+    }
+
     // 检查保护效果（僧侣保护）
     if (player.isProtected && (cause === 'demon' || cause === 'godfather' || cause === 'assassin')) {
       this.sendToPlayer(this.gameConfig.storytellerId, 'playerProtected', {
@@ -1601,6 +1613,14 @@ export class BOTCWorker extends BaseGameWorker {
           });
         }
       }
+      const gameEndSage = checkGameEnd(
+        Array.from(this.gamePlayers.values()),
+        true,
+        !!this.gameState.grimoire.mastermindTriggered
+      );
+      if (gameEndSage.isEnded) {
+        await this.endGame(gameEndSage.winner!, gameEndSage.reason!);
+      }
       return;
     }
 
@@ -1653,6 +1673,14 @@ export class BOTCWorker extends BaseGameWorker {
             }))
           });
         }
+      }
+      const gameEndRk = checkGameEnd(
+        Array.from(this.gamePlayers.values()),
+        true,
+        !!this.gameState.grimoire.mastermindTriggered
+      );
+      if (gameEndRk.isEnded) {
+        await this.endGame(gameEndRk.winner!, gameEndRk.reason!);
       }
       return;
     }

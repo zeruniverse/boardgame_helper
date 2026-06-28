@@ -212,7 +212,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, ref, watch, onUnmounted } from 'vue'
 
 interface Props {
   gameState: any
@@ -236,10 +236,14 @@ const emit = defineEmits<Emits>()
 const nightActionCompleted = ref(false)
 
 // 监听游戏阶段变化，重置夜晚行动状态
-watch(() => props.gameState?.phase, (newPhase, oldPhase) => {
+const watchPhase = watch(() => props.gameState?.phase, (newPhase, oldPhase) => {
   if (newPhase !== oldPhase) {
     nightActionCompleted.value = false
   }
+})
+
+onUnmounted(() => {
+  watchPhase()
 })
 
 // 计算属性

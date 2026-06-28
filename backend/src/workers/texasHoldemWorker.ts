@@ -1833,6 +1833,17 @@ class TexasHoldemWorker extends BaseGameWorker {
       // 显示总分配结果
       this.sendToRoom('chat_broadcast', { message: `总计分配奖池: ${totalDistributed}`, type: 'system' });
       gs.winners = Array.from(allWinnerIds);
+      if (gs.pot > totalDistributed) {
+        const remaining = gs.pot - totalDistributed;
+        if (remaining > 0 && allWinnerIds.size > 0) {
+          const firstWinnerId = Array.from(allWinnerIds)[0];
+          const firstWinner = this.room.players.find(p => p.id === firstWinnerId);
+          if (firstWinner) {
+            firstWinner.gameMetadata.chips += remaining;
+            this.sendToRoom('chat_broadcast', { message: `剩余 ${remaining} 筹码分配给 ${firstWinner.nickname}`, type: 'system' });
+          }
+        }
+      }
       gs.pot = 0; // 奖池已分配完毕
     } else {
       // 非系统发牌模式，评估手牌确定赢家以验证take操作

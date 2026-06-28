@@ -8,7 +8,11 @@ export function evaluateHand(cards: string[]): number {
   const parsed = cards.map(c => {
     const suit = c.slice(-1);
     const rankStr = c.slice(0, -1);
-    return { rank: rankMap[rankStr], suit };
+    const rank = rankMap[rankStr];
+    if (rank === undefined || !['♠','♥','♣','♦'].includes(suit)) {
+      throw new Error(`Invalid card format: ${c}`);
+    }
+    return { rank, suit };
   });
   // 生成所有 5 张组合
   const combos: { rank: number; suit: string }[][] = [];

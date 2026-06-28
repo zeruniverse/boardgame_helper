@@ -82,7 +82,7 @@ export const ONU_WEREWOLF_PRESETS: Record<string, OnuWerewolfPreset> = {
   // 6人游戏
   'classic_6': {
     name: '经典6人局',
-    description: '经典6人配置：2狼人、预言家、强盗、捣蛋鬼、酒鬼、失眠者 + 1村民 + 3张中心卡',
+    description: '经典6人配置：2狼人、预言家、强盗、捣蛋鬼、酒鬼、失眠者 + 2村民 + 3张中心卡',
     playerCount: 6,
     roles: [
       OnuWerewolfRole.Werewolf,
@@ -105,7 +105,7 @@ export const ONU_WEREWOLF_PRESETS: Record<string, OnuWerewolfPreset> = {
   // 7人游戏（含爪牙）
   'minion_7': {
     name: '爪牙7人局',
-    description: '包含爪牙的7人配置：2狼人、爪牙、预言家、强盗、捣蛋鬼、酒鬼、失眠者 + 1村民 + 3张中心卡',
+    description: '包含爪牙的7人配置：2狼人、爪牙、预言家、强盗、捣蛋鬼、酒鬼、失眠者 + 2村民 + 3张中心卡',
     playerCount: 7,
     roles: [
       OnuWerewolfRole.Werewolf,

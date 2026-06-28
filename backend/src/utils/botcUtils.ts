@@ -274,8 +274,9 @@ export function checkGameEnd(gamePlayers: GamePlayer[], checkEvilWin: boolean = 
     return { isEnded: true, winner: 'good', reason: '恶魔已死亡' };
   }
 
-  // 邪恶阵营标准胜利条件：恶魔仍存活且只剩2名或更少存活玩家
-  if (checkEvilWin && alivePlayers.length <= 2) {
+  // 邪恶阵营标准胜利条件：恶魔仍存活且只剩2名或更少存活玩家（不计入旅行者）
+  const aliveNonTravelerCount = alivePlayers.filter(p => p.role?.team !== Team.TRAVELER).length;
+  if (checkEvilWin && aliveNonTravelerCount <= 2) {
     return { isEnded: true, winner: 'evil', reason: '仅剩2名或更少存活玩家' };
   }
 

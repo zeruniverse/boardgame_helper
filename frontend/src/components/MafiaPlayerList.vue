@@ -289,6 +289,7 @@ const getRoleName = (role: string | undefined): string => {
     'KILLER': '杀手',
     'COP': '警察',
     'DOCTOR': '医生',
+    'SNIPER': '狙击手',
     'CIVILIAN': '平民'
   }
   return roleNames[role as keyof typeof roleNames] || role
@@ -298,7 +299,8 @@ const getRoleTagType = (role: string | undefined): string => {
   if (!role) return 'default'
   const roleTypes = {
     'KILLER': 'danger',
-    'COP': 'primary', 
+    'COP': 'primary',
+    'SNIPER': 'warning',
     'DOCTOR': 'success',
     'CIVILIAN': 'info'
   }

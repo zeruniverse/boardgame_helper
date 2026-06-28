@@ -909,18 +909,12 @@ class OnuWerewolfWorker extends BaseGameWorker {
     );
 
     // 检查皮匠(Tanner)特殊胜利：被处决的皮匠单独胜利
-    const executedPlayers = [...voteResult.lynched];
-    for (const hunterVictim of this.gameState.lynchResults) {
-      if (!executedPlayers.includes(hunterVictim)) {
-        executedPlayers.push(hunterVictim);
-      }
-    }
     let winner: OnuWerewolfTeam;
-    const tannerExecuted = executedPlayers.some(pid => this.gameState.players[pid]?.actualRole === OnuWerewolfRole.Tanner);
+    const tannerExecuted = voteResult.lynched.some(pid => this.gameState.players[pid]?.actualRole === OnuWerewolfRole.Tanner);
     if (tannerExecuted) {
       winner = OnuWerewolfTeam.Tanner;
       this.gameState.winner = winner;
-      const lynchedSeats = executedPlayers.map(pid => this.gameState.players[pid]?.seat).filter((s): s is number => s > 0);
+      const lynchedSeats = voteResult.lynched.map(pid => this.gameState.players[pid]?.seat).filter((s): s is number => s > 0);
       this.sendToRoom('onu_tanner_victory', {
         message: `皮匠被处决！皮匠单独胜利！被处决玩家：${lynchedSeats.join('号, ')}号`,
         executedPlayers: lynchedSeats

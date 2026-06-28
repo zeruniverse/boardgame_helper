@@ -8,6 +8,7 @@ import { setResetServerFunction } from '../services/resetService';
 import { WerewolfCharacter } from '../utils/werewolfTypes';
 import { OnuWerewolfRole } from '../utils/onuWerewolfTypes';
 import { getRecommendedRoles } from '../utils/onuWerewolfPresets';
+import { normalizeChatChannel } from '../utils/chat';
 
 const rooms: Map<string, Room> = new Map();
 let threadManager: RoomThreadManager;
@@ -1012,7 +1013,8 @@ export function roomController(io: Server) {
         if (!room) { socket.emit('error', { message: '房间不存在' }); ack?.({ success: false, error: '房间不存在' }); return; }
         const player = room.players.find(p => p.socketId === socket.id);
         if (!player) { socket.emit('error', { message: '您不在此房间中' }); ack?.({ success: false, error: '您不在此房间中' }); return; }
-        await sendTaskToRoom(room.id, 'game_action', { actionType: 'chat_message', actionData: { message: data.message, channel: data.channel || 'all' } }, socket.id, player.id);
+        const normalizedChannel = normalizeChatChannel(data.channel, ['all', 'team', 'werewolf', 'villager']);
+        await sendTaskToRoom(room.id, 'game_action', { actionType: 'chat_message', actionData: { message: data.message, channel: normalizedChannel } }, socket.id, player.id);
         ack?.({ success: true });
       } catch (error) {
         console.error('处理聊天消息失败:', error);

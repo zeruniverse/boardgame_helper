@@ -70,27 +70,32 @@ export function getVoteSituation(votes: Vote[]): VoteSituation {
  * @returns 获胜方或null
  */
 /**
- * 判断角色是否属于村民阵营（非狼人且非第三方）
+ * 判断角色是否属于神职
  */
-function isVillagerTeam(character: WerewolfCharacter): boolean {
-  // 狼人阵营角色
-  const werewolfTeamChars: WerewolfCharacter[] = ['WEREWOLF'];
-  // 第三方/特殊角色（不参与简单的数量对比）
-  const thirdPartyChars: WerewolfCharacter[] = []; // 如有丘比特等第三方可在此添加
-  return !werewolfTeamChars.includes(character) && !thirdPartyChars.includes(character);
+function isGod(character: WerewolfCharacter): boolean {
+  const godChars: WerewolfCharacter[] = ['WITCH', 'SEER', 'HUNTER', 'GUARD'];
+  return godChars.includes(character);
+}
+
+/**
+ * 判断角色是否属于平民
+ */
+function isVillager(character: WerewolfCharacter): boolean {
+  return character === 'VILLAGER';
 }
 
 export function checkGameEnd(players: Record<string, WerewolfPlayerState>): 'WEREWOLF' | 'VILLAGER' | null {
   const alivePlayers = Object.values(players).filter(p => p.isAlive);
   const aliveWerewolves = alivePlayers.filter(p => p.character === 'WEREWOLF');
-  const aliveVillagers = alivePlayers.filter(p => isVillagerTeam(p.character));
+  const aliveGods = alivePlayers.filter(p => isGod(p.character));
+  const aliveVillagers = alivePlayers.filter(p => isVillager(p.character));
 
   if (aliveWerewolves.length === 0) {
     return 'VILLAGER'; // 村民胜利
   }
 
-  if (aliveWerewolves.length >= aliveVillagers.length) {
-    return 'WEREWOLF'; // 狼人胜利
+  if (aliveGods.length === 0 || aliveVillagers.length === 0) {
+    return 'WEREWOLF'; // 狼人胜利（屠边规则）
   }
 
   return null; // 游戏继续

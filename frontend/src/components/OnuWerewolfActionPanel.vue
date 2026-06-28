@@ -440,7 +440,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue';
+import { ref, computed, watch, onUnmounted } from 'vue';
 import {
   OnuWerewolfRole,
   OnuWerewolfTeam,
@@ -765,20 +765,25 @@ const getTeamName = (team: OnuWerewolfTeam) => {
 };
 
 // 监听游戏配置变化
-watch(() => props.gameState?.config, (newConfig) => {
+const watchConfig = watch(() => props.gameState?.config, (newConfig) => {
   if (newConfig) {
     selectedRoles.value = [...newConfig.roles];
   }
 }, { immediate: true });
 
 // 重置技能选择状态当角色变化时
-watch(() => props.myRole, () => {
+const watchRole = watch(() => props.myRole, () => {
   selectedPlayer.value = undefined;
   selectedPlayer1.value = undefined;
   selectedPlayer2.value = undefined;
   selectedCard.value = undefined;
   selectedCards.value = [];
   skillResult.value = '';
+});
+
+onUnmounted(() => {
+  watchConfig();
+  watchRole();
 });
 </script>
 

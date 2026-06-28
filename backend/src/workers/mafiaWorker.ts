@@ -888,7 +888,7 @@ class MafiaWorker extends BaseGameWorker {
     }
 
     const target = gameState.players[targetId];
-    if (!target || !target.alive || targetId === playerId) {
+    if (!target || !target.alive) {
       this.sendToPlayer(playerId, 'snipe_rejected', { message: '狙击目标无效' });
       return;
     }
@@ -1591,7 +1591,16 @@ class MafiaWorker extends BaseGameWorker {
     } else if (killerCount >= goodCount) {
       return Team.RED; // 杀手获胜（杀手数量大于等于好人）
     }
-    
+
+    // 检查是否所有特殊角色都已死亡（只剩下平民和杀手）
+    const specialRoleKeys = ['cop', 'doctor', 'sniper'] as const;
+    const aliveSpecialRoles = nextRoundAlivePlayers.filter(id => {
+      return specialRoleKeys.some(key => gameState.topSecret[key].includes(id));
+    });
+    if (aliveSpecialRoles.length === 0 && killerCount > 0) {
+      return Team.RED;
+    }
+
     return null; // 游戏继续
   }
 
@@ -1708,7 +1717,7 @@ class MafiaWorker extends BaseGameWorker {
         this.enterNightFromVote(message);
       } else {
         // 首次平票，进入PK发言阶段
-        gameState.pkPlayers = maxVotedPlayers;
+        gameState.pkPlayers = maxVotedPlayers.sort((a, b) => gameState.players[a]?.index - gameState.players[b]?.index);
         gameState.status = GameStatus.PK;
         gameState.pkSpeakedCount = 0;
         gameState.speakedCount = 0;
@@ -1731,8 +1740,8 @@ class MafiaWorker extends BaseGameWorker {
       const expelledPlayer = maxVotedPlayers[0];
       const message = `${this.getPlayerName(expelledPlayer)}被投票放逐, 得票数: ${maxVotes}\n`;
 
-      // 游戏继续，检查是否有遗言
-      if (gameState.lastWordCount > 0) {
+      // 游戏继续，检查是否有遗言（杀手被票出无遗言）
+      if (gameState.lastWordCount > 0 && !gameState.topSecret.killer.includes(expelledPlayer)) {
         this.enterLastWord(expelledPlayer, message, GameStatus.LAST_WORD_DAYTIME);
       } else {
         // 没有遗言了，先标记玩家死亡，再检查游戏结束
