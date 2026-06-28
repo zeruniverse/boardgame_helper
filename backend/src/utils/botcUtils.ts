@@ -435,12 +435,9 @@ export function validatePlayerAction(
       }
       return { valid: true };
     }
-    // 死亡玩家可以提名（消耗遗言票）
+    // 死亡玩家不能提名；他们只保留一次投票权。
     if (actionType === 'nominate') {
-      if (!player.canVote) {
-        return { valid: false, error: '你的遗言票已用完，无法提名' };
-      }
-      return { valid: true };
+      return { valid: false, error: '死亡玩家不能提名' };
     }
     // 某些角色（如Ravenkeeper）死后仍有能力
     if (actionType === 'nightAction' && 

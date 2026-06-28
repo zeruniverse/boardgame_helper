@@ -160,6 +160,9 @@
               <el-tag type="success" size="small">
                 医生 {{ config.doctors }}人
               </el-tag>
+              <el-tag type="warning" size="small">
+                狙击手 {{ config.snipers }}人
+              </el-tag>
               <el-tag type="info" size="small">
                 平民 {{ config.civilians }}人
               </el-tag>
@@ -213,21 +216,21 @@ const maxPlayers = 20
 
 // 角色配置 - 与后端 MAFIA_TEAM_CONFIG 和 doc/mafia.md 一致
 const roleConfigs = {
-  6: { killers: 2, cops: 1, doctors: 1, civilians: 2 },
-  7: { killers: 2, cops: 1, doctors: 1, civilians: 3 },
-  8: { killers: 2, cops: 1, doctors: 1, civilians: 4 },
-  9: { killers: 3, cops: 2, doctors: 1, civilians: 3 },
-  10: { killers: 3, cops: 2, doctors: 1, civilians: 4 },
-  11: { killers: 3, cops: 2, doctors: 1, civilians: 5 },
-  12: { killers: 3, cops: 2, doctors: 1, civilians: 6 },
-  13: { killers: 4, cops: 3, doctors: 2, civilians: 4 },
-  14: { killers: 4, cops: 3, doctors: 2, civilians: 5 },
-  15: { killers: 4, cops: 3, doctors: 2, civilians: 6 },
-  16: { killers: 4, cops: 3, doctors: 2, civilians: 7 },
-  17: { killers: 5, cops: 4, doctors: 2, civilians: 6 },
-  18: { killers: 5, cops: 4, doctors: 2, civilians: 7 },
-  19: { killers: 5, cops: 4, doctors: 2, civilians: 8 },
-  20: { killers: 5, cops: 4, doctors: 2, civilians: 9 }
+  6: { killers: 2, cops: 1, doctors: 1, snipers: 1, civilians: 1 },
+  7: { killers: 2, cops: 1, doctors: 1, snipers: 1, civilians: 2 },
+  8: { killers: 2, cops: 1, doctors: 1, snipers: 1, civilians: 3 },
+  9: { killers: 3, cops: 2, doctors: 1, snipers: 1, civilians: 2 },
+  10: { killers: 3, cops: 2, doctors: 1, snipers: 1, civilians: 3 },
+  11: { killers: 3, cops: 2, doctors: 1, snipers: 1, civilians: 4 },
+  12: { killers: 3, cops: 2, doctors: 1, snipers: 1, civilians: 5 },
+  13: { killers: 4, cops: 3, doctors: 2, snipers: 1, civilians: 3 },
+  14: { killers: 4, cops: 3, doctors: 2, snipers: 1, civilians: 4 },
+  15: { killers: 4, cops: 3, doctors: 2, snipers: 1, civilians: 5 },
+  16: { killers: 4, cops: 3, doctors: 2, snipers: 1, civilians: 6 },
+  17: { killers: 5, cops: 4, doctors: 2, snipers: 1, civilians: 5 },
+  18: { killers: 5, cops: 4, doctors: 2, snipers: 1, civilians: 6 },
+  19: { killers: 5, cops: 4, doctors: 2, snipers: 1, civilians: 7 },
+  20: { killers: 5, cops: 4, doctors: 2, snipers: 1, civilians: 8 }
 }
 
 

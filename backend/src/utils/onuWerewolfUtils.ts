@@ -281,6 +281,19 @@ export function onuCalculateWinner(
     return OnuWerewolfTeam.Villager;
   }
 
+  // 无真正狼人但有爪牙时，爪牙只有在“除自己之外的玩家”被处决时才代表狼人阵营获胜。
+  // 如果唯一被处决的是爪牙，狼人阵营没有达成目标，村民胜利。
+  if (aliveWerewolves.length === 0) {
+    const hasMinion = allPlayers.some(p => p.actualRole === OnuWerewolfRole.Minion);
+    if (hasMinion) {
+      const lynchedNonMinion = lynched.some(playerId => {
+        const player = players[playerId];
+        return player && player.actualRole !== OnuWerewolfRole.Minion;
+      });
+      return lynchedNonMinion ? OnuWerewolfTeam.Werewolf : OnuWerewolfTeam.Villager;
+    }
+  }
+
   // 只要有人被处决且没有真正的狼人被处决，村民阵营没有达成目标。
   // 特别注意：如果最终场上无狼人，村民只有在无人被处决时才获胜。
   return OnuWerewolfTeam.Werewolf;
