@@ -21,11 +21,11 @@
 | 游戏 | 最大人数 |
 |------|----------|
 | 德州扑克 | 10 |
-| 狼人杀 | 12 |
+| 狼人杀 | 16 |
 | 杀人游戏 | 16 |
 | 一夜终极狼人 | 10 |
 | 阿瓦隆 | 10 |
-| 血染钟楼 | 20 |
+| 血染钟楼 | 15 |
 
 ---
 
@@ -140,7 +140,7 @@ npm run dev:frontend
     },
     "werewolf": {
       "displayName": "狼人杀",
-      "maxPlayers": 12,
+      "maxPlayers": 16,
       "gameSpecificConfig": {
         "allowCustomRoles": true,
         "dayTime": 300,
@@ -175,7 +175,7 @@ npm run dev:frontend
     },
     "blood-on-the-clocktower": {
       "displayName": "血染钟楼",
-      "maxPlayers": 20,
+      "maxPlayers": 15,
       "gameSpecificConfig": {
         "dayTime": 600,
         "nightTime": 300,

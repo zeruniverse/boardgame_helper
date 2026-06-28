@@ -65,7 +65,7 @@ function loadConfig(): Config {
         },
         "werewolf": {
           displayName: "狼人杀",
-          maxPlayers: 12,
+          maxPlayers: 16,
           gameSpecificConfig: {
             allowCustomRoles: true,
             dayTime: 300,
@@ -100,7 +100,7 @@ function loadConfig(): Config {
         },
         "blood-on-the-clocktower": {
           displayName: "血染钟楼",
-          maxPlayers: 20,
+          maxPlayers: 15,
           gameSpecificConfig: {
             dayTime: 600,
             nightTime: 300,
