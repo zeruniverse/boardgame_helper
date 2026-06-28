@@ -401,16 +401,16 @@
         <h4>选择要投票的玩家:</h4>
         <div class="vote-buttons">
           <el-button
-            v-for="player in allPlayersList"
+            v-for="player in votablePlayers"
             :key="player.id"
             @click="vote(player.seat)"
             type="primary"
             size="large"
           >
-            投票给 {{ player.name }} (座位{{ player.seat }}){{ player.id === currentUserId ? '（你自己）' : '' }}
+            投票给 {{ player.name }} (座位{{ player.seat }})
           </el-button>
           <el-alert
-            title="规则提示：可以投票给自己；若每名玩家最多获得1票，则无人被处决。"
+            title="规则提示：必须投票给另一名玩家；若每名玩家最多获得1票，则无人被处决。"
             type="info"
             :closable="false"
             show-icon
@@ -612,7 +612,10 @@ const allPlayersList = computed(() => {
   return props.allPlayers || [];
 });
 
-// 技能选择仍然排除自己；投票阶段允许自票，因此单独使用 allPlayersList。
+const votablePlayers = computed(() => {
+  return props.allPlayers?.filter((p: any) => p.id !== props.currentUserId) || [];
+});
+
 const otherPlayers = computed(() => {
   return props.allPlayers?.filter((p: any) => p.id !== props.currentUserId) || [];
 });
@@ -747,6 +750,10 @@ const skipSkill = () => {
 const vote = (targetSeat: number) => {
   if (targetSeat === undefined || targetSeat === null || targetSeat < 0) {
     console.error('Invalid vote target:', targetSeat);
+    return;
+  }
+  if (targetSeat === props.mySeat) {
+    console.error('Invalid vote target: cannot vote for yourself');
     return;
   }
   emit('game-action', 'vote', { target: targetSeat });

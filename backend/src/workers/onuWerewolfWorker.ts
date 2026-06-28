@@ -891,7 +891,9 @@ class OnuWerewolfWorker extends BaseGameWorker {
       throw new Error('投票目标不存在');
     }
 
-    // 一夜终极狼人允许玩家投票给自己；若所有人均只有一票，则无人被处决。
+    if (target.id === playerId) {
+      throw new Error('不能投票给自己');
+    }
 
     // 记录投票
     this.gameState.votes[playerId] = target.id;
