@@ -96,8 +96,8 @@ export function onuValidateGameConfig(roles: OnuWerewolfRole[]): {
     return { valid: false, error: '角色列表无效' };
   }
 
-  if (roles.length < 5) {
-    return { valid: false, error: '至少需要5个角色（3张中心卡牌 + 2个玩家）' };
+  if (roles.length < 6) {
+    return { valid: false, error: '至少需要6个角色（3张中心卡牌 + 3个玩家）' };
   }
 
   if (roles.length > 20) {

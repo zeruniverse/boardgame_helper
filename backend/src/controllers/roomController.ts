@@ -121,6 +121,10 @@ function mergeRoomUpdateFromWorker(existingRoom: Room | undefined, workerRoom: R
     ...workerRoom,
     private: existingRoom.private,
     cleanupTimer: existingRoom.cleanupTimer,
+    gameMetadata: {
+      ...(existingRoom.gameMetadata || {}),
+      ...(workerRoom.gameMetadata || {})
+    },
     lastActiveTime: Math.max(existingRoom.lastActiveTime || 0, workerRoom.lastActiveTime || 0),
     players: (workerRoom.players || []).map(player => mergePlayerFromWorker(existingPlayers.get(player.id), player))
   };
@@ -175,6 +179,10 @@ function buildGameConfig(gameType: string, incomingConfig: any): any {
   }
 
   return gameConfig;
+}
+
+function getRoomGameConfig(room: Room): any {
+  return room.gameMetadata?.gameConfig || config.games[room.type]?.gameSpecificConfig || {};
 }
 
 export function roomController(io: Server) {
@@ -455,6 +463,7 @@ export function roomController(io: Server) {
         const roomIdAndName = generateUniqueRoomIdAndName();
         const configuredMaxPlayers = Number(data.gameConfig?.maxPlayers || data.gameConfig?.playerCount || config.games[data.gameType].maxPlayers);
         const maxPlayers = Math.max(1, Math.min(configuredMaxPlayers || config.games[data.gameType].maxPlayers, config.games[data.gameType].maxPlayers));
+        const gameConfig = buildGameConfig(data.gameType, data.gameConfig);
         const room: Room = {
           id: roomIdAndName,
           name: roomIdAndName,
@@ -464,7 +473,8 @@ export function roomController(io: Server) {
           type: data.gameType as any,
           private: data.isPrivate || false,
           threadStatus: 'idle',
-          lastActiveTime: Date.now()
+          lastActiveTime: Date.now(),
+          gameMetadata: { gameConfig }
         };
 
         rooms.set(room.id, room);
@@ -473,8 +483,6 @@ export function roomController(io: Server) {
         await socket.join(room.id);
 
         // 启动房间线程
-        const gameConfig = buildGameConfig(data.gameType, data.gameConfig);
-
         const updatedRoom = await threadManager.startRoomThread(room, gameConfig);
 
         if (!updatedRoom) {
@@ -538,7 +546,7 @@ export function roomController(io: Server) {
           }
 
           // 确保房间线程正在运行
-          const gameConfig = config.games[room.type]?.gameSpecificConfig || {};
+          const gameConfig = getRoomGameConfig(room);
           await threadManager.ensureRoomThreadRunning(room, gameConfig);
 
           // 将更新后的房间数据同步到工作线程
@@ -604,7 +612,7 @@ export function roomController(io: Server) {
           }
 
           await socket.join(room.id);
-          const gameConfig = config.games[room.type]?.gameSpecificConfig || {};
+          const gameConfig = getRoomGameConfig(room);
           await threadManager.ensureRoomThreadRunning(room, gameConfig);
           threadManager.updateRoomData(room.id, room);
           await sendTaskToRoom(room.id, 'update_room_data', { room });
@@ -669,7 +677,7 @@ export function roomController(io: Server) {
         await socket.join(room.id);
 
         // 确保房间线程正在运行
-        const gameConfig = config.games[room.type]?.gameSpecificConfig || {};
+        const gameConfig = getRoomGameConfig(room);
         await threadManager.ensureRoomThreadRunning(room, gameConfig);
 
         // 更新房间数据到线程管理器和工作线程
@@ -729,7 +737,7 @@ export function roomController(io: Server) {
           }
 
           await socket.join(room.id);
-          const gameConfig = config.games[room.type]?.gameSpecificConfig || {};
+          const gameConfig = getRoomGameConfig(room);
           await threadManager.ensureRoomThreadRunning(room, gameConfig);
           threadManager.updateRoomData(room.id, room);
           await sendTaskToRoom(room.id, 'update_room_data', { room });
@@ -794,7 +802,7 @@ export function roomController(io: Server) {
         await socket.join(room.id);
 
         // 确保房间线程正在运行
-        const gameConfig = config.games[room.type]?.gameSpecificConfig || {};
+        const gameConfig = getRoomGameConfig(room);
         await threadManager.ensureRoomThreadRunning(room, gameConfig);
 
         // 更新房间数据到线程管理器和工作线程

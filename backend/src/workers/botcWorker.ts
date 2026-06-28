@@ -537,6 +537,33 @@ export class BOTCWorker extends BaseGameWorker {
     this.clearTimers();
 
     const executionCandidate = this.getExecutionCandidate();
+    const mastermindResolveDay = this.gameState.grimoire.mastermindResolveDay;
+    if (this.gameState.grimoire.mastermindTriggered && mastermindResolveDay && this.gameState.day >= mastermindResolveDay) {
+      if (executionCandidate) {
+        const executedPlayer = this.gamePlayers.get(executionCandidate.nominee);
+        const executedIsEvil = executedPlayer ? isEvilPlayer(executedPlayer) : false;
+        this.gameState.execution = {
+          playerId: executionCandidate.nominee,
+          executedBy: [executionCandidate.nominator],
+          timestamp: Date.now()
+        };
+        await this.executePlayer(executionCandidate.nominee, executionCandidate.nominator);
+        if (this.gameState.phase !== GamePhase.ENDED) {
+          await this.endGame(
+            executedIsEvil ? 'good' : 'evil',
+            executedIsEvil
+              ? '幕后黑手额外日处决了邪恶玩家，善良阵营获胜'
+              : '幕后黑手额外日处决了善良玩家，邪恶阵营获胜'
+          );
+        }
+        return;
+      }
+
+      this.gameState.execution = undefined;
+      await this.endGame('good', '幕后黑手额外日无人被处决，善良阵营获胜');
+      return;
+    }
+
     if (executionCandidate) {
       this.gameState.execution = {
         playerId: executionCandidate.nominee,
@@ -815,7 +842,11 @@ export class BOTCWorker extends BaseGameWorker {
    * 结束投票
    */
   private async endVoting(nomination: Nomination): Promise<void> {
-    this.clearTimers();
+    const votingTimer = this.dayTimers.get('voting');
+    if (votingTimer) {
+      clearTimeout(votingTimer);
+      this.dayTimers.delete('voting');
+    }
     nomination.isOnTrial = false;
 
     const alivePlayers = Array.from(this.gamePlayers.values()).filter(p => !p.isDead).length;
@@ -898,11 +929,18 @@ export class BOTCWorker extends BaseGameWorker {
     });
     this.broadcastGameState();
 
-    // 检查幕后黑手 - 如果恶魔被处决且幕后黑手存活，游戏继续一天（不立即结束）
+    // 恶魔被处决后，先处理红颜；若红颜成功接任，游戏并未因恶魔死亡而结束，幕后黑手不触发。
     if (player.role?.team === Team.DEMON) {
+      const scarletWomanPromoted = this.promoteScarletWomanIfNeeded();
+      this.broadcastGameState();
+      if (scarletWomanPromoted) {
+        return;
+      }
+
       const mastermind = Array.from(this.gamePlayers.values()).find(p => p.role?.id === 'mastermind' && !p.isDead);
       if (mastermind) {
         this.gameState.grimoire.mastermindTriggered = true;
+        this.gameState.grimoire.mastermindResolveDay = this.gameState.day + 1;
         this.sendToRoom('gameMessage', {
           message: '幕后黑手生效，游戏继续一天',
           type: 'info'
@@ -910,11 +948,6 @@ export class BOTCWorker extends BaseGameWorker {
         // 幕后黑手生效时不检查游戏结束，继续推进游戏流程
         return;
       }
-    }
-
-    if (player.role?.team === Team.DEMON) {
-      this.promoteScarletWomanIfNeeded();
-      this.broadcastGameState();
     }
 
     // 检查游戏是否结束（传递幕后黑手状态）
