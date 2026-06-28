@@ -922,11 +922,6 @@ export const BeforeDayDiscussHandler: StateHandler = {
       }
     }
 
-    // 狼刀在先原则：狼杀结算后立即检查游戏结束
-    if (checkAndHandleGameEnd(gameState, context)) {
-      return;
-    }
-
     // 2. 处理女巫毒药（毒杀目标独立处理，即使与狼杀目标相同）
     const poisonTarget = nightActions.witchPoisonTarget;
     if (poisonTarget) {

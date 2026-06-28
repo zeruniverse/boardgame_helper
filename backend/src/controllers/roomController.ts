@@ -1188,6 +1188,9 @@ export function roomController(io: Server) {
           console.error(`向房间 ${roomId} 发送 player_offline 任务失败:`, error);
         }
 
+        rooms.set(roomId, currentRoom);
+        io.to(roomId).emit('room_update', toClientRoom(currentRoom));
+
         // 更新大厅中该房间的玩家数量
         if (!currentRoom.private) {
           broadcastLobbyUpdate();

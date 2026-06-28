@@ -810,12 +810,7 @@ export class BOTCWorker extends BaseGameWorker {
       return;
     }
 
-    // BOTC规则：存活玩家可以投票，死亡玩家如果有遗言票也可以投票
-    if (!voter.isDead && !voter.canVote) {
-      this.sendToPlayer(playerId, 'actionError', { message: '你今天已经投过票了' });
-      return;
-    }
-
+    // BOTC规则：存活玩家每天可对任意数量的提名投票；死亡玩家只有一次赞成票。
     if (voter.isDead && !voter.canVote) {
       this.sendToPlayer(playerId, 'actionError', { message: '你的遗言票已用完' });
       return;
@@ -842,14 +837,11 @@ export class BOTCWorker extends BaseGameWorker {
       activeNomination.votesAgainst++;
     }
 
-    if (!voter.isDead || data.vote === 'for') {
+    if (!voter.isDead) {
       voter.votesUsed++;
-    }
-
-    // 存活玩家在本次提名中投票后不可重复投票；死亡玩家只要参与投票就消耗遗言票
-    if (voter.isDead) {
-      voter.canVote = false;
-    } else {
+    } else if (data.vote === 'for') {
+      // 死亡玩家的遗言票只有在实际投赞成票时消耗；反对/弃权等同于未举手。
+      voter.votesUsed++;
       voter.canVote = false;
     }
 
