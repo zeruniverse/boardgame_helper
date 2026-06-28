@@ -2157,6 +2157,7 @@ export class BOTCWorker extends BaseGameWorker {
       }))
     };
 
+    this.broadcastGameState();
     this.sendToRoom('gameEnded', gameResult);
   }
 

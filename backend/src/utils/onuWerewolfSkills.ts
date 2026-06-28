@@ -715,14 +715,14 @@ export class OnuAuraSeerSkill extends OnuBaseSkill {
   }
 
   execute(): OnuSkillResult {
-    const changedPlayers = this.getOtherPlayers().filter(p => p.initialRole !== p.actualRole);
+    const auraPlayers = this.getOtherPlayers().filter(p => p.auraVisible);
 
     return {
       success: true,
-      vision: onuCreateVision(changedPlayers),
-      message: changedPlayers.length > 0 ?
-        `角色被变动过的玩家：${changedPlayers.map(p => p.name).join(', ')}` :
-        '没有玩家的角色被变动过'
+      vision: onuCreateVision(auraPlayers),
+      message: auraPlayers.length > 0 ?
+        `移动或查看过卡牌/标记的玩家：${auraPlayers.map(p => p.name).join(', ')}` :
+        '没有其他玩家移动或查看过卡牌/标记'
     };
   }
 }

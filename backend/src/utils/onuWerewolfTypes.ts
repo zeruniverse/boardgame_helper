@@ -184,6 +184,7 @@ export interface OnuWerewolfPlayer {
   skillUsed: boolean;
   skillReady: boolean;
   skillData?: any;
+  auraVisible?: boolean;
 }
 
 // 中心卡牌

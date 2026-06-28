@@ -670,6 +670,10 @@ class OnuWerewolfWorker extends BaseGameWorker {
       throw new Error(result.error || '技能使用失败');
     }
 
+    if (this.shouldBeVisibleToAuraSeer(skill.getRole(), result)) {
+      player.auraVisible = true;
+    }
+
     // 应用技能结果
     this.applySkillResult(result);
 
@@ -747,6 +751,29 @@ class OnuWerewolfWorker extends BaseGameWorker {
     // 进入下一个技能
     this.currentSkillIndex++;
     this.processNextSkill();
+  }
+
+  private shouldBeVisibleToAuraSeer(role: OnuWerewolfRole, result: OnuSkillResult): boolean {
+    switch (role) {
+      case OnuWerewolfRole.Doppelganger:
+      case OnuWerewolfRole.Seer:
+      case OnuWerewolfRole.ApprenticeSeer:
+      case OnuWerewolfRole.Robber:
+      case OnuWerewolfRole.Troublemaker:
+      case OnuWerewolfRole.Witch:
+      case OnuWerewolfRole.ParanormalInvestigator:
+      case OnuWerewolfRole.VillageIdiot:
+      case OnuWerewolfRole.Sentinel:
+        return true;
+      case OnuWerewolfRole.Werewolf:
+        return Boolean(result.vision?.cards?.length);
+      case OnuWerewolfRole.AlphaWolf:
+        return Boolean(result.vision?.cards?.length || result.roleChanges?.length || result.cardChanges?.length);
+      case OnuWerewolfRole.MysticWolf:
+        return true;
+      default:
+        return Boolean(result.cardChanges?.length || result.artifactChanges?.length || result.shieldChanges?.length);
+    }
   }
 
   private applySkillResult(result: OnuSkillResult): void {
