@@ -1223,14 +1223,12 @@ class WerewolfWorker extends BaseGameWorker {
 
     if (allVoted) {
       this.sendToRoom('system_message', { message: '所有人都已投票' });
-      this.saveTimeout(() => {
-        const context = this.createContext();
-        if (this.gameState.status === GameStatus.EXILE_VOTE) {
-          stateHandlers[GameStatus.EXILE_VOTE].endOfState(this.gameState, context);
-        } else if (this.gameState.status === GameStatus.SHERIFF_VOTE) {
-          stateHandlers[GameStatus.SHERIFF_VOTE].endOfState(this.gameState, context);
-        }
-      }, 2000);
+      const context = this.createContext();
+      if (this.gameState.status === GameStatus.EXILE_VOTE) {
+        stateHandlers[GameStatus.EXILE_VOTE].endOfState(this.gameState, context);
+      } else if (this.gameState.status === GameStatus.SHERIFF_VOTE) {
+        stateHandlers[GameStatus.SHERIFF_VOTE].endOfState(this.gameState, context);
+      }
     }
   }
 
@@ -1252,10 +1250,7 @@ class WerewolfWorker extends BaseGameWorker {
       });
 
       // 推进到下一个发言者
-      this.saveTimeout(() => {
-        const context = this.createContext();
-        stateHandlers[GameStatus.DAY_DISCUSS].endOfState(this.gameState, context);
-      }, 1000);
+      stateHandlers[GameStatus.DAY_DISCUSS].endOfState(this.gameState, this.createContext());
     } else if (this.gameState.status === GameStatus.SHERIFF_SPEECH) {
       // 检查是否是当前警长竞选发言者
       const currentSpeakerIdx = this.gameState.speakOrder?.[this.gameState.currentSpeakerIndex || 0];
@@ -1268,10 +1263,7 @@ class WerewolfWorker extends BaseGameWorker {
         message: `${gamePlayer.index}号 ${gamePlayer.name} 结束警长竞选发言`
       });
 
-      this.saveTimeout(() => {
-        const context = this.createContext();
-        stateHandlers[GameStatus.SHERIFF_SPEECH].endOfState(this.gameState, context);
-      }, 1000);
+      stateHandlers[GameStatus.SHERIFF_SPEECH].endOfState(this.gameState, this.createContext());
     }
   }
 
@@ -1374,10 +1366,7 @@ class WerewolfWorker extends BaseGameWorker {
     });
 
     // 结束遗言阶段
-    this.saveTimeout(() => {
-      const context = this.createContext();
-      stateHandlers[GameStatus.LEAVE_MSG].endOfState(this.gameState, context);
-    }, 3000);
+    stateHandlers[GameStatus.LEAVE_MSG].endOfState(this.gameState, this.createContext());
   }
 
   // ==================== 聊天消息 ====================
