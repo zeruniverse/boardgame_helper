@@ -1934,7 +1934,7 @@ class MafiaWorker extends BaseGameWorker {
       return;
     }
     this.room.hostId = targetId;
-    this.sendToRoom('chat_broadcast', { message: `${targetPlayer.nickname} 成为新的房主`, type: 'system' });
+    this.sendToRoom('system_message', { message: `${targetPlayer.nickname} 成为新的房主` });
     this.sendToRoom('room_update', this.room);
   }
 

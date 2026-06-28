@@ -598,11 +598,9 @@ class OnuWerewolfWorker extends BaseGameWorker {
 
   private processNextSkill(): void {
     if (this.currentSkillIndex >= this.skillQueue.length) {
-      // 所有技能处理完毕，如果 nightTime 为 0（不限时），自动结束夜间阶段
-      if (this.config.nightTime === 0) {
-        // 给一个短暂的延迟让玩家看到最后结果
-        this.setTimer(2000, () => this.endNightPhase());
-      }
+      // 所有技能处理完毕后应立即进入讨论/投票阶段；nightTime 只是夜间阶段的最长兜底时间。
+      // 给一个短暂的延迟让玩家看到最后一个技能结果，同时清理全局夜间兜底计时器。
+      this.setTimer(2000, () => this.endNightPhase());
       return;
     }
 
@@ -886,9 +884,10 @@ class OnuWerewolfWorker extends BaseGameWorker {
     const player = this.gameState.players[playerId];
     if (!player) throw new Error('玩家不存在');
 
+    const isCompleted = this.gameState.status === OnuWerewolfGameStatus.COMPLETED;
     this.sendToPlayer(playerId, 'onu_role_info', {
       initialRole: player.initialRole,
-      finalRole: player.actualRole,
+      finalRole: isCompleted ? player.actualRole : undefined,
       seat: player.seat
     });
   }
