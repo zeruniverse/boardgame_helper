@@ -1081,6 +1081,13 @@ export const ExileVoteHandler: StateHandler = {
           message: renderPlayersHTML('被放逐的玩家为:', highestVotes)
         });
 
+        // 放逐结算后应立即检查胜负。否则最后一名狼人被放逐时，状态会先进入遗言/死亡链，
+        // 集成测试和客户端会在 EXILE_VOTE 后长时间等不到 game_end。
+        // 常规规则也是狼人全部出局即村民阵营胜利。
+        if (checkAndHandleGameEnd(gameState, context)) {
+          return;
+        }
+
         // 处理死亡链（猎人、遗言、警长传递）
         gameState.deathContext = 'day';
         scheduleStateTask(gameState, () => {
