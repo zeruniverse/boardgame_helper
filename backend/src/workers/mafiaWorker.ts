@@ -1208,14 +1208,26 @@ class MafiaWorker extends BaseGameWorker {
   private handleChatMessage(playerId: string, data: any): void {
     const player = this.room.players.find(p => p.id === playerId);
     const message = normalizeChatText(data?.message);
-    if (player && message) {
-      this.sendToRoom('chat_message', {
-        playerId,
-        playerName: player.nickname,
-        message,
-        timestamp: Date.now()
-      });
+    if (!player || !message) return;
+
+    const gameState = this.gameState as MafiaGameState;
+    if (gameState.status !== GameStatus.WAITING && gameState.status !== GameStatus.OVER) {
+      if (!gameState.players[playerId]) {
+        this.sendToPlayer(playerId, 'game_error', { message: '旁观者在游戏进行中不能发言' });
+        return;
+      }
+      if (this.getMuteList().includes(playerId)) {
+        this.sendToPlayer(playerId, 'game_error', { message: '当前阶段无法发言' });
+        return;
+      }
     }
+
+    this.sendToRoom('chat_message', {
+      playerId,
+      playerName: player.nickname,
+      message,
+      timestamp: Date.now()
+    });
   }
 
   private handleHeartbeat(playerId: string): void {

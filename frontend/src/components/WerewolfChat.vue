@@ -90,13 +90,11 @@ const canSendMessage = computed(() => {
   // 在准备阶段，所有人可以发言
   if (props.gameState?.status === 'preparing') return true;
 
-  // 在夜晚阶段，只有狼人可以在狼人频道交流
-  const nightPhases = ['WOLF_KILL', 'SEER_CHECK', 'WITCH_ACT', 'GUARD_PROTECT', 'HUNTER_SHOOT'];
+  // 在夜晚闭眼阶段，只允许狼人使用狼人频道交流
+  const nightPhases = ['WOLF_KILL', 'WOLF_KILL_CHECK', 'SEER_CHECK', 'WITCH_ACT', 'GUARD_PROTECT', 'BEFORE_DAY_DISCUSS'];
   if (nightPhases.includes(props.gameState?.status)) {
-    // 狼人在狼人频道可以发言
     if (currentChannel.value === 'werewolf' && isWerewolfPlayer.value) return true;
-    // 其他情况下，所有存活玩家在全员频道也可以发言（便于游戏交流）
-    return currentChannel.value === 'all';
+    return false;
   }
 
   // 在白天讨论阶段，所有存活玩家都可以发言（自由讨论）

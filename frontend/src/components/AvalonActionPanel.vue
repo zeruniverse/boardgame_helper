@@ -307,10 +307,9 @@ const getLadyTargets = () => {
   const targets: Record<string, any> = {}
   const playerId = props.playerSecret?.playerId
   const ladys = props.gameState.ladys || []
-  const captainId = props.gameState.captain
   Object.keys(props.gameState.players).forEach(pid => {
-    // 不能验自己，不能验已经被验过的人，不能验当前队长
-    if (pid !== playerId && !ladys.includes(pid) && pid !== captainId) {
+    // 不能验自己，不能验已经持有/被传递过湖上夫人的玩家
+    if (pid !== playerId && !ladys.includes(pid)) {
       targets[pid] = props.gameState.players[pid]
     }
   })

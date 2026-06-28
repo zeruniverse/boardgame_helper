@@ -45,10 +45,14 @@ const store = useMafiaGameStore();
 const input = ref('');
 const chatContainer = ref<HTMLElement>();
 
+const isMuted = computed(() => {
+  return !!props.currentUserId && props.gameState?.muteList?.includes(props.currentUserId)
+})
+
 // 检查是否可以发送消息 - 使用 store.socket 替代 props.socket
 // 因为父组件未传递 socket prop
 const canSend = computed(() => {
-  return store.socket?.connected && props.roomId && props.nickname && input.value.trim()
+  return store.socket?.connected && props.roomId && props.nickname && input.value.trim() && !isMuted.value
 })
 
 // 检查玩家是否死亡 - 使用currentUserId而非nickname

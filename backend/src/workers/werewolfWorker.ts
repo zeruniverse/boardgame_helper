@@ -1321,8 +1321,25 @@ class WerewolfWorker extends BaseGameWorker {
     const channel = normalizeChatChannel(actionData?.channel, ['all', 'werewolf']);
 
     if (!message) return;
+    if (!gamePlayer && this.gameState.status !== GameStatus.WAITING && this.gameState.status !== GameStatus.OVER) {
+      this.sendToPlayer(playerId, 'error', { message: '旁观者在游戏进行中不能发言' });
+      return;
+    }
     if (gamePlayer && !gamePlayer.isAlive) {
       this.sendToPlayer(playerId, 'error', { message: '死亡玩家无法发送消息' });
+      return;
+    }
+
+    const secretNightStatuses = [
+      GameStatus.WOLF_KILL,
+      GameStatus.WOLF_KILL_CHECK,
+      GameStatus.SEER_CHECK,
+      GameStatus.WITCH_ACT,
+      GameStatus.GUARD_PROTECT,
+      GameStatus.BEFORE_DAY_DISCUSS
+    ];
+    if (channel === 'all' && secretNightStatuses.includes(this.gameState.status)) {
+      this.sendToPlayer(playerId, 'error', { message: '夜晚闭眼阶段不能使用全员频道' });
       return;
     }
 

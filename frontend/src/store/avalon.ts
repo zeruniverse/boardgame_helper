@@ -14,6 +14,7 @@ interface AvalonPlayer {
 }
 
 interface AvalonGameState {
+  hostId?: string;
   status: number;
   mission: number;
   scoreBoard: Array<[number, number, number]>; // [teamSize, failReq, result]

@@ -441,6 +441,7 @@ class AvalonWorker extends BaseGameWorker {
       };
     }
     return {
+      hostId: this.room.hostId,
       status: state.status,
       players: playersWithReady,
       mission: state.mission,
