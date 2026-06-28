@@ -4,6 +4,7 @@ import { Room } from '../models/Room';
 import { Player } from '../models/Player';
 import { createDeck, shuffleDeck } from '../utils/deck';
 import { evaluateHand } from '../utils/handEvaluator';
+import { splitPotSidePots, type SidePot } from '../utils/sidePot';
 import { buildChatPayload, normalizeChatText } from '../utils/chat';
 
 if (!parentPort) {
@@ -60,10 +61,6 @@ interface GameTaskResponse {
   error?: string;
 }
 
-interface SidePot {
-  amount: number;
-  eligibleIds: string[];
-}
 
 class TexasHoldemWorker extends BaseGameWorker {
   private config!: TexasHoldemConfig;
@@ -1756,7 +1753,7 @@ class TexasHoldemWorker extends BaseGameWorker {
     if (this.config.allowSystemDealing && gs.playerHands) {
       // 系统发牌模式，自动比较手牌大小并分配侧池
       // 计算主池和各侧池分配信息
-      const pots = this.splitPotSidePots(gs.totalBets, activeIds);
+      const pots = splitPotSidePots(gs.totalBets, activeIds);
       let totalDistributed = 0;
 
       const participatingPlayers = this.room.players.filter(p => this.participants.includes(p.id));
@@ -1884,46 +1881,6 @@ class TexasHoldemWorker extends BaseGameWorker {
     }
   }
 
-  // 内联侧池计算函数
-  private splitPotSidePots(
-    totalBets: Record<string, number>,
-    activeIds: string[]
-  ): SidePot[] {
-    if (!activeIds || activeIds.length === 0) {
-      return [];
-    }
-    const entries = Object.entries(totalBets)
-      .map(([pid, amt]) => ({ pid, amt }));
-    // 确保所有活跃玩家都在 entries 中（下注为0的也包含）
-    for (const pid of activeIds) {
-      if (!entries.some(e => e.pid === pid)) {
-        entries.push({ pid, amt: 0 });
-      }
-    }
-    const uniqueAmounts = Array.from(new Set(entries.map(e => e.amt))).sort((a, b) => a - b);
-    const sidePots: SidePot[] = [];
-    let prev = 0;
-    let orphanedPot = 0; // 记录 eligibleActive 为空的边池金额，合并到下一个有效边池
-    for (const amt of uniqueAmounts) {
-      const eligibleAll = entries.filter(e => e.amt >= amt).map(e => e.pid);
-      if (eligibleAll.length === 0) { prev = amt; continue; }
-      const potAmt = (amt - prev) * eligibleAll.length + orphanedPot;
-      orphanedPot = 0;
-      const eligibleActive = eligibleAll.filter(pid => activeIds.includes(pid));
-      if (eligibleActive.length > 0 && potAmt > 0) {
-        sidePots.push({ amount: potAmt, eligibleIds: eligibleActive });
-      } else if (potAmt > 0) {
-        // 当前层无活跃玩家，金额暂存合并到下一层
-        orphanedPot = potAmt;
-      }
-      prev = amt;
-    }
-    // 如果最后还有剩余的孤儿池金额，创建一个所有活跃玩家可赢的边池
-    if (orphanedPot > 0 && activeIds.length > 0) {
-      sidePots.push({ amount: orphanedPot, eligibleIds: [...activeIds] });
-    }
-    return sidePots;
-  }
 
   // Worker线程终止时清理资源
   private dispose() {
