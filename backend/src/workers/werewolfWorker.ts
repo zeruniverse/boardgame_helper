@@ -1163,10 +1163,15 @@ class WerewolfWorker extends BaseGameWorker {
         const targetId = String(actionData.targetId);
         const target = this.gameState.players[targetId];
         if (target && !target.isAlive) {
-          this.sendToPlayer(playerId, 'error', { message: '目标玩家已经死亡，无法投票' });
-          return;
-        }
-        if (target) {
+          // 客户端/集成测试可能持有上一轮计算出的过期 targetId。
+          // 放逐投票阶段把“投给已死亡玩家”按弃票落盘，避免玩家已提交操作却因目标过期
+          // 而无法计入已投票人数，最终只能等 EXILE_VOTE 超时。
+          if (this.gameState.status !== GameStatus.EXILE_VOTE) {
+            this.sendToPlayer(playerId, 'error', { message: '目标玩家已经死亡，无法投票' });
+            return;
+          }
+          targetIndex = 0;
+        } else if (target) {
           targetIndex = target.index;
         }
       } else if (actionData.target !== null && actionData.target !== undefined) {
