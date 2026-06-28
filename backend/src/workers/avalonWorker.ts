@@ -648,6 +648,13 @@ class AvalonWorker extends BaseGameWorker {
       return;
     }
 
+    if (new Set(team).size !== team.length) {
+      this.sendToPlayer(playerId, 'game_error', {
+        message: '任务队伍不能包含重复玩家'
+      });
+      return;
+    }
+
     // 验证所有队员都是有效玩家
     const validPlayers = Object.keys(state.players);
     if (!team.every(id => validPlayers.includes(id))) {

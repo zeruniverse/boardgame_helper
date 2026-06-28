@@ -162,7 +162,8 @@ export class OnuSeerSkill extends OnuBaseSkill {
     }
 
     if (selection.cards && selection.cards.length === 2) {
-      return selection.cards.every(pos => pos >= 0 && pos <= 2);
+      const uniqueCards = new Set(selection.cards);
+      return uniqueCards.size === 2 && selection.cards.every(pos => pos >= 0 && pos <= 2);
     }
 
     return false;
@@ -338,8 +339,8 @@ export class OnuMasonSkill extends OnuBaseSkill {
   }
 
   execute(): OnuSkillResult {
-    // 石匠查看的是初始分配为Mason的玩家（不论角色是否被交换）
-    const masons = this.getOtherPlayers().filter(p => p.initialRole === OnuWerewolfRole.Mason);
+    // 石匠查看当前夜晚已成为 Mason 的玩家，包含化身复制石匠后的情况。
+    const masons = this.getOtherPlayers().filter(p => p.actualRole === OnuWerewolfRole.Mason);
     const visibleMasons = masons.map(p => ({
       ...p,
       actualRole: OnuWerewolfRole.Mason,
