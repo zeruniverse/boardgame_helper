@@ -896,6 +896,26 @@ export class BOTCWorker extends BaseGameWorker {
     const player = this.gamePlayers.get(playerId);
     if (!player) return;
 
+    // 死亡玩家可以被提名并处决，但不能再次“死亡”。否则会重复扣减 livingPlayers、
+    // 重复触发死亡能力/圣徒失败等效果。
+    if (player.isDead) {
+      this.gameState.execution = {
+        playerId,
+        executedBy: [executedBy],
+        timestamp: Date.now()
+      };
+
+      this.sendToRoom('playerExecuted', {
+        playerId,
+        playerName: this.getPlayerName(playerId),
+        role: player.role,
+        executedBy: this.getPlayerName(executedBy),
+        alreadyDead: true
+      });
+      this.broadcastGameState();
+      return;
+    }
+
     // 处理圣徒被处决 - 善良阵营直接失败
     if (player.role?.id === 'saint') {
       await this.endGame('evil', '圣徒被处决，善良阵营失败');

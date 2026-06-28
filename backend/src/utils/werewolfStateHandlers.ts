@@ -187,9 +187,15 @@ function updateOperators(gameState: WerewolfGameState): void {
       break;
 
     case GameStatus.SHERIFF_SPEECH:
-      operators = players
-        .filter(p => p.canBeVoted)
-        .map(p => p.id);
+      // 警长竞选发言阶段也应只有当前发言候选人可操作，
+      // 避免所有候选人同时看到/触发“结束发言”。
+      if (gameState.toFinishPlayers && gameState.toFinishPlayers.size > 0) {
+        operators = players
+          .filter(p => gameState.toFinishPlayers!.has(p.index))
+          .map(p => p.id);
+      } else {
+        operators = [];
+      }
       break;
 
     case GameStatus.LEAVE_MSG:
@@ -604,27 +610,49 @@ export const SheriffSpeechHandler: StateHandler = {
   status: GameStatus.SHERIFF_SPEECH,
 
   startOfState(gameState, context) {
-    // 设置发言顺序（上警的玩家按编号顺序发言）。
-    // 必须先写入当前操作者，再广播状态；否则前端会短暂收到上一个阶段的 operators。
-    const candidates = Object.values(gameState.players)
-      .filter(p => p.canBeVoted)
-      .sort((a, b) => a.index - b.index)
-      .map(p => p.index);
-
-    gameState.speakOrder = candidates;
-    gameState.currentSpeakerIndex = 0;
-    gameState.toFinishPlayers = new Set();
-
-    const firstSpeaker = candidates.length > 0 ? findPlayerByIndex(gameState.players, candidates[0]) : null;
-    if (firstSpeaker?.isAlive) {
-      gameState.toFinishPlayers = new Set([firstSpeaker.index]);
+    // 设置发言顺序（上警的玩家按编号顺序发言）。首次进入时初始化，
+    // 后续由 endOfState 推进 currentSpeakerIndex，不能每次重置为第一个候选人。
+    if (gameState.status !== GameStatus.SHERIFF_SPEECH || !gameState.speakOrder?.length) {
+      gameState.speakOrder = Object.values(gameState.players)
+        .filter(p => p.canBeVoted)
+        .sort((a, b) => a.index - b.index)
+        .map(p => p.index);
+      gameState.currentSpeakerIndex = 0;
     }
 
-    startCurrentState(this, gameState, context);
+    const speakOrder = gameState.speakOrder || [];
+    let currentIdx = gameState.currentSpeakerIndex || 0;
 
+    while (currentIdx < speakOrder.length) {
+      const speakerIndex = speakOrder[currentIdx];
+      const speaker = findPlayerByIndex(gameState.players, speakerIndex);
+
+      if (speaker?.isAlive && speaker.canBeVoted) {
+        gameState.currentSpeakerIndex = currentIdx;
+        gameState.toFinishPlayers = new Set([speakerIndex]);
+
+        startCurrentState(this, gameState, context);
+
+        context.sendToRoom('show_message', {
+          message: `警长竞选发言开始，${speaker.index}号 ${speaker.name} 请发言`
+        });
+        context.sendToPlayer(speaker.id, 'system_message', {
+          message: '轮到你进行警长竞选发言了'
+        });
+        return;
+      }
+
+      currentIdx++;
+    }
+
+    gameState.currentSpeakerIndex = currentIdx;
+    gameState.toFinishPlayers = new Set();
     context.sendToRoom('show_message', {
-      message: `警长竞选发言开始，${firstSpeaker ? firstSpeaker.index + '号' : ''} 请先发言`
+      message: '警长竞选发言结束，即将进入警长投票'
     });
+    scheduleStateTask(gameState, () => {
+      SheriffVoteHandler.startOfState(gameState, context);
+    }, 1000);
   },
 
   endOfState(gameState, context) {
@@ -633,8 +661,18 @@ export const SheriffSpeechHandler: StateHandler = {
       gameState.timer = undefined;
     }
 
-    // 进入警长投票阶段
-    SheriffVoteHandler.startOfState(gameState, context);
+    if (gameState.currentSpeakerIndex !== undefined) {
+      gameState.currentSpeakerIndex++;
+    }
+
+    const speakOrder = gameState.speakOrder || [];
+    if ((gameState.currentSpeakerIndex || 0) < speakOrder.length) {
+      scheduleStateTask(gameState, () => {
+        SheriffSpeechHandler.startOfState(gameState, context);
+      }, 1000);
+    } else {
+      SheriffVoteHandler.startOfState(gameState, context);
+    }
   }
 };
 

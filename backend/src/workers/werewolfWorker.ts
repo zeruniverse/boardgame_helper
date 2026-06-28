@@ -1204,7 +1204,17 @@ class WerewolfWorker extends BaseGameWorker {
         stateHandlers[GameStatus.DAY_DISCUSS].endOfState(this.gameState, context);
       }, 1000);
     } else if (this.gameState.status === GameStatus.SHERIFF_SPEECH) {
-      // 警长竞选发言结束
+      // 检查是否是当前警长竞选发言者
+      const currentSpeakerIdx = this.gameState.speakOrder?.[this.gameState.currentSpeakerIndex || 0];
+      if (currentSpeakerIdx !== gamePlayer.index) {
+        this.sendToPlayer(playerId, 'error', { message: '当前不是你发言' });
+        return;
+      }
+
+      this.sendToRoom('system_message', {
+        message: `${gamePlayer.index}号 ${gamePlayer.name} 结束警长竞选发言`
+      });
+
       this.saveTimeout(() => {
         const context = this.createContext();
         stateHandlers[GameStatus.SHERIFF_SPEECH].endOfState(this.gameState, context);
