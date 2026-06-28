@@ -919,6 +919,15 @@ class AvalonWorker extends BaseGameWorker {
     const state = this.gameState as AvalonGameState;
     if (state.status !== GameStatus.OVER) return;
 
+    if (this.actionTimer) {
+      clearTimeout(this.actionTimer);
+      this.actionTimer = null;
+    }
+    if (this.assassinationTimer) {
+      clearTimeout(this.assassinationTimer);
+      this.assassinationTimer = null;
+    }
+
     // 重置所有玩家准备状态
     this.room.players.forEach(player => {
       if (player.gameMetadata) {

@@ -259,7 +259,7 @@
         <p>选择要放逐的玩家:</p>
         <div class="player-selection">
           <div
-            v-for="player in getAlivePlayers()"
+            v-for="player in getVotablePlayers()"
             :key="player.id"
             class="player-option"
             :class="{ selected: selectedTarget === player.id }"
@@ -416,6 +416,7 @@ interface GamePlayer {
   index: number
   alive: boolean
   ready?: boolean
+  canBeVoted?: boolean
   role?: string
   isSheriff?: boolean
 }
@@ -497,6 +498,12 @@ const canStartGame = computed(() => {
 const getAlivePlayers = (): any[] => {
   if (!props.gameState.players) return []
   return (Object.values(props.gameState.players) as any[]).filter((p: any) => p.alive)
+}
+
+const getVotablePlayers = (): any[] => {
+  const alivePlayers = getAlivePlayers()
+  const constrained = alivePlayers.filter((p: any) => p.canBeVoted)
+  return constrained.length > 0 ? constrained : alivePlayers
 }
 
 // 获取存活的其他玩家（排除自己）

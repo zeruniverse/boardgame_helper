@@ -1880,6 +1880,11 @@ class MafiaWorker extends BaseGameWorker {
   }
 
   private resetGame(): void {
+    if (this.actionTimer) {
+      clearTimeout(this.actionTimer);
+      this.actionTimer = null;
+    }
+
     const oldPlayers = this.room.players;
     this.initializeGameState();
     

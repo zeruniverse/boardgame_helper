@@ -20,7 +20,7 @@ import {
   renderPlayersHTML,
   shuffleArray
 } from '../utils/werewolfUtils';
-import { stateHandlers } from '../utils/werewolfStateHandlers';
+import { stateHandlers, clearScheduledStateTasks } from '../utils/werewolfStateHandlers';
 import { normalizeChatChannel, normalizeChatText } from '../utils/chat';
 
 if (!parentPort) {
@@ -205,9 +205,10 @@ class WerewolfWorker extends BaseGameWorker {
         index: p.index,
         alive: p.isAlive,
         role: undefined, // 不公开角色
-        ready: p.online,
+        ready: p.ready ?? false,
         isSheriff: p.isSheriff,
-        isDying: p.isDying
+        isDying: p.isDying,
+        canBeVoted: p.canBeVoted
       };
     });
 
@@ -268,6 +269,8 @@ class WerewolfWorker extends BaseGameWorker {
         isAlive: inGame ? gamePlayer!.isAlive : false,
         isSheriff: gamePlayer?.isSheriff || false,
         isDying: gamePlayer?.isDying || false,
+        canBeVoted: gamePlayer?.canBeVoted || false,
+        ready: player.gameMetadata?.ready || false,
         online: player.online
       };
     });
@@ -491,6 +494,7 @@ class WerewolfWorker extends BaseGameWorker {
       clearTimeout(this.gameState.timer);
       this.gameState.timer = undefined;
     }
+    clearScheduledStateTasks(this.gameState);
 
     // 清除游戏状态中所有玩家的角色和生死状态
     (Object.values(this.gameState.players) as WerewolfPlayerState[]).forEach(gp => {
@@ -1117,6 +1121,14 @@ class WerewolfWorker extends BaseGameWorker {
       }
     }
 
+    if (this.gameState.status === GameStatus.EXILE_VOTE && targetIndex > 0) {
+      const target = (Object.values(this.gameState.players) as WerewolfPlayerState[]).find(p => p.index === targetIndex);
+      if (!target?.canBeVoted) {
+        this.sendToPlayer(playerId, 'error', { message: '该玩家当前不在可投票范围内' });
+        return;
+      }
+    }
+
     // 记录投票
     if (this.gameState.status === GameStatus.EXILE_VOTE) {
       gamePlayer.hasVotedAt[this.gameState.currentDay] = targetIndex;
@@ -1364,6 +1376,7 @@ class WerewolfWorker extends BaseGameWorker {
         clearTimeout(this.gameState.timer);
         this.gameState.timer = undefined;
       }
+      clearScheduledStateTasks(this.gameState);
 
       this.sendToRoom('game_end', {
         winner: winner === 'WEREWOLF' ? 'werewolf' : 'villager',
@@ -1388,6 +1401,7 @@ class WerewolfWorker extends BaseGameWorker {
       clearTimeout(this.gameState.timer);
       this.gameState.timer = undefined;
     }
+    clearScheduledStateTasks(this.gameState);
   }
 }
 

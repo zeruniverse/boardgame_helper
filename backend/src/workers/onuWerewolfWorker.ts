@@ -501,7 +501,7 @@ class OnuWerewolfWorker extends BaseGameWorker {
     });
 
     // 开始夜间阶段
-    this.gameTimer = setTimeout(() => this.startNightPhase(), 3000);
+    this.setTimer(3000, () => this.startNightPhase());
   }
 
   private async startNightPhase(): Promise<void> {
@@ -602,7 +602,7 @@ class OnuWerewolfWorker extends BaseGameWorker {
       // 所有技能处理完毕，如果 nightTime 为 0（不限时），自动结束夜间阶段
       if (this.config.nightTime === 0) {
         // 给一个短暂的延迟让玩家看到最后结果
-        setTimeout(() => this.endNightPhase(), 2000);
+        this.setTimer(2000, () => this.endNightPhase());
       }
       return;
     }
@@ -940,7 +940,7 @@ class OnuWerewolfWorker extends BaseGameWorker {
     });
 
     // 显示最终结果
-    setTimeout(() => this.showFinalResult(), 3000);
+    this.setTimer(3000, () => this.showFinalResult());
   }
 
   private async showFinalResult(): Promise<void> {
