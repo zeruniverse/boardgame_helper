@@ -534,19 +534,6 @@ export const GuardProtectHandler: StateHandler = {
   status: GameStatus.GUARD_PROTECT,
 
   startOfState(gameState, context) {
-    // 首夜守卫不可守护（标准规则）
-    if (gameState.currentDay === 1) {
-      context.sendToRoom('show_message', {
-        message: '首夜守卫不可守护，即将进入下一阶段',
-        showTime: 2
-      });
-      // 延迟后直接进入下一阶段
-      scheduleStateTask(gameState, () => {
-        GuardProtectHandler.endOfState(gameState, context);
-      }, 2000);
-      return;
-    }
-
     startCurrentState(this, gameState, context);
 
     // 守卫保护提示只发送给守卫

@@ -566,8 +566,7 @@ class OnuWerewolfWorker extends BaseGameWorker {
       OnuWerewolfRole.Seer,
       OnuWerewolfRole.Robber,
       OnuWerewolfRole.Troublemaker,
-      OnuWerewolfRole.Drunk,
-      OnuWerewolfRole.Minion
+      OnuWerewolfRole.Drunk
     ].includes(role);
   }
 

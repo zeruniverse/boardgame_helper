@@ -31,7 +31,7 @@ import {
 } from '../utils/botcUtils';
 import { EDITIONS, getEditionById, getRoleById } from '../utils/botcData';
 import { processFirstNightInfo, processNightAction, processDeathAbility } from '../utils/botcSkills';
-import { normalizeChatText } from '../utils/chat';
+import { normalizeChatChannel, normalizeChatText } from '../utils/chat';
 
 /**
  * 血染钟楼游戏 Worker
@@ -1673,17 +1673,49 @@ export class BOTCWorker extends BaseGameWorker {
   /**
    * 处理聊天
    */
-  private async handleChat(playerId: string, data: { message: string }): Promise<void> {
+  private async handleChat(playerId: string, data: { message: string; channel?: string }): Promise<void> {
     const player = this.room.players.find(p => p.id === playerId);
     const message = normalizeChatText(data?.message);
     if (!player || !message) return;
 
-    this.sendToRoom('chatMessage', {
+    const channel = normalizeChatChannel(data?.channel, ['all', 'storyteller', 'dead']);
+    const payload = {
       playerId,
       playerName: this.getPlayerName(player.id),
       message,
+      channel,
       timestamp: Date.now()
-    });
+    };
+
+    if (channel === 'storyteller') {
+      // 说书人频道只回显给发送者并发送给说书人，避免泄露到公开频道。
+      this.sendToPlayer(playerId, 'chatMessage', payload);
+      if (playerId !== this.gameConfig.storytellerId) {
+        this.sendToPlayer(this.gameConfig.storytellerId, 'chatMessage', payload);
+      }
+      return;
+    }
+
+    if (channel === 'dead') {
+      const senderGamePlayer = this.gamePlayers.get(playerId);
+      if (!senderGamePlayer?.isDead) {
+        this.sendToPlayer(playerId, 'actionError', { message: '只有死亡玩家可以使用死者频道' });
+        return;
+      }
+
+      // 死者频道只发送给死亡玩家和说书人。
+      for (const gamePlayer of this.gamePlayers.values()) {
+        if (gamePlayer.isDead) {
+          this.sendToPlayer(gamePlayer.playerId, 'chatMessage', payload);
+        }
+      }
+      if (playerId !== this.gameConfig.storytellerId) {
+        this.sendToPlayer(this.gameConfig.storytellerId, 'chatMessage', payload);
+      }
+      return;
+    }
+
+    this.sendToRoom('chatMessage', payload);
   }
 
   /**

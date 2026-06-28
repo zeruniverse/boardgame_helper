@@ -1138,6 +1138,8 @@ class WerewolfWorker extends BaseGameWorker {
 
     // 更新votes记录
     if (!this.gameState.votes) this.gameState.votes = {};
+    // 玩家可在投票截止前改投/弃票；先清除旧票，避免弃票时前端仍显示旧目标。
+    delete this.gameState.votes[playerId];
     if (targetIndex > 0) {
       const target = (Object.values(this.gameState.players) as WerewolfPlayerState[]).find(p => p.index === targetIndex);
       if (target) {

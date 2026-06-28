@@ -412,8 +412,7 @@ export class OnuDoppelgangerSkill extends OnuBaseSkill {
       OnuWerewolfRole.Seer,
       OnuWerewolfRole.Robber,
       OnuWerewolfRole.Troublemaker,
-      OnuWerewolfRole.Drunk,
-      OnuWerewolfRole.Minion
+      OnuWerewolfRole.Drunk
     ];
     const followUpHint = hasFollowUpSkill
       ? (immediateFollowUpRoles.includes(targetRole) ? '，请立即执行该角色的技能' : '，将在该角色的正常夜晚阶段执行技能')
