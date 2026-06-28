@@ -80,6 +80,66 @@ export function clearScheduledStateTasks(gameState: WerewolfGameState): void {
   state.scheduledTimers = [];
 }
 
+const VOTE_TIMEOUT_GRACE_MS = 1200;
+
+function allAlivePlayersVoted(gameState: WerewolfGameState, voteType: 'exile' | 'sheriff'): boolean {
+  const alivePlayers = Object.values(gameState.players).filter(p => p.isAlive);
+  return alivePlayers.every(p => {
+    const votedAt = voteType === 'exile'
+      ? p.hasVotedAt?.[gameState.currentDay]
+      : p.sheriffVotes?.[gameState.currentDay];
+    return votedAt !== undefined;
+  });
+}
+
+function extendIncompleteVoteOnce(
+  handler: StateHandler,
+  gameState: WerewolfGameState,
+  context: any,
+  voteType: 'exile' | 'sheriff'
+): boolean {
+  const state = gameState as WerewolfGameState & {
+    stateSeq?: number;
+    voteTimeoutGraceSeq?: Record<string, number>;
+  };
+  const currentSeq = state.stateSeq || 0;
+  const graceKey = handler.status;
+
+  if (gameState.status !== handler.status || allAlivePlayersVoted(gameState, voteType)) {
+    return false;
+  }
+
+  if (state.voteTimeoutGraceSeq?.[graceKey] === currentSeq) {
+    return false;
+  }
+
+  state.voteTimeoutGraceSeq = { ...(state.voteTimeoutGraceSeq || {}), [graceKey]: currentSeq };
+
+  if (gameState.timer) {
+    clearTimeout(gameState.timer);
+    gameState.timer = undefined;
+  }
+
+  gameState.operateEndTime = new Date(Date.now() + VOTE_TIMEOUT_GRACE_MS);
+  context.sendToRoom('game_info', {
+    gameInfo: context.getGameInfo()
+  });
+
+  scheduleStateTask(gameState, () => {
+    handler.endOfState(gameState, context);
+  }, VOTE_TIMEOUT_GRACE_MS);
+
+  return true;
+}
+
+function getNoExileTransitionDelayMs(context: any): number {
+  const configuredVoteTime = Number(context?.config?.voteTime);
+  if (Number.isFinite(configuredVoteTime) && configuredVoteTime > 0) {
+    return Math.min(5000, Math.max(100, configuredVoteTime * 1000));
+  }
+  return 5000;
+}
+
 function beginEndState(handler: StateHandler, gameState: WerewolfGameState): boolean {
   const state = gameState as WerewolfGameState & { stateSeq?: number; endingStateSeq?: number };
   const currentSeq = state.stateSeq || 0;
@@ -742,6 +802,7 @@ export const SheriffVoteHandler: StateHandler = {
   },
 
   endOfState(gameState, context) {
+    if (extendIncompleteVoteOnce(this, gameState, context, 'sheriff')) return;
     if (!beginEndState(this, gameState)) return;
     if (gameState.timer) {
       clearTimeout(gameState.timer);
@@ -1041,6 +1102,7 @@ export const ExileVoteHandler: StateHandler = {
   },
 
   endOfState(gameState, context) {
+    if (extendIncompleteVoteOnce(this, gameState, context, 'exile')) return;
     if (!beginEndState(this, gameState)) return;
     if (gameState.timer) {
       clearTimeout(gameState.timer);
@@ -1064,7 +1126,7 @@ export const ExileVoteHandler: StateHandler = {
       });
       scheduleStateTask(gameState, () => {
         WolfKillHandler.startOfState(gameState, context, true);
-      }, 5000);
+      }, getNoExileTransitionDelayMs(context));
     } else if (highestVotes.length === 1) {
       // 有人被投死
       const target = findPlayerByIndex(gameState.players, highestVotes[0]);
@@ -1109,7 +1171,7 @@ export const ExileVoteHandler: StateHandler = {
           if (!checkAndHandleGameEnd(gameState, context)) {
             WolfKillHandler.startOfState(gameState, context, true);
           }
-        }, 5000);
+        }, getNoExileTransitionDelayMs(context));
         return;
       }
 
