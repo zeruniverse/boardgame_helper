@@ -109,7 +109,8 @@ export abstract class OnuBaseSkill {
 // 狼人技能
 export class OnuWerewolfSkill extends OnuBaseSkill {
   canUse(selection?: OnuWerewolfSelection): boolean {
-    return true;
+    if (!selection || !selection.cards || selection.cards.length === 0) return true;
+    return selection.cards.length === 1 && this.getCenterCard(selection.cards[0]) !== undefined;
   }
 
   execute(selection?: OnuWerewolfSelection): OnuSkillResult {
@@ -117,14 +118,20 @@ export class OnuWerewolfSkill extends OnuBaseSkill {
     
     if (werewolves.length === 0) {
       // 如果没有其他狼人，可以选择查看一张中心卡牌
-      if (!selection || !selection.cards || selection.cards.length !== 1) {
+      if (!selection || !selection.cards || selection.cards.length === 0) {
         return {
           success: true,
           message: '你选择不查看中心卡'
         };
       }
+      if (selection.cards.length !== 1) {
+        return { success: false, error: '只能查看一张中心卡' };
+      }
       const cardPos = selection.cards[0];
-      const card = this.centerCards[cardPos];
+      const card = this.getCenterCard(cardPos);
+      if (!card) {
+        return { success: false, error: '中心卡牌不存在' };
+      }
       return {
         success: true,
         vision: onuCreateVision([], [card]),

@@ -409,10 +409,11 @@ export class BOTCWorker extends BaseGameWorker {
       player.hasActed = false;
     });
 
-    // 清除前一夜的临时保护效果（僧侣的保护在下一夜清除）
+    // 清除前一夜的临时效果（僧侣保护和女巫诅咒只持续到下一夜）
     if (!isFirstNight) {
       this.gamePlayers.forEach(player => {
         player.isProtected = false;
+        player.reminders = player.reminders.filter(r => r !== '被诅咒' && r !== 'Cursed');
       });
     }
 
@@ -513,6 +514,11 @@ export class BOTCWorker extends BaseGameWorker {
     this.gameState.votes = [];
     this.gameState.execution = undefined;
     this.noExecutionToday = true;
+
+    // 女巫在只剩3名存活玩家时失去能力，现有诅咒立即移除
+    if (this.gameState.livingPlayers <= 3) {
+      this.clearWitchCurseMarkers();
+    }
 
     // 重置玩家状态
     this.gamePlayers.forEach(player => {
@@ -638,6 +644,15 @@ export class BOTCWorker extends BaseGameWorker {
   }
 
   /**
+   * 清除女巫诅咒标记
+   */
+  private clearWitchCurseMarkers(): void {
+    this.gamePlayers.forEach(player => {
+      player.reminders = player.reminders.filter(r => r !== '被诅咒' && r !== 'Cursed');
+    });
+  }
+
+  /**
    * 处理提名
    */
   private async handleNomination(playerId: string, data: { nomineeId: string }): Promise<void> {
@@ -652,11 +667,6 @@ export class BOTCWorker extends BaseGameWorker {
     if (!nominator || !nominee) {
       this.sendToPlayer(playerId, 'actionError', { message: '玩家不存在' });
       return;
-    }
-
-    // 检查女巫（Witch）诅咒 - 被诅咒的玩家被提名时立即死亡
-    if (nominee.reminders?.includes('被诅咒')) {
-      await this.killPlayer(data.nomineeId, 'witch');
     }
 
     // BOTC标准规则：只有存活玩家可以提名；每名玩家每天只能提名一次
@@ -677,6 +687,13 @@ export class BOTCWorker extends BaseGameWorker {
       return;
     }
 
+    // 检查是否已经有提名在进行
+    const activeNomination = this.gameState.nominations.find(n => n.isOnTrial);
+    if (activeNomination) {
+      this.sendToPlayer(playerId, 'actionError', { message: '当前有提名正在进行投票' });
+      return;
+    }
+
     // 检查处女（Virgin）能力 - 首次被提名时，若提名者是镇民，提名者立即被处决
     if (nominee.role?.id === 'virgin' && !nominee.isDead && !nominee.reminders.includes('No ability')) {
       // Virgin 只要被提名就失去能力
@@ -693,11 +710,15 @@ export class BOTCWorker extends BaseGameWorker {
       // 提名者不是镇民，Virgin能力已失去但不触发处决
     }
 
-    // 检查是否已经有提名在进行
-    const activeNomination = this.gameState.nominations.find(n => n.isOnTrial);
-    if (activeNomination) {
-      this.sendToPlayer(playerId, 'actionError', { message: '当前有提名正在进行投票' });
-      return;
+    // 检查女巫（Witch）诅咒：被诅咒的玩家发起提名时死亡，但本次提名仍然成立
+    const nominatorIsWitchCursed = nominator.reminders?.some(r => r === '被诅咒' || r === 'Cursed') === true;
+    if (nominatorIsWitchCursed && this.gameState.livingPlayers > 3) {
+      await this.killPlayer(playerId, 'witch');
+      nominator.reminders = nominator.reminders.filter(r => r !== '被诅咒' && r !== 'Cursed');
+      this.sendToRoom('gameMessage', {
+        message: `${this.getPlayerName(playerId)} 受到女巫诅咒，因提名而死亡！`,
+        type: 'warning'
+      });
     }
 
     // 创建提名
@@ -1321,7 +1342,12 @@ export class BOTCWorker extends BaseGameWorker {
       for (const reminder of effects.reminders) {
         const player = this.gamePlayers.get(reminder.playerId);
         if (player) {
-          player.reminders.push(reminder.reminder);
+          if (reminder.reminder === '被诅咒' || reminder.reminder === 'Cursed') {
+            this.clearWitchCurseMarkers();
+          }
+          if (!player.reminders.includes(reminder.reminder)) {
+            player.reminders.push(reminder.reminder);
+          }
         }
       }
     }
