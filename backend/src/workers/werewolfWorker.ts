@@ -321,29 +321,60 @@ class WerewolfWorker extends BaseGameWorker {
     return secret;
   }
 
+  private normalizeActionType(actionType: string): string {
+    const aliases: Record<string, string> = {
+      toggle_room_lock: 'toggleRoomLock',
+      start_game: 'startGame',
+      restart_game: 'restartGame',
+      chatMessage: 'chat_message',
+      wolfKill: 'wolf_kill',
+      seerCheck: 'seer_check',
+      witchAction: 'witch_action',
+      guardProtect: 'guard_protect',
+      hunterShoot: 'hunter_shoot',
+      characterAction: 'character_action',
+      endSpeak: 'end_speak',
+      endSpeech: 'end_speak',
+      end_speech: 'end_speak',
+      finishSpeak: 'end_speak',
+      finish_speak: 'end_speak',
+      skipSpeak: 'end_speak',
+      skip_speak: 'end_speak',
+      sheriffElect: 'sheriff_elect',
+      sheriffAssign: 'sheriff_assign',
+      leaveMsg: 'leave_msg',
+      leaveMessage: 'leave_msg',
+      leave_message: 'leave_msg'
+    };
+
+    return aliases[actionType] || actionType;
+  }
+
   async gameAction(playerId: string, actionType: string, actionData: any): Promise<void> {
     const player = this.room.players.find(p => p.id === playerId);
     if (!player) return;
 
+    const normalizedActionType = this.normalizeActionType(actionType);
+
     // toggleRoomLock / 准备 / 开始游戏都是开局前房间操作，玩家还没有分配角色，
     // 不能依赖 gameState.players[playerId]，否则新加入玩家无法准备。
-    if (actionType === 'toggleRoomLock') {
+    if (normalizedActionType === 'toggleRoomLock') {
       this.toggleRoomLock(playerId);
       return;
     }
 
-    if (actionType === 'ready') { this.handleReady(playerId); return; }
-    if (actionType === 'unready') { this.handleUnready(playerId); return; }
-    if (actionType === 'startGame') { this.handleStartGame(playerId); return; }
-    if (actionType === 'restartGame') { this.handleRestartGame(playerId); return; }
-    if (actionType === 'chat' || actionType === 'chat_message') { this.handleChatMessage(playerId, actionData); return; }
-    if (actionType === 'heartbeat') { this.handleHeartbeat(playerId); return; }
+    if (normalizedActionType === 'ready') { this.handleReady(playerId); return; }
+    if (normalizedActionType === 'unready') { this.handleUnready(playerId); return; }
+    if (normalizedActionType === 'startGame') { this.handleStartGame(playerId); return; }
+    if (normalizedActionType === 'restartGame') { this.handleRestartGame(playerId); return; }
+    if (normalizedActionType === 'chat' || normalizedActionType === 'chat_message') { this.handleChatMessage(playerId, actionData); return; }
+    if (normalizedActionType === 'heartbeat') { this.handleHeartbeat(playerId); return; }
 
     const gamePlayer = this.gameState.players[playerId];
     if (!gamePlayer) return;
 
     try {
-      switch (actionType) {
+      switch (normalizedActionType) {
         // 角色直接动作类型（前端发送的）
         case 'wolf_kill':
           this.handleWolfKill(playerId, actionData);
