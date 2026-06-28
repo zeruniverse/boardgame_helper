@@ -1111,6 +1111,12 @@ class OnuWerewolfWorker extends BaseGameWorker {
 
   private setTimer(ms: number, callback: () => void): void {
     this.clearTimer();
+
+    // 0 或负数表示不限时；不能注册 setTimeout(0)，否则会立刻自动推进阶段。
+    if (!Number.isFinite(ms) || ms <= 0) {
+      return;
+    }
+
     this.gameTimer = setTimeout(callback, ms);
   }
 
