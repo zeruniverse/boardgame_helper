@@ -29,3 +29,36 @@ export function createSystemMessage(message: string): any {
     timestamp: Date.now()
   };
 }
+export function normalizeErrorMessage(error: unknown, fallback = '未知错误'): string {
+  if (typeof error === 'string') {
+    return error.trim() || fallback;
+  }
+
+  if (error && typeof error === 'object') {
+    const payload = error as { message?: unknown; error?: unknown; detail?: unknown };
+    for (const value of [payload.message, payload.error, payload.detail]) {
+      if (typeof value === 'string' && value.trim()) {
+        return value;
+      }
+    }
+  }
+
+  return fallback;
+}
+
+export function normalizeSystemMessage(message: unknown, fallback = ''): string {
+  if (typeof message === 'string') {
+    return message;
+  }
+
+  if (message && typeof message === 'object') {
+    const payload = message as { message?: unknown; content?: unknown; text?: unknown };
+    for (const value of [payload.message, payload.content, payload.text]) {
+      if (typeof value === 'string') {
+        return value;
+      }
+    }
+  }
+
+  return fallback;
+}

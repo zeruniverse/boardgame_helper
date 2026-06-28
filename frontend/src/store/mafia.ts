@@ -3,7 +3,7 @@ import { io, Socket } from 'socket.io-client';
 import { SOCKET_URL } from '../config';
 import { ensureGameSession, rememberGameSession } from '../utils/gameSession';
 import { emitChatAction, emitGameAction } from '../utils/gameSocket';
-import { appendLimitedMessage, createSystemMessage, normalizeIncomingMessage } from '../utils/messages';
+import { appendLimitedMessage, createSystemMessage, normalizeErrorMessage, normalizeIncomingMessage, normalizeSystemMessage } from '../utils/messages';
 
 interface MafiaPlayer {
   id: string;
@@ -355,16 +355,22 @@ export const useMafiaStore = defineStore('mafia', {
         this.messages = appendLimitedMessage(this.messages, normalizeIncomingMessage(message));
       });
 
-      on('system_message', (message: string) => {
-        this.addSystemMessage(message);
+      on('system_message', (message: unknown) => {
+        const text = normalizeSystemMessage(message);
+        if (text) this.addSystemMessage(text);
       });
 
       // 错误事件
-      on('game_error', (data: { message?: string }) => {
-        if (data.message) {
-          this.errorMessage = data.message;
-          this.addSystemMessage(`错误：${data.message}`);
-        }
+      on('game_error', (data: unknown) => {
+        const message = normalizeErrorMessage(data);
+        this.errorMessage = message;
+        this.addSystemMessage(`错误：${message}`);
+      });
+
+      on('error', (error: unknown) => {
+        const message = normalizeErrorMessage(error);
+        this.errorMessage = message;
+        this.addSystemMessage(`错误：${message}`);
       });
 
       // 时间同步

@@ -5,7 +5,7 @@ import { ElMessage } from 'element-plus'
 import { SOCKET_URL } from '../config'
 import { ensureGameSession, rememberGameSession } from '../utils/gameSession'
 import { emitChatAction, emitGameAction } from '../utils/gameSocket'
-import { appendLimitedMessage, normalizeIncomingMessage } from '../utils/messages'
+import { appendLimitedMessage, normalizeErrorMessage, normalizeIncomingMessage } from '../utils/messages'
 
 export const useBOTCGameStore = defineStore('botc', () => {
   // 状态
@@ -78,10 +78,15 @@ export const useBOTCGameStore = defineStore('botc', () => {
           reject(error)
         })
 
-        // 监听错误消息 - 后端使用actionError
+        // 监听错误消息 - 后端使用actionError，房间控制器使用error
         on('actionError', (data) => {
           console.error('血染钟楼: 服务器错误:', data)
-          ElMessage.error(data.message || '发生未知错误')
+          ElMessage.error(normalizeErrorMessage(data, '发生未知错误'))
+        })
+
+        on('error', (data) => {
+          console.error('血染钟楼: 通用错误:', data)
+          ElMessage.error(normalizeErrorMessage(data, '发生未知错误'))
         })
 
         // 监听用户认证

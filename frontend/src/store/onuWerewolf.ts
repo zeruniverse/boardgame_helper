@@ -3,7 +3,7 @@ import { io, Socket } from 'socket.io-client';
 import { SOCKET_URL } from '../config';
 import { ensureGameSession, rememberGameSession } from '../utils/gameSession';
 import { emitChatAction, emitGameAction } from '../utils/gameSocket';
-import { appendLimitedMessage, createSystemMessage, normalizeIncomingMessage } from '../utils/messages';
+import { appendLimitedMessage, createSystemMessage, normalizeErrorMessage, normalizeIncomingMessage, normalizeSystemMessage } from '../utils/messages';
 
 // 角色枚举
 export enum OnuWerewolfRole {
@@ -481,19 +481,22 @@ export const useOnuWerewolfStore = defineStore('onuWerewolf', {
         }));
       });
 
-      on('system_message', (message: string) => {
-        this.addSystemMessage(message);
+      on('system_message', (message: unknown) => {
+        const text = normalizeSystemMessage(message);
+        if (text) this.addSystemMessage(text);
       });
 
       // 错误事件
-      on('onu_error', (data: { message: string }) => {
-        this.errorMessage = data.message;
-        this.addSystemMessage(`错误：${data.message}`);
+      on('onu_error', (data: unknown) => {
+        const message = normalizeErrorMessage(data);
+        this.errorMessage = message;
+        this.addSystemMessage(`错误：${message}`);
       });
 
-      on('error', (error: string) => {
-        this.errorMessage = error;
-        this.addSystemMessage(`错误：${error}`);
+      on('error', (error: unknown) => {
+        const message = normalizeErrorMessage(error);
+        this.errorMessage = message;
+        this.addSystemMessage(`错误：${message}`);
       });
 
       // 游戏状态同步（用于重连）
