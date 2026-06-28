@@ -601,9 +601,8 @@ export const SheriffSpeechHandler: StateHandler = {
   status: GameStatus.SHERIFF_SPEECH,
 
   startOfState(gameState, context) {
-    startCurrentState(this, gameState, context);
-
-    // 设置发言顺序（上警的玩家按编号顺序发言）
+    // 设置发言顺序（上警的玩家按编号顺序发言）。
+    // 必须先写入当前操作者，再广播状态；否则前端会短暂收到上一个阶段的 operators。
     const candidates = Object.values(gameState.players)
       .filter(p => p.canBeVoted)
       .sort((a, b) => a.index - b.index)
@@ -611,16 +610,15 @@ export const SheriffSpeechHandler: StateHandler = {
 
     gameState.speakOrder = candidates;
     gameState.currentSpeakerIndex = 0;
-
-    // 设置当前发言者
-    if (candidates.length > 0) {
-      const firstSpeaker = findPlayerByIndex(gameState.players, candidates[0]);
-      if (firstSpeaker) {
-        gameState.toFinishPlayers = new Set([firstSpeaker.index]);
-      }
-    }
+    gameState.toFinishPlayers = new Set();
 
     const firstSpeaker = candidates.length > 0 ? findPlayerByIndex(gameState.players, candidates[0]) : null;
+    if (firstSpeaker?.isAlive) {
+      gameState.toFinishPlayers = new Set([firstSpeaker.index]);
+    }
+
+    startCurrentState(this, gameState, context);
+
     context.sendToRoom('show_message', {
       message: `警长竞选发言开始，${firstSpeaker ? firstSpeaker.index + '号' : ''} 请先发言`
     });
@@ -863,17 +861,21 @@ export const DayDiscussHandler: StateHandler = {
   status: GameStatus.DAY_DISCUSS,
 
   startOfState(gameState, context) {
-    startCurrentState(this, gameState, context);
-
-    // 设置当前发言者
+    // 先跳过已经死亡的发言人并设置当前操作者，再广播状态。
+    // 原实现先 startCurrentState()，会把上一名发言人/上一阶段 operators 发给前端。
     const speakOrder = gameState.speakOrder || [];
-    const currentIdx = gameState.currentSpeakerIndex || 0;
+    let currentIdx = gameState.currentSpeakerIndex || 0;
 
-    if (currentIdx < speakOrder.length) {
+    while (currentIdx < speakOrder.length) {
       const speakerIndex = speakOrder[currentIdx];
       const speaker = findPlayerByIndex(gameState.players, speakerIndex);
-      if (speaker && speaker.isAlive) {
+
+      if (speaker?.isAlive) {
+        gameState.currentSpeakerIndex = currentIdx;
         gameState.toFinishPlayers = new Set([speakerIndex]);
+
+        startCurrentState(this, gameState, context);
+
         context.sendToRoom('show_message', {
           message: `${speakerIndex}号 ${speaker.name} 请发言，其他玩家请等待`
         });
@@ -882,26 +884,23 @@ export const DayDiscussHandler: StateHandler = {
         context.sendToPlayer(speaker.id, 'system_message', {
           message: '轮到你发言了，请发表你的看法'
         });
-      } else if (speaker && !speaker.isAlive) {
-        // 当前发言者已死亡，跳过并推进到下一个发言者
-        gameState.currentSpeakerIndex = (gameState.currentSpeakerIndex || 0) + 1;
-        setTimeout(() => {
-          DayDiscussHandler.startOfState(gameState, context);
-        }, 1000);
         return;
       }
-    } else {
-      // 所有人都发言完毕，进入投票
-      context.sendToRoom('show_message', {
-        message: '所有人发言完毕，即将进入投票阶段'
-      });
 
-      // 延迟后进入投票
-      setTimeout(() => {
-        ExileVoteHandler.startOfState(gameState, context);
-      }, 3000);
-      return;
+      currentIdx++;
     }
+
+    // 所有人都发言完毕，进入投票
+    gameState.currentSpeakerIndex = currentIdx;
+    gameState.toFinishPlayers = new Set();
+    context.sendToRoom('show_message', {
+      message: '所有人发言完毕，即将进入投票阶段'
+    });
+
+    // 延迟后进入投票
+    setTimeout(() => {
+      ExileVoteHandler.startOfState(gameState, context);
+    }, 3000);
   },
 
   endOfState(gameState, context) {

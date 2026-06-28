@@ -870,6 +870,7 @@ export class BOTCWorker extends BaseGameWorker {
     }
 
     player.isDead = true;
+    player.isAlive = false;
     player.deathCause = 'execution';
     player.canVote = true; // 刚死亡的玩家获得遗言票
     this.gameState.livingPlayers--;
@@ -1491,6 +1492,7 @@ export class BOTCWorker extends BaseGameWorker {
     // 处理智者（Sage）的死亡能力 - 被恶魔杀死时看到两名玩家中的一名是恶魔
     if (player.role?.id === 'sage' && cause === 'demon') {
       player.isDead = true;
+      player.isAlive = false;
       player.deathCause = cause;
       player.canVote = true;
       this.gameState.livingPlayers--;
@@ -1546,6 +1548,7 @@ export class BOTCWorker extends BaseGameWorker {
     // 处理乌鸦饲养员的死亡能力（任何夜间死亡都触发）
     if (player.role?.id === 'ravenkeeper' && cause !== 'execution') {
       player.isDead = true;
+      player.isAlive = false;
       player.deathCause = cause;
       player.canVote = true; // 获得遗言票
       this.gameState.livingPlayers--;
@@ -2026,7 +2029,8 @@ export class BOTCWorker extends BaseGameWorker {
         canVote: p.canVote,
         seat: p.seat,
         hasActed: p.hasActed,
-        role: p.isDead ? p.role : undefined,
+        // 血染钟楼死亡后仍不公开真实角色；角色身份只给说书人/终局揭示。
+        role: undefined,
         reminders: p.reminders,
         nominations: p.nominations
       })),

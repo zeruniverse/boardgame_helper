@@ -259,11 +259,13 @@ class WerewolfWorker extends BaseGameWorker {
   private getPublicPlayerInfo(): any[] {
     return this.room.players.map(player => {
       const gamePlayer = this.gameState.players[player.id];
+      const inGame = Boolean(gamePlayer);
       return {
         id: player.id,
         nickname: player.nickname,
         index: gamePlayer?.index || 0,
-        isAlive: gamePlayer?.isAlive !== false,
+        // 未入局/旁观者不应被当作存活玩家。
+        isAlive: inGame ? gamePlayer!.isAlive : false,
         isSheriff: gamePlayer?.isSheriff || false,
         isDying: gamePlayer?.isDying || false,
         online: player.online
@@ -525,6 +527,10 @@ class WerewolfWorker extends BaseGameWorker {
   }
 
   private startGame(readyPlayers: Player[]): void {
+    // 只让本局已准备的玩家入局。prepareRoom 会为房间内所有人预建 UNKNOWN，
+    // 这里必须清空，避免未准备/旧玩家以 UNKNOWN 存活状态混入胜负、投票和聊天逻辑。
+    this.gameState.players = {};
+
     // 分配角色
     const characters = shuffleArray([...this.gameState.needingCharacters]);
 
