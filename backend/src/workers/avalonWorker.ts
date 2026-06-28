@@ -63,6 +63,7 @@ interface AvalonGameState {
   actionFailed: number;               // 行动失败数
   consecutiveRejections: number;      // 连续投票否决计数
   winner?: Team;                      // 获胜方
+  endReason?: string;                  // 游戏结束原因，供前端展示
   // 阿瓦隆特有属性
   roles: [Role[], Role[]];            // [蓝方角色, 红方角色]
   assassinateInfo: AssassinateInfo;   // 刺杀投票信息
@@ -828,15 +829,16 @@ class AvalonWorker extends BaseGameWorker {
     // 判断胜负
     const isHitMerlin = state.topSecret.blue[targetId] === Role.MERLIN;
     const winner = isHitMerlin ? Team.RED : Team.BLUE;
+    const targetName = this.getPlayerName(targetId);
 
     this.updateGameState({
       status: GameStatus.OVER,
       winner,
+      endReason: `刺客${this.getPlayerName(playerId)}刺杀了${targetName}，${isHitMerlin ? '莫德雷德方胜利' : '亚瑟方胜利'}`,
       operateEndTime: new Date(Date.now() + 5000),
       step: state.step + 1
     });
 
-    const targetName = this.getPlayerName(targetId);
     const result = isHitMerlin ? '莫德雷德方胜利' : '亚瑟方胜利';
     this.sendGameMessage(`刺客${this.getPlayerName(playerId)}刺杀了${targetName}，${result}`);
     this.sendGameOverInfo();
@@ -1480,6 +1482,7 @@ class AvalonWorker extends BaseGameWorker {
 
     state.status = GameStatus.OVER;
     state.winner = winner;
+    state.endReason = `${reason}，${winner === Team.BLUE ? '亚瑟方' : '莫德雷德方'}胜利！`;
     state.operateEndTime = new Date(Date.now() + 10000); // 10秒后可以重新开始
 
     this.sendGameMessage(`${reason}，${winner === Team.BLUE ? '亚瑟方' : '莫德雷德方'}胜利！`);
@@ -1504,6 +1507,7 @@ class AvalonWorker extends BaseGameWorker {
 
     this.sendToRoom('game_over', {
       winner: state.winner,
+      reason: state.endReason || (state.winner === Team.BLUE ? '亚瑟方胜利！' : '莫德雷德方胜利！'),
       blueTeam,
       redTeam,
       scoreBoard: state.scoreBoard

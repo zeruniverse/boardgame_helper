@@ -163,12 +163,13 @@ export const useAvalonStore = defineStore('avalon', {
         this.playerSecret = secret;
       });
 
-      on('game_over', (data: { winner: 'blue' | 'red'; reason: string }) => {
+      on('game_over', (data: { winner: 'blue' | 'red'; reason?: string }) => {
         if (this.gameState) {
           this.gameState.winner = data.winner;
           this.gameState.status = 999;
         }
-        this.addSystemMessage(`游戏结束：${data.reason}`);
+        const fallbackReason = data.winner === 'blue' ? '亚瑟方胜利！' : '莫德雷德方胜利！';
+        this.addSystemMessage(`游戏结束：${data.reason || fallbackReason}`);
       });
 
       // 聊天事件

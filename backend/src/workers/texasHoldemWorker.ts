@@ -1676,6 +1676,14 @@ class TexasHoldemWorker extends BaseGameWorker {
     }, 30000);
   }
 
+  // 系统发牌模式下，德州扑克在翻牌、转牌、河牌前各烧掉一张牌。
+  private burnCard(): void {
+    const gs = this.gameState as TexasHoldemGameState;
+    if (this.config.allowSystemDealing && gs.deck.length > 0) {
+      gs.deck.pop();
+    }
+  }
+
   // 发社区牌
   private dealCommunityCards() {
     const gs = this.gameState as TexasHoldemGameState;
@@ -1693,7 +1701,8 @@ class TexasHoldemWorker extends BaseGameWorker {
     }
 
     if (gs.round === 1) {
-      // 翻牌：发3张
+      // 翻牌：先烧1张，再发3张
+      this.burnCard();
       const flopCards: string[] = [];
       for (let i = 0; i < 3; i++) {
         if (gs.deck.length > 0) {
@@ -1704,14 +1713,16 @@ class TexasHoldemWorker extends BaseGameWorker {
       }
       this.sendToRoom('chat_broadcast', { message: `翻牌圈开始 - 翻牌: ${flopCards.join(' ')}`, type: 'system' });
     } else if (gs.round === 2) {
-      // 转牌：发1张
+      // 转牌：先烧1张，再发1张
+      this.burnCard();
       if (gs.deck.length > 0) {
         const turnCard = gs.deck.pop()!;
         gs.communityCards.push(turnCard);
         this.sendToRoom('chat_broadcast', { message: `转牌圈开始 - 转牌: ${turnCard} (公共牌: ${gs.communityCards.join(' ')})`, type: 'system' });
       }
     } else if (gs.round === 3) {
-      // 河牌：发1张
+      // 河牌：先烧1张，再发1张
+      this.burnCard();
       if (gs.deck.length > 0) {
         const riverCard = gs.deck.pop()!;
         gs.communityCards.push(riverCard);
