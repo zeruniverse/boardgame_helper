@@ -1445,6 +1445,11 @@ class AvalonWorker extends BaseGameWorker {
   }
 
   private processAssassinationVote(): void {
+    if (this.assassinationTimer) {
+      clearTimeout(this.assassinationTimer);
+      this.assassinationTimer = null;
+    }
+
     const state = this.gameState as AvalonGameState;
     const info = state.assassinateInfo;
     const agreeCount = info.votes.true.length;
@@ -1463,8 +1468,9 @@ class AvalonWorker extends BaseGameWorker {
   private autoApproveAssassination(): void {
     const state = this.gameState as AvalonGameState;
 
-    // 将所有未投票的玩家设为同意
-    state.assassinateInfo.approvers.forEach(playerId => {
+    // handleApproveAssassination 会修改 approvers，必须先复制，避免遍历时跳过玩家。
+    const pendingApprovers = [...state.assassinateInfo.approvers];
+    pendingApprovers.forEach(playerId => {
       this.handleApproveAssassination(playerId, true);
     });
   }

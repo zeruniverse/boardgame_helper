@@ -679,6 +679,10 @@ class WerewolfWorker extends BaseGameWorker {
       this.sendToPlayer(playerId, 'error', { message: '你不是狼人' });
       return;
     }
+    if (!gamePlayer.isAlive) {
+      this.sendToPlayer(playerId, 'error', { message: '你已经死亡，无法行动' });
+      return;
+    }
 
     if (this.gameState.status !== GameStatus.WOLF_KILL) {
       this.sendToPlayer(playerId, 'error', { message: '当前不是狼人行动阶段' });
@@ -749,6 +753,10 @@ class WerewolfWorker extends BaseGameWorker {
     const gamePlayer = this.gameState.players[playerId];
     if (!gamePlayer || gamePlayer.character !== 'SEER') {
       this.sendToPlayer(playerId, 'error', { message: '你不是预言家' });
+      return;
+    }
+    if (!gamePlayer.isAlive) {
+      this.sendToPlayer(playerId, 'error', { message: '你已经死亡，无法行动' });
       return;
     }
 
@@ -824,6 +832,10 @@ class WerewolfWorker extends BaseGameWorker {
     const gamePlayer = this.gameState.players[playerId];
     if (!gamePlayer || gamePlayer.character !== 'WITCH') {
       this.sendToPlayer(playerId, 'error', { message: '你不是女巫' });
+      return;
+    }
+    if (!gamePlayer.isAlive) {
+      this.sendToPlayer(playerId, 'error', { message: '你已经死亡，无法行动' });
       return;
     }
 
@@ -952,6 +964,10 @@ class WerewolfWorker extends BaseGameWorker {
       this.sendToPlayer(playerId, 'error', { message: '你不是守卫' });
       return;
     }
+    if (!gamePlayer.isAlive) {
+      this.sendToPlayer(playerId, 'error', { message: '你已经死亡，无法行动' });
+      return;
+    }
 
     if (this.gameState.status !== GameStatus.GUARD_PROTECT) {
       this.sendToPlayer(playerId, 'error', { message: '当前不是守卫保护阶段' });
@@ -1013,17 +1029,6 @@ class WerewolfWorker extends BaseGameWorker {
 
   // ==================== 猎人开枪 ====================
   private handleHunterShoot(playerId: string, actionData: any): void {
-    // 被毒死的猎人不能开枪（fromCharacter为'WITCH'表示被女巫毒死）
-    if (this.gameState.curDyingPlayer?.die?.fromCharacter === 'WITCH') {
-      this.sendToPlayer(playerId, 'system_message', { message: '你被女巫毒死，无法开枪' });
-      // 结束猎人开枪阶段，继续死亡链
-      this.saveTimeout(() => {
-        const context = this.createContext();
-        stateHandlers[GameStatus.HUNTER_SHOOT].endOfState(this.gameState, context);
-      }, 1000);
-      return;
-    }
-
     const gamePlayer = this.gameState.players[playerId];
     if (!gamePlayer || gamePlayer.character !== 'HUNTER') {
       this.sendToPlayer(playerId, 'error', { message: '你不是猎人' });
@@ -1032,6 +1037,22 @@ class WerewolfWorker extends BaseGameWorker {
 
     if (this.gameState.status !== GameStatus.HUNTER_SHOOT) {
       this.sendToPlayer(playerId, 'error', { message: '当前不是猎人开枪阶段' });
+      return;
+    }
+
+    if (!this.gameState.curDyingPlayer || this.gameState.curDyingPlayer.id !== playerId) {
+      this.sendToPlayer(playerId, 'error', { message: '当前不是你的猎人开枪阶段' });
+      return;
+    }
+
+    // 被毒死的猎人不能开枪（fromCharacter为'WITCH'表示被女巫毒死）
+    if (this.gameState.curDyingPlayer.die?.fromCharacter === 'WITCH') {
+      this.sendToPlayer(playerId, 'system_message', { message: '你被女巫毒死，无法开枪' });
+      // 结束猎人开枪阶段，继续死亡链
+      this.saveTimeout(() => {
+        const context = this.createContext();
+        stateHandlers[GameStatus.HUNTER_SHOOT].endOfState(this.gameState, context);
+      }, 1000);
       return;
     }
 
@@ -1305,6 +1326,11 @@ class WerewolfWorker extends BaseGameWorker {
 
     if (this.gameState.status !== GameStatus.LEAVE_MSG) {
       this.sendToPlayer(playerId, 'error', { message: '当前不是遗言阶段' });
+      return;
+    }
+
+    if (!this.gameState.curDyingPlayer || this.gameState.curDyingPlayer.id !== playerId || !gamePlayer.isDying) {
+      this.sendToPlayer(playerId, 'error', { message: '你不能发表遗言' });
       return;
     }
 

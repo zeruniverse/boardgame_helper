@@ -993,6 +993,10 @@ class OnuWerewolfWorker extends BaseGameWorker {
     const player = this.room.players.find(p => p.id === playerId);
     if (!player) return;
 
+    if (this.gameState.status !== OnuWerewolfGameStatus.WAITING && !this.gameState.players[playerId]) {
+      return;
+    }
+
     const message = normalizeChatText(actionData?.message);
     if (!message) return;
 
@@ -1011,6 +1015,10 @@ class OnuWerewolfWorker extends BaseGameWorker {
   private async handleSkipDiscussion(playerId: string): Promise<void> {
     if (this.gameState.status !== OnuWerewolfGameStatus.VOTING) {
       throw new Error('只能在投票阶段跳过讨论');
+    }
+
+    if (!this.gameState.players[playerId]) {
+      throw new Error('玩家不存在');
     }
 
     // 添加玩家到跳过讨论列表

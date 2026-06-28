@@ -998,6 +998,11 @@ export class BOTCWorker extends BaseGameWorker {
       return;
     }
 
+    if (!this.gameState.nightOrder.includes(playerId)) {
+      this.sendToPlayer(playerId, 'actionError', { message: '你今晚没有可执行的夜晚行动' });
+      return;
+    }
+
     if (player.hasActed) {
       this.sendToPlayer(playerId, 'actionError', { message: '已经行动过了' });
       return;
