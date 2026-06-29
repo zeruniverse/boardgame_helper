@@ -1199,23 +1199,49 @@ class MafiaWorker extends BaseGameWorker {
     if (!player || !message) return;
 
     const gameState = this.gameState as MafiaGameState;
+    let channel = data?.channel === 'killer' ? 'killer' : 'all';
+    if ((gameState.status === GameStatus.WAITING || gameState.status === GameStatus.OVER) && channel === 'killer') {
+      channel = 'all';
+    }
+
     if (gameState.status !== GameStatus.WAITING && gameState.status !== GameStatus.OVER) {
-      if (!gameState.players[playerId]) {
+      const gamePlayer = gameState.players[playerId];
+      if (!gamePlayer) {
         this.sendToPlayer(playerId, 'game_error', { message: '旁观者在游戏进行中不能发言' });
         return;
       }
-      if (this.getMuteList().includes(playerId)) {
+
+      if (channel === 'killer') {
+        const canUseKillerChannel = gameState.status === GameStatus.NIGHT &&
+          gamePlayer.alive &&
+          gameState.topSecret.killer.includes(playerId);
+        if (!canUseKillerChannel) {
+          this.sendToPlayer(playerId, 'game_error', { message: '只有夜晚存活杀手可以使用杀手频道' });
+          return;
+        }
+      } else if (this.getMuteList().includes(playerId)) {
         this.sendToPlayer(playerId, 'game_error', { message: '当前阶段无法发言' });
         return;
       }
     }
 
-    this.sendToRoom('chat_message', {
+    const payload = {
       playerId,
       playerName: player.nickname,
       message,
+      channel,
+      type: channel === 'killer' ? 'killer' : 'chat',
       timestamp: Date.now()
-    });
+    };
+
+    if (channel === 'killer') {
+      gameState.topSecret.killer
+        .filter(killerId => gameState.players[killerId]?.alive)
+        .forEach(killerId => this.sendToPlayer(killerId, 'chat_message', payload));
+      return;
+    }
+
+    this.sendToRoom('chat_message', payload);
   }
 
   private handleHeartbeat(playerId: string): void {

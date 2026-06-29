@@ -454,8 +454,8 @@ export const useMafiaStore = defineStore('mafia', {
     },
 
     // 聊天
-    sendMessage(message: string) {
-      emitChatAction(this.socket, this.currentRoomId, this.currentUserId, message);
+    sendMessage(message: string, channel: string = 'all') {
+      emitChatAction(this.socket, this.currentRoomId, this.currentUserId, message, channel);
     },
 
     // 房间管理

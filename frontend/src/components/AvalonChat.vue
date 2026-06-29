@@ -12,7 +12,7 @@
       <div v-for="(msg, idx) in filteredMessages" :key="idx"
            :class="getMessageClass(msg)"
            :style="{ color: getMessageColor(msg.type || msg.channel) }">
-        <span v-html="safeHtml(formatMessage(msg.message || msg))"></span>
+        <span v-html="safeHtml(formatMessage(formatChatMessage(msg)))"></span>
       </div>
     </el-card>
     
@@ -143,6 +143,14 @@ const getMessageColor = (type: string) => {
     default:
       return undefined; // 默认颜色
   }
+};
+
+const formatChatMessage = (msg: any): string => {
+  if (!msg || typeof msg !== 'object') return String(msg ?? '');
+  const baseMessage = msg.message || msg.content || '';
+  const channelPrefix = msg.channel === 'evil' ? '[邪恶方] ' : '';
+  const senderPrefix = msg.playerName ? `${msg.playerName}: ` : '';
+  return `${channelPrefix}${senderPrefix}${baseMessage}`;
 };
 
 // HTML转义防止XSS

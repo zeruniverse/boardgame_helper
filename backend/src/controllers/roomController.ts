@@ -1027,6 +1027,7 @@ export function roomController(io: Server) {
           'all',
           'team',
           'werewolf',
+          'killer',
           'villager',
           'evil',
           'storyteller',

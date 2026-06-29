@@ -896,19 +896,10 @@ export const BeforeDayDiscussHandler: StateHandler = {
             fromCharacter: 'WEREWOLF'
           };
           dyingPlayers.push(target);
-          context.sendToRoom('system_message', {
-            message: `${target.index}号 ${target.name} 在同守同救中死亡`
-          });
         } else if (guarded && !medicined) {
-          // 被守卫保护，存活（平安夜）
-          context.sendToRoom('system_message', {
-            message: `${target.index}号 ${target.name} 被守卫守护，逃过一劫`
-          });
+          // 被守卫保护，存活（平安夜）。夜晚结算只公开死亡结果，不泄露守护目标。
         } else if (!guarded && medicined) {
-          // 被女巫救活（平安夜）
-          context.sendToRoom('system_message', {
-            message: `${target.index}号 ${target.name} 被女巫救活`
-          });
+          // 被女巫救活（平安夜）。夜晚结算只公开死亡结果，不泄露解药目标。
         } else {
           // 既没有被守卫保护，也没有被女巫救，死亡
           target.isAlive = false;
@@ -944,9 +935,6 @@ export const BeforeDayDiscussHandler: StateHandler = {
           };
           dyingPlayers.push(target);
         }
-        context.sendToRoom('system_message', {
-          message: `${target.index}号 ${target.name} 被女巫毒死`
-        });
       }
     }
 

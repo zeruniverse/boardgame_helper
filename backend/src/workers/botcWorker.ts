@@ -20,7 +20,6 @@ import {
   initializeGameState,
   getNightOrder,
   checkGameEnd,
-  calculateVoteResult,
   getNeighbors,
   isEvilPlayer,
   countAdjacentEvilPairs,
@@ -987,8 +986,10 @@ export class BOTCWorker extends BaseGameWorker {
     nomination.isOnTrial = false;
 
     const alivePlayers = Array.from(this.gamePlayers.values()).filter(p => !p.isDead).length;
-    const shouldExecute = calculateVoteResult(nomination, alivePlayers);
     const executionCandidate = this.getExecutionCandidate();
+    // 只有当前被投票玩家实际成为“待处决”候选人时，才提示本次投票通过；
+    // 达到半数但与既有最高票持平或低于既有最高票时，不应提示处决通过。
+    const shouldExecute = executionCandidate?.nominee === nomination.nominee;
 
     this.gameState.execution = executionCandidate
       ? {
