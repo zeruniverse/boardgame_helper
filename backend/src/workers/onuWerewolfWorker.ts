@@ -621,6 +621,15 @@ class OnuWerewolfWorker extends BaseGameWorker {
     const currentSkillItem = this.skillQueue[this.currentSkillIndex];
     const { player } = currentSkillItem;
 
+    // 哨兵护盾会阻止酒鬼移动自己的牌；不要把玩家卡在一个无法执行且不可跳过的强制技能上。
+    if (currentSkillItem.skill.getRole() === OnuWerewolfRole.Drunk && player.shielded) {
+      this.tryAutoResolveMandatorySkill(player, currentSkillItem.skill);
+      player.skillUsed = true;
+      this.currentSkillIndex++;
+      this.processNextSkill();
+      return;
+    }
+
     // 通知该玩家可以使用技能
     this.sendToPlayer(player.id, 'onu_skill_ready', {
       message: '轮到你使用技能了',
@@ -736,20 +745,39 @@ class OnuWerewolfWorker extends BaseGameWorker {
   }
 
   private tryAutoResolveMandatorySkill(player: OnuWerewolfPlayer, skill: OnuBaseSkill): boolean {
-    if (skill.getRole() !== OnuWerewolfRole.AlphaWolf) {
+    let result: OnuSkillResult | null = null;
+
+    if (skill.getRole() === OnuWerewolfRole.AlphaWolf) {
+      const target = Object.values(this.gameState.players)
+        .filter(p => p.id !== player.id && !p.shielded && !onuIsWerewolf(p.actualRole))
+        .sort((a, b) => a.seat - b.seat)[0];
+
+      if (!target) {
+        return false;
+      }
+
+      result = skill.execute({ players: [target.seat] });
+    } else if (skill.getRole() === OnuWerewolfRole.Drunk) {
+      if (player.shielded) {
+        this.sendToPlayer(player.id, 'onu_skill_result', {
+          message: '你的角色卡被哨兵保护，酒鬼技能未发动'
+        });
+        return true;
+      }
+
+      const centerCard = [...this.gameState.centerCards]
+        .sort((a, b) => a.position - b.position)[0];
+
+      if (!centerCard) {
+        return false;
+      }
+
+      result = skill.execute({ cards: [centerCard.position] });
+    } else {
       return false;
     }
 
-    const target = Object.values(this.gameState.players)
-      .filter(p => p.id !== player.id && !p.shielded && !onuIsWerewolf(p.actualRole))
-      .sort((a, b) => a.seat - b.seat)[0];
-
-    if (!target) {
-      return false;
-    }
-
-    const result = skill.execute({ players: [target.seat] });
-    if (!result.success) {
+    if (!result || !result.success) {
       return false;
     }
 

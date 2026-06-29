@@ -297,6 +297,9 @@ export class OnuTroublemakerSkill extends OnuBaseSkill {
 // 酒鬼技能
 export class OnuDrunkSkill extends OnuBaseSkill {
   canUse(selection?: OnuWerewolfSelection): boolean {
+    if (this.owner.shielded) {
+      return false;
+    }
     if (!selection || !selection.cards || selection.cards.length !== 1) {
       return false;
     }

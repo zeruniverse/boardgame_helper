@@ -248,10 +248,10 @@ class WerewolfWorker extends BaseGameWorker {
       currentSpeaker,
       speakOrder: this.gameState.speakOrder,
       config: {
-        dayDiscussTime: this.config?.dayTime || 120,
-        voteTime: this.config?.voteTime || 60,
-        nightActionTime: this.config?.actionTime || 60,
-        speakTime: this.config?.speakTime || 60
+        dayDiscussTime: this.config?.dayTime ?? 120,
+        voteTime: this.config?.voteTime ?? 60,
+        nightActionTime: this.config?.actionTime ?? 60,
+        speakTime: this.config?.speakTime ?? 60
       }
     };
   }

@@ -377,7 +377,7 @@
             使用技能
           </el-button>
           <el-button
-            v-if="activeRole !== OnuWerewolfRole.AlphaWolf"
+            v-if="canSkipSkill"
             type="info"
             @click="skipSkill"
             class="skip-button"
@@ -638,6 +638,11 @@ const centerCardOptions = computed(() => {
 });
 
 const activeRole = computed(() => props.playerSecret?.activeSkillRole ?? props.myRole);
+const mandatoryNightRoles = new Set<OnuWerewolfRole>([
+  OnuWerewolfRole.AlphaWolf,
+  OnuWerewolfRole.Drunk
+]);
+const canSkipSkill = computed(() => Boolean(activeRole.value) && !mandatoryNightRoles.has(activeRole.value!));
 
 const getCenterCardLabel = (position: number) => {
   return position === 3 ? '中心狼人牌' : `中心卡 ${position}`;
