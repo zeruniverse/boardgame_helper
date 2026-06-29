@@ -96,6 +96,11 @@ interface AvalonConfig {
   lakeLady: boolean;      // 是否启用湖上夫人
 }
 
+type AvalonRawConfig = Partial<AvalonConfig> & {
+  questDiscussionTime?: number | null;
+  enableLady?: boolean | null;
+};
+
 // 任务接口
 interface GameTask {
   id: string;
@@ -193,14 +198,20 @@ class AvalonWorker extends BaseGameWorker {
     } as AvalonGameState;
   }
 
-  async prepareRoom(room: Room, config: AvalonConfig): Promise<void> {
-    this.room = room;
-    this.config = {
-      speakTime: config.speakTime || 60,
-      actionTime: config.actionTime || 60,
-      speakRound: config.speakRound || 1,
-      lakeLady: config.lakeLady || false
+  private normalizeConfig(config: AvalonRawConfig = {}, fallback?: AvalonConfig): AvalonConfig {
+    const questDiscussionTime = config.questDiscussionTime;
+
+    return {
+      speakTime: config.speakTime ?? questDiscussionTime ?? fallback?.speakTime ?? 60,
+      actionTime: config.actionTime ?? questDiscussionTime ?? fallback?.actionTime ?? 60,
+      speakRound: config.speakRound ?? fallback?.speakRound ?? 1,
+      lakeLady: config.lakeLady ?? config.enableLady ?? fallback?.lakeLady ?? false
     };
+  }
+
+  async prepareRoom(room: Room, config: AvalonRawConfig = {}): Promise<void> {
+    this.room = room;
+    this.config = this.normalizeConfig(config);
 
     // 初始化玩家游戏元数据
     room.players.forEach(player => {
@@ -217,13 +228,8 @@ class AvalonWorker extends BaseGameWorker {
     });
   }
 
-  async changeConfig(config: AvalonConfig): Promise<void> {
-    this.config = {
-      speakTime: config.speakTime || this.config.speakTime,
-      actionTime: config.actionTime || this.config.actionTime,
-      speakRound: config.speakRound || this.config.speakRound,
-      lakeLady: config.lakeLady !== undefined ? config.lakeLady : this.config.lakeLady
-    };
+  async changeConfig(config: AvalonRawConfig = {}): Promise<void> {
+    this.config = this.normalizeConfig(config, this.config);
 
     this.sendToRoom('chat_broadcast', {
       message: '房间配置已更新',
@@ -423,7 +429,8 @@ class AvalonWorker extends BaseGameWorker {
         data: {
           room: this.room,
           game: gameInfo,
-          secret
+          secret,
+          currentUserId: playerId
         }
       }
     });
@@ -1153,6 +1160,11 @@ class AvalonWorker extends BaseGameWorker {
   private setTimer(seconds: number): void {
     if (this.actionTimer) {
       clearTimeout(this.actionTimer);
+      this.actionTimer = null;
+    }
+
+    if (!Number.isFinite(seconds) || seconds <= 0) {
+      return;
     }
 
     this.actionTimer = setTimeout(() => {
