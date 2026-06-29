@@ -310,14 +310,14 @@ const getRoleTagType = (role: string | undefined): string => {
 
 <style scoped>
 .mafia-player-list {
-  background: #fff;
+  background: var(--app-panel);
   border-radius: 8px;
   overflow: hidden;
   margin-bottom: 20px;
 }
 
 .list-header {
-  background: #f5f7fa;
+  background: var(--app-panel);
   padding: 12px 16px;
   border-bottom: 1px solid #e4e7ed;
 }
@@ -424,7 +424,7 @@ const getRoleTagType = (role: string | undefined): string => {
 
 .game-config {
   padding: 16px;
-  background: #fafafa;
+  background: var(--app-panel);
 }
 
 .config-item {
@@ -442,7 +442,7 @@ const getRoleTagType = (role: string | undefined): string => {
 
 .role-config {
   padding: 16px;
-  background: #f9f9f9;
+  background: var(--app-panel);
 }
 
 .current-config h5 {

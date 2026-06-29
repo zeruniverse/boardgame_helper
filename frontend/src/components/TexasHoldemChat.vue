@@ -186,8 +186,8 @@ function send() {
   margin-bottom: 8px;
   min-height: 250px;
   max-height: 500px;
-  background: linear-gradient(145deg, #f8f9fa, #e9ecef);
-  border: 1px solid #dee2e6;
+  background: var(--app-panel);
+  border: 1px solid var(--app-border);
 }
 
 .chat-input {

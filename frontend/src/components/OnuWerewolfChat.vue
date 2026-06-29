@@ -179,9 +179,9 @@ watch(() => props.messages.length, scrollToBottom, { flush: 'post' });
   height: 100%;
   display: flex;
   flex-direction: column;
-  background: #f8f9fa;
+  background: var(--app-bg);
   border-radius: 8px;
-  border: 1px solid #e9ecef;
+  border: 1px solid var(--app-border);
 }
 
 .chat-header {
@@ -234,21 +234,23 @@ watch(() => props.messages.length, scrollToBottom, { flush: 'post' });
 }
 
 .system-message {
-  background: #e9ecef;
-  color: #6c757d;
+  background: var(--app-bg);
+  color: var(--app-text-secondary);
   font-style: italic;
   text-align: center;
 }
 
 .chat-message {
-  background: #ffffff;
-  border: 1px solid #e9ecef;
+  background: var(--app-panel);
+  border: 1px solid var(--app-border);
+  color: var(--app-text);
 }
 
 .my-message {
   background: #e3f2fd;
   border-color: #2196f3;
   margin-left: 20px;
+  color: var(--app-text);
 }
 
 .message-content {
@@ -259,13 +261,13 @@ watch(() => props.messages.length, scrollToBottom, { flush: 'post' });
 
 .player-name {
   font-weight: 600;
-  color: #495057;
+  color: var(--app-text-secondary);
   flex-shrink: 0;
 }
 
 .message-text {
   flex: 1;
-  color: #212529;
+  color: var(--app-text);
 }
 
 .message-time {
@@ -276,8 +278,8 @@ watch(() => props.messages.length, scrollToBottom, { flush: 'post' });
 
 .chat-input {
   padding: 15px 20px;
-  background: #ffffff;
-  border-top: 1px solid #e9ecef;
+  background: var(--app-panel);
+  border-top: 1px solid var(--app-border);
   border-radius: 0 0 8px 8px;
 }
 
@@ -294,9 +296,9 @@ watch(() => props.messages.length, scrollToBottom, { flush: 'post' });
 .chat-disabled {
   padding: 20px;
   text-align: center;
-  color: #6c757d;
-  background: #f8f9fa;
-  border-top: 1px solid #e9ecef;
+  color: var(--app-text-secondary);
+  background: var(--app-bg);
+  border-top: 1px solid var(--app-border);
   border-radius: 0 0 8px 8px;
 }
 

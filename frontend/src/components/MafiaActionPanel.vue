@@ -399,7 +399,7 @@ const restartGame = () => safeAction(() => store.restartGame(), 'restartGame')
 
 <style scoped>
 .mafia-action-panel {
-  background: #fff;
+  background: var(--app-panel);
   border: 1px solid #e4e7ed;
   border-radius: 8px;
   padding: 20px;

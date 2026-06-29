@@ -831,6 +831,20 @@ function formatCards(cards: string[]): string {
   border-radius: var(--app-radius);
   box-shadow: var(--app-shadow-sm);
   padding: var(--app-space-4);
+  color: var(--app-text);
+}
+
+.room-loading-overlay {
+  background-color: rgba(0, 0, 0, 0.6);
+}
+
+.loading-content {
+  background: var(--app-panel);
+  color: var(--app-text);
+}
+
+.loading-content p {
+  color: var(--app-text-secondary);
 }
 
 @media (max-width: 768px) {

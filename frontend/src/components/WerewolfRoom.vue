@@ -637,12 +637,75 @@ onUnmounted(() => {
 .role-info,
 .sheriff-info,
 .dead-info,
+.game-history,
 .chat-section {
   background: var(--app-panel);
   border: 1px solid var(--app-border);
   border-radius: var(--app-radius);
   box-shadow: var(--app-shadow-sm);
   color: var(--app-text);
+}
+
+.game-history h4 {
+  color: var(--app-text) !important;
+}
+
+.history-event {
+  border-bottom-color: var(--app-border);
+}
+
+.event-day {
+  color: var(--app-primary);
+}
+
+.event-description {
+  color: var(--app-text-secondary);
+}
+
+.role-info h4 {
+  color: var(--app-text) !important;
+}
+
+.companions h5,
+.potions h5 {
+  color: var(--app-text-secondary) !important;
+}
+
+.companion-player {
+  background: var(--app-panel-strong);
+  color: var(--app-text-secondary);
+}
+
+.potion.available {
+  background: rgba(64, 158, 255, 0.15);
+  color: #409eff;
+}
+
+.potion:not(.available) {
+  background: var(--app-panel-strong);
+  color: var(--app-text-muted);
+}
+
+.my-role.werewolf {
+  background: rgba(254, 242, 242, 0.5);
+  border-color: rgba(252, 202, 202, 0.5);
+}
+
+.my-role.villager {
+  background: rgba(239, 246, 255, 0.5);
+  border-color: rgba(191, 219, 254, 0.5);
+}
+
+.my-role.werewolf .role-name {
+  color: #dc2626;
+}
+
+.my-role.villager .role-name {
+  color: #2563eb;
+}
+
+.team-name {
+  color: var(--app-text-secondary);
 }
 
 @media (max-width: 768px) {

@@ -698,7 +698,7 @@ const handleRestartGame = () => {
 <style scoped>
 .werewolf-action-panel {
   padding: 20px;
-  background: #f8f9fa;
+  background: var(--app-panel);
   border-radius: 8px;
 }
 
@@ -715,7 +715,7 @@ const handleRestartGame = () => {
 .time-display {
   margin-bottom: 20px;
   padding: 15px;
-  background: white;
+  background: var(--app-panel);
   border-radius: 6px;
   box-shadow: 0 2px 4px rgba(0,0,0,0.1);
 }
@@ -743,7 +743,7 @@ const handleRestartGame = () => {
   border-radius: 6px;
   cursor: pointer;
   transition: all 0.2s;
-  background: white;
+  background: var(--app-panel);
 }
 
 .player-option:hover {
@@ -836,7 +836,7 @@ const handleRestartGame = () => {
 }
 
 .vote-section {
-  background: white;
+  background: var(--app-panel);
   padding: 20px;
   border-radius: 6px;
   box-shadow: 0 2px 4px rgba(0,0,0,0.1);
@@ -879,7 +879,7 @@ const handleRestartGame = () => {
 .antidote-section, .poison-section {
   margin: 15px 0;
   padding: 15px;
-  background: white;
+  background: var(--app-panel);
   border-radius: 6px;
 }
 

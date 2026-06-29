@@ -355,7 +355,7 @@ const updateTimeConfig = () => {
 .day-info {
   font-size: 12px;
   color: #666;
-  background: #f0f0f0;
+  background: var(--app-panel);
   padding: 2px 8px;
   border-radius: 10px;
 }
@@ -404,7 +404,7 @@ const updateTimeConfig = () => {
   justify-content: center;
   font-weight: bold;
   font-size: 16px;
-  color: white;
+  color: var(--app-text);
   background: #ccc;
 }
 
@@ -425,7 +425,7 @@ const updateTimeConfig = () => {
   top: -5px;
   right: -5px;
   background: #faad14;
-  color: white;
+  color: #333;
   font-size: 10px;
   padding: 1px 4px;
   border-radius: 8px;
@@ -544,7 +544,7 @@ const updateTimeConfig = () => {
   align-items: center;
   justify-content: space-between;
   padding: 4px 8px;
-  background: #f8f9fa;
+  background: var(--app-panel);
   border-radius: 4px;
 }
 

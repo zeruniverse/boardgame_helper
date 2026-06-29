@@ -805,7 +805,7 @@ const formatNightInfo = (info: any) => {
   padding: 8px 12px;
   border: 1px solid #e9ecef;
   border-radius: 6px;
-  background: #f8f9fa;
+  background: var(--app-panel);
 }
 
 .night-order-item.active {
@@ -871,7 +871,7 @@ const formatNightInfo = (info: any) => {
   padding: 8px 12px;
   border: 1px solid #e9ecef;
   border-radius: 6px;
-  background: #f8f9fa;
+  background: var(--app-panel);
 }
 
 .player-name {

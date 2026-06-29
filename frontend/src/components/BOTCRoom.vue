@@ -722,6 +722,28 @@ const handleStartGame = (config: any) => {
   color: var(--app-text);
 }
 
+.nomination-area {
+  background: var(--app-panel);
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius);
+  box-shadow: var(--app-shadow-sm);
+  color: var(--app-text);
+}
+
+.nomination-area h4,
+.nomination-info {
+  color: var(--app-text) !important;
+}
+
+.vote-status {
+  background: var(--app-panel);
+  border: 1px solid var(--app-border);
+}
+
+.vote-participants {
+  color: var(--app-text-secondary) !important;
+}
+
 @media (max-width: 768px) {
   .room-header,
   .header-left,

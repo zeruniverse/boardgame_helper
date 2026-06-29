@@ -97,7 +97,7 @@ const getTeamName = (team: string): string => {
 }
 
 .player-list-title {
-  color: white;
+  color: var(--app-text);
   font-size: 16px;
   font-weight: bold;
   margin: 0 0 12px 0;
@@ -152,7 +152,7 @@ const getTeamName = (team: string): string => {
 }
 
 .player-name {
-  color: white;
+  color: var(--app-text);
   font-weight: 500;
 }
 
@@ -175,7 +175,7 @@ const getTeamName = (team: string): string => {
 
 .team-badge {
   background: rgba(255, 255, 255, 0.2);
-  color: white;
+  color: var(--app-text);
   padding: 2px 6px;
   border-radius: 3px;
   font-size: 12px;

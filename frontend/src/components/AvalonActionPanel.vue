@@ -427,7 +427,7 @@ const handleRestartGame = () => {
 }
 
 .action-section h4 {
-  color: white;
+  color: var(--app-text);
   margin: 0 0 15px 0;
   text-align: center;
 }
@@ -446,7 +446,7 @@ const handleRestartGame = () => {
 
 .ready-tip {
   margin: 8px 0 0;
-  color: rgba(255, 255, 255, 0.75);
+  color: var(--app-text-secondary);
   font-size: 13px;
   text-align: center;
 }
@@ -462,7 +462,7 @@ const handleRestartGame = () => {
 .vote-section p,
 .assassinate-section p,
 .task-section p {
-  color: white;
+  color: var(--app-text);
   margin-bottom: 15px;
 }
 
@@ -480,7 +480,7 @@ const handleRestartGame = () => {
   background: rgba(255, 255, 255, 0.1);
   border: 2px solid rgba(255, 255, 255, 0.3);
   border-radius: 8px;
-  color: white;
+  color: var(--app-text);
   cursor: pointer;
   transition: all 0.3s ease;
   display: flex;
@@ -530,13 +530,13 @@ const handleRestartGame = () => {
   background: rgba(33, 150, 243, 0.3);
   border: 1px solid #2196f3;
   border-radius: 20px;
-  color: white;
+  color: var(--app-text);
   font-weight: bold;
 }
 
 .speak-section p,
 .lady-section p {
-  color: white;
+  color: var(--app-text);
   margin-bottom: 15px;
   text-align: center;
 }
@@ -556,7 +556,7 @@ const handleRestartGame = () => {
 .winner {
   font-size: 24px;
   font-weight: bold;
-  color: white;
+  color: var(--app-text);
   margin-bottom: 20px;
 }
 </style> 

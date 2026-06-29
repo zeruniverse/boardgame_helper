@@ -278,7 +278,7 @@ const handlePlayerAction = (command: { action: string; playerId: string }) => {
   height: 100%;
   display: flex;
   flex-direction: column;
-  background: #f8f9fa;
+  background: var(--app-panel);
   border-radius: 8px;
   border: 1px solid #e9ecef;
 }
@@ -322,7 +322,7 @@ const handlePlayerAction = (command: { action: string; playerId: string }) => {
   align-items: center;
   padding: 12px 15px;
   margin-bottom: 8px;
-  background: #ffffff;
+  background: var(--app-card, var(--app-panel, #ffffff));
   border-radius: 8px;
   border: 1px solid #e9ecef;
   transition: all 0.3s ease;
@@ -455,7 +455,7 @@ const handlePlayerAction = (command: { action: string; playerId: string }) => {
 
 .game-info {
   padding: 15px 20px;
-  background: #ffffff;
+  background: var(--app-panel);
   border-top: 1px solid #e9ecef;
   border-radius: 0 0 8px 8px;
 }

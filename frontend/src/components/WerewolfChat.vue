@@ -327,6 +327,7 @@ watch(
   word-wrap: break-word;
   border-radius: 4px;
   line-height: 1.6;
+  color: var(--app-text);
 }
 
 .werewolf-message {

@@ -223,6 +223,7 @@ function send() {
   padding: 2px 4px;
   border-radius: 4px;
   line-height: 1.5;
+  color: var(--app-text);
 }
 
 .chat-message:hover {

@@ -363,6 +363,7 @@ defineExpose({
   border-radius: 4px;
   line-height: 1.4;
   position: relative;
+  color: var(--app-text);
 }
 
 .chat-message:hover {
@@ -394,7 +395,7 @@ defineExpose({
   background: #f0f0f0;
   font-style: italic;
   text-align: center;
-  color: #666;
+  color: var(--app-text-secondary) !important;
 }
 
 .message-sender {

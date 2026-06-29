@@ -872,7 +872,7 @@ onUnmounted(() => {
 
 <style scoped>
 .onu-werewolf-action-panel {
-  background: #ffffff;
+  background: var(--app-panel);
   border-radius: 12px;
   border: 1px solid #e9ecef;
   overflow: hidden;
@@ -964,7 +964,7 @@ onUnmounted(() => {
   top: 5px;
   right: 5px;
   background: #ffc107;
-  color: white;
+  color: #333;
   padding: 2px 6px;
   border-radius: 4px;
   font-size: 10px;
@@ -974,7 +974,7 @@ onUnmounted(() => {
 .config-summary {
   margin-top: 25px;
   padding: 20px;
-  background: #f8f9fa;
+  background: var(--app-panel);
   border-radius: 8px;
 }
 
@@ -1001,7 +1001,7 @@ onUnmounted(() => {
 
 .config-display {
   padding: 20px;
-  background: #f8f9fa;
+  background: var(--app-panel);
   border-radius: 8px;
   margin-bottom: 20px;
 }
@@ -1081,7 +1081,7 @@ onUnmounted(() => {
 .skill-selection {
   margin-bottom: 20px;
   padding: 15px;
-  background: #f8f9fa;
+  background: var(--app-panel);
   border-radius: 8px;
 }
 
@@ -1194,7 +1194,7 @@ onUnmounted(() => {
   padding: 15px;
   border: 1px solid #e9ecef;
   border-radius: 8px;
-  background: #f8f9fa;
+  background: var(--app-panel);
 }
 
 .player-reveal.won {

@@ -576,6 +576,44 @@ const handleSendMessage = (message: string, channel: string) => {
   color: var(--app-text);
 }
 
+.mission,
+.mission-number,
+.mission-size {
+  color: var(--app-text) !important;
+}
+
+.role-info h4,
+.role-info h5 {
+  color: var(--app-text) !important;
+}
+
+.role-name {
+  color: var(--app-text) !important;
+}
+
+.team-name {
+  color: var(--app-text-secondary) !important;
+}
+
+.vision-player {
+  background: var(--app-panel-strong);
+  color: var(--app-text) !important;
+}
+
+.loading-content {
+  color: var(--app-text);
+}
+
+.my-role.blue {
+  background: rgba(33, 150, 243, 0.15);
+  border-color: #2196f3;
+}
+
+.my-role.red {
+  background: rgba(244, 67, 54, 0.15);
+  border-color: #f44336;
+}
+
 @media (max-width: 768px) {
   .room-header,
   .header-left,

@@ -628,6 +628,8 @@ const handleKickPlayer = (playerId: string) => {
 
 .game-status,
 .death-info,
+.role-info,
+.vote-result,
 .game-info,
 .chat-section {
   background: var(--app-panel);
@@ -635,6 +637,65 @@ const handleKickPlayer = (playerId: string) => {
   border-radius: var(--app-radius);
   box-shadow: var(--app-shadow-sm);
   color: var(--app-text);
+}
+
+.role-info h4 {
+  color: var(--app-text) !important;
+}
+
+.my-role.red {
+  background: rgba(255, 77, 79, 0.1);
+  border-color: var(--app-danger);
+}
+
+.my-role.blue {
+  background: rgba(24, 144, 255, 0.1);
+  border-color: var(--app-primary);
+}
+
+.teammates h5,
+.inspect-results h5 {
+  color: var(--app-text-secondary) !important;
+}
+
+.teammate {
+  background: rgba(24, 144, 255, 0.1);
+  color: var(--app-text);
+}
+
+.inspect-result {
+  background: rgba(82, 196, 26, 0.1);
+  color: var(--app-text);
+}
+
+.result.red {
+  color: #ff4d4f;
+}
+
+.result.blue {
+  color: #1890ff;
+}
+
+.vote-result h4 {
+  color: var(--app-text) !important;
+}
+
+.vote-item {
+  background: var(--app-panel);
+  color: var(--app-text);
+}
+
+.death-info h4 {
+  color: #ff4d4f !important;
+}
+
+.player-name {
+  color: var(--app-text);
+}
+
+.death-reason,
+.death-day {
+  color: var(--app-text-secondary);
 }
 
 @media (max-width: 768px) {
