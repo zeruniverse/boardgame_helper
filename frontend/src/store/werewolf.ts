@@ -208,6 +208,27 @@ export const useWerewolfStore = defineStore('werewolf', {
         }
       });
 
+      on('config_changed', (data: any) => {
+        if (data.gameInfo) {
+          this.updateGameStateFromGameInfo(data.gameInfo);
+        } else if (data.config) {
+          if (!this.gameState) {
+            this.gameState = {
+              status: 'WAITING',
+              day: 0,
+              players: {},
+              operators: [],
+              votes: {},
+              config: data.config,
+              needingCharacters: data.config.characters || []
+            };
+          } else {
+            this.gameState.config = data.config;
+            this.gameState.needingCharacters = data.config.characters || this.gameState.needingCharacters;
+          }
+        }
+      });
+
       // 游戏事件 - 后端发送 {message, gameInfo}
       on('game_started', (data: { message: string; gameInfo: any }) => {
         console.log('游戏开始事件:', data);

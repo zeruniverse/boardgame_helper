@@ -131,9 +131,27 @@ class WerewolfWorker extends BaseGameWorker {
     });
   }
 
-  async changeConfig(config: WerewolfConfig): Promise<void> {
-    this.config = { ...this.config, ...config };
-    this.sendToRoom('config_changed', { config: this.config });
+  async changeConfig(config: Partial<WerewolfConfig>): Promise<void> {
+    const nextCharacters = config.characters ?? this.config.characters;
+    if (!validateCharacterConfig(nextCharacters)) {
+      throw new Error('角色配置不合法');
+    }
+
+    // 前端配置面板使用 dayTime/nightTime，后端流程读取 speakTime/actionTime；
+    // 同步两组别名，避免 UI 修改后实际夜晚/白天计时仍使用旧值。
+    this.config = {
+      ...this.config,
+      ...config,
+      speakTime: config.speakTime ?? config.dayTime ?? this.config.speakTime,
+      actionTime: config.actionTime ?? config.nightTime ?? this.config.actionTime,
+      nightTime: config.nightTime ?? config.actionTime ?? this.config.nightTime,
+      dayTime: config.dayTime ?? config.speakTime ?? this.config.dayTime,
+      voteTime: config.voteTime ?? this.config.voteTime,
+      characters: nextCharacters
+    };
+    this.gameState.needingCharacters = this.config.characters;
+    this.sendToRoom('config_changed', { config: this.config, gameInfo: this.getGameInfo() });
+    this.sendToRoom('game_prepared', { config: this.config, gameInfo: this.getGameInfo() });
   }
 
   async joinRoom(player: Player): Promise<void> {
@@ -327,6 +345,9 @@ class WerewolfWorker extends BaseGameWorker {
   private normalizeActionType(actionType: string): string {
     const aliases: Record<string, string> = {
       toggle_room_lock: 'toggleRoomLock',
+      update_config: 'change_config',
+      updateConfig: 'change_config',
+      changeConfig: 'change_config',
       start_game: 'startGame',
       restart_game: 'restartGame',
       chatMessage: 'chat_message',
@@ -363,6 +384,24 @@ class WerewolfWorker extends BaseGameWorker {
     // 不能依赖 gameState.players[playerId]，否则新加入玩家无法准备。
     if (normalizedActionType === 'toggleRoomLock') {
       this.toggleRoomLock(playerId);
+      return;
+    }
+
+    if (normalizedActionType === 'change_config') {
+      if (playerId !== this.room.hostId) {
+        this.sendToPlayer(playerId, 'error', { message: '只有房主可以修改游戏配置' });
+        return;
+      }
+      if (this.gameState.status !== GameStatus.WAITING) {
+        this.sendToPlayer(playerId, 'error', { message: '游戏开始后不能修改配置' });
+        return;
+      }
+      try {
+        await this.changeConfig(actionData || {});
+      } catch (error) {
+        const message = error instanceof Error ? error.message : '配置修改失败';
+        this.sendToPlayer(playerId, 'error', { message });
+      }
       return;
     }
 
@@ -1510,7 +1549,7 @@ if (parentPort) {
           break;
 
         case 'change_config':
-          await worker.changeConfig(task.data.config);
+          await worker.changeConfig(task.data?.config || task.data || {});
           response = { taskId: task.id, success: true };
           break;
 
