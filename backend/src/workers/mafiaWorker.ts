@@ -1400,11 +1400,12 @@ class MafiaWorker extends BaseGameWorker {
   private nightTimeout(): void {
     const gameState = this.gameState as MafiaGameState;
     
-    // 重置所有行动锁和状态
-    gameState.killerActionLock = true;
-    gameState.copActionLock = true;
-    gameState.doctorActionLock = true;
-    gameState.sniperActionLock = true;
+    // 夜晚超时表示所有未提交的夜间行动自动跳过。不要重新打开行动锁；
+    // 尤其狙击手已使用一次性技能后，sniperActionLock 应保持 false，否则后续夜晚可能卡住。
+    gameState.killerActionLock = false;
+    gameState.copActionLock = false;
+    gameState.doctorActionLock = false;
+    gameState.sniperActionLock = false;
     gameState.inspect = {};
     gameState.wantToKill = {};
     gameState.wantToSave = {};
