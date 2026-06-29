@@ -687,7 +687,7 @@ const formatNightInfo = (info: any) => {
   display: flex;
   justify-content: space-between;
   font-size: 14px;
-  color: #6c757d;
+  color: var(--app-text-secondary);
   margin-bottom: 12px;
 }
 
@@ -775,7 +775,7 @@ const formatNightInfo = (info: any) => {
   align-items: center;
   justify-content: center;
   min-height: 80px;
-  color: #6c757d;
+  color: var(--app-text-secondary);
 }
 
 .completed-status {
@@ -821,18 +821,18 @@ const formatNightInfo = (info: any) => {
 
 .order-number {
   font-weight: bold;
-  color: #495057;
+  color: var(--app-text-secondary);
   min-width: 24px;
 }
 
 .role-name {
   font-weight: bold;
-  color: #2c3e50;
+  color: var(--app-text);
   min-width: 80px;
 }
 
 .action-name {
-  color: #6c757d;
+  color: var(--app-text-secondary);
   flex: 1;
 }
 

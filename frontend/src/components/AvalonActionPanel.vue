@@ -417,9 +417,9 @@ const handleRestartGame = () => {
 <style scoped>
 .avalon-action-panel {
   padding: 20px;
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--app-bg);
   border-radius: 10px;
-  backdrop-filter: blur(5px);
+  border: 1px solid var(--app-border);
 }
 
 .action-section {
@@ -477,8 +477,8 @@ const handleRestartGame = () => {
 .player-option,
 .target-option {
   padding: 10px 15px;
-  background: rgba(255, 255, 255, 0.1);
-  border: 2px solid rgba(255, 255, 255, 0.3);
+  background: var(--app-bg);
+  border: 2px solid var(--app-border);
   border-radius: 8px;
   color: var(--app-text);
   cursor: pointer;
@@ -490,8 +490,8 @@ const handleRestartGame = () => {
 
 .player-option:hover,
 .target-option:hover {
-  background: rgba(255, 255, 255, 0.2);
-  border-color: rgba(255, 255, 255, 0.5);
+  background: rgba(0, 0, 0, 0.05);
+  border-color: var(--app-primary);
 }
 
 .player-option.selected,
@@ -506,7 +506,7 @@ const handleRestartGame = () => {
   width: 30px;
   height: 30px;
   border-radius: 50%;
-  background: rgba(255, 255, 255, 0.2);
+  background: rgba(0, 0, 0, 0.05);
   display: flex;
   align-items: center;
   justify-content: center;

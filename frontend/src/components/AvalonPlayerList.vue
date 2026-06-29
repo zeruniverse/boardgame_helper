@@ -88,12 +88,11 @@ const getTeamName = (team: string): string => {
 
 <style scoped>
 .avalon-player-list {
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--app-bg);
   border-radius: 8px;
   padding: 16px;
   margin-bottom: 16px;
-  backdrop-filter: blur(10px);
-  border: 1px solid rgba(255, 255, 255, 0.2);
+  border: 1px solid var(--app-border);
 }
 
 .player-list-title {
@@ -101,7 +100,7 @@ const getTeamName = (team: string): string => {
   font-size: 16px;
   font-weight: bold;
   margin: 0 0 12px 0;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+  border-bottom: 1px solid var(--app-border);
   padding-bottom: 8px;
 }
 
@@ -116,7 +115,7 @@ const getTeamName = (team: string): string => {
   justify-content: space-between;
   align-items: center;
   padding: 8px 12px;
-  background: rgba(255, 255, 255, 0.05);
+  background: rgba(0, 0, 0, 0.03);
   border-radius: 6px;
   border: 1px solid transparent;
   transition: all 0.3s;
@@ -174,7 +173,7 @@ const getTeamName = (team: string): string => {
 }
 
 .team-badge {
-  background: rgba(255, 255, 255, 0.2);
+  background: rgba(0, 0, 0, 0.05);
   color: var(--app-text);
   padding: 2px 6px;
   border-radius: 3px;

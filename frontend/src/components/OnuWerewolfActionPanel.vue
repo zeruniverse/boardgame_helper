@@ -874,13 +874,13 @@ onUnmounted(() => {
 .onu-werewolf-action-panel {
   background: var(--app-panel);
   border-radius: 12px;
-  border: 1px solid #e9ecef;
+  border: 1px solid var(--app-border);
   overflow: hidden;
 }
 
 .phase-header {
   padding: 20px 25px;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: var(--app-primary);
   color: white;
   text-align: center;
 }
@@ -913,7 +913,7 @@ onUnmounted(() => {
 
 .role-config h4 {
   margin-bottom: 20px;
-  color: #495057;
+  color: var(--app-text-secondary);
 }
 
 .role-grid {
@@ -925,7 +925,7 @@ onUnmounted(() => {
 
 .role-card {
   padding: 15px;
-  border: 2px solid #e9ecef;
+  border: 2px solid var(--app-border);
   border-radius: 8px;
   cursor: pointer;
   transition: all 0.3s ease;
@@ -933,7 +933,7 @@ onUnmounted(() => {
 }
 
 .role-card:hover {
-  border-color: #007bff;
+  border-color: var(--app-primary);
   box-shadow: 0 4px 12px rgba(0, 123, 255, 0.15);
 }
 
@@ -982,7 +982,7 @@ onUnmounted(() => {
   font-size: 16px;
   font-weight: 600;
   margin-bottom: 15px;
-  color: #495057;
+  color: var(--app-text-secondary);
 }
 
 .config-options {
@@ -1015,10 +1015,10 @@ onUnmounted(() => {
 
 .role-tag {
   padding: 4px 8px;
-  background: #e9ecef;
+  background: var(--app-border);
   border-radius: 4px;
   font-size: 12px;
-  color: #495057;
+  color: var(--app-text-secondary);
 }
 
 .ready-section {
@@ -1056,7 +1056,7 @@ onUnmounted(() => {
 
 .my-role-hint {
   font-size: 16px;
-  color: #495057;
+  color: var(--app-text-secondary);
 }
 
 /* 夜晚阶段样式 */
@@ -1098,7 +1098,7 @@ onUnmounted(() => {
 }
 
 .player-select p, .card-select p {
-  color: #495057;
+  color: var(--app-text-secondary);
   font-size: 14px;
   margin: 0;
 }
@@ -1149,7 +1149,7 @@ onUnmounted(() => {
 
 .vote-panel h4 {
   margin-bottom: 20px;
-  color: #495057;
+  color: var(--app-text-secondary);
 }
 
 .vote-buttons {
@@ -1173,14 +1173,14 @@ onUnmounted(() => {
   text-align: center;
   margin-bottom: 30px;
   padding: 20px;
-  background: linear-gradient(135deg, #ffd89b 0%, #19547b 100%);
+  background: var(--app-primary);
   color: white;
   border-radius: 8px;
 }
 
 .final-roles h5 {
   margin-bottom: 15px;
-  color: #495057;
+  color: var(--app-text-secondary);
 }
 
 .role-reveals {
@@ -1192,7 +1192,7 @@ onUnmounted(() => {
 
 .player-reveal {
   padding: 15px;
-  border: 1px solid #e9ecef;
+  border: 1px solid var(--app-border);
   border-radius: 8px;
   background: var(--app-panel);
 }
@@ -1209,7 +1209,7 @@ onUnmounted(() => {
 
 .role-info {
   font-size: 13px;
-  color: #495057;
+  color: var(--app-text-secondary);
   margin-bottom: 5px;
 }
 

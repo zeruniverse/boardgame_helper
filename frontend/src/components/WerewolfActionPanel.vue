@@ -708,7 +708,7 @@ const handleRestartGame = () => {
 
 .action-section h4 {
   margin-bottom: 15px;
-  color: #333;
+  color: var(--app-text);
   font-weight: bold;
 }
 
@@ -724,7 +724,7 @@ const handleRestartGame = () => {
   text-align: center;
   margin-top: 8px;
   font-weight: bold;
-  color: #333;
+  color: var(--app-text);
 }
 
 .player-selection {
@@ -747,18 +747,18 @@ const handleRestartGame = () => {
 }
 
 .player-option:hover {
-  border-color: #409eff;
+  border-color: var(--app-primary);
   background: #f0f9ff;
 }
 
 .player-option.selected {
-  border-color: #409eff;
+  border-color: var(--app-primary);
   background: #e1f3fe;
 }
 
 .player-number {
   font-size: 14px;
-  color: #666;
+  color: var(--app-text-secondary);
   margin-bottom: 4px;
 }
 
@@ -783,7 +783,7 @@ const handleRestartGame = () => {
 .waiting-section {
   text-align: center;
   padding: 30px;
-  color: #666;
+  color: var(--app-text-secondary);
   font-style: italic;
 }
 
@@ -802,12 +802,12 @@ const handleRestartGame = () => {
 
 .potion.available {
   background: #e1f3fe;
-  color: #409eff;
+  color: var(--app-primary);
 }
 
 .potion:not(.available) {
   background: #f5f5f5;
-  color: #999;
+  color: var(--app-text-secondary);
 }
 
 .death-info {
@@ -822,7 +822,7 @@ const handleRestartGame = () => {
   background: #f0f9ff;
   padding: 10px;
   border-radius: 4px;
-  border-left: 3px solid #409eff;
+  border-left: 3px solid var(--app-primary);
   margin-bottom: 15px;
 }
 
@@ -858,7 +858,7 @@ const handleRestartGame = () => {
   font-size: 24px;
   font-weight: bold;
   margin-bottom: 20px;
-  color: #333;
+  color: var(--app-text);
 }
 
 .host-actions {
@@ -866,7 +866,7 @@ const handleRestartGame = () => {
 }
 
 .hint-text {
-  color: #999;
+  color: var(--app-text-secondary);
   font-size: 12px;
   margin-top: 8px;
 }
@@ -902,6 +902,6 @@ const handleRestartGame = () => {
 
 .free-discuss p {
   margin: 0;
-  color: #409eff;
+  color: var(--app-primary);
 }
 </style>
