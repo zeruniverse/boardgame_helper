@@ -106,6 +106,7 @@
             v-if="store.gameState"
             :game-state="store.gameState"
             :player-role="store.playerRole"
+            :night-info="store.nightInfo"
             :room-id="roomId"
             :is-storyteller="store.isStoryteller"
             :current-user-id="store.currentUserId"
@@ -293,6 +294,9 @@ const formatNightInfo = (info: any) => {
   
   if (info.information) {
     const data = info.information
+    if (data.playerId) {
+      return `${data.playerName || getPlayerName(data.playerId)} 的角色是: ${data.roleName || data.roleId || '未知'}`
+    }
     if (data.roleId) {
       return `角色: ${data.roleName || data.roleId}, 玩家: ${data.players?.map((p: string) => getPlayerName(p)).join(', ') || '未知'}`
     }
@@ -313,9 +317,6 @@ const formatNightInfo = (info: any) => {
     }
     if (data.isCorrect !== undefined) {
       return data.isCorrect ? '猜测正确！' : '猜测错误！'
-    }
-    if (data.playerId) {
-      return `${getPlayerName(data.playerId)} 的角色是: ${data.roleName || data.roleId || '未知'}`
     }
     if (data.abnormalCount !== undefined) {
       return `异常玩家数: ${data.abnormalCount}`

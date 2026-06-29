@@ -156,6 +156,17 @@ export const useBOTCGameStore = defineStore('botc', () => {
           nightInfo.value = data
         })
 
+        on('deathAbilityPrompt', (data) => {
+          nightInfo.value = { ...data, isDeathAbilityPrompt: true }
+          ElMessage.info(data.message || '死亡能力触发')
+        })
+
+        on('deathAbilityResolved', (data) => {
+          if (isStoryteller.value) {
+            ElMessage.info(`${data.playerName || '玩家'} 完成了死亡能力`)
+          }
+        })
+
         // 监听白天/夜晚开始
         on('dayStarted', (data) => {
           if (gameState.value) {

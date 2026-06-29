@@ -1,5 +1,25 @@
 <template>
   <div class="botc-action-panel">
+    <!-- 死亡能力提示（不属于常规夜晚队列） -->
+    <el-card v-if="deathAbilityPrompt && !isStoryteller" class="death-ability-card">
+      <template #header>
+        <h4>死亡能力</h4>
+      </template>
+      <p>{{ formatNightInfo(deathAbilityPrompt) }}</p>
+      <div v-if="deathAbilityTargets.length" class="death-ability-targets">
+        <el-button
+          v-for="target in deathAbilityTargets"
+          :key="target.playerId"
+          @click="useDeathAbility(target.playerId)"
+          :disabled="deathAbilityCompleted"
+          size="small"
+        >
+          {{ target.playerName }}
+        </el-button>
+      </div>
+      <p v-if="deathAbilityCompleted" class="completed-status">死亡能力已提交</p>
+    </el-card>
+
     <!-- 游戏等待阶段 -->
     <div v-if="gameState.phase === 'setup'" class="setup-panel">
       <el-card>
@@ -217,6 +237,7 @@ import { computed, ref, watch, onUnmounted } from 'vue'
 interface Props {
   gameState: any
   playerRole?: any
+  nightInfo?: any
   roomId: string
   isStoryteller?: boolean
   currentUserId?: string
@@ -227,6 +248,7 @@ interface Emits {
 }
 
 const props = withDefaults(defineProps<Props>(), {
+  nightInfo: null,
   isStoryteller: false,
   currentUserId: ''
 })
@@ -234,6 +256,7 @@ const props = withDefaults(defineProps<Props>(), {
 const emit = defineEmits<Emits>()
 
 const nightActionCompleted = ref(false)
+const deathAbilityCompleted = ref(false)
 
 // 监听游戏阶段变化，重置夜晚行动状态
 const watchPhase = watch(() => props.gameState?.phase, (newPhase, oldPhase) => {
@@ -242,11 +265,26 @@ const watchPhase = watch(() => props.gameState?.phase, (newPhase, oldPhase) => {
   }
 })
 
+const watchDeathAbility = watch(() => props.nightInfo, (info) => {
+  if (info?.isDeathAbilityPrompt) {
+    deathAbilityCompleted.value = false
+  }
+})
+
 onUnmounted(() => {
   watchPhase()
+  watchDeathAbility()
 })
 
 // 计算属性
+const deathAbilityPrompt = computed(() => {
+  return props.nightInfo?.isDeathAbilityPrompt ? props.nightInfo : null
+})
+
+const deathAbilityTargets = computed(() => {
+  return deathAbilityPrompt.value?.availableTargets || []
+})
+
 const currentNomination = computed(() => {
   return props.gameState?.nominations?.find((n: any) => n.isOnTrial)
 })
@@ -323,7 +361,7 @@ const nightOrderActions = computed(() => {
 })
 
 const nightInfo = computed(() => {
-  return props.gameState?.nightInfo || null
+  return props.nightInfo || props.gameState?.nightInfo || null
 })
 
 // 方法
@@ -367,6 +405,14 @@ const confirmNightAction = () => {
       actionType: 'ability',
       targets: []
     }
+  })
+}
+
+const useDeathAbility = (targetId: string) => {
+  deathAbilityCompleted.value = true
+  emit('game-action', {
+    type: 'deathAbilityAction',
+    data: { targetId }
   })
 }
 
@@ -447,15 +493,28 @@ const getRoleActionDescription = () => {
   return descriptions[props.playerRole?.id] || '请执行你的角色能力'
 }
 
+const getGamePlayerName = (playerId: string) => {
+  const player = props.gameState?.players?.find((p: any) => p.id === playerId)
+  return player?.name || playerId
+}
+
 const formatNightInfo = (info: any) => {
   if (!info) return ''
   
   if (typeof info === 'string') return info
+
+  if (info.isDeathAbilityPrompt && info.role === 'sage' && info.information?.players) {
+    const names = info.information.players.map((id: string) => getGamePlayerName(id)).join('、')
+    return `${info.message || '恶魔是以下两名玩家之一'}：${names}`
+  }
   
   if (info.message) return info.message
   
   if (info.information) {
     const data = info.information
+    if (data.playerId) {
+      return `${data.playerName || getGamePlayerName(data.playerId)} 的角色是: ${data.roleName || data.roleId || '未知'}`
+    }
     if (data.roleId) {
       return `角色: ${data.roleName || data.roleId}, 玩家: ${(data.players || []).join(', ')}`
     }
@@ -476,9 +535,6 @@ const formatNightInfo = (info: any) => {
     }
     if (data.isCorrect !== undefined) {
       return data.isCorrect ? '猜测正确！' : '猜测错误！'
-    }
-    if (data.playerId) {
-      return `${data.playerId} 的角色是: ${data.roleName || data.roleId || '未知'}`
     }
     if (data.abnormalCount !== undefined) {
       return `异常玩家数: ${data.abnormalCount}`
@@ -537,8 +593,16 @@ const formatNightInfo = (info: any) => {
   margin-top: 8px;
 }
 
-.nomination-card {
+.nomination-card,
+.death-ability-card {
   margin-bottom: 16px;
+}
+
+.death-ability-targets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
 }
 
 .nomination-targets {

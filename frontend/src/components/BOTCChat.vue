@@ -104,11 +104,12 @@ const currentChannel = ref('all'); // 'all' | 'storyteller' | 'dead' | 'private'
 const privateTarget = ref<string>('');
 const showPrivateSelector = ref(false);
 
-// 判断是否是死者（可以使用死者聊天）
+// 判断是否可以使用死者聊天：死亡玩家和说书人可见
 const canUseDeadChat = computed(() => {
+  if (props.isStoryteller) return true
   if (!props.gameState?.players) return false
   const myPlayer = props.gameState.players.find((p: any) => p.id === props.nickname)
-  return myPlayer && myPlayer.isDead
+  return Boolean(myPlayer?.isDead)
 });
 
 // 可用的私聊目标

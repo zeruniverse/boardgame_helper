@@ -218,6 +218,11 @@ export class BOTCWorker extends BaseGameWorker {
       return;
     }
 
+    if (actionType === 'deathAbilityAction') {
+      await this.handleDeathAbilityAction(playerId, actionData);
+      return;
+    }
+
     const action: BOTCGameAction = { type: actionType as any, data: actionData };
     
     const validation = validatePlayerAction(
@@ -1068,6 +1073,62 @@ export class BOTCWorker extends BaseGameWorker {
   }
 
   /**
+   * 处理死亡能力选择（乌鸦饲养员等非夜晚队列行动）
+   */
+  private async handleDeathAbilityAction(playerId: string, data: any): Promise<void> {
+    if (this.gameState.phase === GamePhase.ENDED) {
+      this.sendToPlayer(playerId, 'actionError', { message: '游戏已结束' });
+      return;
+    }
+
+    const player = this.gamePlayers.get(playerId);
+    if (!player || player.role?.id !== 'ravenkeeper') {
+      this.sendToPlayer(playerId, 'actionError', { message: '当前角色没有可选择的死亡能力' });
+      return;
+    }
+
+    if (!player.isDead || player.deathCause === 'execution' || !player.reminders.includes('ravenkeeperDeathAbilityPending')) {
+      this.sendToPlayer(playerId, 'actionError', { message: '乌鸦饲养员只有夜间死亡后才能选择目标' });
+      return;
+    }
+
+    if (player.reminders.includes('ravenkeeperDeathAbilityUsed')) {
+      this.sendToPlayer(playerId, 'actionError', { message: '死亡能力已经使用过' });
+      return;
+    }
+
+    const targetId = data?.targetId || data?.targets?.[0];
+    const target = this.gamePlayers.get(targetId);
+    if (!target || target.isDead || target.playerId === playerId) {
+      this.sendToPlayer(playerId, 'actionError', { message: '请选择一名有效玩家' });
+      return;
+    }
+
+    player.reminders = player.reminders.filter(reminder => reminder !== 'ravenkeeperDeathAbilityPending');
+    player.reminders.push('ravenkeeperDeathAbilityUsed');
+
+    const information = {
+      playerId: target.playerId,
+      playerName: this.getPlayerName(target.playerId),
+      roleName: target.role?.name,
+      roleId: target.role?.id
+    };
+
+    this.sendToPlayer(playerId, 'nightInfo', {
+      role: 'ravenkeeper',
+      information,
+      isDeathAbility: true
+    });
+
+    this.sendToPlayer(this.gameConfig.storytellerId, 'deathAbilityResolved', {
+      playerId,
+      playerName: this.getPlayerName(playerId),
+      role: 'ravenkeeper',
+      target: information
+    });
+  }
+
+  /**
    * 处理说书人操作
    */
   private async handleStoryteller(playerId: string, data: any): Promise<void> {
@@ -1651,8 +1712,9 @@ export class BOTCWorker extends BaseGameWorker {
       return;
     }
 
-    // 处理乌鸦饲养员的死亡能力（任何夜间死亡都触发）
-    if (player.role?.id === 'ravenkeeper' && cause !== 'execution') {
+    // 处理乌鸦饲养员的死亡能力（夜间死亡触发）
+    const diedAtNight = this.gameState.phase === GamePhase.NIGHT || this.gameState.phase === GamePhase.FIRST_NIGHT;
+    if (player.role?.id === 'ravenkeeper' && diedAtNight) {
       player.isDead = true;
       player.isAlive = false;
       player.deathCause = cause;
@@ -1691,6 +1753,7 @@ export class BOTCWorker extends BaseGameWorker {
           });
         } else {
           // 玩家模式下，提示玩家选择目标
+          player.reminders.push('ravenkeeperDeathAbilityPending');
           this.sendToPlayer(playerId, 'deathAbilityPrompt', {
             role: 'ravenkeeper',
             message: '你是乌鸦饲养员，你死了。请选择一名玩家来学习他的角色。',
@@ -1777,18 +1840,21 @@ export class BOTCWorker extends BaseGameWorker {
 
     if (channel === 'dead') {
       const senderGamePlayer = this.gamePlayers.get(playerId);
-      if (!senderGamePlayer?.isDead) {
-        this.sendToPlayer(playerId, 'actionError', { message: '只有死亡玩家可以使用死者频道' });
+      const isStoryteller = playerId === this.gameConfig.storytellerId;
+      if (!isStoryteller && !senderGamePlayer?.isDead) {
+        this.sendToPlayer(playerId, 'actionError', { message: '只有死亡玩家或说书人可以使用死者频道' });
         return;
       }
 
       // 死者频道只发送给死亡玩家和说书人。
+      const delivered = new Set<string>();
       for (const gamePlayer of this.gamePlayers.values()) {
         if (gamePlayer.isDead) {
           this.sendToPlayer(gamePlayer.playerId, 'chatMessage', payload);
+          delivered.add(gamePlayer.playerId);
         }
       }
-      if (playerId !== this.gameConfig.storytellerId) {
+      if (!delivered.has(this.gameConfig.storytellerId)) {
         this.sendToPlayer(this.gameConfig.storytellerId, 'chatMessage', payload);
       }
       return;
