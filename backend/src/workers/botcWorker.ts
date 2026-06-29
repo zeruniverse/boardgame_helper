@@ -493,6 +493,9 @@ export class BOTCWorker extends BaseGameWorker {
    * 开始夜晚阶段
    */
   private async startNight(isFirstNight: boolean = false): Promise<void> {
+    // 任何进入夜晚的路径都必须清理上一阶段计时器，避免旧的白天/投票计时器延迟触发二次结算。
+    this.clearTimers();
+
     this.gameState.phase = isFirstNight ? GamePhase.FIRST_NIGHT : GamePhase.NIGHT;
     this.gameState.nightOrder = getNightOrder(Array.from(this.gamePlayers.values()), isFirstNight);
     this.nightActions = [];
@@ -615,6 +618,9 @@ export class BOTCWorker extends BaseGameWorker {
    * 开始白天阶段
    */
   private async startDay(): Promise<void> {
+    // 任何进入白天的路径都必须清理上一阶段计时器，避免旧的夜晚/转阶段计时器继续触发。
+    this.clearTimers();
+
     this.gameState.phase = GamePhase.DAY;
     this.gameState.day++;
     this.gameState.isFirstDay = this.gameState.day === 1;
