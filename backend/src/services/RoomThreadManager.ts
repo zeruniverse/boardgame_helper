@@ -34,7 +34,8 @@ export class RoomThreadManager {
   constructor(eventHandler?: (data: any) => void) {
     this.onMessage = eventHandler;
 
-    // 定期检查并清理空闲线程
+    // 定期检查并清理空闲线程。控制层会负责按房间保留时间删除离线房间；
+    // 这里不能提前停止仍有玩家记录的 worker，否则重连时会丢失游戏内存状态。
     this.cleanupInterval = setInterval(() => {
       this.checkAndCleanupIdleThreads().catch(err => {
         console.error('清理空闲线程时出错:', err);
@@ -337,8 +338,9 @@ export class RoomThreadManager {
         const onlinePlayers = roomData.players.filter(p => p.online);
         const timeSinceLastActive = now - roomData.lastActiveTime;
 
-        // 如果没有在线玩家且超过1分钟无活动，则销毁房间
-        if (onlinePlayers.length === 0 && timeSinceLastActive > idleThreshold) {
+        // 只清理真正已无玩家记录的孤儿线程。仍有离线玩家的房间可能还在
+        // roomController 的重连保留窗口内，必须保留 worker 中的角色、牌局、计时器等状态。
+        if (roomData.players.length === 0 && onlinePlayers.length === 0 && timeSinceLastActive > idleThreshold) {
           roomsToCleanup.push(roomId);
         }
       }
