@@ -143,6 +143,7 @@ export interface PlayerSetup {
 }
 
 export const PLAYER_COUNTS: { [key: number]: PlayerSetup } = {
+  4: { townsfolk: 2, outsiders: 0, minions: 1, demons: 1 },
   5: { townsfolk: 3, outsiders: 0, minions: 1, demons: 1 },
   6: { townsfolk: 3, outsiders: 1, minions: 1, demons: 1 },
   7: { townsfolk: 5, outsiders: 0, minions: 1, demons: 1 },

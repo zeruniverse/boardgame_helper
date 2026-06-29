@@ -21,6 +21,8 @@ export const useBOTCGameStore = defineStore('botc', () => {
   const playerRole = ref<any>(null)
   const nightInfo = ref<any>(null)
   const isStoryteller = ref<boolean>(false)
+  const storytellerQuestion = ref<{ question: string, playerId: string, roleId: string } | null>(null)
+  const aiStorytellerMessages = ref<string[]>([])
 
   // 计算属性：是否是房主
   const isHost = () => {
@@ -307,6 +309,27 @@ export const useBOTCGameStore = defineStore('botc', () => {
           }
         })
 
+        // 监听需要说书人回复的问题（如Artist的yes/no问题）
+        on('storytellerQuestionRequired', (data) => {
+          storytellerQuestion.value = {
+            question: data.question,
+            playerId: data.playerId,
+            roleId: data.roleId
+          }
+          ElMessage.info(`收到玩家问题待回复: ${data.question}`)
+        })
+
+        // 监听AI说书人模板消息
+        on('aiStorytellerMessage', (data) => {
+          if (data.message) {
+            aiStorytellerMessages.value.push(data.message)
+            // 保持最多50条
+            if (aiStorytellerMessages.value.length > 50) {
+              aiStorytellerMessages.value = aiStorytellerMessages.value.slice(-50)
+            }
+          }
+        })
+
         // 监听说书人信息（包含所有玩家的角色）
         on('storytellerInfo', (data) => {
           if (isStoryteller.value && data.players) {
@@ -342,6 +365,8 @@ export const useBOTCGameStore = defineStore('botc', () => {
       room.value = null
       gameState.value = null
       playerRole.value = null
+      storytellerQuestion.value = null
+      aiStorytellerMessages.value = []
       chatMessages.value = []
     }
   }
@@ -512,6 +537,19 @@ export const useBOTCGameStore = defineStore('botc', () => {
     return editions[editionId] || null
   }
 
+  // 清除说书人问题
+  const clearStorytellerQuestion = () => {
+    storytellerQuestion.value = null
+  }
+
+  // 添加AI说书人消息
+  const addAIStorytellerMessage = (message: string) => {
+    aiStorytellerMessages.value.push(message)
+    if (aiStorytellerMessages.value.length > 50) {
+      aiStorytellerMessages.value = aiStorytellerMessages.value.slice(-50)
+    }
+  }
+
   return {
     // 状态
     socket,
@@ -527,6 +565,8 @@ export const useBOTCGameStore = defineStore('botc', () => {
     isHost,
     chatMessages,
     timeLeft,
+    storytellerQuestion,
+    aiStorytellerMessages,
 
     // 方法
     connect,
@@ -545,6 +585,8 @@ export const useBOTCGameStore = defineStore('botc', () => {
     vote,
     nightAction,
     storytellerAction,
+    clearStorytellerQuestion,
+    addAIStorytellerMessage,
     getRoleInfo,
     getEditionInfo
   }

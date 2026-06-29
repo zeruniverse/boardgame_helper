@@ -110,7 +110,11 @@
             :room-id="roomId"
             :is-storyteller="store.isStoryteller"
             :current-user-id="store.currentUserId"
+            :is-ai-storyteller="store.gameConfig?.isAIStoryteller || false"
+            :storyteller-question="store.storytellerQuestion"
+            :ai-storyteller-messages="store.aiStorytellerMessages"
             @game-action="handleGameAction"
+            @storyteller-response="handleStorytellerResponse"
           />
         </div>
       </el-main>
@@ -375,6 +379,14 @@ const getVoteProgressColor = () => {
 // 处理游戏操作 - 使用store的方法
 const handleGameAction = (action: any) => {
   store.sendGameAction(action.type, action.data)
+}
+
+// 处理说书人回复玩家问题
+const handleStorytellerResponse = (response: { playerId: string, answer: string }) => {
+  // 通过私聊发送回复
+  store.sendPrivateMessage(response.playerId, `[说书人回复] ${response.answer}`)
+  // 清除问题
+  store.clearStorytellerQuestion()
 }
 
 // 处理转移房主

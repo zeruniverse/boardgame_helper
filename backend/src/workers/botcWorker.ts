@@ -146,6 +146,159 @@ export class BOTCWorker extends BaseGameWorker {
     return Boolean(storytellerId?.startsWith('computer_'));
   }
 
+  /**
+   * AI说书人生成模板回答
+   * 根据AI偏好（good/evil/neutral）生成对不同问题的回答
+   */
+  private generateAIStorytellerResponse(player: GamePlayer, questionType: string, data: any): any {
+    const aiBias = this.gameConfig.aiBias || 'neutral';
+    const allPlayers = Array.from(this.gamePlayers.values());
+
+    switch (questionType) {
+      case 'alignment': {
+        // "X号是好人/坏人"
+        const targetId = data.targetId;
+        const target = this.gamePlayers.get(targetId);
+        if (!target) return { answer: '无法确定', targetId };
+        const actuallyEvil = isEvilPlayer(target);
+        // AI偏向影响答案准确性
+        let reportedEvil = actuallyEvil;
+        if (aiBias === 'good' && actuallyEvil && Math.random() < 0.3) {
+          reportedEvil = false;
+        } else if (aiBias === 'evil' && !actuallyEvil && Math.random() < 0.3) {
+          reportedEvil = true;
+        } else if (aiBias === 'neutral' && Math.random() < 0.15) {
+          reportedEvil = !actuallyEvil;
+        }
+        return {
+          answer: reportedEvil ? '坏人' : '好人',
+          actualAnswer: actuallyEvil ? '坏人' : '好人',
+          targetId,
+          targetName: this.getPlayerName(targetId)
+        };
+      }
+
+      case 'role': {
+        // "X号的角色是XXX" —— 供间谍类角色获取信息
+        const targetId = data.targetId;
+        const target = this.gamePlayers.get(targetId);
+        if (!target) return { answer: '无法确定', targetId };
+        const actualRole = this.getEffectiveRole(target);
+        let reportedRole = actualRole;
+        // 邪恶偏向可能给出错误信息
+        if (aiBias === 'evil' && !isEvilPlayer(target) && Math.random() < 0.35) {
+          const outsiderRoles = getRolesByTeam(this.gameConfig.edition, Team.OUTSIDER);
+          const townsfolkRoles = getRolesByTeam(this.gameConfig.edition, Team.TOWNSFOLK);
+          const fakePool = [...outsiderRoles, ...townsfolkRoles].filter(r => r.id !== actualRole?.id);
+          reportedRole = fakePool[Math.floor(Math.random() * fakePool.length)] || actualRole;
+        } else if (aiBias === 'good' && isEvilPlayer(target) && Math.random() < 0.25) {
+          // 善良偏向：可能将邪恶角色报告为较不危险的角色
+          const outsiderRoles = getRolesByTeam(this.gameConfig.edition, Team.OUTSIDER);
+          reportedRole = outsiderRoles[Math.floor(Math.random() * outsiderRoles.length)] || actualRole;
+        }
+        return {
+          answer: reportedRole?.name || '未知',
+          roleId: reportedRole?.id,
+          actualRoleId: actualRole?.id,
+          targetId,
+          targetName: this.getPlayerName(targetId)
+        };
+      }
+
+      case 'yesNo': {
+        // "是/否"回答 —— 供艺术家等角色
+        const actualAnswer = data.actualAnswer;
+        let answer = actualAnswer;
+        if (aiBias === 'good' && !actualAnswer && Math.random() < 0.2) {
+          answer = true;
+        } else if (aiBias === 'evil' && actualAnswer && Math.random() < 0.35) {
+          answer = false;
+        } else if (aiBias === 'neutral' && Math.random() < 0.15) {
+          answer = !actualAnswer;
+        }
+        return {
+          answer: answer ? '是' : '否',
+          actualAnswer: actualAnswer ? '是' : '否'
+        };
+      }
+
+      case 'adjacentEvil': {
+        // "X个坏人相邻" —— 供厨师类信息
+        const actualCount = data.adjacentEvilPairs ?? 0;
+        let reportedCount = actualCount;
+        if (aiBias === 'good' && actualCount > 0 && Math.random() < 0.25) {
+          reportedCount = Math.max(0, actualCount - 1);
+        } else if (aiBias === 'evil' && actualCount === 0 && Math.random() < 0.3) {
+          reportedCount = 1;
+        } else if (aiBias === 'neutral' && Math.random() < 0.15) {
+          reportedCount = (reportedCount + 1) % 3;
+        }
+        return {
+          answer: `${reportedCount}个坏人相邻`,
+          actualAnswer: `${actualCount}个坏人相邻`,
+          count: reportedCount
+        };
+      }
+
+      case 'characterAbility': {
+        // 哲学家询问某角色的能力是否有效
+        const characterId = data.characterId;
+        const characterRole = getRoleById(characterId);
+        const isInPlay = allPlayers.some(p => !p.isDead && (p.role?.id === characterId || p.displayRole?.id === characterId));
+        let answer = isInPlay;
+        if (aiBias === 'evil' && isInPlay && Math.random() < 0.3) {
+          answer = false;
+        } else if (aiBias === 'good' && !isInPlay && Math.random() < 0.2) {
+          answer = true;
+        }
+        return {
+          answer: answer ? '该角色在场且能力有效' : '该角色不在场或能力无效',
+          characterId,
+          characterName: characterRole?.name || characterId,
+          isInPlay
+        };
+      }
+
+      default:
+        return { answer: '说书人无法回答此问题' };
+    }
+  }
+
+  /**
+   * 发送说书人问题
+   * AI说书人模式下自动生成回答；人类说书人模式下发送给说书人等待回答
+   */
+  private sendStorytellerQuestion(playerId: string, questionType: string, questionData: any): void {
+    const player = this.gamePlayers.get(playerId);
+    if (!player) return;
+
+    const isAI = this.isComputerStoryteller();
+
+    if (isAI) {
+      const response = this.generateAIStorytellerResponse(player, questionType, questionData);
+      this.sendToPlayer(playerId, 'storytellerAnswer', {
+        questionType,
+        response,
+        fromAI: true,
+        role: player.role?.id
+      });
+      player.hasActed = true;
+    } else {
+      this.sendToPlayer(this.gameConfig.storytellerId, 'storytellerQuestionRequired', {
+        playerId,
+        playerName: this.getPlayerName(playerId),
+        roleId: player.role?.id,
+        roleName: player.role?.name,
+        questionType,
+        questionData
+      });
+      this.sendToPlayer(playerId, 'storytellerQuestionPending', {
+        questionType,
+        message: '你的问题已发送给说书人，等待回答...'
+      });
+    }
+  }
+
   private broadcastGameState(): void {
     this.sendToRoom('game_update', this.getPublicGameState());
 
@@ -400,8 +553,9 @@ export class BOTCWorker extends BaseGameWorker {
 
     // 排除说书人后计算参与游戏的玩家数
     const gamePlayerCount = this.room.players.filter(p => p.online !== false && p.id !== this.gameConfig.storytellerId).length;
-    if (gamePlayerCount < 5) {
-      this.sendToPlayer(playerId, 'actionError', { message: `排除说书人后至少需要5名玩家才能开始游戏，当前只有${gamePlayerCount}名` });
+    const minPlayers = isComputerStoryteller ? 4 : 5;
+    if (gamePlayerCount < minPlayers) {
+      this.sendToPlayer(playerId, 'actionError', { message: `排除说书人后至少需要${minPlayers}名玩家才能开始游戏，当前只有${gamePlayerCount}名` });
       return;
     }
 
@@ -419,8 +573,9 @@ export class BOTCWorker extends BaseGameWorker {
         .filter(p => p.online !== false && p.id !== storytellerId)
         .map(p => p.id);
       
-      if (playerIds.length < 5) {
-        this.sendToRoom('gameError', { message: `需要至少5名非说书人玩家才能开始游戏，当前只有${playerIds.length}名` });
+      const minPlayers = this.isComputerStoryteller() ? 4 : 5;
+      if (playerIds.length < minPlayers) {
+        this.sendToRoom('gameError', { message: `需要至少${minPlayers}名非说书人玩家才能开始游戏，当前只有${playerIds.length}名` });
         return;
       }
       
@@ -1446,6 +1601,25 @@ export class BOTCWorker extends BaseGameWorker {
     // 处理其他夜间被动效果
     await this.processPassiveEffects();
 
+    // 恶魔死亡后，确保红颜晋升逻辑被触发
+    const anyDemonDiedTonight = allPlayers.some(p =>
+      p.role?.team === Team.DEMON && p.isDead && p.deathCause === 'demon'
+    );
+    if (anyDemonDiedTonight) {
+      const promoted = this.promoteScarletWomanIfNeeded();
+      if (!promoted) {
+        // 没有红颜晋升，检查是否还有存活恶魔；若无，可能影响游戏胜负
+        const aliveDemon = allPlayers.find(p => p.role?.team === Team.DEMON && !p.isDead);
+        if (!aliveDemon) {
+          this.sendToPlayer(this.gameConfig.storytellerId, 'storytellerDecision', {
+            type: 'noDemonAlive',
+            message: '场上已无存活恶魔，需要说书人裁决游戏是否继续或结束',
+            options: ['结束游戏（善良获胜）', '继续游戏']
+          });
+        }
+      }
+    }
+
     // 清空夜晚行动数组
     this.nightActions = [];
 
@@ -1712,6 +1886,76 @@ export class BOTCWorker extends BaseGameWorker {
             roleId: executedPlayer?.role?.id || null,
             roleName: executedPlayer?.role?.name || null
           });
+        }
+
+        // === 需要向说书人提问的角色 ===
+        else if (roleId === 'philosopher') {
+          const targets = selectedPlayers(action);
+          if (targets.length !== 1) {
+            this.sendToPlayer(playerId, 'actionError', { message: '哲学家必须选择一名玩家' });
+            continue;
+          }
+          const target = targets[0];
+          this.sendStorytellerQuestion(playerId, 'characterAbility', {
+            characterId: target.role?.id,
+            targetId: target.playerId
+          });
+        }
+
+        else if (roleId === 'artist') {
+          const question = action?.data?.question || '';
+          if (!question) {
+            this.sendToPlayer(playerId, 'actionError', { message: '艺术家必须提交一个问题' });
+            continue;
+          }
+          // 根据问题内容推断实际答案
+          let actualAnswer = false;
+          const lowerQ = question.toLowerCase();
+          if (lowerQ.includes('恶魔') || lowerQ.includes('坏') || lowerQ.includes('邪恶')) {
+            const hasAliveDemon = allPlayers.some(p => !p.isDead && p.role?.team === Team.DEMON);
+            actualAnswer = hasAliveDemon;
+          } else if (lowerQ.includes('镇民') || lowerQ.includes('好人')) {
+            const hasAliveGood = allPlayers.some(p => !p.isDead && !isEvilPlayer(p));
+            actualAnswer = hasAliveGood;
+          }
+          this.sendStorytellerQuestion(playerId, 'yesNo', {
+            question,
+            actualAnswer
+          });
+        }
+
+        else if (roleId === 'courtier') {
+          const characterId = action?.data?.characterId;
+          if (!characterId) {
+            this.sendToPlayer(playerId, 'actionError', { message: '侍臣必须选择一个角色' });
+            continue;
+          }
+          this.sendStorytellerQuestion(playerId, 'characterAbility', {
+            characterId
+          });
+        }
+
+        else if (roleId === 'spy') {
+          const targets = selectedPlayers(action);
+          if (targets.length !== 1) {
+            this.sendStorytellerQuestion(playerId, 'role', {
+              targetId: this.getRandomAlivePlayer(allPlayers, playerId) || ''
+            });
+          } else {
+            this.sendStorytellerQuestion(playerId, 'role', {
+              targetId: targets[0].playerId
+            });
+          }
+        }
+
+        else if (roleId === 'highpriestess') {
+          const randomAlive = allPlayers.filter(p => !p.isDead && p.playerId !== playerId);
+          const target = randomAlive[Math.floor(Math.random() * randomAlive.length)];
+          if (target) {
+            this.sendStorytellerQuestion(playerId, 'alignment', {
+              targetId: target.playerId
+            });
+          }
         }
       } catch (error) {
         console.error(`处理特殊夜晚信息失败 (${roleId}):`, error);

@@ -30,7 +30,8 @@
           <p>等待所有玩家加入房间，房主配置游戏并开始游戏。</p>
           <div class="player-count-info">
             <span>当前玩家数: {{ gameState.players?.length || gameState.playerCount || 0 }}人</span>
-            <span>建议人数: 5-15人</span>
+            <span v-if="isAIStoryteller">建议人数: AI说书人模式下4-14名游戏玩家</span>
+            <span v-else>建议人数: 5-15人（含1名说书人）</span>
           </div>
           <el-button 
             v-if="isStoryteller && (gameState.players?.length >= 5 || gameState.playerCount >= 5)" 
@@ -117,6 +118,71 @@
           <el-button @click="endGame" type="danger">
             结束游戏
           </el-button>
+        </div>
+      </el-card>
+
+      <!-- 说书人魔典 -->
+      <el-card v-if="isStoryteller && gameState.phase !== 'setup'" class="grimoire-card">
+        <template #header>
+          <h4>魔典 (Grimoire)</h4>
+        </template>
+        <div class="grimoire-players">
+          <div v-for="(player, index) in gameState.players" :key="player.id || player.playerId" class="grimoire-player">
+            <span class="seat-number">{{ index + 1 }}号</span>
+            <span :class="['team-badge', 'team-' + (player.role?.team)]">{{ player.role?.name || '?' }}</span>
+            <span class="player-name">{{ player.name || player.playerName || player.id || player.playerId }}</span>
+            <el-tag v-if="player.isDead" type="danger" size="small">已死亡</el-tag>
+            <el-tag v-else type="success" size="small">存活</el-tag>
+            <span v-for="r in (player.reminders || [])" :key="r" class="reminder-tag">{{ r }}</span>
+          </div>
+        </div>
+      </el-card>
+
+      <!-- 说书人问题提示 -->
+      <el-card v-if="isStoryteller && storytellerQuestion" class="storyteller-question-card">
+        <template #header>
+          <h4>玩家问题待回复</h4>
+        </template>
+        <div class="question-content">
+          <p class="question-text">{{ storytellerQuestion.question }}</p>
+          <p class="question-meta">
+            来自: {{ getGamePlayerName(storytellerQuestion.playerId) }}
+            (角色: {{ storytellerQuestion.roleId }})
+          </p>
+        </div>
+        <div class="question-response-buttons">
+          <el-button type="success" size="small" @click="respondToStorytellerQuestion('是 / Yes')">是 (Yes)</el-button>
+          <el-button type="danger" size="small" @click="respondToStorytellerQuestion('否 / No')">否 (No)</el-button>
+          <el-button type="info" size="small" @click="respondToStorytellerQuestion('不确定 / Maybe')">不确定</el-button>
+          <el-button type="warning" size="small" @click="respondToStorytellerQuestion('无法回答 / Cannot answer')">无法回答</el-button>
+        </div>
+        <div class="question-custom-response">
+          <el-input
+            v-model="storytellerResponseInput"
+            placeholder="输入自定义回复..."
+            size="small"
+            @keyup.enter="respondToStorytellerQuestion(storytellerResponseInput)"
+          />
+          <el-button
+            type="primary"
+            size="small"
+            :disabled="!storytellerResponseInput.trim()"
+            @click="respondToStorytellerQuestion(storytellerResponseInput)"
+          >
+            发送
+          </el-button>
+        </div>
+      </el-card>
+
+      <!-- AI说书人模板消息 -->
+      <el-card v-if="isAIStoryteller && aiStorytellerMessages.length > 0" class="ai-messages-card">
+        <template #header>
+          <h4>AI说书人消息</h4>
+        </template>
+        <div class="ai-messages-list">
+          <div v-for="(msg, idx) in aiStorytellerMessages" :key="idx" class="ai-message-item">
+            {{ msg }}
+          </div>
         </div>
       </el-card>
     </div>
@@ -206,6 +272,59 @@
           </el-button>
         </div>
       </el-card>
+
+      <!-- 说书人魔典 (夜晚) -->
+      <el-card v-if="isStoryteller && gameState.phase !== 'setup'" class="grimoire-card">
+        <template #header>
+          <h4>魔典 (Grimoire)</h4>
+        </template>
+        <div class="grimoire-players">
+          <div v-for="(player, index) in gameState.players" :key="player.id || player.playerId" class="grimoire-player">
+            <span class="seat-number">{{ index + 1 }}号</span>
+            <span :class="['team-badge', 'team-' + (player.role?.team)]">{{ player.role?.name || '?' }}</span>
+            <span class="player-name">{{ player.name || player.playerName || player.id || player.playerId }}</span>
+            <el-tag v-if="player.isDead" type="danger" size="small">已死亡</el-tag>
+            <el-tag v-else type="success" size="small">存活</el-tag>
+            <span v-for="r in (player.reminders || [])" :key="r" class="reminder-tag">{{ r }}</span>
+          </div>
+        </div>
+      </el-card>
+
+      <!-- 说书人问题提示 (夜晚) -->
+      <el-card v-if="isStoryteller && storytellerQuestion" class="storyteller-question-card">
+        <template #header>
+          <h4>玩家问题待回复</h4>
+        </template>
+        <div class="question-content">
+          <p class="question-text">{{ storytellerQuestion.question }}</p>
+          <p class="question-meta">
+            来自: {{ getGamePlayerName(storytellerQuestion.playerId) }}
+            (角色: {{ storytellerQuestion.roleId }})
+          </p>
+        </div>
+        <div class="question-response-buttons">
+          <el-button type="success" size="small" @click="respondToStorytellerQuestion('是 / Yes')">是 (Yes)</el-button>
+          <el-button type="danger" size="small" @click="respondToStorytellerQuestion('否 / No')">否 (No)</el-button>
+          <el-button type="info" size="small" @click="respondToStorytellerQuestion('不确定 / Maybe')">不确定</el-button>
+          <el-button type="warning" size="small" @click="respondToStorytellerQuestion('无法回答 / Cannot answer')">无法回答</el-button>
+        </div>
+        <div class="question-custom-response">
+          <el-input
+            v-model="storytellerResponseInput"
+            placeholder="输入自定义回复..."
+            size="small"
+            @keyup.enter="respondToStorytellerQuestion(storytellerResponseInput)"
+          />
+          <el-button
+            type="primary"
+            size="small"
+            :disabled="!storytellerResponseInput.trim()"
+            @click="respondToStorytellerQuestion(storytellerResponseInput)"
+          >
+            发送
+          </el-button>
+        </div>
+      </el-card>
     </div>
 
     <!-- 游戏结束 -->
@@ -252,16 +371,23 @@ interface Props {
   roomId: string
   isStoryteller?: boolean
   currentUserId?: string
+  isAIStoryteller?: boolean
+  storytellerQuestion?: { question: string, playerId: string, roleId: string } | null
+  aiStorytellerMessages?: string[]
 }
 
 interface Emits {
   (e: 'game-action', action: { type: string, data: any }): void
+  (e: 'storyteller-response', response: { playerId: string, answer: string }): void
 }
 
 const props = withDefaults(defineProps<Props>(), {
   nightInfo: null,
   isStoryteller: false,
-  currentUserId: ''
+  currentUserId: '',
+  isAIStoryteller: false,
+  storytellerQuestion: null,
+  aiStorytellerMessages: () => []
 })
 
 const emit = defineEmits<Emits>()
@@ -270,6 +396,7 @@ const nightActionCompleted = ref(false)
 const deathAbilityCompleted = ref(false)
 const selectedNightTargets = ref<string[]>([])
 const nightExtraInput = ref('')
+const storytellerResponseInput = ref('')
 
 function resetNightActionInput() {
   nightActionCompleted.value = false
@@ -504,6 +631,15 @@ const useDeathAbility = (targetId: string) => {
     type: 'deathAbilityAction',
     data: { targetId }
   })
+}
+
+const respondToStorytellerQuestion = (answer: string) => {
+  if (!props.storytellerQuestion) return
+  emit('storyteller-response', {
+    playerId: props.storytellerQuestion.playerId,
+    answer
+  })
+  storytellerResponseInput.value = ''
 }
 
 const nextPhase = () => {
@@ -876,6 +1012,144 @@ const formatNightInfo = (info: any) => {
 
 .player-name {
   font-weight: bold;
+}
+
+/* 魔典 (Grimoire) 样式 */
+.grimoire-card {
+  margin-top: 16px;
+  background: var(--app-panel);
+  border: 1px solid var(--app-border);
+}
+
+.grimoire-players {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.grimoire-player {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border: 1px solid var(--app-border);
+  border-radius: 6px;
+  background: var(--app-bg);
+  flex-wrap: wrap;
+}
+
+.seat-number {
+  font-weight: bold;
+  color: var(--app-text-secondary);
+  min-width: 32px;
+}
+
+.team-badge {
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: bold;
+  min-width: 60px;
+  text-align: center;
+}
+
+.team-townsfolk {
+  background: #3498db;
+  color: white;
+}
+
+.team-outsider {
+  background: #f39c12;
+  color: white;
+}
+
+.team-minion {
+  background: #e74c3c;
+  color: white;
+}
+
+.team-demon {
+  background: #2d3436;
+  color: white;
+}
+
+.team-traveler {
+  background: #9b59b6;
+  color: white;
+}
+
+.reminder-tag {
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  background: #fdf6ec;
+  color: #e6a23c;
+  border: 1px solid #f5dab1;
+}
+
+/* 说书人问题提示样式 */
+.storyteller-question-card {
+  margin-top: 16px;
+  background: var(--app-panel);
+  border: 1px solid #e6a23c;
+}
+
+.question-content {
+  margin-bottom: 12px;
+}
+
+.question-text {
+  font-size: 16px;
+  font-weight: bold;
+  color: var(--app-text);
+  margin: 0 0 8px 0;
+}
+
+.question-meta {
+  font-size: 13px;
+  color: var(--app-text-secondary);
+  margin: 0;
+}
+
+.question-response-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.question-custom-response {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.question-custom-response .el-input {
+  flex: 1;
+}
+
+/* AI说书人消息样式 */
+.ai-messages-card {
+  margin-top: 16px;
+  background: var(--app-panel);
+  border: 1px solid #67c23a;
+}
+
+.ai-messages-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.ai-message-item {
+  padding: 8px 12px;
+  border-radius: 6px;
+  background: #f0f9eb;
+  border-left: 3px solid #67c23a;
+  font-size: 13px;
+  color: var(--app-text);
 }
 </style>
 
