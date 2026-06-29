@@ -1213,6 +1213,7 @@ export function roomController(io: Server) {
         }
         currentRoom = latestRoom;
         rooms.set(roomId, latestRoom);
+        threadManager.updateRoomData(roomId, latestRoom);
         io.to(roomId).emit('room_update', toClientRoom(latestRoom));
 
         // 更新大厅中该房间的玩家数量

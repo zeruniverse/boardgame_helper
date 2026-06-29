@@ -232,28 +232,13 @@ export function getNightOrder(gamePlayers: GamePlayer[], isFirstNight: boolean):
 
     playersWithRole.forEach(player => {
       const nightAction = isFirstNight ? player.role!.firstNight : player.role!.otherNight;
-      if (nightAction > 0) {
-        // 存活玩家正常行动
-        if (!player.isDead) {
-          order.push(player.playerId);
-        }
-        // 某些角色（如Ravenkeeper）死亡后仍有能力
-        else if (player.isDead && shouldWakeWhenDead(player.role!.id, isFirstNight)) {
-          order.push(player.playerId);
-        }
+      if (nightAction > 0 && !player.isDead) {
+        order.push(player.playerId);
       }
     });
   });
 
   return order;
-}
-
-/**
- * 判断角色死亡后是否应该被唤醒
- */
-function shouldWakeWhenDead(roleId: string, isFirstNight: boolean): boolean {
-  const wakesWhenDead = ['ravenkeeper', 'sage'];
-  return wakesWhenDead.includes(roleId);
 }
 
 /**
@@ -439,11 +424,6 @@ export function validatePlayerAction(
     // 死亡玩家不能提名；他们只保留一次投票权。
     if (actionType === 'nominate') {
       return { valid: false, error: '死亡玩家不能提名' };
-    }
-    // 某些角色（如Ravenkeeper）死后仍有能力
-    if (actionType === 'nightAction' && 
-        (player.role?.id === 'ravenkeeper' || player.role?.id === 'sage')) {
-      return { valid: true };
     }
     return { valid: false, error: '死亡玩家无法执行此操作' };
   }
