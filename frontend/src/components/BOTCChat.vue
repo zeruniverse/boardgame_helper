@@ -4,7 +4,7 @@
     <div class="chat-tabs">
       <el-radio-group v-model="currentChannel" size="small">
         <el-radio-button label="all">全员</el-radio-button>
-        <el-radio-button label="storyteller" v-if="isStoryteller">说书人</el-radio-button>
+        <el-radio-button label="storyteller">说书人</el-radio-button>
         <el-radio-button label="dead" v-if="canUseDeadChat">死者</el-radio-button>
         <el-radio-button label="private" v-if="privateTarget">
           私聊: {{ getPlayerName(privateTarget) }}

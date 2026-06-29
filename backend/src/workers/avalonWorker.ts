@@ -722,6 +722,8 @@ class AvalonWorker extends BaseGameWorker {
         }
       });
       this.processVoteResult();
+    } else {
+      this.sendToRoom('game_update', this.getGameInfo());
     }
   }
 
@@ -749,6 +751,8 @@ class AvalonWorker extends BaseGameWorker {
     // 检查是否所有人都行动了
     if (state.operators.length === 0) {
       this.processMissionResult();
+    } else {
+      this.sendToRoom('game_update', this.getGameInfo());
     }
   }
 

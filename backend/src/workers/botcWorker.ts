@@ -1099,7 +1099,7 @@ export class BOTCWorker extends BaseGameWorker {
 
     const targetId = data?.targetId || data?.targets?.[0];
     const target = this.gamePlayers.get(targetId);
-    if (!target || target.isDead || target.playerId === playerId) {
+    if (!target) {
       this.sendToPlayer(playerId, 'actionError', { message: '请选择一名有效玩家' });
       return;
     }
@@ -1732,15 +1732,15 @@ export class BOTCWorker extends BaseGameWorker {
       }
       this.broadcastGameState();
 
-      // 乌鸦饲养员可以选一名玩家学习其角色
+      // 乌鸦饲养员可以选择任意玩家学习其角色；规则文本没有限制为存活玩家或非自己。
       const allPlayers = Array.from(this.gamePlayers.values());
-      const aliveOthers = allPlayers.filter(p => !p.isDead && p.playerId !== playerId);
-      if (aliveOthers.length > 0) {
+      const availableTargets = allPlayers;
+      if (availableTargets.length > 0) {
         // 检查是否是AI说书人模式
         const isComputerStoryteller = this.isComputerStoryteller();
         if (isComputerStoryteller) {
           // AI模式下随机选择
-          const randomPlayer = aliveOthers[Math.floor(Math.random() * aliveOthers.length)];
+          const randomPlayer = availableTargets[Math.floor(Math.random() * availableTargets.length)];
           this.sendToPlayer(playerId, 'nightInfo', {
             role: 'ravenkeeper',
             information: { 
@@ -1757,7 +1757,7 @@ export class BOTCWorker extends BaseGameWorker {
           this.sendToPlayer(playerId, 'deathAbilityPrompt', {
             role: 'ravenkeeper',
             message: '你是乌鸦饲养员，你死了。请选择一名玩家来学习他的角色。',
-            availableTargets: aliveOthers.map(p => ({
+            availableTargets: availableTargets.map(p => ({
               playerId: p.playerId,
               playerName: this.getPlayerName(p.playerId)
             }))
