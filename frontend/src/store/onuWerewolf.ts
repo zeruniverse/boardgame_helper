@@ -114,6 +114,7 @@ interface OnuWerewolfGameState {
 
 interface OnuWerewolfSecret {
   myRole?: OnuWerewolfRole;
+  activeSkillRole?: OnuWerewolfRole;
   mySeat?: number;
   canUseSkill?: boolean;
   canVote?: boolean;
@@ -375,6 +376,9 @@ export const useOnuWerewolfStore = defineStore('onuWerewolf', {
       // Skill ready notification (C4 fix)
       on('onu_skill_ready', (data: any) => {
         if (!this.playerSecret) this.playerSecret = {};
+        if (data.role !== undefined) {
+          this.playerSecret.activeSkillRole = data.role;
+        }
         this.playerSecret.canUseSkill = true;
         this.addSystemMessage(data.message || '轮到你使用技能了');
       });
@@ -384,6 +388,7 @@ export const useOnuWerewolfStore = defineStore('onuWerewolf', {
         if (!this.playerSecret) this.playerSecret = {};
         this.playerSecret.canUseSkill = false;
         this.playerSecret.skillUsed = true;
+        delete this.playerSecret.activeSkillRole;
         if (data.vision) {
           mergeVision(data.vision);
         }
@@ -395,6 +400,7 @@ export const useOnuWerewolfStore = defineStore('onuWerewolf', {
         if (!this.playerSecret) this.playerSecret = {};
         this.playerSecret.canUseSkill = false;
         this.playerSecret.skillUsed = true;
+        delete this.playerSecret.activeSkillRole;
         this.addSystemMessage(data.message || '你跳过了技能');
       });
 

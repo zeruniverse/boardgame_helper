@@ -624,6 +624,8 @@ class OnuWerewolfWorker extends BaseGameWorker {
     // 通知该玩家可以使用技能
     this.sendToPlayer(player.id, 'onu_skill_ready', {
       message: '轮到你使用技能了',
+      role: currentSkillItem.skill.getRole(),
+      roleName: ONU_WEREWOLF_ROLE_NAMES[currentSkillItem.skill.getRole()] || '未知角色',
       timeLeft: this.gameState.timeLeft
     });
 
@@ -884,10 +886,12 @@ class OnuWerewolfWorker extends BaseGameWorker {
       this.skillTimeout = null;
     }
 
-    // 修复Bug 5.4: 如果技能队列未完成，先自动跳过剩余技能
+    // 如果夜间总时限耗尽而技能队列仍未完成，剩余技能按超时处理。
+    // 狼王把中心狼人牌给一名玩家是强制效果，不能被总时限直接跳过。
     while (this.currentSkillIndex < this.skillQueue.length) {
       const currentSkillItem = this.skillQueue[this.currentSkillIndex];
       if (currentSkillItem && !currentSkillItem.player.skillUsed) {
+        this.tryAutoResolveMandatorySkill(currentSkillItem.player, currentSkillItem.skill);
         currentSkillItem.player.skillUsed = true;
       }
       this.currentSkillIndex++;

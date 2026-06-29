@@ -131,20 +131,20 @@
       <div class="phase-header">
         <h3>夜晚阶段</h3>
         <div class="my-role">
-          你的角色: <span class="role-name">{{ getRoleName(myRole) }}</span>
+          你的角色: <span class="role-name">{{ getRoleName(activeRole) }}</span>
         </div>
       </div>
 
       <div v-if="canUseSkill" class="skill-panel">
         <h4>使用技能</h4>
         <div class="skill-description">
-          {{ getSkillDescription(myRole) }}
+          {{ getSkillDescription(activeRole) }}
         </div>
         
         <!-- 技能目标选择UI (H1 fix) -->
         <div class="skill-selection">
           <!-- 预言家/学徒: 选择1名玩家 或 2张中心卡 -->
-          <div v-if="myRole === OnuWerewolfRole.Seer" class="selection-options">
+          <div v-if="activeRole === OnuWerewolfRole.Seer" class="selection-options">
             <el-radio-group v-model="seerMode">
               <el-radio-button label="player">查看1名玩家</el-radio-button>
               <el-radio-button label="cards">查看2张中心卡</el-radio-button>
@@ -175,7 +175,7 @@
           </div>
 
           <!-- 预言家学徒: 选择1张中心卡 -->
-          <div v-else-if="myRole === OnuWerewolfRole.ApprenticeSeer" class="card-select">
+          <div v-else-if="activeRole === OnuWerewolfRole.ApprenticeSeer" class="card-select">
             <p>选择一张中心卡查看:</p>
             <el-select v-model="selectedCard" placeholder="选择中心卡">
               <el-option
@@ -188,7 +188,7 @@
           </div>
 
           <!-- 强盗: 选择1名其他玩家交换 -->
-          <div v-else-if="myRole === OnuWerewolfRole.Robber" class="player-select">
+          <div v-else-if="activeRole === OnuWerewolfRole.Robber" class="player-select">
             <p>选择一名玩家交换角色:</p>
             <el-select v-model="selectedPlayer" placeholder="选择玩家">
               <el-option
@@ -201,7 +201,7 @@
           </div>
 
           <!-- 捣蛋鬼: 选择2名其他玩家交换 -->
-          <div v-else-if="myRole === OnuWerewolfRole.Troublemaker" class="player-select">
+          <div v-else-if="activeRole === OnuWerewolfRole.Troublemaker" class="player-select">
             <p>选择两名玩家交换角色:</p>
             <el-select v-model="selectedPlayer1" placeholder="选择第一名玩家">
               <el-option
@@ -222,7 +222,7 @@
           </div>
 
           <!-- 酒鬼: 选择1张中心卡交换 -->
-          <div v-else-if="myRole === OnuWerewolfRole.Drunk" class="card-select">
+          <div v-else-if="activeRole === OnuWerewolfRole.Drunk" class="card-select">
             <p>选择一张中心卡交换角色:</p>
             <el-select v-model="selectedCard" placeholder="选择中心卡">
               <el-option
@@ -235,7 +235,7 @@
           </div>
 
           <!-- 化身: 选择1名玩家复制角色 -->
-          <div v-else-if="myRole === OnuWerewolfRole.Doppelganger" class="player-select">
+          <div v-else-if="activeRole === OnuWerewolfRole.Doppelganger" class="player-select">
             <p>选择一名玩家复制其角色:</p>
             <el-select v-model="selectedPlayer" placeholder="选择玩家">
               <el-option
@@ -248,7 +248,7 @@
           </div>
 
           <!-- 女巫: 查看中心卡并可选择与玩家交换 -->
-          <div v-else-if="myRole === OnuWerewolfRole.Witch" class="selection-options">
+          <div v-else-if="activeRole === OnuWerewolfRole.Witch" class="selection-options">
             <div class="card-select">
               <p>选择一张中心卡查看:</p>
               <el-select v-model="selectedCard" placeholder="选择中心卡">
@@ -274,7 +274,7 @@
           </div>
 
           <!-- 超自然调查员: 选择最多两名其他玩家依次查看 -->
-          <div v-else-if="myRole === OnuWerewolfRole.ParanormalInvestigator" class="player-select">
+          <div v-else-if="activeRole === OnuWerewolfRole.ParanormalInvestigator" class="player-select">
             <p>选择1-2名玩家依次查看；若看到狼人或皮匠会立即变成该角色并停止查看:</p>
             <el-checkbox-group v-model="selectedPlayers" :max="2">
               <el-checkbox-button
@@ -288,7 +288,7 @@
           </div>
 
           <!-- 村庄白痴: 选择整体移动方向 -->
-          <div v-else-if="myRole === OnuWerewolfRole.VillageIdiot" class="selection-options">
+          <div v-else-if="activeRole === OnuWerewolfRole.VillageIdiot" class="selection-options">
             <p>选择将除自己外的其他可移动玩家角色卡整体移动方向:</p>
             <el-radio-group v-model="villageIdiotDirection">
               <el-radio-button label="left">左移</el-radio-button>
@@ -297,7 +297,7 @@
           </div>
 
           <!-- 揭示者: 选择1名玩家揭示角色 -->
-          <div v-else-if="myRole === OnuWerewolfRole.Revealer" class="player-select">
+          <div v-else-if="activeRole === OnuWerewolfRole.Revealer" class="player-select">
             <p>选择一名玩家揭示其角色:</p>
             <el-select v-model="selectedPlayer" placeholder="选择玩家">
               <el-option
@@ -310,7 +310,7 @@
           </div>
 
           <!-- 馆长: 选择1名玩家放置文物 -->
-          <div v-else-if="myRole === OnuWerewolfRole.Curator" class="player-select">
+          <div v-else-if="activeRole === OnuWerewolfRole.Curator" class="player-select">
             <p>选择一名玩家放置文物标记:</p>
             <el-select v-model="selectedPlayer" placeholder="选择玩家">
               <el-option
@@ -323,7 +323,7 @@
           </div>
 
           <!-- 哨兵: 选择1名玩家保护 -->
-          <div v-else-if="myRole === OnuWerewolfRole.Sentinel" class="player-select">
+          <div v-else-if="activeRole === OnuWerewolfRole.Sentinel" class="player-select">
             <p>选择一名玩家保护（不能查看/交换）:</p>
             <el-select v-model="selectedPlayer" placeholder="选择玩家">
               <el-option
@@ -336,7 +336,7 @@
           </div>
 
           <!-- 狼王: 选择1名非狼人玩家与中心狼人牌交换 -->
-          <div v-else-if="myRole === OnuWerewolfRole.AlphaWolf" class="player-select">
+          <div v-else-if="activeRole === OnuWerewolfRole.AlphaWolf" class="player-select">
             <p>查看狼人同伴后，选择一名非狼人玩家与中心狼人牌交换:</p>
             <el-select v-model="selectedPlayer" placeholder="选择玩家">
               <el-option
@@ -349,7 +349,7 @@
           </div>
 
           <!-- 神秘狼: 查看狼人后选择1名非狼人玩家查看角色 -->
-          <div v-else-if="myRole === OnuWerewolfRole.MysticWolf" class="player-select">
+          <div v-else-if="activeRole === OnuWerewolfRole.MysticWolf" class="player-select">
             <p>查看狼人同伴后，选择一名非狼人玩家查看其角色:</p>
             <el-select v-model="selectedPlayer" placeholder="选择玩家">
               <el-option
@@ -363,7 +363,7 @@
 
           <!-- 狼人/爪牙/石匠/失眠者: 无需选择 -->
           <div v-else class="no-selection">
-            <p>{{ getAutoSkillText(myRole) }}</p>
+            <p>{{ getAutoSkillText(activeRole) }}</p>
           </div>
         </div>
 
@@ -377,7 +377,7 @@
             使用技能
           </el-button>
           <el-button
-            v-if="myRole !== OnuWerewolfRole.AlphaWolf"
+            v-if="activeRole !== OnuWerewolfRole.AlphaWolf"
             type="info"
             @click="skipSkill"
             class="skip-button"
@@ -541,6 +541,7 @@ interface GameState {
 
 interface PlayerSecret {
   myRole?: OnuWerewolfRole;
+  activeSkillRole?: OnuWerewolfRole;
   mySeat?: number;
   skillUsed?: boolean;
   myVote?: number;
@@ -636,6 +637,8 @@ const centerCardOptions = computed(() => {
   return roles.includes(OnuWerewolfRole.AlphaWolf) ? [...baseCards, 3] : baseCards;
 });
 
+const activeRole = computed(() => props.playerSecret?.activeSkillRole ?? props.myRole);
+
 const getCenterCardLabel = (position: number) => {
   return position === 3 ? '中心狼人牌' : `中心卡 ${position}`;
 };
@@ -650,9 +653,9 @@ const otherPlayers = computed(() => {
 
 // 判断技能是否可以执行
 const canExecuteSkill = computed(() => {
-  if (!props.myRole) return false;
+  if (!activeRole.value) return false;
   
-  switch (props.myRole) {
+  switch (activeRole.value) {
     case OnuWerewolfRole.Seer:
       if (seerMode.value === 'player') return !!selectedPlayer.value;
       return selectedCards.value.length === 2;
@@ -689,9 +692,9 @@ const canExecuteSkill = computed(() => {
 
 // 构建技能选择的actionData
 const buildSkillSelection = (): any => {
-  if (!props.myRole) return {};
+  if (!activeRole.value) return {};
   
-  switch (props.myRole) {
+  switch (activeRole.value) {
     case OnuWerewolfRole.Seer:
       if (seerMode.value === 'player' && selectedPlayer.value) {
         return { selection: { players: [selectedPlayer.value] } };
@@ -798,7 +801,7 @@ const getRoleName = (role: OnuWerewolfRole | null | undefined) => {
   return ONU_WEREWOLF_ROLE_NAMES[role] || '未知';
 };
 
-const getSkillDescription = (role: OnuWerewolfRole | null) => {
+const getSkillDescription = (role: OnuWerewolfRole | null | undefined) => {
   if (!role) return '';
   const roleInfo = availableRoles.find(r => r.value === role);
   return roleInfo?.description || '';
@@ -845,7 +848,7 @@ const watchConfig = watch(() => props.gameState?.config, (newConfig) => {
 }, { immediate: true });
 
 // 重置技能选择状态当角色变化时
-const watchRole = watch(() => props.myRole, () => {
+const watchRole = watch(() => activeRole.value, () => {
   selectedPlayer.value = undefined;
   selectedPlayer1.value = undefined;
   selectedPlayer2.value = undefined;
