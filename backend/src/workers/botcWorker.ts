@@ -71,7 +71,7 @@ export class BOTCWorker extends BaseGameWorker {
     });
   }
 
-  private promoteScarletWomanIfNeeded(): boolean {
+  private promoteScarletWomanIfNeeded(dyingDemonId?: string): boolean {
     const allPlayers = Array.from(this.gamePlayers.values());
     const alivePlayers = allPlayers.filter(p => !p.isDead);
     const aliveDemon = alivePlayers.find(p => p.role?.team === Team.DEMON);
@@ -80,8 +80,10 @@ export class BOTCWorker extends BaseGameWorker {
     }
 
     const scarletWoman = alivePlayers.find(p => p.role?.id === 'scarletwoman');
-    const aliveNonTravelerCount = alivePlayers.filter(p => p.role?.team !== Team.TRAVELER).length;
-    if (!scarletWoman || aliveNonTravelerCount < 5) {
+    const dyingDemon = dyingDemonId ? allPlayers.find(p => p.playerId === dyingDemonId && p.role?.team === Team.DEMON) : undefined;
+    const aliveNonTravelerCountAtDemonDeath = alivePlayers.filter(p => p.role?.team !== Team.TRAVELER).length
+      + (dyingDemon && dyingDemon.isDead && dyingDemon.role?.team !== Team.TRAVELER ? 1 : 0);
+    if (!scarletWoman || aliveNonTravelerCountAtDemonDeath < 5) {
       return false;
     }
 
@@ -978,7 +980,7 @@ export class BOTCWorker extends BaseGameWorker {
 
     // 恶魔被处决后，先处理红颜；若红颜成功接任，游戏并未因恶魔死亡而结束，幕后黑手不触发。
     if (player.role?.team === Team.DEMON) {
-      const scarletWomanPromoted = this.promoteScarletWomanIfNeeded();
+      const scarletWomanPromoted = this.promoteScarletWomanIfNeeded(playerId);
       this.broadcastGameState();
       if (scarletWomanPromoted) {
         return;
@@ -1151,7 +1153,7 @@ export class BOTCWorker extends BaseGameWorker {
         if (!isDebuffed && target.role?.team === Team.DEMON) {
           // 目标是恶魔，立即击杀
           await this.killPlayer(targetId, 'slayer');
-          this.promoteScarletWomanIfNeeded();
+          this.promoteScarletWomanIfNeeded(targetId);
           this.broadcastGameState();
           this.sendToRoom('gameMessage', {
             message: `${this.getPlayerName(playerId)} 使用杀手能力击杀了 ${this.getPlayerName(targetId)}（恶魔）！`,
@@ -1600,7 +1602,7 @@ export class BOTCWorker extends BaseGameWorker {
         hasDeathAbility: true
       });
       if (player.role?.team === Team.DEMON) {
-        this.promoteScarletWomanIfNeeded();
+        this.promoteScarletWomanIfNeeded(playerId);
       }
       this.broadcastGameState();
 
@@ -1664,7 +1666,7 @@ export class BOTCWorker extends BaseGameWorker {
         hasDeathAbility: true
       });
       if (player.role?.team === Team.DEMON) {
-        this.promoteScarletWomanIfNeeded();
+        this.promoteScarletWomanIfNeeded(playerId);
       }
       this.broadcastGameState();
 
@@ -1722,7 +1724,7 @@ export class BOTCWorker extends BaseGameWorker {
       cause
     });
     if (player.role?.team === Team.DEMON) {
-      this.promoteScarletWomanIfNeeded();
+      this.promoteScarletWomanIfNeeded(playerId);
     }
     this.broadcastGameState();
   }

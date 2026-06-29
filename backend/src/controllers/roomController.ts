@@ -94,6 +94,26 @@ function serializeEventData(event: string, data: any): any {
   return data;
 }
 
+function markPlayerOnlineForController(room: Room, player: Player, socketId: string, nickname?: string): void {
+  player.socketId = socketId;
+  if (nickname) {
+    player.nickname = nickname;
+    player.name = nickname;
+  }
+  player.online = true;
+  player.lastHeartbeat = Date.now();
+
+  // 德州扑克 worker 会在玩家离线自动弃牌时把 inGame 置为 false。
+  // 玩家成功重连/按原 playerId 重新进入时，主线程快照也要先恢复，
+  // 否则随后同步给 worker 的旧状态会覆盖重连状态。
+  if (room.type === 'texas-holdem') {
+    player.gameMetadata = {
+      ...(player.gameMetadata || {}),
+      inGame: true
+    };
+  }
+}
+
 function mergePlayerFromWorker(existing: Player | undefined, worker: Player): Player {
   if (!existing) return worker;
 
@@ -534,9 +554,7 @@ export function roomController(io: Server) {
           console.log(`玩家 ${player.nickname} (${playerId}) 正在重连到房间 ${roomId}`);
           
           // 更新玩家的 socketId 和在线状态
-          player.socketId = socket.id;
-          player.online = true;
-          player.lastHeartbeat = Date.now();
+          markPlayerOnlineForController(room, player, socket.id);
 
           // 让新 socket 加入房间频道
           await socket.join(roomId);
@@ -600,11 +618,7 @@ export function roomController(io: Server) {
 
         // 如果同一个玩家ID已存在，按重连处理，避免创建/进房后页面切换导致重复人数。
         if (player) {
-          player.socketId = socket.id;
-          player.nickname = data.nickname || player.nickname;
-          player.name = player.nickname;
-          player.online = true;
-          player.lastHeartbeat = Date.now();
+          markPlayerOnlineForController(room, player, socket.id, data.nickname || player.nickname);
           room.lastActiveTime = Date.now();
 
           if (room.cleanupTimer) {
@@ -725,11 +739,7 @@ export function roomController(io: Server) {
 
         // 旧版直接链接接口也支持按 playerId 重连，避免刷新/分享链接后重复占座。
         if (player) {
-          player.socketId = socket.id;
-          player.nickname = data.nickname || player.nickname;
-          player.name = player.nickname;
-          player.online = true;
-          player.lastHeartbeat = Date.now();
+          markPlayerOnlineForController(room, player, socket.id, data.nickname || player.nickname);
           room.lastActiveTime = Date.now();
 
           if (room.cleanupTimer) {
@@ -1196,16 +1206,22 @@ export function roomController(io: Server) {
           console.error(`向房间 ${roomId} 发送 player_offline 任务失败:`, error);
         }
 
-        rooms.set(roomId, currentRoom);
-        io.to(roomId).emit('room_update', toClientRoom(currentRoom));
+        const latestRoom = rooms.get(roomId) || currentRoom;
+        const latestPlayer = latestRoom.players.find(p => p.id === player.id);
+        if (latestPlayer) {
+          latestPlayer.online = false;
+        }
+        currentRoom = latestRoom;
+        rooms.set(roomId, latestRoom);
+        io.to(roomId).emit('room_update', toClientRoom(latestRoom));
 
         // 更新大厅中该房间的玩家数量
-        if (!currentRoom.private) {
+        if (!latestRoom.private) {
           broadcastLobbyUpdate();
         }
 
         // 检查房间是否已空，如果空则设置清理定时器
-        const onlinePlayers = currentRoom.players.filter(p => p.online);
+        const onlinePlayers = latestRoom.players.filter(p => p.online);
         if (onlinePlayers.length === 0) {
           console.log(`房间 ${roomId} 已没有在线玩家，设置清理定时器`);
           
