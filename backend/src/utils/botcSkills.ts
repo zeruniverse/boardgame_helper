@@ -660,7 +660,8 @@ function processGambler(action: NightAction, allPlayers: GamePlayer[]): SkillRes
   }
 
   const target = allPlayers.find(p => p.playerId === targets[0]);
-  const isCorrect = target?.role?.id === guess;
+  const normalizedGuess = String(guess).trim().toLowerCase();
+  const isCorrect = target?.role?.id.toLowerCase() === normalizedGuess || target?.role?.name === String(guess).trim();
 
   return {
     success: true,

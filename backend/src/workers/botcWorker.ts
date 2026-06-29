@@ -594,6 +594,19 @@ export class BOTCWorker extends BaseGameWorker {
         const randomPlayer = allPlayers[Math.floor(Math.random() * allPlayers.length)];
         corrupted.grandchild = randomPlayer?.playerId;
       }
+      for (const key of ['isDemon', 'sameAlignment', 'demonVoted', 'minionNominated']) {
+        if (typeof information[key] === 'boolean') {
+          corrupted[key] = !information[key];
+        }
+      }
+      for (const key of ['deadEvilCount', 'abnormalCount', 'wokeCount']) {
+        if (typeof information[key] === 'number') {
+          corrupted[key] = Math.max(0, information[key] + (Math.random() < 0.5 ? -1 : 1));
+        }
+      }
+      if (Array.isArray(information.roles) && information.roles.length > 1) {
+        corrupted.roles = [...information.roles].reverse();
+      }
       return corrupted;
     }
     return information;
@@ -1531,60 +1544,141 @@ export class BOTCWorker extends BaseGameWorker {
   }
 
   /**
-   * 处理需要白天历史数据的特殊信息角色
-   * Flowergirl: 白天是否有恶魔投票
-   * Towncrier: 白天是否有爪牙提名
-   * Seamstress: 比较两个目标的阵营
-   * Dreamer: 揭示一个正确和一个错误的角色
+   * 处理需要白天历史数据或玩家目标选择的夜晚信息角色。
+   * 这些角色不会产生杀人/保护等效果，但必须在夜晚行动结算时给出信息；
+   * 不能因为玩家已经提交了“确认/选择目标”而跳过，否则会静默丢失信息。
    */
   private async processSpecialNightInfo(): Promise<void> {
     const allPlayers = Array.from(this.gamePlayers.values());
+    const getAction = (playerId: string) => this.nightActions.find(action => action.playerId === playerId);
+    const selectedPlayers = (action: NightAction | undefined): GamePlayer[] => {
+      return (action?.targets || [])
+        .map(targetId => this.gamePlayers.get(targetId))
+        .filter((p): p is GamePlayer => Boolean(p));
+    };
+    const sendInfo = (playerId: string, player: GamePlayer, roleId: string, information: any) => {
+      const finalInfo = this.playerAbilityWorks(player)
+        ? information
+        : this.corruptInfo(information, roleId);
+      this.sendToPlayer(playerId, 'nightInfo', {
+        role: roleId,
+        information: finalInfo,
+        isCorrupted: false
+      });
+      player.hasActed = true;
+    };
 
     for (const playerId of this.gameState.nightOrder) {
       const player = this.gamePlayers.get(playerId);
       const effectiveRole = player ? this.getEffectiveRole(player) : null;
       if (!player || !effectiveRole || player.isDead) continue;
-      if (player.hasActed) continue; // 已经处理过的跳过
 
       const roleId = effectiveRole.id;
+      const action = getAction(playerId);
 
       try {
-        // Flowergirl: 检查白天是否有恶魔投票
-        if (roleId === 'flowergirl') {
-          // 从白天的投票记录中检查是否有恶魔参与投票
-          const demonVoted = this.checkIfDemonVotedToday();
-          const isPoisoned = !this.playerAbilityWorks(player);
-          this.sendToPlayer(playerId, 'nightInfo', {
-            role: 'flowergirl',
-            information: { demonVoted: isPoisoned ? !demonVoted : demonVoted },
-            isCorrupted: false
-          });
-          player.hasActed = true;
+        if (roleId === 'empath') {
+          const neighbors = getNeighbors(playerId, allPlayers);
+          const evilCount = neighbors.filter(neighbor => isEvilPlayer(neighbor)).length;
+          sendInfo(playerId, player, roleId, { evilCount });
         }
 
-        // Towncrier: 检查白天是否有爪牙提名
+        else if (roleId === 'fortuneteller') {
+          const targets = selectedPlayers(action);
+          if (targets.length !== 2) {
+            this.sendToPlayer(playerId, 'actionError', { message: '占卜师必须选择两名玩家' });
+            continue;
+          }
+          const isDemon = targets.some(target => {
+            const targetRole = this.getEffectiveRole(target) || target.role;
+            return targetRole?.team === Team.DEMON || target.reminders.includes('Red herring');
+          });
+          sendInfo(playerId, player, roleId, { isDemon });
+        }
+
+        else if (roleId === 'dreamer') {
+          const targets = selectedPlayers(action);
+          if (targets.length !== 1) {
+            this.sendToPlayer(playerId, 'actionError', { message: '筑梦师必须选择一名玩家' });
+            continue;
+          }
+          const target = targets[0];
+          const realRole = this.getEffectiveRole(target) || target.role;
+          const fakeTeams = realRole?.team === Team.DEMON || realRole?.team === Team.MINION
+            ? [Team.TOWNSFOLK, Team.OUTSIDER]
+            : [Team.MINION, Team.DEMON];
+          const rolePool = fakeTeams
+            .flatMap(team => getRolesByTeam(this.gameConfig.edition, team))
+            .filter(role => role.id !== realRole?.id);
+          const fakeRole = rolePool[Math.floor(Math.random() * rolePool.length)] || realRole;
+          const roles = Math.random() < 0.5
+            ? [realRole, fakeRole]
+            : [fakeRole, realRole];
+          sendInfo(playerId, player, roleId, {
+            playerId: target.playerId,
+            playerName: this.getPlayerName(target.playerId),
+            roles: roles.filter(Boolean).map(role => ({ roleId: role!.id, roleName: role!.name }))
+          });
+        }
+
+        else if (roleId === 'seamstress') {
+          const targets = selectedPlayers(action);
+          if (player.reminders.includes('Seamstress used')) {
+            continue;
+          }
+          if (targets.length !== 2 || targets.some(target => target.playerId === playerId)) {
+            this.sendToPlayer(playerId, 'actionError', { message: '女裁缝必须选择两名非自己的玩家' });
+            continue;
+          }
+          const sameAlignment = isEvilPlayer(targets[0]) === isEvilPlayer(targets[1]);
+          sendInfo(playerId, player, roleId, { sameAlignment });
+          player.reminders.push('Seamstress used');
+        }
+
+        else if (roleId === 'chambermaid') {
+          const targets = selectedPlayers(action);
+          if (targets.length !== 2 || targets.some(target => target.playerId === playerId || target.isDead)) {
+            this.sendToPlayer(playerId, 'actionError', { message: '侍女必须选择两名存活且非自己的玩家' });
+            continue;
+          }
+          const wokeCount = targets.filter(target => this.nightActions.some(a => a.playerId === target.playerId)).length;
+          sendInfo(playerId, player, roleId, { wokeCount });
+        }
+
+        else if (roleId === 'flowergirl') {
+          sendInfo(playerId, player, roleId, { demonVoted: this.checkIfDemonVotedToday() });
+        }
+
         else if (roleId === 'towncrier') {
-          const minionNominated = this.checkIfMinionNominatedToday();
-          const isPoisoned = !this.playerAbilityWorks(player);
-          this.sendToPlayer(playerId, 'nightInfo', {
-            role: 'towncrier',
-            information: { minionNominated: isPoisoned ? !minionNominated : minionNominated },
-            isCorrupted: false
-          });
-          player.hasActed = true;
+          sendInfo(playerId, player, roleId, { minionNominated: this.checkIfMinionNominatedToday() });
         }
 
-        // Oracle: 统计死亡邪恶玩家数量
         else if (roleId === 'oracle') {
           const deadEvilCount = allPlayers.filter(p => p.isDead && isEvilPlayer(p)).length;
-          const isPoisoned = !this.playerAbilityWorks(player);
-          const fakeCount = isPoisoned ? Math.floor(Math.random() * 5) : deadEvilCount;
-          this.sendToPlayer(playerId, 'nightInfo', {
-            role: 'oracle',
-            information: { deadEvilCount: fakeCount },
-            isCorrupted: false
+          sendInfo(playerId, player, roleId, { deadEvilCount });
+        }
+
+        else if (roleId === 'mathematician') {
+          const abnormalCount = allPlayers.filter(p =>
+            p.reminders.includes('Poisoned') ||
+            p.reminders.includes('中毒') ||
+            p.reminders.includes('Mad') ||
+            p.reminders.includes('Drunk') ||
+            p.reminders.includes('醉酒') ||
+            p.reminders.includes('Protected')
+          ).length;
+          sendInfo(playerId, player, roleId, { abnormalCount });
+        }
+
+        else if (roleId === 'undertaker') {
+          const executedPlayerId = this.gameState.execution?.playerId;
+          const executedPlayer = executedPlayerId ? this.gamePlayers.get(executedPlayerId) : undefined;
+          sendInfo(playerId, player, roleId, {
+            playerId: executedPlayerId || null,
+            playerName: executedPlayerId ? this.getPlayerName(executedPlayerId) : null,
+            roleId: executedPlayer?.role?.id || null,
+            roleName: executedPlayer?.role?.name || null
           });
-          player.hasActed = true;
         }
       } catch (error) {
         console.error(`处理特殊夜晚信息失败 (${roleId}):`, error);
@@ -2154,21 +2248,29 @@ export class BOTCWorker extends BaseGameWorker {
         { const targets = this.selectInnkeeperTargets(allPlayers, aiBias, isGoodStrong, isEvilStrong);
           actionData.targets = targets; }
         break;
-      // 善良信息角色：随机选择（信息由技能处理器正确计算）
-      case 'empath':
+      // 善良信息角色：按角色所需目标数选择，自动信息角色只提交确认。
       case 'fortuneteller':
+      case 'seamstress':
+      case 'chambermaid':
+        actionData.targets = this.selectTwoAliveTargets(allPlayers, player.playerId);
+        break;
+      case 'dreamer':
+        { const randomTarget = this.getRandomAlivePlayer(allPlayers, player.playerId);
+          actionData.targets = randomTarget ? [randomTarget] : []; }
+        break;
+      case 'empath':
       case 'washerwoman':
       case 'librarian':
       case 'investigator':
       case 'chef':
       case 'grandmother':
       case 'clockmaker':
-      case 'dreamer':
-      case 'seamstress':
-      case 'chambermaid':
+      case 'flowergirl':
+      case 'towncrier':
+      case 'oracle':
+      case 'undertaker':
       case 'mathematician':
-        { const randomTarget = this.getRandomAlivePlayer(allPlayers, player.playerId);
-          actionData.targets = randomTarget ? [randomTarget] : []; }
+        actionData.targets = [];
         break;
       // 默认：随机选择目标
       default:
@@ -2310,6 +2412,17 @@ export class BOTCWorker extends BaseGameWorker {
     const t1 = this.selectProtectTarget(allPlayers, aiBias, isGoodStrong, isEvilStrong);
     let t2 = this.getRandomAlivePlayer(allPlayers, t1) || t1;
     return [t1, t2];
+  }
+
+  private selectTwoAliveTargets(allPlayers: GamePlayer[], excludeId?: string): string[] {
+    const candidates = allPlayers.filter(p => !p.isDead && p.playerId !== excludeId);
+    if (candidates.length <= 2) {
+      return candidates.map(p => p.playerId);
+    }
+    const first = candidates[Math.floor(Math.random() * candidates.length)];
+    const remaining = candidates.filter(p => p.playerId !== first.playerId);
+    const second = remaining[Math.floor(Math.random() * remaining.length)];
+    return [first.playerId, second.playerId];
   }
 
   /**

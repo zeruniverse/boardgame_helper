@@ -136,17 +136,27 @@
             
             <!-- 需要选择目标的行动 -->
             <div v-if="needsTarget" class="night-targets">
+              <p class="hint-text">请选择 {{ requiredTargetCount }} 名玩家（已选 {{ selectedNightTargets.length }} 名）</p>
               <el-button
                 v-for="target in availableTargets"
                 :key="target.id"
                 @click="selectNightTarget(target.id)"
                 :disabled="nightActionCompleted"
+                :type="isNightTargetSelected(target.id) ? 'primary' : 'default'"
                 size="small"
               >
                 {{ target.name }}
                 <el-tag v-if="target.isDead" size="small" type="danger">已死亡</el-tag>
               </el-button>
             </div>
+
+            <el-input
+              v-if="needsExtraInput && !nightActionCompleted"
+              v-model="nightExtraInput"
+              :placeholder="extraInputPlaceholder"
+              class="night-extra-input"
+              size="small"
+            />
             
             <!-- 信息展示 -->
             <div v-if="nightInfo" class="night-info">
@@ -154,9 +164,10 @@
             </div>
             
             <el-button 
-              v-if="!nightActionCompleted && !needsTarget"
+              v-if="!nightActionCompleted && (requiredTargetCount !== 1 || needsExtraInput)"
               @click="confirmNightAction"
               type="primary"
+              :disabled="!canConfirmNightAction"
             >
               确认
             </el-button>
@@ -257,12 +268,24 @@ const emit = defineEmits<Emits>()
 
 const nightActionCompleted = ref(false)
 const deathAbilityCompleted = ref(false)
+const selectedNightTargets = ref<string[]>([])
+const nightExtraInput = ref('')
+
+function resetNightActionInput() {
+  nightActionCompleted.value = false
+  selectedNightTargets.value = []
+  nightExtraInput.value = ''
+}
 
 // 监听游戏阶段变化，重置夜晚行动状态
 const watchPhase = watch(() => props.gameState?.phase, (newPhase, oldPhase) => {
   if (newPhase !== oldPhase) {
-    nightActionCompleted.value = false
+    resetNightActionInput()
   }
+})
+
+const watchRole = watch(() => props.playerRole?.id, () => {
+  resetNightActionInput()
 })
 
 const watchDeathAbility = watch(() => props.nightInfo, (info) => {
@@ -273,6 +296,7 @@ const watchDeathAbility = watch(() => props.nightInfo, (info) => {
 
 onUnmounted(() => {
   watchPhase()
+  watchRole()
   watchDeathAbility()
 })
 
@@ -322,21 +346,67 @@ const myNightAction = computed(() => {
   }
 })
 
-const needsTarget = computed(() => {
-  // 需要选择目标的角色
-  const targetRoles = [
-    'poisoner', 'monk', 'imp', 'butler', 'spy', 'sailor', 'exorcist',
-    'innkeeper', 'gambler', 'godfather', 'zombuul', 'pukka', 'witch',
-    'philosopher', 'fanggu', 'vigormortis', 'nodashii', 'vortox',
-    'washerwoman', 'librarian', 'investigator', 'empath', 'fortuneteller',
-    'grandmother', 'clockmaker', 'dreamer', 'seamstress', 'bureaucrat', 'thief'
-  ]
-  return targetRoles.includes(props.playerRole?.id)
+const roleTargetCounts: Record<string, number> = {
+  poisoner: 1,
+  monk: 1,
+  imp: 1,
+  butler: 1,
+  sailor: 1,
+  exorcist: 1,
+  innkeeper: 2,
+  gambler: 1,
+  godfather: 1,
+  zombuul: 1,
+  pukka: 1,
+  witch: 1,
+  fanggu: 1,
+  vigormortis: 1,
+  nodashii: 1,
+  vortox: 1,
+  dreamer: 1,
+  fortuneteller: 2,
+  seamstress: 2,
+  chambermaid: 2,
+  bureaucrat: 1,
+  thief: 1
+}
+
+const requiredTargetCount = computed(() => {
+  return roleTargetCounts[props.playerRole?.id || ''] || 0
+})
+
+const needsTarget = computed(() => requiredTargetCount.value > 0)
+
+const needsExtraInput = computed(() => {
+  return ['gambler', 'philosopher'].includes(props.playerRole?.id || '')
+})
+
+const extraInputPlaceholder = computed(() => {
+  if (props.playerRole?.id === 'gambler') return '填写你猜测的角色ID或角色名，例如 empath / 共情者'
+  if (props.playerRole?.id === 'philosopher') return '填写你要获得的善良角色ID或角色名，例如 empath / 共情者'
+  return ''
+})
+
+const canConfirmNightAction = computed(() => {
+  const enoughTargets = selectedNightTargets.value.length === requiredTargetCount.value
+  const hasExtraInput = !needsExtraInput.value || nightExtraInput.value.trim().length > 0
+  return enoughTargets && hasExtraInput
 })
 
 const availableTargets = computed(() => {
-  return props.gameState?.players?.filter((p: any) => p.id !== props.currentUserId) || []
+  const roleId = props.playerRole?.id || ''
+  const selfExcludedRoles = ['monk', 'butler', 'dreamer', 'seamstress', 'chambermaid']
+  const aliveOnlyRoles = ['chambermaid']
+  return props.gameState?.players?.filter((p: any) => {
+    if (selfExcludedRoles.includes(roleId) && p.id === props.currentUserId) return false
+    if (aliveOnlyRoles.includes(roleId) && p.isDead) return false
+    return true
+  }) || []
 })
+
+const isNightTargetSelected = (targetId: string) => {
+  return selectedNightTargets.value.includes(targetId)
+}
 
 const nightOrderActions = computed(() => {
   return props.gameState?.nightOrder?.map((item: any, index: number) => {
@@ -386,26 +456,46 @@ const vote = (voteChoice: 'for' | 'against' | 'abstain') => {
   })
 }
 
-const selectNightTarget = (targetId: string) => {
+const buildNightActionData = () => {
+  const roleId = props.playerRole?.id || ''
+  const data: any = {}
+  if (roleId === 'gambler') data.guess = nightExtraInput.value.trim()
+  if (roleId === 'philosopher') data.ability = nightExtraInput.value.trim()
+  return {
+    actionType: 'ability',
+    targets: [...selectedNightTargets.value],
+    data
+  }
+}
+
+const submitNightAction = () => {
+  if (!canConfirmNightAction.value) return
   nightActionCompleted.value = true
   emit('game-action', {
     type: 'nightAction',
-    data: { 
-      actionType: 'ability',
-      targets: [targetId] 
-    }
+    data: buildNightActionData()
   })
 }
 
+const selectNightTarget = (targetId: string) => {
+  if (nightActionCompleted.value) return
+  const existingIndex = selectedNightTargets.value.indexOf(targetId)
+  if (existingIndex >= 0) {
+    selectedNightTargets.value.splice(existingIndex, 1)
+    return
+  }
+  if (selectedNightTargets.value.length >= requiredTargetCount.value) {
+    selectedNightTargets.value.shift()
+  }
+  selectedNightTargets.value.push(targetId)
+
+  if (requiredTargetCount.value === 1 && !needsExtraInput.value) {
+    submitNightAction()
+  }
+}
+
 const confirmNightAction = () => {
-  nightActionCompleted.value = true
-  emit('game-action', {
-    type: 'nightAction',
-    data: { 
-      actionType: 'ability',
-      targets: []
-    }
-  })
+  submitNightAction()
 }
 
 const useDeathAbility = (targetId: string) => {
@@ -551,6 +641,13 @@ const formatNightInfo = (info: any) => {
     if (data.sameAlignment !== undefined) {
       return data.sameAlignment ? '两名玩家同阵营' : '两名玩家不同阵营'
     }
+    if (data.wokeCount !== undefined) {
+      return `两名目标中今晚醒来的玩家数: ${data.wokeCount}`
+    }
+    if (Array.isArray(data.roles)) {
+      const roleNames = data.roles.map((role: any) => role.roleName || role.roleId).join(' / ')
+      return `${data.playerName || getGamePlayerName(data.playerId)} 可能是: ${roleNames}`
+    }
     return JSON.stringify(data)
   }
 
@@ -563,6 +660,13 @@ const formatNightInfo = (info: any) => {
   }
   if (info.deadEvilCount !== undefined) {
     return `死亡的邪恶玩家数: ${info.deadEvilCount}`
+  }
+  if (info.wokeCount !== undefined) {
+    return `两名目标中今晚醒来的玩家数: ${info.wokeCount}`
+  }
+  if (Array.isArray(info.roles)) {
+    const roleNames = info.roles.map((role: any) => role.roleName || role.roleId).join(' / ')
+    return `${info.playerName || getGamePlayerName(info.playerId)} 可能是: ${roleNames}`
   }
 
   return JSON.stringify(info)
@@ -654,6 +758,11 @@ const formatNightInfo = (info: any) => {
   gap: 8px;
   justify-content: center;
   margin: 16px 0;
+}
+
+.night-extra-input {
+  max-width: 360px;
+  margin: 8px auto 16px;
 }
 
 .night-info {
