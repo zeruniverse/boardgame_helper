@@ -145,6 +145,23 @@ export const useAvalonStore = defineStore('avalon', {
 
       on('room_update', (room: AvalonRoomState) => {
         this.room = room;
+        if (this.gameState?.status === 0) {
+          const players: Record<string, AvalonPlayer> = {};
+          room.players.forEach((player, index) => {
+            players[player.id] = {
+              ...player,
+              name: player.name || player.nickname || player.id,
+              index: player.index || index + 1,
+              ready: Boolean(player.ready),
+              online: player.online !== false
+            };
+          });
+          this.gameState = {
+            ...this.gameState,
+            hostId: room.hostId,
+            players
+          };
+        }
       });
 
       // 游戏事件

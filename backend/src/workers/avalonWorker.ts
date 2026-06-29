@@ -75,6 +75,7 @@ interface AvalonPlayer {
   name: string;
   index: number;
   ready?: boolean;
+  online?: boolean;
 }
 
 interface AssassinateInfo {
@@ -439,14 +440,27 @@ class AvalonWorker extends BaseGameWorker {
   // 获取游戏信息（不包含机密信息）
   private getGameInfo(): any {
     const state = this.gameState as AvalonGameState;
-    // 将房间中的 ready 状态合并到游戏玩家信息中
+    // 将房间中的 ready 状态合并到游戏玩家信息中。
+    // 准备阶段尚未初始化 state.players，前端仍需要玩家/准备状态来显示房主开始入口。
     const playersWithReady: Record<string, AvalonPlayer> = {};
-    for (const [id, player] of Object.entries(state.players)) {
-      const roomPlayer = this.room.players.find(p => p.id === id);
-      playersWithReady[id] = {
-        ...player,
-        ready: roomPlayer?.gameMetadata?.ready || false
-      };
+    if (Object.keys(state.players).length === 0) {
+      this.room.players.forEach((roomPlayer, index) => {
+        playersWithReady[roomPlayer.id] = {
+          name: roomPlayer.name || roomPlayer.nickname || roomPlayer.id,
+          index: index + 1,
+          ready: roomPlayer.gameMetadata?.ready || false,
+          online: roomPlayer.online !== false
+        };
+      });
+    } else {
+      for (const [id, player] of Object.entries(state.players)) {
+        const roomPlayer = this.room.players.find(p => p.id === id);
+        playersWithReady[id] = {
+          ...player,
+          ready: roomPlayer?.gameMetadata?.ready || false,
+          online: roomPlayer?.online !== false
+        };
+      }
     }
     return {
       hostId: this.room.hostId,

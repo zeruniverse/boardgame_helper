@@ -18,7 +18,18 @@
         >
           取消准备
         </el-button>
+        <el-button
+          v-if="isHost"
+          type="primary"
+          :disabled="!canStartGame"
+          @click="handleStartGame"
+        >
+          开始游戏
+        </el-button>
       </div>
+      <p v-if="isHost" class="ready-tip">
+        {{ readyCount }}/{{ activePlayerCount }} 名在线玩家已准备，5-10 人且全部准备后可开始
+      </p>
     </div>
 
     <!-- 队长选择发言顺序 -->
@@ -265,16 +276,29 @@ const isReady = computed(() => {
   return player?.ready || false
 })
 
-// isHost: 从gameState中推断房主身份（hostId字段或第一个玩家）
 const isHost = computed(() => {
   const playerId = props.playerSecret?.playerId
-  if (!playerId || !props.gameState?.players) return false
-  // 优先使用hostId字段判断
-  if (props.gameState.hostId) {
-    return props.gameState.hostId === playerId
-  }
-  // 回退：在游戏等待阶段(status=0)，玩家列表中的第一个可能是房主
-  return false
+  if (!playerId) return false
+  return props.gameState.hostId === playerId
+})
+
+const waitingPlayers = computed(() => {
+  return Object.values(props.gameState?.players || {}) as any[]
+})
+
+const activePlayerCount = computed(() => {
+  return waitingPlayers.value.filter(player => player.online !== false).length
+})
+
+const readyCount = computed(() => {
+  return waitingPlayers.value.filter(player => player.online !== false && player.ready).length
+})
+
+const canStartGame = computed(() => {
+  return isHost.value &&
+         activePlayerCount.value >= 5 &&
+         activePlayerCount.value <= 10 &&
+         readyCount.value === activePlayerCount.value
 })
 
 const hasVoted = computed(() => {
@@ -346,6 +370,10 @@ const handleUnready = () => {
   emit('gameAction', 'unready', {})
 }
 
+const handleStartGame = () => {
+  emit('gameAction', 'startGame', {})
+}
+
 const handleCaptainSpeak = (speakFirst: boolean) => {
   emit('gameAction', 'captainSpeak', { speakFirst })
 }
@@ -414,6 +442,13 @@ const handleRestartGame = () => {
   justify-content: center;
   gap: 15px;
   flex-wrap: wrap;
+}
+
+.ready-tip {
+  margin: 8px 0 0;
+  color: rgba(255, 255, 255, 0.75);
+  font-size: 13px;
+  text-align: center;
 }
 
 .pick-team-section,
