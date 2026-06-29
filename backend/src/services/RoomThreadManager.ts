@@ -169,9 +169,9 @@ export class RoomThreadManager {
         }
       });
 
-      worker.on('error', (error) => {
+      worker.on('error', (error: any) => {
         console.error(`房间 ${room.id} 线程出错:`, error);
-        this.rejectPendingTasksForRoom(room.id, new Error(`房间 ${room.id} 线程出错: ${error.message}`));
+        this.rejectPendingTasksForRoom(room.id, new Error(`房间 ${room.id} 线程出错: ${error?.message || String(error)}`));
         this.stopRoomThread(room.id);
       });
 

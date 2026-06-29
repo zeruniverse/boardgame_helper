@@ -560,16 +560,30 @@ export class BOTCWorker extends BaseGameWorker {
         const result = processFirstNightInfo(player, allPlayers, this.gameConfig.edition);
         
         if (result.success && result.information) {
-          // 如果中毒或醉酒，提供错误信息，但不泄露真实角色
-          const finalInfo = (isPoisoned || isDrunk) 
-            ? this.corruptInfo(result.information, effectiveRole.id)
-            : result.information;
+          // 判断信息是否为元数据（需要玩家选择目标的提示）还是实际信息
+          const isMetaInfo = result.information.requiresTargets !== undefined ||
+                             result.information.requiresStatement !== undefined ||
+                             result.information.requiresQuestion !== undefined ||
+                             result.information.checkDemonVoted !== undefined ||
+                             result.information.checkMinionNominated !== undefined;
 
-          this.sendToPlayer(playerId, 'nightInfo', {
-            role: effectiveRole.id,
-            information: finalInfo,
-            isCorrupted: false
-          });
+          // 只有实际信息才发送给玩家；元数据（如requiresTargets）仅供内部使用，
+          // 不应发送给玩家，避免泄露说书人信息（如占卜师的redHerring）
+          if (!isMetaInfo) {
+            // 如果中毒或醉酒，提供错误信息，但不泄露真实角色
+            const finalInfo = (isPoisoned || isDrunk) 
+              ? this.corruptInfo(result.information, effectiveRole.id)
+              : result.information;
+
+            this.sendToPlayer(playerId, 'nightInfo', {
+              role: effectiveRole.id,
+              information: finalInfo,
+              isCorrupted: false
+            });
+
+            // 标记首夜信息已处理，避免processSpecialNightInfo重复发送
+            player.hasActed = true;
+          }
         }
       } catch (error) {
         console.error(`处理首夜信息失败 (${effectiveRole.id}):`, error);
@@ -1581,10 +1595,16 @@ export class BOTCWorker extends BaseGameWorker {
       player.hasActed = true;
     };
 
+    const isFirstNight = this.gameState.phase === GamePhase.FIRST_NIGHT;
+
     for (const playerId of this.gameState.nightOrder) {
       const player = this.gamePlayers.get(playerId);
       const effectiveRole = player ? this.getEffectiveRole(player) : null;
       if (!player || !effectiveRole || player.isDead) continue;
+
+      // 首夜中，若玩家已通过processFirstNightInfo获得实际信息并标记hasActed，则跳过
+      // 避免重复发送nightInfo（如empath、washerwoman等角色的信息首夜已直接处理）
+      if (isFirstNight && player.hasActed) continue;
 
       const roleId = effectiveRole.id;
       const action = getAction(playerId);

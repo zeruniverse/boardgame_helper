@@ -1422,7 +1422,9 @@ class WerewolfWorker extends BaseGameWorker {
     const gamePlayer = this.gameState.players[playerId];
 
     const message = normalizeChatText(actionData?.message);
-    const channel = normalizeChatChannel(actionData?.channel, ['all', 'werewolf']);
+    // 将 'wolf' 映射为 'werewolf'，支持前端简写
+    const rawChannel = actionData?.channel === 'wolf' ? 'werewolf' : actionData?.channel;
+    const channel = normalizeChatChannel(rawChannel, ['all', 'werewolf']);
 
     if (!message) return;
     if (!gamePlayer && this.gameState.status !== GameStatus.WAITING && this.gameState.status !== GameStatus.OVER) {
