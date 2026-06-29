@@ -295,6 +295,13 @@ class OnuWerewolfWorker extends BaseGameWorker {
     const gameInfo = this.getGameInfo();
     const secretInfo = this.getSecretInfoForPlayer(playerId);
 
+    this.sendToPlayer(playerId, 'game_state_sync', {
+      room: this.room,
+      game: gameInfo,
+      secret: secretInfo,
+      currentUserId: playerId
+    });
+
     this.sendToPlayer(playerId, 'onu_game_state', {
       ...gameInfo,
       ...secretInfo
