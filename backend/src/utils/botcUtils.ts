@@ -217,21 +217,23 @@ export function getNightOrder(gamePlayers: GamePlayer[], isFirstNight: boolean):
   const roleToPlayers: Map<string, GamePlayer[]> = new Map();
   
   gamePlayers.forEach(player => {
-    if (player.role) {
-      if (!roleToPlayers.has(player.role.id)) {
-        roleToPlayers.set(player.role.id, []);
+    const effectiveRole = player.displayRole || player.role;
+    if (effectiveRole) {
+      if (!roleToPlayers.has(effectiveRole.id)) {
+        roleToPlayers.set(effectiveRole.id, []);
       }
-      roleToPlayers.get(player.role.id)!.push(player);
+      roleToPlayers.get(effectiveRole.id)!.push(player);
     }
   });
 
-  // 按照夜晚顺序添加相关角色玩家
+  // 按照夜晚顺序添加相关角色玩家。酒鬼按其伪镇民身份进入夜晚流程。
   nightOrderIds.forEach(roleId => {
     const playersWithRole = roleToPlayers.get(roleId);
     if (!playersWithRole) return;
 
     playersWithRole.forEach(player => {
-      const nightAction = isFirstNight ? player.role!.firstNight : player.role!.otherNight;
+      const effectiveRole = player.displayRole || player.role!;
+      const nightAction = isFirstNight ? effectiveRole.firstNight : effectiveRole.otherNight;
       if (nightAction > 0 && !player.isDead) {
         order.push(player.playerId);
       }

@@ -40,11 +40,12 @@ export function processFirstNightInfo(
   allPlayers: GamePlayer[],
   editionId: string
 ): SkillResult {
-  if (!player.role) {
+  const effectiveRole = player.displayRole || player.role;
+  if (!effectiveRole) {
     return { success: false, message: '玩家没有角色' };
   }
 
-  const roleId = player.role.id;
+  const roleId = effectiveRole.id;
   
   // 信息类技能处理器映射
   const infoHandlers: { [key: string]: () => SkillResult } = {
@@ -86,11 +87,12 @@ export function processNightAction(
   isFirstNight: boolean = false
 ): SkillResult {
   const player = allPlayers.find(p => p.playerId === action.playerId);
-  if (!player || !player.role) {
+  const effectiveRole = player?.displayRole || player?.role;
+  if (!player || !effectiveRole) {
     return { success: false, message: '玩家或角色不存在' };
   }
 
-  const roleId = player.role.id;
+  const roleId = effectiveRole.id;
   
   // 夜晚行动处理器映射
   const actionHandlers: { [key: string]: () => SkillResult } = {

@@ -51,7 +51,10 @@ export interface Edition {
 
 export interface GamePlayer {
   playerId: string;
+  /** 真实角色。酒鬼等隐藏身份仍以真实角色记录，避免泄露给普通玩家。 */
   role: Role | null;
+  /** 玩家实际看到/被当作执行夜晚流程的角色；目前用于酒鬼的伪镇民身份。 */
+  displayRole?: Role | null;
   isDead: boolean;
   isAlive?: boolean;  // 前端兼容性属性，由isDead派生
   deathCause?: string;
