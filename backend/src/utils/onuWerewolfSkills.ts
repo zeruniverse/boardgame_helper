@@ -109,6 +109,10 @@ export abstract class OnuBaseSkill {
   protected getCenterCard(position: number): OnuWerewolfCenterCard | undefined {
     return this.centerCards[position];
   }
+
+  protected getAlphaWolfCenterCard(): OnuWerewolfCenterCard | undefined {
+    return this.centerCards.find(card => card.position === 3 || card.flags?.includes(OnuWerewolfRole.AlphaWolf));
+  }
 }
 
 // 狼人技能
@@ -172,7 +176,7 @@ export class OnuSeerSkill extends OnuBaseSkill {
 
     if (selection.cards && selection.cards.length === 2) {
       const uniqueCards = new Set(selection.cards);
-      return uniqueCards.size === 2 && selection.cards.every(pos => pos >= 0 && pos <= 2);
+      return uniqueCards.size === 2 && selection.cards.every(pos => this.getCenterCard(pos) !== undefined);
     }
 
     return false;
@@ -298,7 +302,7 @@ export class OnuDrunkSkill extends OnuBaseSkill {
     }
     
     const position = selection.cards[0];
-    return position >= 0 && position <= 2;
+    return this.getCenterCard(position) !== undefined;
   }
 
   execute(selection: OnuWerewolfSelection): OnuSkillResult {
@@ -459,11 +463,11 @@ export class OnuWitchSkill extends OnuBaseSkill {
     // 阶段2：选择是否将看到的卡与某玩家交换（优先判断，避免与阶段1条件重叠）
     if (selection.cards && selection.cards.length === 1 && selection.players && selection.players.length === 1) {
       const target = this.getPlayerBySeat(selection.players[0]);
-      return target !== undefined && !target.shielded && selection.cards[0] >= 0 && selection.cards[0] <= 2;
+      return target !== undefined && !target.shielded && this.getCenterCard(selection.cards[0]) !== undefined;
     }
     // 阶段1：查看一张中心卡（仅选择卡牌，无玩家）
     if (selection.cards && selection.cards.length === 1 && (!selection.players || selection.players.length === 0)) {
-      return selection.cards[0] >= 0 && selection.cards[0] <= 2;
+      return this.getCenterCard(selection.cards[0]) !== undefined;
     }
     return false;
   }
@@ -690,7 +694,7 @@ export class OnuApprenticeSeerSkill extends OnuBaseSkill {
     if (!selection || !selection.cards || selection.cards.length !== 1) {
       return false;
     }
-    return selection.cards[0] >= 0 && selection.cards[0] <= 2;
+    return this.getCenterCard(selection.cards[0]) !== undefined;
   }
 
   execute(selection: OnuWerewolfSelection): OnuSkillResult {
@@ -753,14 +757,13 @@ export class OnuApprenticeTannerSkill extends OnuBaseSkill {
 // 狼王技能 - 像狼人查看同伴 + 可移动狼人标记
 export class OnuAlphaWolfSkill extends OnuBaseSkill {
   canUse(selection?: OnuWerewolfSelection): boolean {
-    // 如果没有选择，只查看同伴
-    if (!selection || (!selection.players && !selection.cards)) return true;
-    // 如果要移动标记，需要选择一名非狼人且未被保护的玩家
-    if (selection.players && selection.players.length === 1) {
-      const target = this.getPlayerBySeat(selection.players[0]);
-      return target !== undefined && target.id !== this.owner.id && !onuIsWerewolf(target.actualRole) && !target.shielded;
-    }
-    return true;
+    if (!selection || !selection.players || selection.players.length !== 1) return false;
+    const target = this.getPlayerBySeat(selection.players[0]);
+    return target !== undefined &&
+      target.id !== this.owner.id &&
+      !onuIsWerewolf(target.actualRole) &&
+      !target.shielded &&
+      this.getAlphaWolfCenterCard() !== undefined;
   }
 
   execute(selection?: OnuWerewolfSelection): OnuSkillResult {
@@ -771,7 +774,6 @@ export class OnuAlphaWolfSkill extends OnuBaseSkill {
       revealed: true
     }));
 
-    // 查看同伴
     const baseResult: OnuSkillResult = {
       success: true,
       vision: werewolves.length > 0 ? onuCreateVision(visibleWerewolves) : onuCreateVision([], [this.centerCards[0]]),
@@ -780,16 +782,20 @@ export class OnuAlphaWolfSkill extends OnuBaseSkill {
         '你是唯一的狼人，查看了第一张中心卡牌'
     };
 
-    // 如果选择了目标玩家，将其变为狼人
-    if (selection?.players && selection.players.length === 1) {
-      const target = this.getPlayerBySeat(selection.players[0]);
-      if (target && !onuIsWerewolf(target.actualRole)) {
-        baseResult.roleChanges = [
-          { playerId: target.id, newRole: OnuWerewolfRole.Werewolf, type: 'actual' }
-        ];
-        baseResult.message += `，你将狼人标记给予了${target.name}`;
-      }
+    const target = selection?.players?.length === 1 ? this.getPlayerBySeat(selection.players[0]) : undefined;
+    const centerWolfCard = this.getAlphaWolfCenterCard();
+    if (!target || target.id === this.owner.id || onuIsWerewolf(target.actualRole) || target.shielded || !centerWolfCard) {
+      return { success: false, error: '狼王必须将中心狼人牌与一名未被保护的非狼人玩家交换' };
     }
+
+    const targetRole = target.actualRole;
+    baseResult.roleChanges = [
+      { playerId: target.id, newRole: centerWolfCard.role, type: 'actual' }
+    ];
+    baseResult.cardChanges = [
+      { position: centerWolfCard.position, newRole: targetRole }
+    ];
+    baseResult.message += `，你将中心狼人牌与${target.name}的角色卡交换`;
 
     return baseResult;
   }

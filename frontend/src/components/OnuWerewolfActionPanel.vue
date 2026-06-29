@@ -163,9 +163,13 @@
             <div v-else class="card-select">
               <p>选择两张中心卡查看:</p>
               <el-checkbox-group v-model="selectedCards">
-                <el-checkbox-button :value="0">中心卡 0</el-checkbox-button>
-                <el-checkbox-button :value="1">中心卡 1</el-checkbox-button>
-                <el-checkbox-button :value="2">中心卡 2</el-checkbox-button>
+                <el-checkbox-button
+                  v-for="pos in centerCardOptions"
+                  :key="pos"
+                  :value="pos"
+                >
+                  {{ getCenterCardLabel(pos) }}
+                </el-checkbox-button>
               </el-checkbox-group>
             </div>
           </div>
@@ -174,9 +178,12 @@
           <div v-else-if="myRole === OnuWerewolfRole.ApprenticeSeer" class="card-select">
             <p>选择一张中心卡查看:</p>
             <el-select v-model="selectedCard" placeholder="选择中心卡">
-              <el-option :value="0" label="中心卡 0" />
-              <el-option :value="1" label="中心卡 1" />
-              <el-option :value="2" label="中心卡 2" />
+              <el-option
+                v-for="pos in centerCardOptions"
+                :key="pos"
+                :value="pos"
+                :label="getCenterCardLabel(pos)"
+              />
             </el-select>
           </div>
 
@@ -218,9 +225,12 @@
           <div v-else-if="myRole === OnuWerewolfRole.Drunk" class="card-select">
             <p>选择一张中心卡交换角色:</p>
             <el-select v-model="selectedCard" placeholder="选择中心卡">
-              <el-option :value="0" label="中心卡 0" />
-              <el-option :value="1" label="中心卡 1" />
-              <el-option :value="2" label="中心卡 2" />
+              <el-option
+                v-for="pos in centerCardOptions"
+                :key="pos"
+                :value="pos"
+                :label="getCenterCardLabel(pos)"
+              />
             </el-select>
           </div>
 
@@ -242,9 +252,12 @@
             <div class="card-select">
               <p>选择一张中心卡查看:</p>
               <el-select v-model="selectedCard" placeholder="选择中心卡">
-                <el-option :value="0" label="中心卡 0" />
-                <el-option :value="1" label="中心卡 1" />
-                <el-option :value="2" label="中心卡 2" />
+                <el-option
+                  v-for="pos in centerCardOptions"
+                  :key="pos"
+                  :value="pos"
+                  :label="getCenterCardLabel(pos)"
+                />
               </el-select>
             </div>
             <div class="player-select">
@@ -322,10 +335,10 @@
             </el-select>
           </div>
 
-          <!-- 狼王: 可选选择1名非狼人玩家变为狼人 -->
+          <!-- 狼王: 选择1名非狼人玩家与中心狼人牌交换 -->
           <div v-else-if="myRole === OnuWerewolfRole.AlphaWolf" class="player-select">
-            <p>查看狼人同伴后，可选择一名非狼人玩家给予狼人标记:</p>
-            <el-select v-model="selectedPlayer" placeholder="不给予标记" clearable>
+            <p>查看狼人同伴后，选择一名非狼人玩家与中心狼人牌交换:</p>
+            <el-select v-model="selectedPlayer" placeholder="选择玩家">
               <el-option
                 v-for="p in otherPlayers"
                 :key="p.seat"
@@ -363,7 +376,12 @@
           <el-button type="primary" @click="executeSkill" :disabled="!canExecuteSkill">
             使用技能
           </el-button>
-          <el-button type="info" @click="skipSkill" class="skip-button">
+          <el-button
+            v-if="myRole !== OnuWerewolfRole.AlphaWolf"
+            type="info"
+            @click="skipSkill"
+            class="skip-button"
+          >
             跳过技能
           </el-button>
         </div>
@@ -484,7 +502,7 @@ const availableRoles = [
   { value: OnuWerewolfRole.Hunter, label: '猎人', description: '如果被投票出局，可以带走一名玩家' },
   { value: OnuWerewolfRole.Tanner, label: '皮匠', description: '只有被投票出局才能获胜' },
   { value: OnuWerewolfRole.Doppelganger, label: '化身', description: '选择一名玩家复制其角色' },
-  { value: OnuWerewolfRole.AlphaWolf, label: '狼王', description: '与其他狼人互相认识，可将一名非狼人玩家变为狼人' },
+  { value: OnuWerewolfRole.AlphaWolf, label: '狼王', description: '与其他狼人互相认识，必须将中心狼人牌与一名非狼人玩家交换' },
   { value: OnuWerewolfRole.MysticWolf, label: '神秘狼', description: '与其他狼人互相认识，还可查看一名非狼人玩家的角色' },
   { value: OnuWerewolfRole.ApprenticeSeer, label: '预言家学徒', description: '可以查看一张中心卡牌' },
   { value: OnuWerewolfRole.ParanormalInvestigator, label: '超自然调查员', description: '可依次查看最多两名玩家，若看到狼人或皮匠则变成该角色' },
@@ -612,6 +630,16 @@ const allPlayersList = computed(() => {
   return props.allPlayers || [];
 });
 
+const centerCardOptions = computed(() => {
+  const roles = props.gameState?.config?.roles || selectedRoles.value;
+  const baseCards = [0, 1, 2];
+  return roles.includes(OnuWerewolfRole.AlphaWolf) ? [...baseCards, 3] : baseCards;
+});
+
+const getCenterCardLabel = (position: number) => {
+  return position === 3 ? '中心狼人牌' : `中心卡 ${position}`;
+};
+
 const votablePlayers = computed(() => {
   return props.allPlayers?.filter((p: any) => p.id !== props.currentUserId) || [];
 });
@@ -647,7 +675,7 @@ const canExecuteSkill = computed(() => {
     case OnuWerewolfRole.VillageIdiot:
       return true;
     case OnuWerewolfRole.AlphaWolf:
-      return true; // 可选目标
+      return !!selectedPlayer.value;
     case OnuWerewolfRole.Werewolf:
     case OnuWerewolfRole.Minion:
     case OnuWerewolfRole.Mason:

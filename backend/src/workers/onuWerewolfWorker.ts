@@ -28,7 +28,8 @@ import {
   onuCreateVision,
   onuFormatTime,
   onuGetRoleTeam,
-  onuProcessHunterRevenge
+  onuProcessHunterRevenge,
+  onuIsWerewolf
 } from '../utils/onuWerewolfUtils';
 
 import {
@@ -480,12 +481,22 @@ class OnuWerewolfWorker extends BaseGameWorker {
       this.gameState.players[player.id] = gamePlayer;
     });
 
-    // 创建中心卡牌
+    // 创建中心卡牌。
+    // 狼王(Alpha Wolf)按 Daybreak 规则需要一张额外的“中心狼人牌”，
+    // 它不计入玩家数 + 3 张普通中心牌的配置数量。
     this.gameState.centerCards = centerCards.map((role, index) => ({
       position: index,
       role,
       revealed: false
     }));
+    if (this.config.roles.includes(OnuWerewolfRole.AlphaWolf)) {
+      this.gameState.centerCards.push({
+        position: 3,
+        role: OnuWerewolfRole.Werewolf,
+        revealed: false,
+        flags: [OnuWerewolfRole.AlphaWolf]
+      });
+    }
 
     this.sendToRoom('onu_game_started', {
       message: '游戏开始！角色已分发',
@@ -722,6 +733,35 @@ class OnuWerewolfWorker extends BaseGameWorker {
     this.processNextSkill();
   }
 
+  private tryAutoResolveMandatorySkill(player: OnuWerewolfPlayer, skill: OnuBaseSkill): boolean {
+    if (skill.getRole() !== OnuWerewolfRole.AlphaWolf) {
+      return false;
+    }
+
+    const target = Object.values(this.gameState.players)
+      .filter(p => p.id !== player.id && !p.shielded && !onuIsWerewolf(p.actualRole))
+      .sort((a, b) => a.seat - b.seat)[0];
+
+    if (!target) {
+      return false;
+    }
+
+    const result = skill.execute({ players: [target.seat] });
+    if (!result.success) {
+      return false;
+    }
+
+    if (this.shouldBeVisibleToAuraSeer(skill.getRole(), result)) {
+      player.auraVisible = true;
+    }
+    this.applySkillResult(result);
+    this.sendToPlayer(player.id, 'onu_skill_result', {
+      message: result.message,
+      vision: result.vision
+    });
+    return true;
+  }
+
   private async handleSkipSkill(playerId: string): Promise<void> {
     const player = this.gameState.players[playerId];
     if (!player) return;
@@ -735,7 +775,9 @@ class OnuWerewolfWorker extends BaseGameWorker {
       return;
     }
 
-    // 标记技能已使用（跳过）
+    const autoResolved = this.tryAutoResolveMandatorySkill(player, currentSkillItem.skill);
+
+    // 标记技能已使用（跳过或已由系统自动处理强制技能）
     player.skillUsed = true;
 
     // 清理技能超时定时器
@@ -744,9 +786,11 @@ class OnuWerewolfWorker extends BaseGameWorker {
       this.skillTimeout = null;
     }
 
-    this.sendToPlayer(playerId, 'onu_skill_skipped', {
-      message: '你跳过了技能使用'
-    });
+    if (!autoResolved) {
+      this.sendToPlayer(playerId, 'onu_skill_skipped', {
+        message: '你跳过了技能使用'
+      });
+    }
 
     // 进入下一个技能
     this.currentSkillIndex++;
