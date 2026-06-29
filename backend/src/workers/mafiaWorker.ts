@@ -941,12 +941,10 @@ class MafiaWorker extends BaseGameWorker {
       return;
     }
 
-    if (playerId in gameState.wantToKill) {
-      this.sendToPlayer(playerId, 'kill_pending', { message: '你已经选择过杀人目标' });
-      return;
-    }
+    const isChangingChoice = playerId in gameState.wantToKill;
 
-    // 记录杀人选择
+    // 记录或更新杀人选择。多名杀手目标不一致时，需要允许改票达成一致；
+    // 否则在不限时或长夜晚配置下会一直等待共识，导致夜晚无法自然推进。
     gameState.wantToKill[playerId] = targetId;
     
     // 移除离线杀手的选择
@@ -976,7 +974,9 @@ class MafiaWorker extends BaseGameWorker {
       }
     } else {
       this.sendToPlayer(playerId, 'kill_pending', {
-        message: '杀人选择已记录，等待其他杀手选择'
+        message: isChangingChoice
+          ? '杀人选择已更新，等待所有在线杀手达成一致'
+          : '杀人选择已记录，等待其他杀手选择'
       });
     }
   }
