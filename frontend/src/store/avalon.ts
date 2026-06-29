@@ -11,6 +11,7 @@ interface AvalonPlayer {
   nickname?: string;
   index: number;
   ready: boolean;
+  online?: boolean;
 }
 
 interface AvalonGameState {
@@ -82,8 +83,9 @@ export const useAvalonStore = defineStore('avalon', {
 
     canStartGame(): boolean {
       if (!this.isHost || !this.room) return false;
-      const readyCount = this.room.players.filter(p => p.ready).length;
-      return readyCount >= 5 && readyCount === this.room.players.length;
+      const activePlayers = this.room.players.filter(p => p.online !== false);
+      const readyCount = activePlayers.filter(p => p.ready).length;
+      return readyCount >= 5 && readyCount <= 10 && readyCount === activePlayers.length;
     },
 
     canOperate(): boolean {

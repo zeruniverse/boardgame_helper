@@ -90,6 +90,7 @@ interface OnuWerewolfPlayer {
   nickname?: string;
   seat: number;
   ready: boolean;
+  online?: boolean;
   voted: boolean;
   skillUsed: boolean;
   revealed?: boolean;
@@ -164,11 +165,12 @@ export const useOnuWerewolfStore = defineStore('onuWerewolf', {
 
     canStartGame(): boolean {
       if (!this.isHost || !this.room || !this.gameState?.config) return false;
-      const playerCount = this.room.players.length;
+      const activePlayers = this.room.players.filter(p => p.online !== false);
+      const playerCount = activePlayers.length;
       const roleCount = this.gameState.config.roles.length;
-      const readyCount = this.room.players.filter(p => p.ready).length;
+      const readyCount = activePlayers.filter(p => p.ready).length;
       
-      // 角色数量必须比玩家数量多3个，且所有玩家都准备就绪
+      // 后端按在线玩家开局：离线玩家留在房间中，但不参与新局。
       return roleCount === playerCount + 3 && readyCount === playerCount && playerCount >= 3;
     },
 

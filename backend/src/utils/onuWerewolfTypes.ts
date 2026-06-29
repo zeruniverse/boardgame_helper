@@ -96,7 +96,7 @@ export const ONU_WEREWOLF_SKILL_PRIORITY: Record<OnuWerewolfRole, number> = {
   [OnuWerewolfRole.Squire]: 0x930,
   [OnuWerewolfRole.Beholder]: 0x990,
   [OnuWerewolfRole.Revealer]: 0x1a00,
-  [OnuWerewolfRole.Curator]: 0xb00,
+  [OnuWerewolfRole.Curator]: 0x1b00,
   [OnuWerewolfRole.Unknown]: 0,
   [OnuWerewolfRole.Villager]: 0,
   [OnuWerewolfRole.Hunter]: 0,

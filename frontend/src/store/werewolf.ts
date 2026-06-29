@@ -11,6 +11,7 @@ interface WerewolfPlayer {
   nickname?: string;
   index: number;
   ready: boolean;
+  online?: boolean;
   alive: boolean;
   role?: string;
   isSheriff?: boolean;
@@ -111,9 +112,10 @@ export const useWerewolfStore = defineStore('werewolf', {
 
     canStartGame(): boolean {
       if (!this.isHost || !this.room) return false;
-      const readyCount = this.room.players.filter(p => p.ready).length;
+      const activePlayers = this.room.players.filter(p => p.online !== false);
+      const readyCount = activePlayers.filter(p => p.ready).length;
       const requiredCount = this.gameState?.needingCharacters?.length || this.room.config?.playerCount || 6;
-      return readyCount >= requiredCount;
+      return readyCount === requiredCount;
     },
 
     canOperate(): boolean {
