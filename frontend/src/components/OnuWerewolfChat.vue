@@ -4,11 +4,11 @@
       <h4>聊天区域</h4>
       <div class="chat-info" v-if="gameState">
         <span class="game-phase">{{ gameState.currentPhase }}</span>
-        <span v-if="gameState.status === 3" class="voting-phase">
-          投票阶段 - 可以聊天
+        <span v-if="canChat" class="voting-phase">
+          当前阶段 - 可以聊天
         </span>
         <span v-else class="no-chat">
-          非投票阶段 - 禁止聊天
+          当前阶段 - 禁止聊天
         </span>
       </div>
     </div>
@@ -96,8 +96,9 @@ const messagesContainer = ref<HTMLElement>();
 
 // 计算属性
 const canChat = computed(() => {
-  // 在投票阶段和游戏结束阶段才能聊天（H7 fix）
-  return props.gameState?.status === OnuWerewolfGameStatus.VOTING ||
+  // 等待房间、讨论投票阶段和游戏结束阶段可以公开聊天；夜晚/揭示阶段禁聊。
+  return props.gameState?.status === OnuWerewolfGameStatus.WAITING ||
+         props.gameState?.status === OnuWerewolfGameStatus.VOTING ||
          props.gameState?.status === OnuWerewolfGameStatus.COMPLETED;
 });
 

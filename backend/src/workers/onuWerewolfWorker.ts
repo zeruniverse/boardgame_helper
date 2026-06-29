@@ -868,6 +868,21 @@ class OnuWerewolfWorker extends BaseGameWorker {
     this.setTimer((this.config.discussTime + this.config.votingTime) * 1000, () => this.endVotingPhase());
   }
 
+  private resolveVoteTargetSeat(actionData: any): number | undefined {
+    const rawSeat = actionData?.target ?? actionData?.targetSeat ?? actionData?.seat;
+    if (rawSeat !== undefined && rawSeat !== null && rawSeat !== '') {
+      const seat = Number(rawSeat);
+      return Number.isFinite(seat) ? seat : undefined;
+    }
+
+    const targetId = actionData?.targetId;
+    if (targetId && this.gameState.players[targetId]) {
+      return this.gameState.players[targetId].seat;
+    }
+
+    return undefined;
+  }
+
   private async handleVote(playerId: string, actionData: any): Promise<void> {
     const player = this.gameState.players[playerId];
     if (!player) throw new Error('玩家不存在');
@@ -880,7 +895,7 @@ class OnuWerewolfWorker extends BaseGameWorker {
       throw new Error('你已经投过票了');
     }
 
-    const targetSeat = actionData.target !== undefined ? Number(actionData.target) : undefined;
+    const targetSeat = this.resolveVoteTargetSeat(actionData || {});
     const totalPlayers = Object.keys(this.gameState.players).length;
     if (!targetSeat || isNaN(targetSeat) || targetSeat < 1 || targetSeat > totalPlayers) {
       throw new Error('无效的投票目标');
@@ -1061,9 +1076,12 @@ class OnuWerewolfWorker extends BaseGameWorker {
     const message = normalizeChatText(actionData?.message);
     if (!message) return;
 
-    // 在投票阶段和游戏结束阶段允许聊天
-    if (this.gameState.status === OnuWerewolfGameStatus.VOTING ||
-        this.gameState.status === OnuWerewolfGameStatus.COMPLETED) {
+    // 等待房间、讨论投票阶段和游戏结束阶段允许公开聊天；夜晚仍禁止公聊，避免泄露秘密行动。
+    if ([
+      OnuWerewolfGameStatus.WAITING,
+      OnuWerewolfGameStatus.VOTING,
+      OnuWerewolfGameStatus.COMPLETED
+    ].includes(this.gameState.status)) {
       this.sendToRoom('onu_chat_message', {
         playerId,
         playerName: player.nickname,
