@@ -813,6 +813,12 @@ export class BOTCWorker extends BaseGameWorker {
           message: `${this.getPlayerName(playerId)} 提名了处女，被立即处决！`,
           type: 'warning'
         });
+
+        // 处女能力造成的是一次处决；按 BOTC 规则每天最多一次处决，
+        // 因此若游戏未因该处决结束，应立即结束当天并进入夜晚。
+        if ((this.gameState as any).phase !== GamePhase.ENDED) {
+          await this.startNight(false);
+        }
         return;
       }
       // 提名者不是镇民，Virgin能力已失去但不触发处决
