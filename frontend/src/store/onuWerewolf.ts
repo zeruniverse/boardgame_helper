@@ -247,6 +247,35 @@ export const useOnuWerewolfStore = defineStore('onuWerewolf', {
         };
       };
 
+      const toWaitingPlayer = (player: any): OnuWerewolfPlayer => ({
+        id: player.id,
+        name: player.name || player.nickname || '',
+        seat: player.seat || 0,
+        ready: Boolean(player.ready ?? player.gameMetadata?.ready),
+        online: player.online,
+        voted: Boolean(player.voted),
+        skillUsed: Boolean(player.skillUsed),
+        revealed: Boolean(player.revealed),
+        revealedRole: player.revealedRole
+      });
+
+      const mergeRoomPlayersIntoActiveGame = (roomPlayers: any[]) => {
+        if (!this.gameState) return;
+        const roomPlayersById = new Map(roomPlayers.map(player => [player.id, player]));
+
+        this.gameState.players = this.gameState.players.map(existingPlayer => {
+          const roomPlayer = roomPlayersById.get(existingPlayer.id);
+          if (!roomPlayer) return existingPlayer;
+
+          return {
+            ...existingPlayer,
+            name: roomPlayer.name || roomPlayer.nickname || existingPlayer.name,
+            ready: Boolean(roomPlayer.ready ?? roomPlayer.gameMetadata?.ready ?? existingPlayer.ready),
+            online: roomPlayer.online ?? existingPlayer.online
+          };
+        });
+      };
+
       on('connect', () => {
         console.log('OnuWerewolf socket connected');
         this.connected = true;
@@ -292,18 +321,16 @@ export const useOnuWerewolfStore = defineStore('onuWerewolf', {
       on('room_update', (room: OnuWerewolfRoomState) => {
         this.room = room;
         if (this.gameState) {
-          this.gameState.playerCount = room.players.length;
-          this.gameState.readyCount = room.players.filter(p => p.ready).length;
-          this.gameState.players = room.players.map(p => ({
-            id: p.id,
-            name: p.name || p.nickname || '',
-            seat: p.seat || 0,
-            ready: p.ready || false,
-            voted: p.voted || false,
-            skillUsed: p.skillUsed || false,
-            revealed: p.revealed || false,
-            revealedRole: p.revealedRole
-          }));
+          if (this.gameState.status === OnuWerewolfGameStatus.WAITING) {
+            this.gameState.playerCount = room.players.length;
+            this.gameState.readyCount = room.players.filter((p: any) => p.ready || p.gameMetadata?.ready).length;
+            this.gameState.players = room.players.map(toWaitingPlayer);
+          } else {
+            // 房间更新只包含房间层玩家信息，不包含一夜狼人局内座位/行动状态。
+            // 游戏开始后不能用它重建 gameState.players，否则断线、重连、锁房等房间事件
+            // 会把所有座位覆盖为 0，导致夜晚技能和投票提交到错误目标。
+            mergeRoomPlayersIntoActiveGame(room.players);
+          }
         }
       });
 
