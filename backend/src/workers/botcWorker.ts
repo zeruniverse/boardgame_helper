@@ -1479,9 +1479,23 @@ export class BOTCWorker extends BaseGameWorker {
       case 'startDay':
         await this.startDay();
         break;
+      case 'endVoting': {
+        const activeNomination = this.gameState.nominations.find(n => n.isOnTrial);
+        if (!activeNomination) {
+          this.sendToPlayer(playerId, 'actionError', { message: '当前没有正在进行的投票' });
+          return;
+        }
+        await this.endVoting(activeNomination);
+        break;
+      }
       case 'nextPhase':
-        // 根据当前阶段决定下一步
+        // 白天若仍有提名投票在进行，先由说书人结算当前投票；再次点击才进入夜晚。
         if (this.gameState.phase === GamePhase.DAY) {
+          const activeNomination = this.gameState.nominations.find(n => n.isOnTrial);
+          if (activeNomination) {
+            await this.endVoting(activeNomination);
+            return;
+          }
           await this.endDay();
         } else if (this.gameState.phase === GamePhase.NIGHT || this.gameState.phase === GamePhase.FIRST_NIGHT) {
           await this.processNightActions();

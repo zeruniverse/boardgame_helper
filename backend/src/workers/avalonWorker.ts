@@ -462,6 +462,12 @@ class AvalonWorker extends BaseGameWorker {
         };
       }
     }
+    // 投票/任务行动正在进行时，已提交内容必须保密；否则广播 game_update 会让未提交玩家提前看到票型或失败牌数量。
+    const publicVoteResult = state.status === GameStatus.VOTE
+      ? { true: [], false: [], system: [...(state.voteResult.system || [])] }
+      : state.voteResult;
+    const publicActionFailed = state.status === GameStatus.ACTION ? 0 : state.actionFailed;
+
     return {
       hostId: this.room.hostId,
       status: state.status,
@@ -473,8 +479,8 @@ class AvalonWorker extends BaseGameWorker {
       operators: state.operators,
       step: state.step,
       speakedCount: state.speakedCount,
-      voteResult: state.voteResult,
-      actionFailed: state.actionFailed,
+      voteResult: publicVoteResult,
+      actionFailed: publicActionFailed,
       consecutiveRejections: state.consecutiveRejections,
       winner: state.winner,
       roles: state.roles,
@@ -842,11 +848,10 @@ class AvalonWorker extends BaseGameWorker {
       return;
     }
 
-    // 检查目标是否有效（必须是蓝方阵营，奥伯伦不可作为刺杀目标）
-    const isValidTarget = state.topSecret.blue[targetId] !== undefined;
-    if (!isValidTarget) {
+    // 刺杀本质是猜梅林；选择非梅林（包括邪恶方或自己）都应视为刺杀失败，不能让刺客重试。
+    if (!state.players[targetId]) {
       this.sendToPlayer(playerId, 'game_error', {
-        message: '无效的刺杀目标，只能选择亚瑟方成员'
+        message: '无效的刺杀目标'
       });
       return;
     }
@@ -1230,8 +1235,8 @@ class AvalonWorker extends BaseGameWorker {
           id => state.topSecret.red[id] === Role.ASSASSIN
         );
         if (assassin) {
-          const bluePlayers = Object.keys(state.topSecret.blue);
-          const randomTarget = bluePlayers[Math.floor(Math.random() * bluePlayers.length)];
+          const candidateTargets = Object.keys(state.players);
+          const randomTarget = candidateTargets[Math.floor(Math.random() * candidateTargets.length)];
           this.handleAssassinate(assassin, randomTarget);
         }
         break;
