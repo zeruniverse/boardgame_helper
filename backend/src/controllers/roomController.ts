@@ -263,33 +263,37 @@ export function roomController(io: Server) {
       if (data.type === 'emit') {
         // 广播到房间内所有客户端
         console.log(`广播事件到房间 ${data.roomId}: ${data.event}`, data.data);
+        let outgoingData = data.data;
         if (data.event === 'room_update' && data.data?.id) {
           const existingRoom = rooms.get(data.data.id);
           const oldPrivate = existingRoom?.private;
           const mergedRoom = mergeRoomUpdateFromWorker(existingRoom, data.data);
           rooms.set(data.data.id, mergedRoom);
           threadManager.updateRoomData(data.data.id, mergedRoom);
+          outgoingData = mergedRoom;
           // 如果房间的private状态发生变化，广播大厅更新
           if (oldPrivate !== undefined && mergedRoom.private !== oldPrivate) {
             broadcastLobbyUpdate();
           }
         }
-        io.to(data.roomId).emit(data.event, serializeEventData(data.event, data.data));
+        io.to(data.roomId).emit(data.event, serializeEventData(data.event, outgoingData));
       } else if (data.type === 'emit_to_socket') {
         // 发送到特定socket
         console.log(`发送事件到socket ${data.socketId}: ${data.event}`, data.data);
+        let outgoingData = data.data;
         if (data.event === 'room_update' && data.data?.id) {
           const existingRoom = rooms.get(data.data.id);
           const oldPrivate = existingRoom?.private;
           const mergedRoom = mergeRoomUpdateFromWorker(existingRoom, data.data);
           rooms.set(data.data.id, mergedRoom);
           threadManager.updateRoomData(data.data.id, mergedRoom);
+          outgoingData = mergedRoom;
           // 如果房间的private状态发生变化，广播大厅更新
           if (oldPrivate !== undefined && mergedRoom.private !== oldPrivate) {
             broadcastLobbyUpdate();
           }
         }
-        io.to(data.socketId).emit(data.event, serializeEventData(data.event, data.data));
+        io.to(data.socketId).emit(data.event, serializeEventData(data.event, outgoingData));
       }
     } catch (error) {
       console.error('处理线程消息失败:', error);
