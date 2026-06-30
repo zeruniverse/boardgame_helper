@@ -47,6 +47,7 @@ export class BOTCWorker extends BaseGameWorker {
   private nightRound: number = 0;
   private previouslyPukkaTarget: string | null = null;
   private noExecutionToday: boolean = true;
+  private firstNightInfoPlayerIds: Set<string> = new Set();
 
   /**
    * 获取玩家显示名称的辅助函数
@@ -704,6 +705,7 @@ export class BOTCWorker extends BaseGameWorker {
     this.gameState.phase = isFirstNight ? GamePhase.FIRST_NIGHT : GamePhase.NIGHT;
     this.gameState.nightOrder = getNightOrder(Array.from(this.gamePlayers.values()), isFirstNight);
     this.nightActions = [];
+    this.firstNightInfoPlayerIds.clear();
     this.nightRound++;
 
     // 重置玩家夜间行动状态
@@ -731,10 +733,8 @@ export class BOTCWorker extends BaseGameWorker {
       isFirstNight
     });
 
-    // 处理首夜信息类角色
-    if (isFirstNight) {
-      await this.processFirstNightInfo();
-    }
+    // 首夜信息不能在夜晚刚开始时立即发送。
+    // 投毒者、普卡等首夜前置行动需要先按夜晚顺序结算，否则信息角色可能拿到未受影响的错误信息。
 
     // 如果没有夜晚行动，直接进入白天
     if (this.gameState.nightOrder.length === 0) {
@@ -787,6 +787,7 @@ export class BOTCWorker extends BaseGameWorker {
             });
 
             // 标记首夜信息已处理，避免processSpecialNightInfo重复发送
+            this.firstNightInfoPlayerIds.add(playerId);
             player.hasActed = true;
           }
         }
@@ -1631,9 +1632,18 @@ export class BOTCWorker extends BaseGameWorker {
 
     const allPlayers = Array.from(this.gamePlayers.values());
     const processedActions: any[] = [];
+    const nightOrderIndex = new Map(
+      this.gameState.nightOrder.map((playerId, index) => [playerId, index])
+    );
+    const orderedNightActions = [...this.nightActions].sort((a, b) => {
+      const aIndex = nightOrderIndex.get(a.playerId) ?? Number.MAX_SAFE_INTEGER;
+      const bIndex = nightOrderIndex.get(b.playerId) ?? Number.MAX_SAFE_INTEGER;
+      if (aIndex !== bIndex) return aIndex - bIndex;
+      return a.timestamp - b.timestamp;
+    });
 
-    // 按夜晚顺序处理各个角色的行动
-    for (const action of this.nightActions) {
+    // 按夜晚顺序处理各个角色的行动，而不是按玩家提交先后顺序。
+    for (const action of orderedNightActions) {
       const player = this.gamePlayers.get(action.playerId);
       if (!player || !player.role) continue;
 
@@ -1676,6 +1686,11 @@ export class BOTCWorker extends BaseGameWorker {
       } catch (error) {
         console.error(`处理夜晚行动失败 (${action.roleId}):`, error);
       }
+    }
+
+    // 首夜信息必须等前置夜晚效果（如投毒、保护、阻止）按顺序结算后再发送。
+    if (this.gameState.phase === GamePhase.FIRST_NIGHT) {
+      await this.processFirstNightInfo();
     }
 
     // 处理特殊信息角色的夜晚信息（Flowergirl、Towncrier等需要白天历史数据）
@@ -1862,11 +1877,11 @@ export class BOTCWorker extends BaseGameWorker {
       const effectiveRole = player ? this.getEffectiveRole(player) : null;
       if (!player || !effectiveRole || player.isDead) continue;
 
-      // 首夜中，若玩家已通过processFirstNightInfo获得实际信息并标记hasActed，则跳过
-      // 避免重复发送nightInfo（如empath、washerwoman等角色的信息首夜已直接处理）
-      if (isFirstNight && player.hasActed) continue;
-
       const roleId = effectiveRole.id;
+      // 首夜中，只有已经通过processFirstNightInfo拿到实际信息的玩家才跳过。
+      // 不能用hasActed判断：占卜师、筑梦师、女裁缝、侍女等目标型信息角色提交行动后仍需要在这里发信息。
+      if (isFirstNight && this.firstNightInfoPlayerIds.has(playerId)) continue;
+
       const action = getAction(playerId);
 
       try {
