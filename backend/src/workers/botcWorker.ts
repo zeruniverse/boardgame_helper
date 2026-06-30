@@ -350,7 +350,11 @@ export class BOTCWorker extends BaseGameWorker {
       if (player.online === false) {
         return;
       }
-      this.sendToPlayer(player.id, 'game_update', this.getGameStateForViewer(player.id));
+      this.sendToPlayer(player.id, 'game_update', {
+        ...this.getGameStateForViewer(player.id),
+        isStoryteller: player.id === this.gameConfig.storytellerId,
+        gameConfig: this.gameConfig
+      });
     });
   }
 
@@ -450,7 +454,8 @@ export class BOTCWorker extends BaseGameWorker {
     // 发送当前游戏状态给新玩家
     this.sendToPlayer(roomPlayer.id, 'gameState', {
       gameState: this.getGameStateForViewer(roomPlayer.id),
-      isStoryteller: roomPlayer.id === this.gameConfig.storytellerId
+      isStoryteller: roomPlayer.id === this.gameConfig.storytellerId,
+      gameConfig: this.gameConfig
     });
   }
 
@@ -460,7 +465,8 @@ export class BOTCWorker extends BaseGameWorker {
     // 重新发送游戏状态
     this.sendToPlayer(playerId, 'gameState', {
       gameState: this.getGameStateForViewer(playerId),
-      isStoryteller: playerId === this.gameConfig.storytellerId
+      isStoryteller: playerId === this.gameConfig.storytellerId,
+      gameConfig: this.gameConfig
     });
   }
 

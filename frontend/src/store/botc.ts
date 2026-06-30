@@ -147,6 +147,12 @@ export const useBOTCGameStore = defineStore('botc', () => {
         })
 
         on('game_update', (data) => {
+          if (data?.gameConfig) gameConfig.value = data.gameConfig
+          if (typeof data?.isStoryteller === 'boolean') {
+            isStoryteller.value = data.isStoryteller
+          } else if (gameConfig.value?.storytellerId) {
+            isStoryteller.value = currentUserId.value === gameConfig.value.storytellerId
+          }
           gameState.value = data
         })
 
