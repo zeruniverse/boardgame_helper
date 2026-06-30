@@ -549,10 +549,18 @@ const roleTargetCounts: Record<string, number> = {
   exorcist: 1,
   innkeeper: 2,
   gambler: 1,
+  professor: 1,
   godfather: 1,
+  devilsadvocate: 1,
+  assassin: 1,
   zombuul: 1,
   pukka: 1,
+  shabaloth: 2,
+  po: 1,
+  snakecharmer: 1,
   witch: 1,
+  cerenovus: 1,
+  pithag: 1,
   fanggu: 1,
   vigormortis: 1,
   nodashii: 1,
@@ -566,13 +574,17 @@ const roleTargetCounts: Record<string, number> = {
 }
 
 const requiredTargetCount = computed(() => {
-  return roleTargetCounts[props.playerRole?.id || ''] || 0
+  const roleId = props.playerRole?.id || ''
+  if (roleId === 'professor') {
+    return props.gameState?.players?.some((p: any) => p.isDead) ? 1 : 0
+  }
+  return roleTargetCounts[roleId] || 0
 })
 
 const needsTarget = computed(() => requiredTargetCount.value > 0)
 
 const needsExtraInput = computed(() => {
-  return ['gambler', 'philosopher', 'artist', 'courtier'].includes(props.playerRole?.id || '')
+  return ['gambler', 'philosopher', 'artist', 'courtier', 'cerenovus', 'pithag'].includes(props.playerRole?.id || '')
 })
 
 const extraInputPlaceholder = computed(() => {
@@ -580,6 +592,8 @@ const extraInputPlaceholder = computed(() => {
   if (props.playerRole?.id === 'philosopher') return '填写你要获得的善良角色ID或角色名，例如 empath / 共情者'
   if (props.playerRole?.id === 'artist') return '填写你的艺术家是/否问题'
   if (props.playerRole?.id === 'courtier') return '填写你要选择的角色ID或角色名，例如 imp / 小恶魔'
+  if (props.playerRole?.id === 'cerenovus') return '填写你要求目标疯狂声称的角色ID，例如 artist / 艺术家'
+  if (props.playerRole?.id === 'pithag') return '填写你要把目标变成的角色ID，例如 savant / 贤者'
   return ''
 })
 
@@ -591,11 +605,13 @@ const canConfirmNightAction = computed(() => {
 
 const availableTargets = computed(() => {
   const roleId = props.playerRole?.id || ''
-  const selfExcludedRoles = ['monk', 'butler', 'dreamer', 'seamstress', 'chambermaid']
-  const aliveOnlyRoles = ['chambermaid']
+  const selfExcludedRoles = ['monk', 'butler', 'dreamer', 'seamstress', 'chambermaid', 'snakecharmer']
+  const aliveOnlyRoles = ['chambermaid', 'devilsadvocate', 'snakecharmer']
+  const deadOnlyRoles = ['professor']
   return props.gameState?.players?.filter((p: any) => {
     if (selfExcludedRoles.includes(roleId) && p.id === props.currentUserId) return false
     if (aliveOnlyRoles.includes(roleId) && p.isDead) return false
+    if (deadOnlyRoles.includes(roleId) && !p.isDead) return false
     return true
   }) || []
 })
@@ -680,6 +696,8 @@ const buildNightActionData = () => {
   if (roleId === 'philosopher') data.ability = nightExtraInput.value.trim()
   if (roleId === 'artist') data.question = nightExtraInput.value.trim()
   if (roleId === 'courtier') data.characterId = nightExtraInput.value.trim()
+  if (roleId === 'cerenovus') data.characterId = nightExtraInput.value.trim()
+  if (roleId === 'pithag') data.characterId = nightExtraInput.value.trim()
   return {
     actionType: 'ability',
     targets: [...selectedNightTargets.value],
@@ -793,10 +811,18 @@ const getRoleActionDescription = () => {
     'exorcist': '选择一个玩家：如果是恶魔，恶魔今晚不行动',
     'innkeeper': '选择两个玩家：他们不能死亡，但一个醉酒',
     'gambler': '选择一个玩家并猜测他的角色',
+    'professor': '选择一名死亡镇民复活（一次性能力）',
     'godfather': '如果有外来者死亡，选择一个玩家杀死',
+    'devilsadvocate': '选择一名存活玩家，使其明天被处决也不会死亡',
+    'assassin': '选择一名玩家死亡（一次性能力）',
     'zombuul': '如果白天没人死，选择一个玩家杀死',
     'pukka': '选择一个玩家中毒（前一晚中毒的会死亡）',
+    'shabaloth': '选择两名玩家死亡',
+    'po': '选择一名玩家死亡（蓄力变体由说书人处理）',
+    'snakecharmer': '选择一名存活玩家；若为恶魔则互换角色并使新蛇魅中毒',
     'witch': '诅咒一个玩家：如果他明天提名就死亡',
+    'cerenovus': '选择一名玩家和角色，使其明天疯狂声称该角色',
+    'pithag': '选择一名玩家和不在场角色，将其变成该角色',
     'philosopher': '选择一个善良角色获得其能力',
     'fanggu': '选择一个玩家杀死（第一次杀外来者会转移）',
     'vigormortis': '选择一个玩家杀死',

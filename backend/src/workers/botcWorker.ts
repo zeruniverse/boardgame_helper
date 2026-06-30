@@ -114,6 +114,16 @@ export class BOTCWorker extends BaseGameWorker {
     return !this.isPlayerPoisoned(player) && !this.isPlayerDrunk(player);
   }
 
+  private getNightKillCause(action: NightAction): string {
+    const actingPlayer = this.gamePlayers.get(action.playerId);
+    const roleId = action.roleId || (actingPlayer ? this.getEffectiveRole(actingPlayer)?.id : '') || '';
+    if (roleId === 'godfather') return 'godfather';
+    if (roleId === 'assassin') return 'assassin';
+    if (roleId === 'gambler') return 'gambler';
+    if (roleId === 'pukka') return 'pukka';
+    return 'demon';
+  }
+
   private refreshAlignmentLists(): void {
     const allPlayers = Array.from(this.gamePlayers.values());
     this.gameState.evilPlayers = allPlayers
@@ -620,12 +630,26 @@ export class BOTCWorker extends BaseGameWorker {
       return;
     }
 
-    // 如果传入了配置，更新游戏配置
-    if (config) {
-      if (config.storytellerId) {
-        this.gameConfig.storytellerId = config.storytellerId;
-        this.gameState.storyteller = config.storytellerId;
-      }
+    // 允许房主或当前说书人开始游戏；配置只能由房主修改。
+    // 注意：必须先鉴权再应用 storytellerId，否则任意玩家可把自己写成说书人并越权开局。
+    const isHost = playerId === this.room.hostId;
+    const isStoryteller = playerId === this.gameConfig.storytellerId;
+    const configKeys = ['storytellerId', 'edition', 'storytellerMode', 'aiBias', 'enableTimers'];
+    const hasConfigUpdate = Boolean(
+      config && configKeys.some(key => Object.prototype.hasOwnProperty.call(config, key))
+    );
+
+    if (!isHost && hasConfigUpdate) {
+      this.sendToPlayer(playerId, 'actionError', { message: '只有房主可以修改血染钟楼配置' });
+      return;
+    }
+
+    if (!isHost && !isStoryteller) {
+      this.sendToPlayer(playerId, 'actionError', { message: '只有房主或说书人可以开始游戏' });
+      return;
+    }
+
+    if (isHost && config) {
       if (config.edition) {
         this.gameConfig.edition = config.edition;
       }
@@ -635,18 +659,13 @@ export class BOTCWorker extends BaseGameWorker {
       if (config.aiBias === 'neutral' || config.aiBias === 'good' || config.aiBias === 'evil') {
         this.gameConfig.aiBias = config.aiBias;
       }
+      if (config.storytellerId) {
+        this.gameConfig.storytellerId = config.storytellerId;
+        this.gameState.storyteller = config.storytellerId;
+      }
       if (typeof config.enableTimers === 'boolean') {
         this.gameConfig.enableTimers = config.enableTimers;
       }
-    }
-
-    // 允许房主或说书人开始游戏
-    const isHost = playerId === this.room.hostId;
-    const isStoryteller = playerId === this.gameConfig.storytellerId;
-    
-    if (!isHost && !isStoryteller) {
-      this.sendToPlayer(playerId, 'actionError', { message: '只有房主或说书人可以开始游戏' });
-      return;
     }
 
     // 验证说书人已设置
@@ -761,11 +780,20 @@ export class BOTCWorker extends BaseGameWorker {
       player.hasActed = false;
     });
 
-    // 清除前一夜的临时效果（僧侣保护和女巫诅咒只持续到下一夜）
+    // 清除上一白天/上一夜的临时效果。
     if (!isFirstNight) {
       this.gamePlayers.forEach(player => {
         player.isProtected = false;
-        player.reminders = player.reminders.filter(r => r !== '被诅咒' && r !== 'Cursed');
+        const poChargeWasUsed = player.reminders.includes('Po Charged Used');
+        player.reminders = player.reminders.filter(r =>
+          r !== '被诅咒' &&
+          r !== 'Cursed' &&
+          r !== 'Protected' &&
+          r !== 'Survives execution' &&
+          r !== 'DA Protected' &&
+          r !== 'Po Charged Used' &&
+          !(poChargeWasUsed && r === 'Po Charged')
+        );
       });
     }
 
@@ -1331,6 +1359,30 @@ export class BOTCWorker extends BaseGameWorker {
       return;
     }
 
+    // 恶魔律师保护：玩家仍被处决，但不会因处决死亡。
+    if (player.reminders.includes('Survives execution') || player.reminders.includes('DA Protected')) {
+      player.reminders = player.reminders.filter(r => r !== 'Survives execution' && r !== 'DA Protected');
+      this.noExecutionToday = false;
+      this.gameState.execution = {
+        playerId,
+        executedBy: [executedBy],
+        timestamp: Date.now()
+      };
+
+      this.sendToRoom('playerExecuted', {
+        playerId,
+        playerName: this.getPlayerName(playerId),
+        executedBy: this.getPlayerName(executedBy),
+        survivedExecution: true
+      });
+      this.sendToRoom('gameMessage', {
+        message: `${this.getPlayerName(playerId)} 被处决，但没有死亡`,
+        type: 'warning'
+      });
+      this.broadcastGameState();
+      return;
+    }
+
     // 处理圣徒被处决 - 善良阵营直接失败
     if (player.role?.id === 'saint') {
       await this.endGame('evil', '圣徒被处决，善良阵营失败');
@@ -1565,6 +1617,42 @@ export class BOTCWorker extends BaseGameWorker {
       case 'revivePlayer':
         await this.revivePlayer(data.playerId);
         break;
+      case 'poisonPlayer': {
+        const target = this.gamePlayers.get(data.playerId);
+        if (!target) {
+          this.sendToPlayer(playerId, 'actionError', { message: '目标玩家不存在' });
+          return;
+        }
+        const hasPoisoned = target.reminders.includes('Poisoned') || target.reminders.includes('中毒');
+        target.reminders = target.reminders.filter(r => r !== 'Poisoned' && r !== '中毒');
+        if (!hasPoisoned) {
+          target.reminders.push('Poisoned');
+        }
+        this.sendToRoom('gameMessage', {
+          message: `${this.getPlayerName(data.playerId)} ${hasPoisoned ? '被解毒' : '被标记为中毒'}`,
+          type: 'info'
+        });
+        this.broadcastGameState();
+        break;
+      }
+      case 'drunkPlayer': {
+        const target = this.gamePlayers.get(data.playerId);
+        if (!target) {
+          this.sendToPlayer(playerId, 'actionError', { message: '目标玩家不存在' });
+          return;
+        }
+        const hasDrunk = target.reminders.includes('Drunk') || target.reminders.includes('醉酒');
+        target.reminders = target.reminders.filter(r => r !== 'Drunk' && r !== '醉酒');
+        if (!hasDrunk) {
+          target.reminders.push('Drunk');
+        }
+        this.sendToRoom('gameMessage', {
+          message: `${this.getPlayerName(data.playerId)} ${hasDrunk ? '恢复清醒' : '被标记为醉酒'}`,
+          type: 'info'
+        });
+        this.broadcastGameState();
+        break;
+      }
       case 'endGame':
         await this.endGame(data.winner || 'good', data.reason || '说书人结束游戏');
         break;
@@ -1891,8 +1979,9 @@ export class BOTCWorker extends BaseGameWorker {
 
     // 处理击杀
     if (effects.killed) {
+      const killCause = this.getNightKillCause(action);
       for (const playerId of effects.killed) {
-        await this.killPlayer(playerId, 'demon');
+        await this.killPlayer(playerId, killCause);
       }
     }
 
@@ -1914,11 +2003,73 @@ export class BOTCWorker extends BaseGameWorker {
       }
     }
 
+    // 处理复活
+    if (effects.revived) {
+      for (const playerId of effects.revived) {
+        await this.revivePlayer(playerId);
+      }
+    }
+
+    // 处理角色交换（例如蛇魅）
+    if (effects.roleSwaps) {
+      for (const swap of effects.roleSwaps) {
+        const playerA = this.gamePlayers.get(swap.playerA);
+        const playerB = this.gamePlayers.get(swap.playerB);
+        if (!playerA || !playerB) continue;
+
+        const roleA = playerA.role;
+        const displayRoleA = playerA.displayRole;
+        playerA.role = playerB.role ? { ...playerB.role } : null;
+        playerA.displayRole = playerB.displayRole ? { ...playerB.displayRole } : undefined;
+        playerB.role = roleA ? { ...roleA } : null;
+        playerB.displayRole = displayRoleA ? { ...displayRoleA } : undefined;
+        playerA.nightInfo = null;
+        playerB.nightInfo = null;
+
+        if (swap.poisonPlayerId) {
+          const poisoned = this.gamePlayers.get(swap.poisonPlayerId);
+          if (poisoned && !poisoned.reminders.includes('Poisoned')) {
+            poisoned.reminders.push('Poisoned');
+          }
+        }
+
+        this.refreshAlignmentLists();
+        this.sendRoleStateToPlayer(playerA.playerId);
+        this.sendRoleStateToPlayer(playerB.playerId);
+        this.sendToRoom('gameMessage', {
+          message: swap.message || '有玩家的角色发生了交换',
+          type: 'warning'
+        });
+      }
+    }
+
+    // 处理角色改变（例如坑巫）
+    if (effects.roleChanges) {
+      for (const change of effects.roleChanges) {
+        const player = this.gamePlayers.get(change.playerId);
+        const newRole = getRoleById(change.roleId);
+        if (!player || !newRole) continue;
+
+        player.role = { ...newRole };
+        player.displayRole = undefined;
+        player.nightInfo = null;
+        if (change.poison && !player.reminders.includes('Poisoned')) {
+          player.reminders.push('Poisoned');
+        }
+        this.refreshAlignmentLists();
+        this.sendRoleStateToPlayer(player.playerId);
+        this.sendNightInfoToPlayer(player.playerId, {
+          role: newRole.id,
+          information: { message: change.message || `你的角色变成了${newRole.name}` }
+        });
+      }
+    }
+
     // 处理醉酒
     if (effects.drunk) {
       for (const playerId of effects.drunk) {
         const player = this.gamePlayers.get(playerId);
-        if (player) {
+        if (player && !player.reminders.includes('Drunk')) {
           player.reminders.push('Drunk');
         }
       }
@@ -2273,7 +2424,7 @@ export class BOTCWorker extends BaseGameWorker {
     }
 
     // 检查保护效果（僧侣保护）
-    if (player.isProtected && (cause === 'demon' || cause === 'godfather' || cause === 'assassin')) {
+    if (player.isProtected && (cause === 'demon' || cause === 'godfather')) {
       this.sendToPlayer(this.gameConfig.storytellerId, 'playerProtected', {
         playerId,
         playerName: this.getPlayerName(playerId)

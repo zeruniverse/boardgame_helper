@@ -210,6 +210,9 @@ class OnuWerewolfWorker extends BaseGameWorker {
           await this.handleStartGame(playerId);
           break;
         case 'change_config':
+          if (playerId !== this.room.hostId) {
+            throw new Error('只有房主可以修改游戏配置');
+          }
           await this.changeConfig(actionData || {});
           break;
         case 'useSkill':

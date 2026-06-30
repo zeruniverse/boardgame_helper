@@ -9,7 +9,7 @@ import {
   getNeighbors, 
   countAdjacentEvilPairs 
 } from './botcUtils';
-// 注意：如需使用角色数据工具函数，请从botcData导入
+import { getRoleById } from './botcData';
 
 /**
  * 血染钟楼角色技能处理器 - 完整版本
@@ -26,6 +26,9 @@ export interface SkillResult {
     drunk?: string[];
     mad?: string[];
     reminders?: { playerId: string; reminder: string }[];
+    revived?: string[];
+    roleChanges?: { playerId: string; roleId: string; poison?: boolean; message?: string }[];
+    roleSwaps?: { playerA: string; playerB: string; poisonPlayerId?: string; message?: string }[];
     globalReminders?: { reminder: string; data?: any }[];
     message?: string;
   };
@@ -108,12 +111,20 @@ export function processNightAction(
     exorcist: () => processExorcist(action, allPlayers),
     innkeeper: () => processInnkeeper(action, allPlayers),
     gambler: () => processGambler(action, allPlayers),
+    professor: () => processProfessor(action, allPlayers),
     godfather: () => processGodfather(action, allPlayers),
+    devilsadvocate: () => processDevilsAdvocate(action, allPlayers),
+    assassin: () => processAssassin(action, allPlayers),
     zombuul: () => processZombuul(action, allPlayers),
     pukka: () => processPukka(action, allPlayers),
+    shabaloth: () => processShabaloth(action, allPlayers),
+    po: () => processPo(action, allPlayers),
     
     // Sects & Violets
+    snakecharmer: () => processSnakeCharmer(action, allPlayers),
     witch: () => processWitch(action, allPlayers),
+    cerenovus: () => processCerenovus(action, allPlayers),
+    pithag: () => processPitHag(action, allPlayers),
     philosopher: () => processPhilosopher(action, allPlayers),
     fanggu: () => processFanggu(action, allPlayers),
     vigormortis: () => processVigormortis(action, allPlayers),
@@ -716,7 +727,178 @@ function processPukka(action: NightAction, allPlayers: GamePlayer[]): SkillResul
   };
 }
 
+
+function processDevilsAdvocate(action: NightAction, allPlayers: GamePlayer[]): SkillResult {
+  const targets = action.targets || [];
+  if (targets.length !== 1) {
+    return { success: false, message: '恶魔律师必须选择一名玩家' };
+  }
+
+  const target = allPlayers.find(p => p.playerId === targets[0]);
+  if (!target || target.isDead) {
+    return { success: false, message: '恶魔律师必须选择一名存活玩家' };
+  }
+
+  return {
+    success: true,
+    effects: {
+      reminders: [
+        { playerId: target.playerId, reminder: 'Survives execution' }
+      ]
+    },
+    message: '恶魔律师保护了一名玩家，使其明天免于处决死亡'
+  };
+}
+
+function processAssassin(action: NightAction, allPlayers: GamePlayer[]): SkillResult {
+  const player = allPlayers.find(p => p.playerId === action.playerId);
+  if (player?.reminders.includes('No ability')) {
+    return { success: true, message: '刺客已经使用过能力' };
+  }
+
+  const targets = action.targets || [];
+  if (targets.length !== 1) {
+    return { success: false, message: '刺客必须选择一名玩家' };
+  }
+
+  return {
+    success: true,
+    effects: {
+      killed: [targets[0]],
+      reminders: [
+        { playerId: action.playerId, reminder: 'No ability' }
+      ]
+    },
+    message: '刺客使用一次性击杀能力'
+  };
+}
+
+function processShabaloth(action: NightAction, allPlayers: GamePlayer[]): SkillResult {
+  const targets = action.targets || [];
+  if (targets.length < 1 || targets.length > 2) {
+    return { success: false, message: '沙巴洛斯必须选择一到两名玩家' };
+  }
+
+  return {
+    success: true,
+    effects: {
+      killed: Array.from(new Set(targets))
+    }
+  };
+}
+
+function processPo(action: NightAction, allPlayers: GamePlayer[]): SkillResult {
+  const targets = action.targets || [];
+  const player = allPlayers.find(p => p.playerId === action.playerId);
+  const charged = Boolean(player?.reminders.includes('Po Charged'));
+
+  if (targets.length === 0) {
+    return {
+      success: true,
+      effects: {
+        reminders: [
+          { playerId: action.playerId, reminder: 'Po Charged' }
+        ]
+      },
+      message: '珀今晚蓄力，下一晚最多可选择三名玩家'
+    };
+  }
+
+  if (!charged && targets.length > 1) {
+    return { success: false, message: '未蓄力的珀只能选择一名玩家' };
+  }
+  if (charged && targets.length > 3) {
+    return { success: false, message: '蓄力后的珀最多选择三名玩家' };
+  }
+
+  return {
+    success: true,
+    effects: {
+      killed: Array.from(new Set(targets)),
+      reminders: charged ? [
+        { playerId: action.playerId, reminder: 'Po Charged Used' }
+      ] : undefined
+    }
+  };
+}
+
+function processProfessor(action: NightAction, allPlayers: GamePlayer[]): SkillResult {
+  const player = allPlayers.find(p => p.playerId === action.playerId);
+  if (player?.reminders.includes('No ability')) {
+    return { success: true, message: '教授已经使用过能力' };
+  }
+
+  const targets = action.targets || [];
+  if (targets.length === 0) {
+    return { success: true, message: '教授今晚未使用能力' };
+  }
+  if (targets.length !== 1) {
+    return { success: false, message: '教授最多选择一名死亡玩家' };
+  }
+
+  const target = allPlayers.find(p => p.playerId === targets[0]);
+  if (!target || !target.isDead) {
+    return { success: false, message: '教授必须选择一名死亡玩家' };
+  }
+  if (target.role?.team !== Team.TOWNSFOLK) {
+    return {
+      success: true,
+      effects: {
+        reminders: [
+          { playerId: action.playerId, reminder: 'No ability' }
+        ]
+      },
+      message: '教授选择的目标不是镇民，未能复活'
+    };
+  }
+
+  return {
+    success: true,
+    effects: {
+      revived: [target.playerId],
+      reminders: [
+        { playerId: action.playerId, reminder: 'No ability' }
+      ]
+    },
+    message: '教授复活了一名死亡镇民'
+  };
+}
+
 // Sects & Violets 夜晚技能
+
+function processSnakeCharmer(action: NightAction, allPlayers: GamePlayer[]): SkillResult {
+  const targets = action.targets || [];
+  if (targets.length !== 1) {
+    return { success: false, message: '蛇魅必须选择一名存活玩家' };
+  }
+  if (targets[0] === action.playerId) {
+    return { success: false, message: '蛇魅不能选择自己' };
+  }
+
+  const target = allPlayers.find(p => p.playerId === targets[0]);
+  if (!target || target.isDead) {
+    return { success: false, message: '蛇魅必须选择一名存活玩家' };
+  }
+
+  if (target.role?.team !== Team.DEMON) {
+    return {
+      success: true,
+      information: { isDemon: false, target: target.playerId }
+    };
+  }
+
+  return {
+    success: true,
+    information: { isDemon: true, target: target.playerId },
+    effects: {
+      roleSwaps: [
+        { playerA: action.playerId, playerB: target.playerId, poisonPlayerId: target.playerId }
+      ]
+    },
+    message: '蛇魅与恶魔交换角色，新的蛇魅中毒'
+  };
+}
+
 function processWitch(action: NightAction, allPlayers: GamePlayer[]): SkillResult {
   const targets = action.targets;
   if (!targets || targets.length !== 1) {
@@ -746,6 +928,58 @@ function processPhilosopher(action: NightAction, allPlayers: GamePlayer[]): Skil
         { playerId: action.playerId, reminder: `获得${ability}能力` }
       ]
     }
+  };
+}
+
+
+function processCerenovus(action: NightAction, allPlayers: GamePlayer[]): SkillResult {
+  const targets = action.targets || [];
+  const characterId = String(action.data?.characterId || action.data?.character || action.data?.roleId || '').trim().toLowerCase();
+  if (targets.length !== 1 || !characterId) {
+    return { success: false, message: '洗脑师必须选择一名玩家和一个角色' };
+  }
+
+  return {
+    success: true,
+    information: { target: targets[0], characterId },
+    effects: {
+      reminders: [
+        { playerId: targets[0], reminder: `Mad:${characterId}` }
+      ]
+    },
+    message: '洗脑师指定了一名玩家明天疯狂声称某角色'
+  };
+}
+
+function processPitHag(action: NightAction, allPlayers: GamePlayer[]): SkillResult {
+  const targets = action.targets || [];
+  const requestedRoleId = String(action.data?.characterId || action.data?.character || action.data?.roleId || '').trim().toLowerCase();
+  if (targets.length !== 1 || !requestedRoleId) {
+    return { success: false, message: '坑巫必须选择一名玩家和一个角色' };
+  }
+
+  const role = getRoleById(requestedRoleId);
+  if (!role) {
+    return { success: false, message: '坑巫选择的角色不存在' };
+  }
+
+  const alreadyInPlay = allPlayers.some(p => p.role?.id === role.id);
+  if (alreadyInPlay) {
+    return {
+      success: true,
+      information: { changed: false, reason: 'characterInPlay', roleId: role.id }
+    };
+  }
+
+  return {
+    success: true,
+    information: { changed: true, roleId: role.id, target: targets[0] },
+    effects: {
+      roleChanges: [
+        { playerId: targets[0], roleId: role.id, message: '坑巫改变了你的角色' }
+      ]
+    },
+    message: '坑巫改变了一名玩家的角色'
   };
 }
 

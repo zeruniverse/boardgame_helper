@@ -134,6 +134,7 @@
           @kick-player="handleKickPlayer"
           @start-private-chat="handleStartPrivateChat"
           @start-game="handleStartGame"
+          @storyteller-action="handleStorytellerCommand"
         />
 
         <!-- 聊天区域 -->
@@ -385,6 +386,26 @@ const handleGameAction = (action: any) => {
 const handleStorytellerResponse = (response: { playerId: string, answer: string }) => {
   store.storytellerAction('answerQuestion', response)
   store.clearStorytellerQuestion()
+}
+
+// 处理玩家列表中的说书人快捷操作
+const handleStorytellerCommand = (command: any) => {
+  if (!command?.playerId) return
+
+  const actionMap: Record<string, string> = {
+    kill: 'killPlayer',
+    resurrect: 'revivePlayer',
+    poison: 'poisonPlayer',
+    drunk: 'drunkPlayer'
+  }
+  const actionType = actionMap[command.action]
+  if (!actionType) return
+
+  const payload: any = { playerId: command.playerId }
+  if (actionType === 'killPlayer') {
+    payload.cause = 'storyteller'
+  }
+  store.storytellerAction(actionType, payload)
 }
 
 // 处理转移房主
