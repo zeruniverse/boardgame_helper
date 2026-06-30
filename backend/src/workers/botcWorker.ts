@@ -264,6 +264,47 @@ export class BOTCWorker extends BaseGameWorker {
     }
   }
 
+  private buildStorytellerQuestionText(player: GamePlayer, questionType: string, questionData: any): string {
+    const playerName = this.getPlayerName(player.playerId);
+    const roleName = player.role?.name || player.role?.id || '未知角色';
+    const prefix = `${playerName}（${roleName}）`;
+
+    switch (questionType) {
+      case 'yesNo':
+        return `${prefix}提问：${questionData?.question || '是/否问题'}`;
+      case 'role': {
+        const targetName = questionData?.targetId ? this.getPlayerName(questionData.targetId) : '指定玩家';
+        return `${prefix}想知道 ${targetName} 的角色信息`;
+      }
+      case 'alignment': {
+        const targetName = questionData?.targetId ? this.getPlayerName(questionData.targetId) : '指定玩家';
+        return `${prefix}想知道 ${targetName} 的阵营信息`;
+      }
+      case 'characterAbility': {
+        const character = questionData?.characterId ? getRoleById(questionData.characterId) : undefined;
+        const characterName = character?.name || questionData?.characterId || '指定角色';
+        if (questionData?.targetId) {
+          return `${prefix}想确认 ${this.getPlayerName(questionData.targetId)} 的 ${characterName} 能力是否有效`;
+        }
+        return `${prefix}想确认 ${characterName} 能力是否有效`;
+      }
+      default:
+        return `${prefix}提交了一个需要说书人回答的问题`;
+    }
+  }
+
+  private inferArtistActualAnswer(question: string): boolean {
+    const allPlayers = Array.from(this.gamePlayers.values());
+    const lowerQ = question.toLowerCase();
+    if (lowerQ.includes('恶魔') || lowerQ.includes('坏') || lowerQ.includes('邪恶')) {
+      return allPlayers.some(p => !p.isDead && p.role?.team === Team.DEMON);
+    }
+    if (lowerQ.includes('镇民') || lowerQ.includes('好人')) {
+      return allPlayers.some(p => !p.isDead && !isEvilPlayer(p));
+    }
+    return false;
+  }
+
   /**
    * 发送说书人问题
    * AI说书人模式下自动生成回答；人类说书人模式下发送给说书人等待回答
@@ -273,10 +314,12 @@ export class BOTCWorker extends BaseGameWorker {
     if (!player) return;
 
     const isAI = this.isComputerStoryteller();
+    const question = this.buildStorytellerQuestionText(player, questionType, questionData);
 
     if (isAI) {
       const response = this.generateAIStorytellerResponse(player, questionType, questionData);
       this.sendToPlayer(playerId, 'storytellerAnswer', {
+        question,
         questionType,
         response,
         fromAI: true,
@@ -285,6 +328,7 @@ export class BOTCWorker extends BaseGameWorker {
       player.hasActed = true;
     } else {
       this.sendToPlayer(this.gameConfig.storytellerId, 'storytellerQuestionRequired', {
+        question,
         playerId,
         playerName: this.getPlayerName(playerId),
         roleId: player.role?.id,
@@ -1524,6 +1568,28 @@ export class BOTCWorker extends BaseGameWorker {
         }
         break;
       }
+      case 'artist': {
+        if (effectiveRole.id !== 'artist') {
+          this.sendToPlayer(playerId, 'actionError', { message: '你不是艺术家' });
+          return;
+        }
+        if (player.reminders.includes('No ability')) {
+          this.sendToPlayer(playerId, 'actionError', { message: '你已经使用过艺术家能力了' });
+          return;
+        }
+        const question = normalizeChatText(data.question || data.statement || '');
+        if (!question) {
+          this.sendToPlayer(playerId, 'actionError', { message: '艺术家必须提交一个是/否问题' });
+          return;
+        }
+
+        player.reminders.push('No ability');
+        this.sendStorytellerQuestion(playerId, 'yesNo', {
+          question,
+          actualAnswer: this.inferArtistActualAnswer(question)
+        });
+        break;
+      }
       default:
         this.sendToPlayer(playerId, 'actionError', { message: '未知的白天能力类型' });
     }
@@ -1890,15 +1956,13 @@ export class BOTCWorker extends BaseGameWorker {
 
         // === 需要向说书人提问的角色 ===
         else if (roleId === 'philosopher') {
-          const targets = selectedPlayers(action);
-          if (targets.length !== 1) {
-            this.sendToPlayer(playerId, 'actionError', { message: '哲学家必须选择一名玩家' });
+          const characterId = action?.data?.characterId || action?.data?.ability || action?.data?.roleId;
+          if (!characterId) {
+            this.sendToPlayer(playerId, 'actionError', { message: '哲学家必须选择一个善良角色' });
             continue;
           }
-          const target = targets[0];
           this.sendStorytellerQuestion(playerId, 'characterAbility', {
-            characterId: target.role?.id,
-            targetId: target.playerId
+            characterId
           });
         }
 
@@ -1908,19 +1972,9 @@ export class BOTCWorker extends BaseGameWorker {
             this.sendToPlayer(playerId, 'actionError', { message: '艺术家必须提交一个问题' });
             continue;
           }
-          // 根据问题内容推断实际答案
-          let actualAnswer = false;
-          const lowerQ = question.toLowerCase();
-          if (lowerQ.includes('恶魔') || lowerQ.includes('坏') || lowerQ.includes('邪恶')) {
-            const hasAliveDemon = allPlayers.some(p => !p.isDead && p.role?.team === Team.DEMON);
-            actualAnswer = hasAliveDemon;
-          } else if (lowerQ.includes('镇民') || lowerQ.includes('好人')) {
-            const hasAliveGood = allPlayers.some(p => !p.isDead && !isEvilPlayer(p));
-            actualAnswer = hasAliveGood;
-          }
           this.sendStorytellerQuestion(playerId, 'yesNo', {
             question,
-            actualAnswer
+            actualAnswer: this.inferArtistActualAnswer(question)
           });
         }
 

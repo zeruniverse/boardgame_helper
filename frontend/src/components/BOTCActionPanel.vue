@@ -46,6 +46,44 @@
 
     <!-- 白天阶段 -->
     <div v-else-if="gameState.phase === 'day'" class="day-panel">
+      <el-card v-if="canUseDayAbility" class="day-ability-card">
+        <template #header>
+          <h4>{{ getDayAbilityTitle() }}</h4>
+        </template>
+
+        <div v-if="playerRole?.id === 'slayer'" class="day-targets">
+          <p class="hint-text">选择一名玩家发动杀手能力</p>
+          <el-button
+            v-for="target in dayAbilityTargets"
+            :key="target.id"
+            @click="selectDayTarget(target.id)"
+            :disabled="dayAbilityCompleted"
+            :type="selectedDayTarget === target.id ? 'primary' : 'default'"
+            size="small"
+          >
+            {{ target.name }}
+          </el-button>
+        </div>
+
+        <el-input
+          v-if="playerRole?.id === 'artist' && !dayAbilityCompleted"
+          v-model="dayAbilityInput"
+          placeholder="填写你的艺术家是/否问题"
+          class="day-ability-input"
+          size="small"
+        />
+
+        <el-button
+          v-if="!dayAbilityCompleted"
+          type="primary"
+          :disabled="!canConfirmDayAbility"
+          @click="submitDayAbility"
+        >
+          使用能力
+        </el-button>
+        <p v-else class="completed-status">白天能力已提交</p>
+      </el-card>
+
       <!-- 提名区域 -->
       <el-card class="nomination-card">
         <template #header>
@@ -393,9 +431,12 @@ const props = withDefaults(defineProps<Props>(), {
 const emit = defineEmits<Emits>()
 
 const nightActionCompleted = ref(false)
+const dayAbilityCompleted = ref(false)
 const deathAbilityCompleted = ref(false)
 const selectedNightTargets = ref<string[]>([])
+const selectedDayTarget = ref('')
 const nightExtraInput = ref('')
+const dayAbilityInput = ref('')
 const storytellerResponseInput = ref('')
 
 function resetNightActionInput() {
@@ -404,15 +445,23 @@ function resetNightActionInput() {
   nightExtraInput.value = ''
 }
 
+function resetDayAbilityInput() {
+  dayAbilityCompleted.value = false
+  selectedDayTarget.value = ''
+  dayAbilityInput.value = ''
+}
+
 // 监听游戏阶段变化，重置夜晚行动状态
 const watchPhase = watch(() => props.gameState?.phase, (newPhase, oldPhase) => {
   if (newPhase !== oldPhase) {
     resetNightActionInput()
+    resetDayAbilityInput()
   }
 })
 
 const watchRole = watch(() => props.playerRole?.id, () => {
   resetNightActionInput()
+  resetDayAbilityInput()
 })
 
 const watchDeathAbility = watch(() => props.nightInfo, (info) => {
@@ -455,6 +504,24 @@ const hasVoted = computed(() => {
 
 const nominationTargets = computed(() => {
   return props.gameState?.players || []
+})
+
+const canUseDayAbility = computed(() => {
+  if (props.isStoryteller || !props.currentUserId) return false
+  const roleId = props.playerRole?.id || ''
+  if (!['slayer', 'artist'].includes(roleId)) return false
+  const me = props.gameState?.players?.find((p: any) => p.id === props.currentUserId)
+  return Boolean(me && !me.isDead)
+})
+
+const dayAbilityTargets = computed(() => {
+  return props.gameState?.players || []
+})
+
+const canConfirmDayAbility = computed(() => {
+  if (props.playerRole?.id === 'slayer') return Boolean(selectedDayTarget.value)
+  if (props.playerRole?.id === 'artist') return dayAbilityInput.value.trim().length > 0
+  return false
 })
 
 const myNightAction = computed(() => {
@@ -505,12 +572,14 @@ const requiredTargetCount = computed(() => {
 const needsTarget = computed(() => requiredTargetCount.value > 0)
 
 const needsExtraInput = computed(() => {
-  return ['gambler', 'philosopher'].includes(props.playerRole?.id || '')
+  return ['gambler', 'philosopher', 'artist', 'courtier'].includes(props.playerRole?.id || '')
 })
 
 const extraInputPlaceholder = computed(() => {
   if (props.playerRole?.id === 'gambler') return '填写你猜测的角色ID或角色名，例如 empath / 共情者'
   if (props.playerRole?.id === 'philosopher') return '填写你要获得的善良角色ID或角色名，例如 empath / 共情者'
+  if (props.playerRole?.id === 'artist') return '填写你的艺术家是/否问题'
+  if (props.playerRole?.id === 'courtier') return '填写你要选择的角色ID或角色名，例如 imp / 小恶魔'
   return ''
 })
 
@@ -576,6 +645,27 @@ const nominate = (targetId: string) => {
   })
 }
 
+const selectDayTarget = (targetId: string) => {
+  if (dayAbilityCompleted.value) return
+  selectedDayTarget.value = targetId
+}
+
+const submitDayAbility = () => {
+  if (!canConfirmDayAbility.value) return
+  const roleId = props.playerRole?.id || ''
+  const data: any = {
+    abilityType: roleId
+  }
+  if (roleId === 'slayer') data.targetId = selectedDayTarget.value
+  if (roleId === 'artist') data.question = dayAbilityInput.value.trim()
+
+  dayAbilityCompleted.value = true
+  emit('game-action', {
+    type: 'dayAbility',
+    data
+  })
+}
+
 const vote = (voteChoice: 'for' | 'against' | 'abstain') => {
   emit('game-action', {
     type: 'vote',
@@ -588,6 +678,8 @@ const buildNightActionData = () => {
   const data: any = {}
   if (roleId === 'gambler') data.guess = nightExtraInput.value.trim()
   if (roleId === 'philosopher') data.ability = nightExtraInput.value.trim()
+  if (roleId === 'artist') data.question = nightExtraInput.value.trim()
+  if (roleId === 'courtier') data.characterId = nightExtraInput.value.trim()
   return {
     actionType: 'ability',
     targets: [...selectedNightTargets.value],
@@ -682,6 +774,12 @@ const getTeamClass = (team: string) => {
 
 const getRoleActionTitle = () => {
   return `${props.playerRole?.name || '你的角色'} 行动`
+}
+
+const getDayAbilityTitle = () => {
+  if (props.playerRole?.id === 'slayer') return '杀手能力'
+  if (props.playerRole?.id === 'artist') return '艺术家提问'
+  return '白天能力'
 }
 
 const getRoleActionDescription = () => {

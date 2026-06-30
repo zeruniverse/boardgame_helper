@@ -44,6 +44,14 @@ export const useBOTCGameStore = defineStore('botc', () => {
     chatMessages.value = appendLimitedMessage(chatMessages.value, normalizeIncomingMessage(data))
   }
 
+  const getStorytellerAnswerText = (data: any): string => {
+    const response = data?.response
+    if (typeof response === 'string') return response
+    if (response && typeof response.answer === 'string') return response.answer
+    if (response && response.answer !== undefined) return String(response.answer)
+    return '说书人已回答'
+  }
+
   // 连接到服务器
   const connect = () => {
     if (socket.value?.connected) {
@@ -156,6 +164,29 @@ export const useBOTCGameStore = defineStore('botc', () => {
 
         on('nightInfo', (data) => {
           nightInfo.value = data
+        })
+
+        on('storytellerAnswer', (data) => {
+          const answerText = getStorytellerAnswerText(data)
+          const message = `说书人回复：${answerText}`
+          nightInfo.value = {
+            ...data,
+            message,
+            information: data?.response
+          }
+          addChatMessage({
+            type: 'system',
+            channel: 'system',
+            from: data?.fromAI ? 'ai-storyteller' : 'storyteller',
+            fromName: data?.fromAI ? 'AI说书人' : '说书人',
+            message,
+            timestamp: Date.now()
+          })
+          ElMessage.info(message)
+        })
+
+        on('storytellerQuestionPending', (data) => {
+          ElMessage.info(data?.message || '你的问题已发送给说书人，等待回答...')
         })
 
         on('deathAbilityPrompt', (data) => {
@@ -311,12 +342,13 @@ export const useBOTCGameStore = defineStore('botc', () => {
 
         // 监听需要说书人回复的问题（如Artist的yes/no问题）
         on('storytellerQuestionRequired', (data) => {
+          const question = data.question || data.questionData?.question || '玩家提交了一个需要说书人回答的问题'
           storytellerQuestion.value = {
-            question: data.question,
+            question,
             playerId: data.playerId,
             roleId: data.roleId
           }
-          ElMessage.info(`收到玩家问题待回复: ${data.question}`)
+          ElMessage.info(`收到玩家问题待回复: ${question}`)
         })
 
         // 监听AI说书人模板消息
