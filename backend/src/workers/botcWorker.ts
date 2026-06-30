@@ -61,6 +61,47 @@ export class BOTCWorker extends BaseGameWorker {
     return player.displayRole || player.role;
   }
 
+  private buildRoleAssignedPayload(player: GamePlayer): { role: Role | null; seat: number; isEvil: boolean; nightInfo: any } {
+    return {
+      role: this.getEffectiveRole(player),
+      seat: player.seat,
+      isEvil: isEvilPlayer(player),
+      nightInfo: player.nightInfo || null
+    };
+  }
+
+  private sendRoleStateToPlayer(playerId: string): void {
+    const player = this.gamePlayers.get(playerId);
+    if (!player) return;
+    this.sendToPlayer(playerId, 'roleAssigned', this.buildRoleAssignedPayload(player));
+  }
+
+  private buildStorytellerInfoPayload(): any {
+    return {
+      players: Array.from(this.gamePlayers.values()).map(p => ({
+        playerId: p.playerId,
+        playerName: this.getPlayerName(p.playerId),
+        role: p.role,
+        displayRole: p.displayRole,
+        seat: p.seat,
+        team: p.role?.team
+      }))
+    };
+  }
+
+  private sendStorytellerFullInfo(storytellerId: string | undefined = this.gameConfig?.storytellerId): void {
+    if (!storytellerId || this.isComputerStoryteller(storytellerId)) return;
+    this.sendToPlayer(storytellerId, 'storytellerInfo', this.buildStorytellerInfoPayload());
+  }
+
+  private sendNightInfoToPlayer(playerId: string, info: any): void {
+    const player = this.gamePlayers.get(playerId);
+    if (player) {
+      player.nightInfo = info;
+    }
+    this.sendToPlayer(playerId, 'nightInfo', info);
+  }
+
   private isPlayerPoisoned(player: GamePlayer): boolean {
     return player.reminders.some(r => r === 'Poisoned' || r === '中毒');
   }
@@ -128,15 +169,11 @@ export class BOTCWorker extends BaseGameWorker {
     player.displayRole = undefined;
     player.reminders = player.reminders.filter(reminder => reminder !== '成为恶魔');
     player.reminders.push('成为恶魔');
+    player.nightInfo = null;
     this.refreshAlignmentLists();
 
-    this.sendToPlayer(playerId, 'roleAssigned', {
-      role: player.role,
-      seat: player.seat,
-      isEvil: true,
-      nightInfo: null
-    });
-    this.sendToPlayer(playerId, 'nightInfo', {
+    this.sendRoleStateToPlayer(playerId);
+    this.sendNightInfoToPlayer(playerId, {
       role: player.role.id,
       information: { message: '你成为了新的小恶魔。' }
     });
@@ -323,13 +360,15 @@ export class BOTCWorker extends BaseGameWorker {
 
     if (isAI) {
       const response = this.generateAIStorytellerResponse(player, questionType, questionData);
-      this.sendToPlayer(playerId, 'storytellerAnswer', {
+      const answerPayload = {
         question,
         questionType,
         response,
         fromAI: true,
         role: player.role?.id
-      });
+      };
+      player.nightInfo = answerPayload;
+      this.sendToPlayer(playerId, 'storytellerAnswer', answerPayload);
       player.hasActed = true;
     } else {
       this.sendToPlayer(this.gameConfig.storytellerId, 'storytellerQuestionRequired', {
@@ -388,9 +427,11 @@ export class BOTCWorker extends BaseGameWorker {
 
     scarletWoman.role = { ...newDemonRole };
     scarletWoman.displayRole = undefined;
+    scarletWoman.nightInfo = null;
     scarletWoman.reminders.push('成为恶魔');
     this.refreshAlignmentLists();
-    this.sendToPlayer(scarletWoman.playerId, 'nightInfo', {
+    this.sendRoleStateToPlayer(scarletWoman.playerId);
+    this.sendNightInfoToPlayer(scarletWoman.playerId, {
       role: scarletWoman.role.id,
       information: { message: '你成为了新的恶魔！' }
     });
@@ -473,6 +514,14 @@ export class BOTCWorker extends BaseGameWorker {
       isStoryteller: playerId === this.gameConfig.storytellerId,
       gameConfig: this.gameConfig
     });
+
+    // 进行中的局在刷新/重连后必须补发私有状态，否则前端会丢失身份与夜间信息，无法继续提交对应角色行动。
+    if (this.gameState.phase !== GamePhase.SETUP) {
+      this.sendRoleStateToPlayer(playerId);
+      if (playerId === this.gameConfig.storytellerId) {
+        this.sendStorytellerFullInfo(playerId);
+      }
+    }
   }
 
   async playerOffline(playerId: string): Promise<void> {
@@ -673,26 +722,12 @@ export class BOTCWorker extends BaseGameWorker {
       this.refreshAlignmentLists();
 
       // 发送角色信息给参与游戏的玩家
-      this.gamePlayers.forEach((gamePlayer, playerId) => {
-        this.sendToPlayer(playerId, 'roleAssigned', {
-          role: this.getEffectiveRole(gamePlayer),
-          seat: gamePlayer.seat,
-          isEvil: isEvilPlayer(gamePlayer),
-          nightInfo: null
-        });
+      this.gamePlayers.forEach((_gamePlayer, playerId) => {
+        this.sendRoleStateToPlayer(playerId);
       });
 
       // 发送说书人信息（包含所有玩家的角色）
-      this.sendToPlayer(storytellerId, 'storytellerInfo', {
-        players: Array.from(this.gamePlayers.values()).map(p => ({
-          playerId: p.playerId,
-          playerName: this.getPlayerName(p.playerId),
-          role: p.role,
-          displayRole: p.displayRole,
-          seat: p.seat,
-          team: p.role?.team
-        }))
-      });
+      this.sendStorytellerFullInfo(storytellerId);
 
       // 发送游戏开始信息
       this.sendToRoom('gameStarted', {
@@ -793,7 +828,7 @@ export class BOTCWorker extends BaseGameWorker {
               ? this.corruptInfo(result.information, effectiveRole.id)
               : result.information;
 
-            this.sendToPlayer(playerId, 'nightInfo', {
+            this.sendNightInfoToPlayer(playerId, {
               role: effectiveRole.id,
               information: finalInfo,
               isCorrupted: false
@@ -1463,7 +1498,7 @@ export class BOTCWorker extends BaseGameWorker {
       roleId: target.role?.id
     };
 
-    this.sendToPlayer(playerId, 'nightInfo', {
+    this.sendNightInfoToPlayer(playerId, {
       role: 'ravenkeeper',
       information,
       isDeathAbility: true
@@ -1533,6 +1568,38 @@ export class BOTCWorker extends BaseGameWorker {
       case 'endGame':
         await this.endGame(data.winner || 'good', data.reason || '说书人结束游戏');
         break;
+      case 'answerQuestion':
+      case 'storytellerAnswer':
+      case 'respondToQuestion': {
+        const targetId = data.playerId || data.targetId;
+        const targetPlayer = targetId ? this.gamePlayers.get(targetId) : null;
+        const answerText = normalizeChatText(String(data.answer ?? data.response ?? data.message ?? ''));
+        if (!targetId || !targetPlayer) {
+          this.sendToPlayer(playerId, 'actionError', { message: '回答失败：目标玩家不存在' });
+          return;
+        }
+        if (!answerText) {
+          this.sendToPlayer(playerId, 'actionError', { message: '回答内容不能为空' });
+          return;
+        }
+
+        const answerPayload = {
+          question: data.question || null,
+          questionType: data.questionType || null,
+          response: { answer: answerText },
+          fromAI: false,
+          role: targetPlayer.role?.id
+        };
+        targetPlayer.hasActed = true;
+        targetPlayer.nightInfo = answerPayload;
+        this.sendToPlayer(targetId, 'storytellerAnswer', answerPayload);
+        this.sendToPlayer(playerId, 'storytellerQuestionAnswered', {
+          playerId: targetId,
+          playerName: this.getPlayerName(targetId),
+          answer: answerText
+        });
+        break;
+      }
       default:
         this.sendToPlayer(playerId, 'actionError', { message: '未知说书人操作: ' + data.actionType });
     }
@@ -1683,7 +1750,7 @@ export class BOTCWorker extends BaseGameWorker {
               ? result.information
               : this.corruptInfo(result.information, effectiveRole?.id || player.role.id);
 
-            this.sendToPlayer(action.playerId, 'nightInfo', {
+            this.sendNightInfoToPlayer(action.playerId, {
               role: effectiveRole?.id || player.role.id,
               information: finalInfo,
               isCorrupted: false
@@ -1875,7 +1942,7 @@ export class BOTCWorker extends BaseGameWorker {
       const finalInfo = this.playerAbilityWorks(player)
         ? information
         : this.corruptInfo(information, roleId);
-      this.sendToPlayer(playerId, 'nightInfo', {
+      this.sendNightInfoToPlayer(playerId, {
         role: roleId,
         information: finalInfo,
         isCorrupted: false
@@ -2269,7 +2336,7 @@ export class BOTCWorker extends BaseGameWorker {
         if (isComputerStoryteller) {
           // AI模式下随机排序并返回
           const pair = Math.random() < 0.5 ? [randomEvil, randomGood] : [randomGood, randomEvil];
-          this.sendToPlayer(playerId, 'nightInfo', {
+          this.sendNightInfoToPlayer(playerId, {
             role: 'sage',
             information: {
               players: pair.map(p => ({
@@ -2331,7 +2398,7 @@ export class BOTCWorker extends BaseGameWorker {
         if (isComputerStoryteller) {
           // AI模式下随机选择
           const randomPlayer = availableTargets[Math.floor(Math.random() * availableTargets.length)];
-          this.sendToPlayer(playerId, 'nightInfo', {
+          this.sendNightInfoToPlayer(playerId, {
             role: 'ravenkeeper',
             information: { 
               playerId: randomPlayer.playerId,

@@ -383,9 +383,7 @@ const handleGameAction = (action: any) => {
 
 // 处理说书人回复玩家问题
 const handleStorytellerResponse = (response: { playerId: string, answer: string }) => {
-  // 通过私聊发送回复
-  store.sendPrivateMessage(response.playerId, `[说书人回复] ${response.answer}`)
-  // 清除问题
+  store.storytellerAction('answerQuestion', response)
   store.clearStorytellerQuestion()
 }
 
