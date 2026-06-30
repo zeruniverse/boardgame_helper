@@ -143,8 +143,8 @@ export const useWerewolfStore = defineStore('werewolf', {
 
   actions: {
     initSocket() {
-      // 防止重复连接
-      if (this.socket?.connected) {
+      // 防止重复连接；如果监听器被清理但 socket 仍连接，需要重新初始化。
+      if (this.socket?.connected && this.socketListeners.length > 0) {
         console.log('Werewolf socket already connected, skipping init');
         return;
       }
@@ -389,7 +389,7 @@ export const useWerewolfStore = defineStore('werewolf', {
     },
 
     connectToRoom(roomId: string, gameType: string = 'werewolf') {
-      if (!this.socket) {
+      if (!this.socket || this.socketListeners.length === 0) {
         this.initSocket();
       }
 

@@ -174,8 +174,8 @@ export const useMafiaStore = defineStore('mafia', {
 
   actions: {
     initSocket() {
-      // 防止重复连接
-      if (this.socket?.connected) {
+      // 防止重复连接；如果监听器被清理但 socket 仍连接，需要重新初始化。
+      if (this.socket?.connected && this.socketListeners.length > 0) {
         console.log('Mafia socket already connected, skipping init');
         return;
       }

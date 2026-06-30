@@ -54,7 +54,7 @@ export const useBOTCGameStore = defineStore('botc', () => {
 
   // 连接到服务器
   const connect = () => {
-    if (socket.value?.connected) {
+    if (socket.value?.connected && socketListeners.value.length > 0) {
       return Promise.resolve()
     }
 
@@ -417,7 +417,7 @@ export const useBOTCGameStore = defineStore('botc', () => {
   // 连接到房间
   const connectToRoom = async (roomId: string, gameType: string = 'blood-on-the-clocktower') => {
     try {
-      if (!socket.value || !connected.value) {
+      if (!socket.value || !connected.value || socketListeners.value.length === 0) {
         await connect()
       }
 
