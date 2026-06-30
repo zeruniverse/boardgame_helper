@@ -126,11 +126,17 @@ export class OnuWerewolfSkill extends OnuBaseSkill {
     const werewolves = this.getOtherPlayers().filter(p => onuIsWerewolf(p.actualRole));
     
     if (werewolves.length === 0) {
-      // 如果没有其他狼人，可以选择查看一张中心卡牌
+      // 如果没有其他狼人，可以选择查看一张中心卡牌；兼容旧客户端或玩家未选择中心卡时，
+      // 缺省给出第一张中心卡，避免唯一狼人完全拿不到该信息。
       if (!selection || !selection.cards || selection.cards.length === 0) {
+        const defaultCard = this.getCenterCard(0) || this.centerCards[0];
+        if (!defaultCard) {
+          return { success: false, error: '中心卡牌不存在' };
+        }
         return {
           success: true,
-          message: '你选择不查看中心卡'
+          vision: onuCreateVision([], [defaultCard]),
+          message: `你是唯一的狼人，自动查看了中心卡${defaultCard.position}`
         };
       }
       if (selection.cards.length !== 1) {

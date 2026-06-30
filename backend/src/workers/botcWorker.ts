@@ -147,6 +147,10 @@ export class BOTCWorker extends BaseGameWorker {
     return Boolean(storytellerId?.startsWith('computer_'));
   }
 
+  private shouldUseAutomaticTimers(): boolean {
+    return this.gameConfig.enableTimers === true || this.isComputerStoryteller();
+  }
+
   /**
    * AI说书人生成模板回答
    * 根据AI偏好（good/evil/neutral）生成对不同问题的回答
@@ -576,6 +580,15 @@ export class BOTCWorker extends BaseGameWorker {
       if (config.edition) {
         this.gameConfig.edition = config.edition;
       }
+      if (config.storytellerMode === 'player' || config.storytellerMode === 'ai' || config.storytellerMode === 'none') {
+        this.gameConfig.storytellerMode = config.storytellerMode;
+      }
+      if (config.aiBias === 'neutral' || config.aiBias === 'good' || config.aiBias === 'evil') {
+        this.gameConfig.aiBias = config.aiBias;
+      }
+      if (typeof config.enableTimers === 'boolean') {
+        this.gameConfig.enableTimers = config.enableTimers;
+      }
     }
 
     // 允许房主或说书人开始游戏
@@ -873,7 +886,7 @@ export class BOTCWorker extends BaseGameWorker {
     this.broadcastGameState();
 
     // 设置白天计时器
-    if (this.gameConfig.enableTimers) {
+    if (this.shouldUseAutomaticTimers()) {
       const timer = setTimeout(() => {
         this.endDay();
       }, this.gameConfig.dayTimer * 1000);
@@ -1126,7 +1139,7 @@ export class BOTCWorker extends BaseGameWorker {
     });
 
     // 设置投票计时器
-    if (this.gameConfig.enableTimers) {
+    if (this.shouldUseAutomaticTimers()) {
       const timer = setTimeout(() => {
         this.endVoting(nomination);
       }, this.gameConfig.votingTimer * 1000);

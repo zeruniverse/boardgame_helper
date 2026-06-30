@@ -1145,10 +1145,13 @@ export const ExileVoteHandler: StateHandler = {
           message: renderPlayersHTML('被放逐的玩家为:', highestVotes)
         });
 
-        // 放逐结算后应立即检查胜负。否则最后一名狼人被放逐时，状态会先进入遗言/死亡链，
-        // 集成测试和客户端会在 EXILE_VOTE 后长时间等不到 game_end。
-        // 常规规则也是狼人全部出局即村民阵营胜利。
-        if (checkAndHandleGameEnd(gameState, context)) {
+        // 放逐结算后应立即检查胜负，避免最后一名狼人出局后客户端等待无意义的死亡链。
+        // 但猎人被放逐且仍可开枪时，必须先完成猎人死亡技能再做狼队人数胜负判定。
+        const exiledHunterCanShoot = target.character === 'HUNTER'
+          && target.die?.fromCharacter !== 'WITCH'
+          && !target.characterStatus.hasUsedSkill
+          && (!target.characterStatus.shootAt || target.characterStatus.shootAt.day < 0);
+        if (!exiledHunterCanShoot && checkAndHandleGameEnd(gameState, context)) {
           return;
         }
 

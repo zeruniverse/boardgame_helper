@@ -361,7 +361,20 @@
             </el-select>
           </div>
 
-          <!-- 狼人/爪牙/石匠/失眠者: 无需选择 -->
+          <!-- 狼人: 可为唯一狼人选择中心卡 -->
+          <div v-else-if="activeRole === OnuWerewolfRole.Werewolf" class="card-select">
+            <p>狼人会先查看同伴；如果你是唯一狼人，可选择一张中心卡查看:</p>
+            <el-select v-model="selectedCard" placeholder="可选：选择中心卡" clearable>
+              <el-option
+                v-for="pos in centerCardOptions"
+                :key="pos"
+                :label="getCenterCardLabel(pos)"
+                :value="pos"
+              />
+            </el-select>
+          </div>
+
+          <!-- 爪牙/石匠/失眠者: 无需选择 -->
           <div v-else class="no-selection">
             <p>{{ getAutoSkillText(activeRole) }}</p>
           </div>
@@ -736,6 +749,12 @@ const buildSkillSelection = (): any => {
     case OnuWerewolfRole.AlphaWolf:
       if (selectedPlayer.value !== undefined) {
         return { selection: { players: [selectedPlayer.value] } };
+      }
+      return { selection: {} };
+
+    case OnuWerewolfRole.Werewolf:
+      if (selectedCard.value !== undefined) {
+        return { selection: { cards: [selectedCard.value] } };
       }
       return { selection: {} };
     
