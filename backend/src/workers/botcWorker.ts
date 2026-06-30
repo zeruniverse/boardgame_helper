@@ -33,6 +33,9 @@ import { EDITIONS, getEditionById, getRoleById, getRolesByTeam } from '../utils/
 import { processFirstNightInfo, processNightAction, processDeathAbility } from '../utils/botcSkills';
 import { normalizeChatChannel, normalizeChatText } from '../utils/chat';
 
+type DebuffType = 'Poisoned' | 'Drunk';
+type DebuffSourceMap = Record<string, Partial<Record<DebuffType, string[]>>>;
+
 /**
  * 血染钟楼游戏 Worker
  * 处理血染钟楼游戏的所有逻辑
@@ -123,6 +126,131 @@ export class BOTCWorker extends BaseGameWorker {
     return !this.isPlayerPoisoned(player) && !this.isPlayerDrunk(player);
   }
 
+  private addReminder(player: GamePlayer, reminder: string): void {
+    if (!player.reminders.includes(reminder)) {
+      player.reminders.push(reminder);
+    }
+  }
+
+  private getDebuffSources(): DebuffSourceMap {
+    if (!this.gameState.grimoire.debuffSources) {
+      this.gameState.grimoire.debuffSources = {};
+    }
+    return this.gameState.grimoire.debuffSources as DebuffSourceMap;
+  }
+
+  private markDebuffSource(playerId: string, debuff: DebuffType, source: string): void {
+    if (!playerId || !source) return;
+    const sourceMap = this.getDebuffSources();
+    const playerSources = sourceMap[playerId] || {};
+    const sources = playerSources[debuff] || [];
+    if (!sources.includes(source)) {
+      sources.push(source);
+    }
+    playerSources[debuff] = sources;
+    sourceMap[playerId] = playerSources;
+  }
+
+  private hasDebuffSource(playerId: string, debuff: DebuffType): boolean {
+    const sources = this.getDebuffSources()[playerId]?.[debuff] || [];
+    return sources.length > 0;
+  }
+
+  private hasPersistentDebuffMarker(player: GamePlayer, debuff: DebuffType): boolean {
+    if (debuff === 'Drunk') {
+      return player.role?.id === 'drunk' ||
+        player.reminders.includes('Is the Drunk') ||
+        player.reminders.includes('醉酒');
+    }
+    // 中文标记用于说书人手动标记，不应被角色的临时中毒自动清掉。
+    return player.reminders.includes('中毒');
+  }
+
+  private removeDebuffSource(player: GamePlayer, debuff: DebuffType, source: string): void {
+    const sourceMap = this.getDebuffSources();
+    const playerSources = sourceMap[player.playerId];
+    if (!playerSources?.[debuff]) return;
+
+    const remaining = (playerSources[debuff] || []).filter(s => s !== source);
+    if (remaining.length > 0) {
+      playerSources[debuff] = remaining;
+    } else {
+      delete playerSources[debuff];
+    }
+    if (Object.keys(playerSources).length === 0) {
+      delete sourceMap[player.playerId];
+    } else {
+      sourceMap[player.playerId] = playerSources;
+    }
+
+    if (!this.hasDebuffSource(player.playerId, debuff) && !this.hasPersistentDebuffMarker(player, debuff)) {
+      player.reminders = player.reminders.filter(r => r !== debuff);
+    }
+  }
+
+  private applyDebuff(player: GamePlayer, debuff: DebuffType, source?: string): void {
+    this.addReminder(player, debuff);
+    if (source) {
+      this.markDebuffSource(player.playerId, debuff, source);
+    }
+  }
+
+  private clearDebuffSourceFromAll(debuff: DebuffType, source: string): void {
+    this.gamePlayers.forEach(player => this.removeDebuffSource(player, debuff, source));
+  }
+
+  private getNoDashiiPoisonTargets(nodashiiId: string): GamePlayer[] {
+    const seatedPlayers = Array.from(this.gamePlayers.values()).sort((a, b) => a.seat - b.seat);
+    const nodashiiIndex = seatedPlayers.findIndex(player => player.playerId === nodashiiId);
+    if (nodashiiIndex < 0 || seatedPlayers.length <= 1) {
+      return [];
+    }
+
+    const targets: GamePlayer[] = [];
+    const addClosestTownsfolk = (direction: -1 | 1) => {
+      for (let offset = 1; offset < seatedPlayers.length; offset++) {
+        const index = (nodashiiIndex + direction * offset + seatedPlayers.length) % seatedPlayers.length;
+        const candidate = seatedPlayers[index];
+        if (candidate.role?.team === Team.TOWNSFOLK) {
+          if (!targets.some(target => target.playerId === candidate.playerId)) {
+            targets.push(candidate);
+          }
+          return;
+        }
+      }
+    };
+
+    // No Dashii跳过非镇民，且可毒到已死亡镇民；不能复用通常“存活邻座”的计算。
+    addClosestTownsfolk(-1);
+    addClosestTownsfolk(1);
+    return targets;
+  }
+
+  private refreshNoDashiiPoison(): void {
+    this.clearDebuffSourceFromAll('Poisoned', 'nodashii');
+
+    const allPlayers = Array.from(this.gamePlayers.values());
+    const alivePlayers = allPlayers.filter(p => !p.isDead);
+    const nodashii = alivePlayers.find(p => p.role?.id === 'nodashii');
+    if (!nodashii || !this.playerAbilityWorks(nodashii)) {
+      return;
+    }
+
+    for (const neighbor of this.getNoDashiiPoisonTargets(nodashii.playerId)) {
+      this.applyDebuff(neighbor, 'Poisoned', 'nodashii');
+    }
+  }
+
+  private clearExpiredTemporaryDebuffs(): void {
+    this.gamePlayers.forEach(player => {
+      // 投毒者的中毒持续到下一个黄昏；进入下一夜时必须过期。
+      this.removeDebuffSource(player, 'Poisoned', 'poisoner');
+      // 水手与酒馆老板造成的醉酒只持续到黄昏，不能永久保留。
+      this.removeDebuffSource(player, 'Drunk', 'sailor');
+      this.removeDebuffSource(player, 'Drunk', 'innkeeper');
+    });
+  }
+
   private getNightKillCause(action: NightAction): string {
     const actingPlayer = this.gamePlayers.get(action.playerId);
     const roleId = action.roleId || (actingPlayer ? this.getEffectiveRole(actingPlayer)?.id : '') || '';
@@ -168,12 +296,8 @@ export class BOTCWorker extends BaseGameWorker {
       player.displayRole = { ...displayRole };
       usedDisplayRoleIds.add(displayRole.id);
 
-      if (!player.reminders.includes('Drunk')) {
-        player.reminders.push('Drunk');
-      }
-      if (!player.reminders.includes('Is the Drunk')) {
-        player.reminders.push('Is the Drunk');
-      }
+      this.addReminder(player, 'Drunk');
+      this.addReminder(player, 'Is the Drunk');
     });
   }
 
@@ -327,7 +451,8 @@ export class BOTCWorker extends BaseGameWorker {
 
   private buildStorytellerQuestionText(player: GamePlayer, questionType: string, questionData: any): string {
     const playerName = this.getPlayerName(player.playerId);
-    const roleName = player.role?.name || player.role?.id || '未知角色';
+    const visibleRole = this.getEffectiveRole(player);
+    const roleName = visibleRole?.name || visibleRole?.id || '未知角色';
     const prefix = `${playerName}（${roleName}）`;
 
     switch (questionType) {
@@ -375,6 +500,7 @@ export class BOTCWorker extends BaseGameWorker {
     if (!player) return;
 
     const isAI = this.isComputerStoryteller();
+    const visibleRole = this.getEffectiveRole(player);
     const question = this.buildStorytellerQuestionText(player, questionType, questionData);
 
     if (isAI) {
@@ -384,7 +510,7 @@ export class BOTCWorker extends BaseGameWorker {
         questionType,
         response,
         fromAI: true,
-        role: player.role?.id
+        role: visibleRole?.id
       };
       player.nightInfo = answerPayload;
       this.sendToPlayer(playerId, 'storytellerAnswer', answerPayload);
@@ -791,6 +917,8 @@ export class BOTCWorker extends BaseGameWorker {
 
     // 清除上一白天/上一夜的临时效果。
     if (!isFirstNight) {
+      this.clearExpiredTemporaryDebuffs();
+      this.refreshNoDashiiPoison();
       this.gamePlayers.forEach(player => {
         player.isProtected = false;
         const poChargeWasUsed = player.reminders.includes('Po Charged Used');
@@ -804,6 +932,10 @@ export class BOTCWorker extends BaseGameWorker {
           !(poChargeWasUsed && r === 'Po Charged')
         );
       });
+    }
+
+    if (isFirstNight) {
+      this.refreshNoDashiiPoison();
     }
 
     // 进入夜晚后补发每名玩家自己的私有能力状态。
@@ -1640,8 +1772,9 @@ export class BOTCWorker extends BaseGameWorker {
         }
         const hasPoisoned = target.reminders.includes('Poisoned') || target.reminders.includes('中毒');
         target.reminders = target.reminders.filter(r => r !== 'Poisoned' && r !== '中毒');
+        delete this.getDebuffSources()[target.playerId]?.Poisoned;
         if (!hasPoisoned) {
-          target.reminders.push('Poisoned');
+          this.applyDebuff(target, 'Poisoned', 'manual');
         }
         this.sendToRoom('gameMessage', {
           message: `${this.getPlayerName(data.playerId)} ${hasPoisoned ? '被解毒' : '被标记为中毒'}`,
@@ -1658,8 +1791,9 @@ export class BOTCWorker extends BaseGameWorker {
         }
         const hasDrunk = target.reminders.includes('Drunk') || target.reminders.includes('醉酒');
         target.reminders = target.reminders.filter(r => r !== 'Drunk' && r !== '醉酒');
+        delete this.getDebuffSources()[target.playerId]?.Drunk;
         if (!hasDrunk) {
-          target.reminders.push('Drunk');
+          this.applyDebuff(target, 'Drunk', 'manual');
         }
         this.sendToRoom('gameMessage', {
           message: `${this.getPlayerName(data.playerId)} ${hasDrunk ? '恢复清醒' : '被标记为醉酒'}`,
@@ -1686,12 +1820,13 @@ export class BOTCWorker extends BaseGameWorker {
           return;
         }
 
+        const targetVisibleRole = this.getEffectiveRole(targetPlayer);
         const answerPayload = {
           question: data.question || null,
           questionType: data.questionType || null,
           response: { answer: answerText },
           fromAI: false,
-          role: targetPlayer.role?.id
+          role: targetVisibleRole?.id
         };
         targetPlayer.hasActed = true;
         targetPlayer.nightInfo = answerPayload;
@@ -1961,12 +2096,13 @@ export class BOTCWorker extends BaseGameWorker {
   private async applyNightEffects(effects: any, action: NightAction): Promise<void> {
     // 处理中毒
     if (effects.poisoned) {
+      const actingPlayer = this.gamePlayers.get(action.playerId);
+      const sourceRoleId = action.roleId || (actingPlayer ? this.getEffectiveRole(actingPlayer)?.id : '') || '';
+      const source = sourceRoleId === 'poisoner' || sourceRoleId === 'pukka' ? sourceRoleId : undefined;
       for (const playerId of effects.poisoned) {
         const player = this.gamePlayers.get(playerId);
         if (player) {
-          // 清除之前的中毒标记
-          player.reminders = player.reminders.filter(r => r !== 'Poisoned' && r !== '中毒');
-          player.reminders.push('Poisoned');
+          this.applyDebuff(player, 'Poisoned', source);
         }
       }
     }
@@ -1977,7 +2113,7 @@ export class BOTCWorker extends BaseGameWorker {
         const player = this.gamePlayers.get(playerId);
         if (player) {
           player.isProtected = true;
-          player.reminders.push('Protected');
+          this.addReminder(player, 'Protected');
         }
       }
     }
@@ -2011,9 +2147,7 @@ export class BOTCWorker extends BaseGameWorker {
           if (reminder.reminder === '被诅咒' || reminder.reminder === 'Cursed') {
             this.clearWitchCurseMarkers();
           }
-          if (!player.reminders.includes(reminder.reminder)) {
-            player.reminders.push(reminder.reminder);
-          }
+          this.addReminder(player, reminder.reminder);
         }
       }
     }
@@ -2043,8 +2177,8 @@ export class BOTCWorker extends BaseGameWorker {
 
         if (swap.poisonPlayerId) {
           const poisoned = this.gamePlayers.get(swap.poisonPlayerId);
-          if (poisoned && !poisoned.reminders.includes('Poisoned')) {
-            poisoned.reminders.push('Poisoned');
+          if (poisoned) {
+            this.applyDebuff(poisoned, 'Poisoned', 'snakecharmer');
           }
         }
 
@@ -2068,8 +2202,8 @@ export class BOTCWorker extends BaseGameWorker {
         player.role = { ...newRole };
         player.displayRole = undefined;
         player.nightInfo = null;
-        if (change.poison && !player.reminders.includes('Poisoned')) {
-          player.reminders.push('Poisoned');
+        if (change.poison) {
+          this.applyDebuff(player, 'Poisoned', 'pithag');
         }
         this.refreshAlignmentLists();
         this.sendRoleStateToPlayer(player.playerId);
@@ -2082,10 +2216,13 @@ export class BOTCWorker extends BaseGameWorker {
 
     // 处理醉酒
     if (effects.drunk) {
+      const actingPlayer = this.gamePlayers.get(action.playerId);
+      const sourceRoleId = action.roleId || (actingPlayer ? this.getEffectiveRole(actingPlayer)?.id : '') || '';
+      const source = sourceRoleId === 'sailor' || sourceRoleId === 'innkeeper' ? sourceRoleId : undefined;
       for (const playerId of effects.drunk) {
         const player = this.gamePlayers.get(playerId);
-        if (player && !player.reminders.includes('Drunk')) {
-          player.reminders.push('Drunk');
+        if (player) {
+          this.applyDebuff(player, 'Drunk', source);
         }
       }
     }
@@ -2345,8 +2482,12 @@ export class BOTCWorker extends BaseGameWorker {
     });
 
     if (pukkaAction && this.previouslyPukkaTarget) {
-      // 前一晚中毒的玩家今夜死亡
+      // 前一晚中毒的玩家今夜死亡，随后解除Pukka留下的中毒来源。
       await this.killPlayer(this.previouslyPukkaTarget, 'pukka');
+      const previousTarget = this.gamePlayers.get(this.previouslyPukkaTarget);
+      if (previousTarget) {
+        this.removeDebuffSource(previousTarget, 'Poisoned', 'pukka');
+      }
     }
 
     // 更新前一夜的中毒目标
@@ -2354,7 +2495,7 @@ export class BOTCWorker extends BaseGameWorker {
       this.previouslyPukkaTarget = pukkaAction.targets[0];
       const target = this.gamePlayers.get(this.previouslyPukkaTarget);
       if (target) {
-        target.reminders.push('Poisoned');
+        this.applyDebuff(target, 'Poisoned', 'pukka');
       }
     }
   }
@@ -2375,18 +2516,8 @@ export class BOTCWorker extends BaseGameWorker {
       soldier.isProtected = true;
     }
 
-    // 诺达希（No Dashii）的被动效果：邻座镇民中毒
-    const nodashii = alivePlayers.find(p => p.role?.id === 'nodashii');
-    if (nodashii && this.playerAbilityWorks(nodashii)) {
-      const nodashiiNeighbors = getNeighbors(nodashii.playerId, allPlayers);
-      for (const neighbor of nodashiiNeighbors) {
-        if (neighbor.role?.team === Team.TOWNSFOLK && !neighbor.isDead) {
-          // 清除之前的中毒标记避免重复
-          neighbor.reminders = neighbor.reminders.filter(r => r !== 'Poisoned');
-          neighbor.reminders.push('Poisoned');
-        }
-      }
-    }
+    // 诺达希（No Dashii）的邻座镇民中毒是持续效果；夜晚结束时刷新，供白天和下一夜使用。
+    this.refreshNoDashiiPoison();
 
     // 维格莫提斯（Vigormortis）杀死的爪牙保留能力并毒化邻座镇民
     // 此效果在applyNightEffects中通过reminders处理
@@ -2397,7 +2528,7 @@ export class BOTCWorker extends BaseGameWorker {
       deadSweetheart.reminders.push('sweetheartProcessed');
       const randomAlive = alivePlayers[Math.floor(Math.random() * alivePlayers.length)];
       if (randomAlive) {
-        randomAlive.reminders.push('Drunk');
+        this.applyDebuff(randomAlive, 'Drunk', 'sweetheart');
         this.sendToPlayer(this.gameConfig.storytellerId, 'sweetheartEffect', {
           targetId: randomAlive.playerId,
           targetName: this.getPlayerName(randomAlive.playerId)
