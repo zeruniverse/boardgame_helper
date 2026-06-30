@@ -240,7 +240,7 @@
             
             <!-- 需要选择目标的行动 -->
             <div v-if="needsTarget" class="night-targets">
-              <p class="hint-text">请选择 {{ requiredTargetCount }} 名玩家（已选 {{ selectedNightTargets.length }} 名）</p>
+              <p class="hint-text">{{ targetSelectionText }}（已选 {{ selectedNightTargets.length }} 名）</p>
               <el-button
                 v-for="target in availableTargets"
                 :key="target.id"
@@ -268,7 +268,7 @@
             </div>
             
             <el-button 
-              v-if="!nightActionCompleted && (requiredTargetCount !== 1 || needsExtraInput)"
+              v-if="!nightActionCompleted && showNightConfirmButton"
               @click="confirmNightAction"
               type="primary"
               :disabled="!canConfirmNightAction"
@@ -573,15 +573,35 @@ const roleTargetCounts: Record<string, number> = {
   thief: 1
 }
 
-const requiredTargetCount = computed(() => {
+const isPoCharged = computed(() => Boolean(props.playerRole?.abilityState?.poCharged))
+
+const maxTargetCount = computed(() => {
   const roleId = props.playerRole?.id || ''
   if (roleId === 'professor') {
     return props.gameState?.players?.some((p: any) => p.isDead) ? 1 : 0
   }
+  if (roleId === 'po') {
+    return isPoCharged.value ? 3 : 1
+  }
   return roleTargetCounts[roleId] || 0
 })
 
-const needsTarget = computed(() => requiredTargetCount.value > 0)
+const minTargetCount = computed(() => {
+  const roleId = props.playerRole?.id || ''
+  if (roleId === 'po') {
+    return isPoCharged.value ? 1 : 0
+  }
+  return maxTargetCount.value
+})
+
+const targetSelectionText = computed(() => {
+  if (maxTargetCount.value === 0) return '无需选择玩家'
+  if (minTargetCount.value === 0) return `可选择 0-${maxTargetCount.value} 名玩家`
+  if (minTargetCount.value === maxTargetCount.value) return `请选择 ${maxTargetCount.value} 名玩家`
+  return `请选择 ${minTargetCount.value}-${maxTargetCount.value} 名玩家`
+})
+
+const needsTarget = computed(() => maxTargetCount.value > 0)
 
 const needsExtraInput = computed(() => {
   return ['gambler', 'philosopher', 'artist', 'courtier', 'cerenovus', 'pithag'].includes(props.playerRole?.id || '')
@@ -598,10 +618,17 @@ const extraInputPlaceholder = computed(() => {
 })
 
 const canConfirmNightAction = computed(() => {
-  const enoughTargets = selectedNightTargets.value.length === requiredTargetCount.value
+  const targetCount = selectedNightTargets.value.length
+  const enoughTargets = targetCount >= minTargetCount.value && targetCount <= maxTargetCount.value
   const hasExtraInput = !needsExtraInput.value || nightExtraInput.value.trim().length > 0
   return enoughTargets && hasExtraInput
 })
+
+const shouldAutoSubmitSingleTarget = computed(() => {
+  return minTargetCount.value === 1 && maxTargetCount.value === 1 && !needsExtraInput.value
+})
+
+const showNightConfirmButton = computed(() => !shouldAutoSubmitSingleTarget.value)
 
 const availableTargets = computed(() => {
   const roleId = props.playerRole?.id || ''
@@ -721,12 +748,12 @@ const selectNightTarget = (targetId: string) => {
     selectedNightTargets.value.splice(existingIndex, 1)
     return
   }
-  if (selectedNightTargets.value.length >= requiredTargetCount.value) {
+  if (selectedNightTargets.value.length >= maxTargetCount.value) {
     selectedNightTargets.value.shift()
   }
   selectedNightTargets.value.push(targetId)
 
-  if (requiredTargetCount.value === 1 && !needsExtraInput.value) {
+  if (shouldAutoSubmitSingleTarget.value) {
     submitNightAction()
   }
 }

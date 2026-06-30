@@ -61,19 +61,28 @@ export class BOTCWorker extends BaseGameWorker {
     return player.displayRole || player.role;
   }
 
-  private buildRoleAssignedPayload(player: GamePlayer): { role: Role | null; seat: number; isEvil: boolean; nightInfo: any } {
-    return {
-      role: this.getEffectiveRole(player),
+  private buildRoleAssignedPayload(player: GamePlayer, includeNightInfo: boolean = true): { role: Role | null; seat: number; isEvil: boolean; nightInfo?: any; abilityState: any } {
+    const effectiveRole = this.getEffectiveRole(player);
+    const payload: { role: Role | null; seat: number; isEvil: boolean; nightInfo?: any; abilityState: any } = {
+      role: effectiveRole,
       seat: player.seat,
       isEvil: isEvilPlayer(player),
-      nightInfo: player.nightInfo || null
+      abilityState: {
+        poCharged: effectiveRole?.id === 'po' &&
+          player.reminders.includes('Po Charged') &&
+          !player.reminders.includes('Po Charged Used')
+      }
     };
+    if (includeNightInfo) {
+      payload.nightInfo = player.nightInfo || null;
+    }
+    return payload;
   }
 
-  private sendRoleStateToPlayer(playerId: string): void {
+  private sendRoleStateToPlayer(playerId: string, includeNightInfo: boolean = true): void {
     const player = this.gamePlayers.get(playerId);
     if (!player) return;
-    this.sendToPlayer(playerId, 'roleAssigned', this.buildRoleAssignedPayload(player));
+    this.sendToPlayer(playerId, 'roleAssigned', this.buildRoleAssignedPayload(player, includeNightInfo));
   }
 
   private buildStorytellerInfoPayload(): any {
@@ -796,6 +805,12 @@ export class BOTCWorker extends BaseGameWorker {
         );
       });
     }
+
+    // 进入夜晚后补发每名玩家自己的私有能力状态。
+    // 只包含玩家已知且提交行动必需的信息（例如珀是否已蓄力），避免公开魔典提醒标记。
+    this.gamePlayers.forEach((_gamePlayer, playerId) => {
+      this.sendRoleStateToPlayer(playerId, false);
+    });
 
     this.sendToRoom('nightStarted', {
       isFirstNight
@@ -2738,7 +2753,7 @@ export class BOTCWorker extends BaseGameWorker {
         const player = this.gamePlayers.get(playerId);
         if (!player || player.isDead) continue;
 
-        const role = player.role;
+        const role = this.getEffectiveRole(player);
         if (!role) continue;
 
         // AI智能选择目标
@@ -2776,7 +2791,7 @@ export class BOTCWorker extends BaseGameWorker {
     const isGoodStrong = goodAdvantage > 1;
     const isEvilStrong = goodAdvantage < 0;
 
-    const roleId = player.role?.id || '';
+    const roleId = this.getEffectiveRole(player)?.id || '';
     const actionData: any = { actionType: 'ability' };
 
     // 根据角色和AI策略选择目标
@@ -2799,7 +2814,7 @@ export class BOTCWorker extends BaseGameWorker {
           actionData.targets = targets; }
         break;
       case 'po':
-        actionData.targets = this.selectPoTargets(allPlayers, aiBias, isGoodStrong, isEvilStrong);
+        actionData.targets = this.selectPoTargets(player, allPlayers, aiBias, isGoodStrong, isEvilStrong);
         break;
       case 'fanggu':
         actionData.targets = [this.selectDemonTarget(allPlayers, aiBias, isGoodStrong, isEvilStrong, 'fanggu')];
@@ -2946,9 +2961,31 @@ export class BOTCWorker extends BaseGameWorker {
   /**
    * AI选择破的目标
    */
-  private selectPoTargets(allPlayers: GamePlayer[], aiBias: string, isGoodStrong: boolean, isEvilStrong: boolean): string[] {
-    // Po的3杀模式：如果上一轮没有杀人，这轮杀3个
-    return [this.selectDemonTarget(allPlayers, aiBias, isGoodStrong, isEvilStrong, 'po')];
+  private selectPoTargets(player: GamePlayer, allPlayers: GamePlayer[], aiBias: string, isGoodStrong: boolean, isEvilStrong: boolean): string[] {
+    const charged = player.reminders.includes('Po Charged') && !player.reminders.includes('Po Charged Used');
+
+    if (!charged) {
+      // 平衡/偏邪恶的AI说书人允许珀放弃本夜击杀以获得下一夜最多三杀。
+      if (aiBias === 'evil' || (aiBias === 'neutral' && isGoodStrong)) {
+        return [];
+      }
+      const target = this.selectDemonTarget(allPlayers, aiBias, isGoodStrong, isEvilStrong, 'po');
+      return target ? [target] : [];
+    }
+
+    const candidates = allPlayers.filter(p => !p.isDead && p.playerId !== player.playerId);
+    const selected = new Set<string>();
+    while (selected.size < Math.min(3, candidates.length)) {
+      const target = this.selectDemonTarget(allPlayers, aiBias, isGoodStrong, isEvilStrong, 'po');
+      if (target && target !== player.playerId && !selected.has(target)) {
+        selected.add(target);
+        continue;
+      }
+      const fallback = candidates.find(p => !selected.has(p.playerId));
+      if (!fallback) break;
+      selected.add(fallback.playerId);
+    }
+    return Array.from(selected);
   }
 
   /**

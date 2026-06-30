@@ -158,9 +158,14 @@ export const useBOTCGameStore = defineStore('botc', () => {
 
         // 监听角色分配 - 后端使用roleAssigned (camelCase)
         on('roleAssigned', (data) => {
-          playerRole.value = data.role
-          nightInfo.value = data.nightInfo
-          ElMessage.success(`你的角色是: ${data.role?.name || '未知'}`)
+          const previousRoleId = playerRole.value?.id
+          playerRole.value = data.role ? { ...data.role, abilityState: data.abilityState || {} } : null
+          if (Object.prototype.hasOwnProperty.call(data, 'nightInfo')) {
+            nightInfo.value = data.nightInfo
+          }
+          if (data.role?.id && previousRoleId !== data.role.id) {
+            ElMessage.success(`你的角色是: ${data.role?.name || '未知'}`)
+          }
         })
 
         // 监听夜晚信息 - 后端使用nightActionConfirmed
