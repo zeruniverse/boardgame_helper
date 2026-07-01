@@ -1252,6 +1252,7 @@ class OnuWerewolfWorker extends BaseGameWorker {
       message: '游戏已重置，可以开始新的游戏',
       gameInfo: this.getGameInfo()
     });
+    this.sendToRoom('room_update', this.room);
   }
 
   dispose(): void {

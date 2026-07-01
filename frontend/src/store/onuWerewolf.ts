@@ -509,12 +509,24 @@ export const useOnuWerewolfStore = defineStore('onuWerewolf', {
       on('onu_game_over', handleGameCompleted);
 
       on('onu_game_reset', (data: any) => {
-        this.gameState = null;
+        const resetGameInfo = data?.gameInfo as OnuWerewolfGameState | undefined;
         this.playerSecret = null;
+        this.skipDiscussionCount = 0;
+        this.skipDiscussionTotal = 0;
         if (this.room) {
           this.room.gameStarted = false;
+          this.room.players = this.room.players.map(player => ({
+            ...player,
+            ready: false,
+            voted: false,
+            skillUsed: false,
+            revealed: false,
+            revealedRole: undefined
+          }));
         }
-        this.addSystemMessage(data.message);
+        this.gameState = resetGameInfo || null;
+        syncWaitingRoomState(this.room, resetGameInfo?.config);
+        this.addSystemMessage(data.message || '游戏已重置，可以开始新的游戏');
       });
 
       on('onu_player_ready', (data: any) => {
