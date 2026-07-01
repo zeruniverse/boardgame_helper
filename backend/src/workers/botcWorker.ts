@@ -29,7 +29,9 @@ import {
   getAlivePlayers,
   getDeadPlayersWithGhostVote,
   isZombuulLivingWhileRegisteredDead,
-  ZOMBUUL_ALIVE_REMINDER
+  ZOMBUUL_ALIVE_REMINDER,
+  isGoodTwinPlayer,
+  hasLivingEvilTwin
 } from '../utils/botcUtils';
 import { EDITIONS, getEditionById, getRoleById, getRolesByTeam } from '../utils/botcData';
 import { processFirstNightInfo, processNightAction, processDeathAbility } from '../utils/botcSkills';
@@ -364,6 +366,49 @@ export class BOTCWorker extends BaseGameWorker {
       this.addReminder(player, 'Drunk');
       this.addReminder(player, 'Is the Drunk');
     });
+  }
+
+  private assignEvilTwinPair(): void {
+    const players = Array.from(this.gamePlayers.values());
+    const evilTwin = players.find(player => player.role?.id === 'eviltwin');
+    if (!evilTwin) {
+      return;
+    }
+
+    const existingGoodTwin = players.find(player => isGoodTwinPlayer(player) && !isEvilPlayer(player));
+    const candidates = players.filter(player => player.playerId !== evilTwin.playerId && !isEvilPlayer(player));
+    const goodTwin = existingGoodTwin || candidates[Math.floor(Math.random() * candidates.length)];
+    if (!goodTwin) {
+      return;
+    }
+
+    this.addReminder(evilTwin, 'Evil Twin');
+    this.addReminder(goodTwin, 'Good Twin');
+
+    const visibleGoodTwinRole = this.getEffectiveRole(goodTwin) || goodTwin.role;
+    evilTwin.nightInfo = {
+      role: 'eviltwin',
+      information: {
+        twinId: goodTwin.playerId,
+        twinName: this.getPlayerName(goodTwin.playerId),
+        twinRoleId: visibleGoodTwinRole?.id || null,
+        twinRoleName: visibleGoodTwinRole?.name || null,
+        isGoodTwin: false
+      },
+      message: `你的善良双子是 ${this.getPlayerName(goodTwin.playerId)}（${visibleGoodTwinRole?.name || '未知角色'}）`
+    };
+
+    goodTwin.nightInfo = {
+      role: visibleGoodTwinRole?.id || goodTwin.role?.id || 'goodtwin',
+      information: {
+        twinId: evilTwin.playerId,
+        twinName: this.getPlayerName(evilTwin.playerId),
+        twinRoleId: 'eviltwin',
+        twinRoleName: evilTwin.role?.name || '邪恶双子',
+        isGoodTwin: true
+      },
+      message: `你的邪恶双子是 ${this.getPlayerName(evilTwin.playerId)}`
+    };
   }
 
   private promotePlayerToImp(playerId: string): boolean {
@@ -926,6 +971,9 @@ export class BOTCWorker extends BaseGameWorker {
 
       // 酒鬼必须看到一个镇民身份，并按该身份进入夜晚流程；真实角色只给说书人。
       this.assignDrunkDisplayRoles();
+
+      // 邪恶双子必须在开局时绑定一名善良玩家，否则其信息和胜负条件都无法生效。
+      this.assignEvilTwinPair();
 
       // 分配占卜师的"假恶魔"（Red Herring）标记 - 随机选择一个善良玩家
       const goodPlayersForHerring = Array.from(this.gamePlayers.values())
@@ -1571,6 +1619,11 @@ export class BOTCWorker extends BaseGameWorker {
         executedBy: [executedBy],
         timestamp: Date.now()
       };
+
+      if (isGoodTwinPlayer(player) && hasLivingEvilTwin(Array.from(this.gamePlayers.values()))) {
+        await this.endGame('evil', '善良双子被处决，邪恶阵营获胜');
+        return;
+      }
 
       if (isZombuulLivingWhileRegisteredDead(player)) {
         this.noExecutionToday = false;

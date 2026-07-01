@@ -257,11 +257,35 @@ export function getNightOrder(gamePlayers: GamePlayer[], isFirstNight: boolean):
 /**
  * 检查游戏是否结束 - 包含特殊胜利条件
  */
+export function isGoodTwinPlayer(player?: GamePlayer | null): boolean {
+  if (!player) return false;
+  return player.role?.id === 'goodtwin' || player.reminders.some(reminder =>
+    reminder === 'Good Twin' ||
+    reminder === '善良双子' ||
+    reminder === 'Twin:Good'
+  );
+}
+
+export function hasLivingEvilTwin(gamePlayers: GamePlayer[]): boolean {
+  return gamePlayers.some(player => player.role?.id === 'eviltwin' && !player.isDead);
+}
+
+export function getGoodTwinPlayer(gamePlayers: GamePlayer[]): GamePlayer | undefined {
+  return gamePlayers.find(isGoodTwinPlayer);
+}
+
 export function checkGameEnd(gamePlayers: GamePlayer[], checkEvilWin: boolean = true, mastermindTriggered: boolean = false): { isEnded: boolean; winner?: 'good' | 'evil'; reason?: string } {
   // 僵怖第一次死亡后登记为死亡，但恶魔本体仍然存活；胜负判定必须按实际存活计算。
   const actuallyAlivePlayers = gamePlayers.filter(p => !p.isDead || isZombuulLivingWhileRegisteredDead(p));
   const alivePlayers = gamePlayers.filter(p => !p.isDead);
   const aliveDemon = actuallyAlivePlayers.filter(p => p.role && p.role.team === Team.DEMON);
+  const goodTwin = getGoodTwinPlayer(gamePlayers);
+  const livingEvilTwin = hasLivingEvilTwin(gamePlayers);
+
+  // 邪恶双子：只有善良双子“被处决”时邪恶获胜；夜间死亡不应触发。
+  if (livingEvilTwin && goodTwin?.isDead && goodTwin.deathCause === 'execution') {
+    return { isEnded: true, winner: 'evil', reason: '善良双子被处决' };
+  }
 
   // 幕后黑手生效中：恶魔被处决但游戏继续一天，此时不判定好人胜利
   if (aliveDemon.length === 0 && mastermindTriggered) {
@@ -269,8 +293,11 @@ export function checkGameEnd(gamePlayers: GamePlayer[], checkEvilWin: boolean = 
     return { isEnded: false };
   }
 
-  // 恶魔死亡，善良阵营获胜
+  // 恶魔死亡，善良阵营获胜；但邪恶双子双方都存活时，善良不能获胜。
   if (aliveDemon.length === 0) {
+    if (livingEvilTwin && goodTwin && !goodTwin.isDead) {
+      return { isEnded: false };
+    }
     return { isEnded: true, winner: 'good', reason: '恶魔已死亡' };
   }
 
@@ -278,13 +305,6 @@ export function checkGameEnd(gamePlayers: GamePlayer[], checkEvilWin: boolean = 
   const aliveNonTravelerCount = actuallyAlivePlayers.filter(p => p.role?.team !== Team.TRAVELER).length;
   if (checkEvilWin && aliveNonTravelerCount <= 2) {
     return { isEnded: true, winner: 'evil', reason: '仅剩2名或更少存活玩家' };
-  }
-
-  // 邪恶双子相关 - 如果善良双子被处决且邪恶双子存活，邪恶获胜
-  const evilTwin = gamePlayers.find(p => p.role?.id === 'eviltwin');
-  const goodTwin = gamePlayers.find(p => p.role?.id === 'goodtwin');
-  if (evilTwin && !evilTwin.isDead && goodTwin?.isDead) {
-    return { isEnded: true, winner: 'evil', reason: '善良双子已被处决' };
   }
 
   // Vortox特殊条件 - 如果白天没有人被处决，邪恶获胜
