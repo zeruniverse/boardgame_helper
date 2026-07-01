@@ -1348,6 +1348,16 @@ export class BOTCWorker extends BaseGameWorker {
         message: `${this.getPlayerName(playerId)} 受到女巫诅咒，因提名而死亡！`,
         type: 'warning'
       });
+
+      const gameEnd = checkGameEnd(
+        Array.from(this.gamePlayers.values()),
+        true,
+        !!this.gameState.grimoire.mastermindTriggered
+      );
+      if (gameEnd.isEnded) {
+        await this.endGame(gameEnd.winner!, gameEnd.reason!);
+        return;
+      }
     }
 
     // 创建提名
@@ -3035,7 +3045,7 @@ export class BOTCWorker extends BaseGameWorker {
       // 批量处理夜晚行动
       for (const playerId of this.gameState.nightOrder) {
         const player = this.gamePlayers.get(playerId);
-        if (!player || player.isDead) continue;
+        if (!player || (player.isDead && !isZombuulLivingWhileRegisteredDead(player))) continue;
 
         const role = this.getEffectiveRole(player);
         if (!role) continue;
