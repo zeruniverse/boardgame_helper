@@ -370,9 +370,9 @@ class TexasHoldemWorker extends BaseGameWorker {
       return { kicked: false, reason: '目标玩家不存在' };
     }
 
-    // 如果游戏正在进行中，不允许踢出玩家
-    if (this.gameState.stage === 'playing') {
-      const reason = '游戏进行中，无法踢出玩家';
+    // 如果游戏正在进行或仍在分奖池，不允许踢出玩家，否则可能破坏奖池结算。
+    if (this.gameState.stage !== 'idle') {
+      const reason = '游戏进行中或奖池结算中，无法踢出玩家';
       this.sendToRoom('chat_broadcast', { message: reason, type: 'system' });
       return { kicked: false, reason };
     }
@@ -594,6 +594,11 @@ class TexasHoldemWorker extends BaseGameWorker {
 
     const player = this.room.players[playerIndex];
     const gs = this.gameState as TexasHoldemGameState;
+
+    if (gs.stage === 'distribution' && gs.pot > 0) {
+      this.sendToPlayer(playerId, 'error', { message: '奖池结算中，请先完成分奖池后再 Cash Out' });
+      return;
+    }
 
     // 如果游戏正在进行中且该玩家未fold，先fold
     if (this.participants.includes(playerId) && !gs.folded.includes(playerId)) {
@@ -1324,6 +1329,11 @@ class TexasHoldemWorker extends BaseGameWorker {
     }
 
     const gs = this.gameState as TexasHoldemGameState;
+    if (gs.stage !== 'distribution') {
+      this.sendToPlayer(playerId, 'error', { message: '当前不在分奖池阶段，无法领取筹码' });
+      return;
+    }
+
     if (takeAmt > gs.pot) {
       return;
     }
@@ -1357,6 +1367,11 @@ class TexasHoldemWorker extends BaseGameWorker {
     }
 
     const gs = this.gameState as TexasHoldemGameState;
+    if (gs.stage !== 'distribution') {
+      this.sendToPlayer(playerId, 'error', { message: '当前不在分奖池阶段，无法领取筹码' });
+      return;
+    }
+
     if (gs.pot === 0) {
       return;
     }
