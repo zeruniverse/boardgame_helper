@@ -591,6 +591,9 @@ const minTargetCount = computed(() => {
   if (roleId === 'po') {
     return isPoCharged.value ? 1 : 0
   }
+  if (roleId === 'godfather' || roleId === 'zombuul') {
+    return 0
+  }
   return maxTargetCount.value
 })
 
@@ -839,10 +842,10 @@ const getRoleActionDescription = () => {
     'innkeeper': '选择两个玩家：他们不能死亡，但一个醉酒',
     'gambler': '选择一个玩家并猜测他的角色',
     'professor': '选择一名死亡镇民复活（一次性能力）',
-    'godfather': '如果有外来者死亡，选择一个玩家杀死',
+    'godfather': '首夜得知在场外来者；若今天有外来者死亡，夜晚可选择一名玩家杀死',
     'devilsadvocate': '选择一名存活玩家，使其明天被处决也不会死亡',
     'assassin': '选择一名玩家死亡（一次性能力）',
-    'zombuul': '如果白天没人死，选择一个玩家杀死',
+    'zombuul': '若今天无人死亡，夜晚可选择一名玩家杀死；第一次死亡会登记为死亡但游戏继续',
     'pukka': '选择一个玩家中毒（前一晚中毒的会死亡）',
     'shabaloth': '选择两名玩家死亡',
     'po': '选择一名玩家死亡（蓄力变体由说书人处理）',
@@ -889,6 +892,14 @@ const formatNightInfo = (info: any) => {
   
   if (info.information) {
     const data = info.information
+    if (Array.isArray(data.outsiderRoles)) {
+      return data.outsiderRoles.length > 0
+        ? `在场外来者角色：${data.outsiderRoles.map((role: any) => role.roleName || role.roleId).join('、')}`
+        : '没有外来者角色在场'
+    }
+    if (data.canKill === false) {
+      return data.message || '今晚没有可执行的击杀'
+    }
     if (data.playerId) {
       return `${data.playerName || getGamePlayerName(data.playerId)} 的角色是: ${data.roleName || data.roleId || '未知'}`
     }
@@ -939,6 +950,14 @@ const formatNightInfo = (info: any) => {
   }
 
   // 直接处理information对象（worker直接发送的数据格式）
+  if (Array.isArray(info.outsiderRoles)) {
+    return info.outsiderRoles.length > 0
+      ? `在场外来者角色：${info.outsiderRoles.map((role: any) => role.roleName || role.roleId).join('、')}`
+      : '没有外来者角色在场'
+  }
+  if (info.canKill === false) {
+    return info.message || '今晚没有可执行的击杀'
+  }
   if (info.demonVoted !== undefined) {
     return info.demonVoted ? '今天有恶魔投票了' : '今天没有恶魔投票'
   }

@@ -88,7 +88,8 @@ export function processFirstNightInfo(
 export function processNightAction(
   action: NightAction,
   allPlayers: GamePlayer[],
-  isFirstNight: boolean = false
+  isFirstNight: boolean = false,
+  context: { outsiderDiedToday?: boolean; anyoneDiedToday?: boolean } = {}
 ): SkillResult {
   const player = allPlayers.find(p => p.playerId === action.playerId);
   const effectiveRole = player?.displayRole || player?.role;
@@ -114,10 +115,10 @@ export function processNightAction(
     gambler: () => processGambler(action, allPlayers),
     courtier: () => processCourtier(action, allPlayers),
     professor: () => processProfessor(action, allPlayers),
-    godfather: () => processGodfather(action, allPlayers),
+    godfather: () => processGodfather(action, allPlayers, isFirstNight, context.outsiderDiedToday === true),
     devilsadvocate: () => processDevilsAdvocate(action, allPlayers),
     assassin: () => processAssassin(action, allPlayers),
-    zombuul: () => processZombuul(action, allPlayers),
+    zombuul: () => processZombuul(action, allPlayers, isFirstNight, context.anyoneDiedToday === true),
     pukka: () => processPukka(action, allPlayers),
     shabaloth: () => processShabaloth(action, allPlayers),
     po: () => processPo(action, allPlayers),
@@ -685,10 +686,42 @@ function processGambler(action: NightAction, allPlayers: GamePlayer[]): SkillRes
   };
 }
 
-function processGodfather(action: NightAction, allPlayers: GamePlayer[]): SkillResult {
+function processGodfather(
+  action: NightAction,
+  allPlayers: GamePlayer[],
+  isFirstNight: boolean,
+  outsiderDiedToday: boolean
+): SkillResult {
+  if (isFirstNight) {
+    const outsiderRoles = allPlayers
+      .filter(p => p.role?.team === Team.OUTSIDER)
+      .map(p => ({ roleId: p.role!.id, roleName: p.role!.name }));
+
+    return {
+      success: true,
+      information: {
+        outsiderRoles,
+        message: outsiderRoles.length > 0
+          ? `在场外来者角色：${outsiderRoles.map(r => r.roleName || r.roleId).join('、')}`
+          : '没有外来者角色在场'
+      }
+    };
+  }
+
+  if (!outsiderDiedToday) {
+    return {
+      success: true,
+      information: {
+        canKill: false,
+        reason: 'noOutsiderDiedToday',
+        message: '今天没有外来者死亡，教父今晚不能杀人'
+      }
+    };
+  }
+
   const targets = action.targets;
   if (!targets || targets.length !== 1) {
-    return { success: false, message: '教父必须选择一个目标' };
+    return { success: false, message: '今天有外来者死亡，教父必须选择一个目标' };
   }
 
   return {
@@ -699,10 +732,26 @@ function processGodfather(action: NightAction, allPlayers: GamePlayer[]): SkillR
   };
 }
 
-function processZombuul(action: NightAction, allPlayers: GamePlayer[]): SkillResult {
+function processZombuul(
+  action: NightAction,
+  _allPlayers: GamePlayer[],
+  isFirstNight: boolean,
+  anyoneDiedToday: boolean
+): SkillResult {
+  if (isFirstNight || anyoneDiedToday) {
+    return {
+      success: true,
+      information: {
+        canKill: false,
+        reason: isFirstNight ? 'firstNight' : 'someoneDiedToday',
+        message: isFirstNight ? '第一夜僵怖不会行动' : '今天有人死亡，僵怖今晚不能杀人'
+      }
+    };
+  }
+
   const targets = action.targets;
   if (!targets || targets.length !== 1) {
-    return { success: false, message: '僵尸必须选择一个目标' };
+    return { success: false, message: '今天无人死亡，僵怖必须选择一个目标' };
   }
 
   return {

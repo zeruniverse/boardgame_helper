@@ -27,7 +27,9 @@ import {
   getRoleName,
   handleSetupMarkers,
   getAlivePlayers,
-  getDeadPlayersWithGhostVote
+  getDeadPlayersWithGhostVote,
+  isZombuulLivingWhileRegisteredDead,
+  ZOMBUUL_ALIVE_REMINDER
 } from '../utils/botcUtils';
 import { EDITIONS, getEditionById, getRoleById, getRolesByTeam } from '../utils/botcData';
 import { processFirstNightInfo, processNightAction, processDeathAbility } from '../utils/botcSkills';
@@ -50,6 +52,7 @@ export class BOTCWorker extends BaseGameWorker {
   private nightRound: number = 0;
   private previouslyPukkaTarget: string | null = null;
   private noExecutionToday: boolean = true;
+  private deathsToday: Array<{ playerId: string; roleId?: string; team?: Team; cause: string }> = [];
   private firstNightInfoPlayerIds: Set<string> = new Set();
 
   /**
@@ -130,6 +133,48 @@ export class BOTCWorker extends BaseGameWorker {
     if (!player.reminders.includes(reminder)) {
       player.reminders.push(reminder);
     }
+  }
+
+  private recordDeathToday(player: GamePlayer, cause: string): void {
+    if (this.gameState.phase !== GamePhase.DAY) return;
+    if (this.deathsToday.some(entry => entry.playerId === player.playerId)) return;
+
+    this.deathsToday.push({
+      playerId: player.playerId,
+      roleId: player.role?.id,
+      team: player.role?.team,
+      cause
+    });
+  }
+
+  private didAnyoneDieToday(): boolean {
+    return this.deathsToday.length > 0;
+  }
+
+  private didOutsiderDieToday(): boolean {
+    return this.deathsToday.some(entry => entry.team === Team.OUTSIDER);
+  }
+
+  private applyZombuulFirstDeath(player: GamePlayer, cause: string): boolean {
+    if (player.role?.id !== 'zombuul') return false;
+    if (isZombuulLivingWhileRegisteredDead(player)) return false;
+    if (!this.playerAbilityWorks(player)) return false;
+
+    player.isDead = true;
+    player.isAlive = false;
+    player.deathCause = cause;
+    player.canVote = true;
+    this.gameState.livingPlayers = Math.max(0, this.gameState.livingPlayers - 1);
+    this.addReminder(player, ZOMBUUL_ALIVE_REMINDER);
+    this.recordDeathToday(player, cause);
+    return true;
+  }
+
+  private finishRegisteredDeadZombuul(player: GamePlayer, cause: string): void {
+    player.reminders = player.reminders.filter(reminder => reminder !== ZOMBUUL_ALIVE_REMINDER);
+    player.deathCause = cause;
+    player.isAlive = false;
+    this.recordDeathToday(player, cause);
   }
 
   private getDebuffSources(): DebuffSourceMap {
@@ -1091,6 +1136,7 @@ export class BOTCWorker extends BaseGameWorker {
     this.gameState.votes = [];
     this.gameState.execution = undefined;
     this.noExecutionToday = true;
+    this.deathsToday = [];
 
     // 女巫在只剩3名存活玩家时失去能力，现有诅咒立即移除
     if (this.gameState.livingPlayers <= 3) {
@@ -1507,14 +1553,55 @@ export class BOTCWorker extends BaseGameWorker {
     const player = this.gamePlayers.get(playerId);
     if (!player) return;
 
-    // 死亡玩家可以被提名并处决，但不能再次“死亡”。否则会重复扣减 livingPlayers、
-    // 重复触发死亡能力/圣徒失败等效果。
+    // 死亡玩家可以被提名并处决，但不能再次“死亡”。僵怖第一次死亡后只是登记为死亡，
+    // 再次被处决时才真正死亡。
     if (player.isDead) {
       this.gameState.execution = {
         playerId,
         executedBy: [executedBy],
         timestamp: Date.now()
       };
+
+      if (isZombuulLivingWhileRegisteredDead(player)) {
+        this.noExecutionToday = false;
+        this.finishRegisteredDeadZombuul(player, 'execution');
+        this.sendToRoom('playerExecuted', {
+          playerId,
+          playerName: this.getPlayerName(playerId),
+          executedBy: this.getPlayerName(executedBy),
+          finalDeath: true
+        });
+        this.broadcastGameState();
+
+        if (player.role?.team === Team.DEMON) {
+          const scarletWomanPromoted = this.promoteScarletWomanIfNeeded(playerId);
+          this.broadcastGameState();
+          if (scarletWomanPromoted) {
+            return;
+          }
+
+          const mastermind = Array.from(this.gamePlayers.values()).find(p => p.role?.id === 'mastermind' && !p.isDead);
+          if (mastermind) {
+            this.gameState.grimoire.mastermindTriggered = true;
+            this.gameState.grimoire.mastermindResolveDay = this.gameState.day + 1;
+            this.sendToRoom('gameMessage', {
+              message: '幕后黑手生效，游戏继续一天',
+              type: 'info'
+            });
+            return;
+          }
+        }
+
+        const gameEnd = checkGameEnd(
+          Array.from(this.gamePlayers.values()),
+          true,
+          !!this.gameState.grimoire.mastermindTriggered
+        );
+        if (gameEnd.isEnded) {
+          await this.endGame(gameEnd.winner!, gameEnd.reason!);
+        }
+        return;
+      }
 
       this.sendToRoom('playerExecuted', {
         playerId,
@@ -1556,12 +1643,34 @@ export class BOTCWorker extends BaseGameWorker {
       return;
     }
 
+    if (this.applyZombuulFirstDeath(player, 'execution')) {
+      this.noExecutionToday = false;
+      this.gameState.execution = {
+        playerId,
+        executedBy: [executedBy],
+        timestamp: Date.now()
+      };
+      this.sendToRoom('playerExecuted', {
+        playerId,
+        playerName: this.getPlayerName(playerId),
+        executedBy: this.getPlayerName(executedBy),
+        zombuulFirstDeath: true
+      });
+      this.sendToRoom('gameMessage', {
+        message: `${this.getPlayerName(playerId)} 死亡并登记为死亡，但游戏仍在继续`,
+        type: 'warning'
+      });
+      this.broadcastGameState();
+      return;
+    }
+
     player.isDead = true;
     player.isAlive = false;
     player.deathCause = 'execution';
     player.canVote = true; // 刚死亡的玩家获得遗言票
     this.gameState.livingPlayers--;
     this.noExecutionToday = false;
+    this.recordDeathToday(player, 'execution');
 
     // 处理死亡时的能力
     const deathResult = processDeathAbility(playerId, Array.from(this.gamePlayers.values()), 'execution');
@@ -1627,7 +1736,7 @@ export class BOTCWorker extends BaseGameWorker {
     }
 
     const player = this.gamePlayers.get(playerId);
-    if (!player || player.isDead) {
+    if (!player || (player.isDead && !isZombuulLivingWhileRegisteredDead(player))) {
       this.sendToPlayer(playerId, 'actionError', { message: '无法执行夜晚行动' });
       return;
     }
@@ -1903,7 +2012,9 @@ export class BOTCWorker extends BaseGameWorker {
         if (!isDebuffed && target.role?.team === Team.DEMON) {
           // 目标是恶魔，立即击杀
           await this.killPlayer(targetId, 'slayer');
-          this.promoteScarletWomanIfNeeded(targetId);
+          if (!isZombuulLivingWhileRegisteredDead(target)) {
+            this.promoteScarletWomanIfNeeded(targetId);
+          }
           this.broadcastGameState();
           this.sendToRoom('gameMessage', {
             message: `${this.getPlayerName(playerId)} 使用杀手能力击杀了 ${this.getPlayerName(targetId)}（恶魔）！`,
@@ -1991,7 +2102,10 @@ export class BOTCWorker extends BaseGameWorker {
       }
 
       try {
-        const result = processNightAction(action, allPlayers, this.gameState.phase === GamePhase.FIRST_NIGHT);
+        const result = processNightAction(action, allPlayers, this.gameState.phase === GamePhase.FIRST_NIGHT, {
+          outsiderDiedToday: this.didOutsiderDieToday(),
+          anyoneDiedToday: this.didAnyoneDieToday()
+        });
         
         if (result.success) {
           const abilityWorks = this.playerAbilityWorks(player);
@@ -2042,13 +2156,18 @@ export class BOTCWorker extends BaseGameWorker {
 
     // 恶魔死亡后，确保红颜晋升逻辑被触发
     const anyDemonDiedTonight = allPlayers.some(p =>
-      p.role?.team === Team.DEMON && p.isDead && p.deathCause === 'demon'
+      p.role?.team === Team.DEMON &&
+      p.isDead &&
+      !isZombuulLivingWhileRegisteredDead(p) &&
+      p.deathCause === 'demon'
     );
     if (anyDemonDiedTonight) {
       const promoted = this.promoteScarletWomanIfNeeded();
       if (!promoted) {
         // 没有红颜晋升，检查是否还有存活恶魔；若无，可能影响游戏胜负
-        const aliveDemon = allPlayers.find(p => p.role?.team === Team.DEMON && !p.isDead);
+        const aliveDemon = allPlayers.find(p =>
+          p.role?.team === Team.DEMON && (!p.isDead || isZombuulLivingWhileRegisteredDead(p))
+        );
         if (!aliveDemon) {
           this.sendToPlayer(this.gameConfig.storytellerId, 'storytellerDecision', {
             type: 'noDemonAlive',
@@ -2562,7 +2681,21 @@ export class BOTCWorker extends BaseGameWorker {
    */
   private async killPlayer(playerId: string, cause: string): Promise<void> {
     const player = this.gamePlayers.get(playerId);
-    if (!player || player.isDead) return;
+    if (!player) return;
+
+    if (player.isDead) {
+      if (!isZombuulLivingWhileRegisteredDead(player)) return;
+
+      this.finishRegisteredDeadZombuul(player, cause);
+      this.sendToRoom('playerDied', {
+        playerId,
+        playerName: this.getPlayerName(playerId),
+        cause,
+        finalDeath: true
+      });
+      this.broadcastGameState();
+      return;
+    }
 
     // 检查愚者（Fool）免死效果
     if (player.role?.id === 'fool' && this.playerAbilityWorks(player) && !player.reminders?.includes('foolUsed')) {
@@ -2604,6 +2737,21 @@ export class BOTCWorker extends BaseGameWorker {
       }
     }
 
+    if (this.applyZombuulFirstDeath(player, cause)) {
+      this.sendToRoom('playerDied', {
+        playerId,
+        playerName: this.getPlayerName(playerId),
+        cause,
+        zombuulFirstDeath: true
+      });
+      this.sendToRoom('gameMessage', {
+        message: `${this.getPlayerName(playerId)} 死亡并登记为死亡，但游戏仍在继续`,
+        type: 'warning'
+      });
+      this.broadcastGameState();
+      return;
+    }
+
     // 处理智者（Sage）的死亡能力 - 被恶魔杀死时看到两名玩家中的一名是恶魔
     if (player.role?.id === 'sage' && this.playerAbilityWorks(player) && cause === 'demon') {
       player.isDead = true;
@@ -2611,6 +2759,7 @@ export class BOTCWorker extends BaseGameWorker {
       player.deathCause = cause;
       player.canVote = true;
       this.gameState.livingPlayers--;
+      this.recordDeathToday(player, cause);
 
       this.sendToRoom('playerDied', {
         playerId,
@@ -2676,6 +2825,7 @@ export class BOTCWorker extends BaseGameWorker {
       player.deathCause = cause;
       player.canVote = true; // 获得遗言票
       this.gameState.livingPlayers--;
+      this.recordDeathToday(player, cause);
 
       this.sendToRoom('playerDied', {
         playerId,
@@ -2736,6 +2886,7 @@ export class BOTCWorker extends BaseGameWorker {
     player.deathCause = cause;
     player.canVote = true; // 新死亡的玩家获得遗言票
     this.gameState.livingPlayers--;
+    this.recordDeathToday(player, cause);
 
     this.sendToRoom('playerDied', {
       playerId,

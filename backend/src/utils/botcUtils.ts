@@ -14,6 +14,17 @@ import { ROLES, getRolesByTeam, NIGHT_ORDER } from './botcData';
  * 血染钟楼游戏工具函数
  */
 
+export const ZOMBUUL_ALIVE_REMINDER = 'Zombuul Alive';
+
+export function isZombuulLivingWhileRegisteredDead(player?: GamePlayer | null): boolean {
+  return Boolean(
+    player &&
+    player.role?.id === 'zombuul' &&
+    player.isDead &&
+    player.reminders.includes(ZOMBUUL_ALIVE_REMINDER)
+  );
+}
+
 /**
  * 随机打乱数组
  */
@@ -234,7 +245,7 @@ export function getNightOrder(gamePlayers: GamePlayer[], isFirstNight: boolean):
     playersWithRole.forEach(player => {
       const effectiveRole = player.displayRole || player.role!;
       const nightAction = isFirstNight ? effectiveRole.firstNight : effectiveRole.otherNight;
-      if (nightAction > 0 && !player.isDead) {
+      if (nightAction > 0 && (!player.isDead || isZombuulLivingWhileRegisteredDead(player))) {
         order.push(player.playerId);
       }
     });
@@ -247,8 +258,10 @@ export function getNightOrder(gamePlayers: GamePlayer[], isFirstNight: boolean):
  * 检查游戏是否结束 - 包含特殊胜利条件
  */
 export function checkGameEnd(gamePlayers: GamePlayer[], checkEvilWin: boolean = true, mastermindTriggered: boolean = false): { isEnded: boolean; winner?: 'good' | 'evil'; reason?: string } {
+  // 僵怖第一次死亡后登记为死亡，但恶魔本体仍然存活；胜负判定必须按实际存活计算。
+  const actuallyAlivePlayers = gamePlayers.filter(p => !p.isDead || isZombuulLivingWhileRegisteredDead(p));
   const alivePlayers = gamePlayers.filter(p => !p.isDead);
-  const aliveDemon = alivePlayers.filter(p => p.role && p.role.team === Team.DEMON);
+  const aliveDemon = actuallyAlivePlayers.filter(p => p.role && p.role.team === Team.DEMON);
 
   // 幕后黑手生效中：恶魔被处决但游戏继续一天，此时不判定好人胜利
   if (aliveDemon.length === 0 && mastermindTriggered) {
@@ -262,7 +275,7 @@ export function checkGameEnd(gamePlayers: GamePlayer[], checkEvilWin: boolean = 
   }
 
   // 邪恶阵营标准胜利条件：恶魔仍存活且只剩2名或更少存活玩家（不计入旅行者）
-  const aliveNonTravelerCount = alivePlayers.filter(p => p.role?.team !== Team.TRAVELER).length;
+  const aliveNonTravelerCount = actuallyAlivePlayers.filter(p => p.role?.team !== Team.TRAVELER).length;
   if (checkEvilWin && aliveNonTravelerCount <= 2) {
     return { isEnded: true, winner: 'evil', reason: '仅剩2名或更少存活玩家' };
   }
@@ -414,8 +427,9 @@ export function validatePlayerAction(
     return { valid: false, error: '游戏尚未开始' };
   }
 
-  // 死亡玩家的限制
-  if (player.isDead) {
+  // 死亡玩家的限制。僵怖第一次死亡后登记为死亡，但仍会在满足条件时于夜晚醒来攻击。
+  const canRegisteredDeadZombuulAct = actionType === 'nightAction' && isZombuulLivingWhileRegisteredDead(player);
+  if (player.isDead && !canRegisteredDeadZombuulAct) {
     // 死亡玩家可以投票（遗言票）和聊天
     if (actionType === 'vote') {
       if (!player.canVote) {
