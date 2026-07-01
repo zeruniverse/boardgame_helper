@@ -866,26 +866,82 @@ export function roomController(io: Server) {
         }
 
         // 先将玩家标记为离线并通知 worker；多数游戏需要在玩家仍存在于房间时
-        // 处理自动弃牌、死亡/托管、阶段推进等逻辑，然后控制层再真正移出玩家。
+        // 处理自动弃牌、死亡/托管、阶段推进等逻辑。主动离房的 socket 仍保持连接，
+        // 需要清空旧 socketId，避免后续私有身份/行动消息继续发到已离开的页面。
         player.online = false;
+        player.socketId = '';
         player.lastHeartbeat = Date.now();
         room.lastActiveTime = Date.now();
         rooms.set(room.id, room);
         threadManager.updateRoomData(room.id, room);
 
+        let canRemovePlayer = true;
         if (threadManager.getRoomThreadStatus(room.id) !== 'not_found') {
           try {
             await sendTaskToRoom(room.id, 'update_room_data', { room });
             await sendTaskToRoom(room.id, 'player_offline', { playerId: player.id });
+
+            // 是否能从房间中真正移除玩家必须由对应游戏 worker 决定。
+            // 进行中的局通常只能把玩家置为离线，否则 room.players 与 worker 内的
+            // gameState/座位/手牌/角色列表会错位，导致流程卡死或私有信息错发。
+            const kickResponse = await sendTaskToRoom(room.id, 'kick_out_player', { targetId: player.id });
+            const kickResult = readKickResult(kickResponse);
+            canRemovePlayer = kickResult.kicked;
           } catch (error) {
             console.error(`通知房间线程玩家离开失败: ${room.id}`, error);
+            canRemovePlayer = false;
           }
         }
 
         // 离开房间频道
         await socket.leave(room.id);
 
-        // worker 可能在 player_offline 中推进了状态，因此移除前重新读取最新房间快照。
+        // worker 拒绝移除时，保持玩家为离线状态，使用与断线相同的重连/清理模型。
+        if (!canRemovePlayer) {
+          const latestRoom = rooms.get(room.id) || room;
+          const latestPlayer = latestRoom.players.find(p => p.id === player.id);
+          if (latestPlayer) {
+            latestPlayer.online = false;
+            latestPlayer.socketId = '';
+            latestPlayer.lastHeartbeat = Date.now();
+          }
+          latestRoom.lastActiveTime = Date.now();
+          rooms.set(latestRoom.id, latestRoom);
+          threadManager.updateRoomData(latestRoom.id, latestRoom);
+          io.to(latestRoom.id).emit('room_update', toClientRoom(latestRoom));
+          if (!latestRoom.private) {
+            broadcastLobbyUpdate();
+          }
+
+          const onlinePlayers = latestRoom.players.filter(p => p.online);
+          if (onlinePlayers.length === 0) {
+            if (latestRoom.cleanupTimer) {
+              clearTimeout(latestRoom.cleanupTimer);
+            }
+            latestRoom.cleanupTimer = setTimeout(() => {
+              console.log(`清理空房间: ${latestRoom.id}`);
+              const roomToClean = rooms.get(latestRoom.id);
+              if (!roomToClean) return;
+              const stillOnline = roomToClean.players.filter(p => p.online);
+              if (stillOnline.length > 0) return;
+
+              threadManager.stopRoomThread(latestRoom.id).catch(err => {
+                console.error(`清理空房间时停止线程失败: ${latestRoom.id}`, err);
+              });
+              rooms.delete(latestRoom.id);
+              hostKickVotes.delete(latestRoom.id);
+              broadcastLobbyUpdate();
+            }, config.server.roomCleanupTimeout || 60000);
+            rooms.set(latestRoom.id, latestRoom);
+            threadManager.updateRoomData(latestRoom.id, latestRoom);
+          }
+
+          socket.emit('room_left', { roomId: room.id });
+          console.log(`玩家 ${player.nickname} 在游戏进行中离开了房间 ${room.name}，已保留为离线玩家`);
+          return;
+        }
+
+        // worker 可能在 player_offline / kick_out_player 中推进了状态，因此移除前重新读取最新房间快照。
         const latestRoom = rooms.get(room.id) || room;
         const playerIndex = latestRoom.players.findIndex(p => p.id === player.id);
         if (playerIndex !== -1) {
