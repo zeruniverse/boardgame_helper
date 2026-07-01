@@ -15,6 +15,7 @@ import { ROLES, getRolesByTeam, NIGHT_ORDER } from './botcData';
  */
 
 export const ZOMBUUL_ALIVE_REMINDER = 'Zombuul Alive';
+export const GOOD_TWIN_EXECUTED_REMINDER = 'Good Twin Executed';
 
 export function isZombuulLivingWhileRegisteredDead(player?: GamePlayer | null): boolean {
   return Boolean(
@@ -266,8 +267,27 @@ export function isGoodTwinPlayer(player?: GamePlayer | null): boolean {
   );
 }
 
+export function isAbilitySuppressed(player?: GamePlayer | null): boolean {
+  return Boolean(
+    player && (
+      player.role?.id === 'drunk' ||
+      player.reminders.some(reminder =>
+        reminder === 'Poisoned' ||
+        reminder === '中毒' ||
+        reminder === 'Drunk' ||
+        reminder === '醉酒' ||
+        reminder === 'Is the Drunk'
+      )
+    )
+  );
+}
+
 export function hasLivingEvilTwin(gamePlayers: GamePlayer[]): boolean {
-  return gamePlayers.some(player => player.role?.id === 'eviltwin' && !player.isDead);
+  return gamePlayers.some(player =>
+    player.role?.id === 'eviltwin' &&
+    !player.isDead &&
+    !isAbilitySuppressed(player)
+  );
 }
 
 export function getGoodTwinPlayer(gamePlayers: GamePlayer[]): GamePlayer | undefined {
@@ -282,8 +302,10 @@ export function checkGameEnd(gamePlayers: GamePlayer[], checkEvilWin: boolean = 
   const goodTwin = getGoodTwinPlayer(gamePlayers);
   const livingEvilTwin = hasLivingEvilTwin(gamePlayers);
 
-  // 邪恶双子：只有善良双子“被处决”时邪恶获胜；夜间死亡不应触发。
-  if (livingEvilTwin && goodTwin?.isDead && goodTwin.deathCause === 'execution') {
+  // 邪恶双子：只有在邪恶双子能力有效时发生的善良双子处决才会触发；
+  // 避免邪恶双子中毒/醉酒时处决善良双子后，状态恢复又被历史 deathCause 追溯判负。
+  const goodTwinExecutedWithActiveTwin = goodTwin?.reminders.includes(GOOD_TWIN_EXECUTED_REMINDER);
+  if (livingEvilTwin && goodTwinExecutedWithActiveTwin) {
     return { isEnded: true, winner: 'evil', reason: '善良双子被处决' };
   }
 
@@ -309,13 +331,13 @@ export function checkGameEnd(gamePlayers: GamePlayer[], checkEvilWin: boolean = 
 
   // Vortox特殊条件 - 如果白天没有人被处决，邪恶获胜
   // checkEvilWin=false表示这是白天结束时调用，且白天无人被处决
-  const vortox = alivePlayers.find(p => p.role?.id === 'vortox' && !p.isDead);
+  const vortox = alivePlayers.find(p => p.role?.id === 'vortox' && !p.isDead && !isAbilitySuppressed(p));
   if (vortox && !checkEvilWin) {
     return { isEnded: true, winner: 'evil', reason: 'Vortox效果：白天无人被处决' };
   }
 
   // 镇长特殊胜利条件 - 只剩3名存活玩家且无执行时，需要说书人判断
-  const mayor = alivePlayers.find(p => p.role?.id === 'mayor' && !p.isDead);
+  const mayor = alivePlayers.find(p => p.role?.id === 'mayor' && !p.isDead && !isAbilitySuppressed(p));
   if (mayor && alivePlayers.length === 3) {
     // 说书人需要判断，返回待定状态
     return { isEnded: false }; // 说书人需要判断，这里不自动结束

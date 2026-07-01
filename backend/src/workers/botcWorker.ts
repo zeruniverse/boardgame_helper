@@ -31,6 +31,7 @@ import {
   isZombuulLivingWhileRegisteredDead,
   ZOMBUUL_ALIVE_REMINDER,
   isGoodTwinPlayer,
+  GOOD_TWIN_EXECUTED_REMINDER,
   hasLivingEvilTwin
 } from '../utils/botcUtils';
 import { EDITIONS, getEditionById, getRoleById, getRolesByTeam } from '../utils/botcData';
@@ -1270,7 +1271,7 @@ export class BOTCWorker extends BaseGameWorker {
 
     // 检查镇长（Mayor）特殊胜利条件：只剩3名存活且无执行
     const alivePlayers = Array.from(this.gamePlayers.values()).filter(p => !p.isDead);
-    const mayor = alivePlayers.find(p => p.role?.id === 'mayor');
+    const mayor = alivePlayers.find(p => p.role?.id === 'mayor' && this.playerAbilityWorks(p));
     if (mayor && alivePlayers.length === 3) {
       // 今天没有处决且只剩3人存活（含镇长），善良获胜
       await this.endGame('good', '镇长特殊胜利：仅剩3名存活玩家且无执行');
@@ -1278,7 +1279,7 @@ export class BOTCWorker extends BaseGameWorker {
     }
 
     // 检查沃托克斯（Vortox）特殊胜利条件：白天无人被处决
-    const vortox = alivePlayers.find(p => p.role?.id === 'vortox' && !p.isDead);
+    const vortox = alivePlayers.find(p => p.role?.id === 'vortox' && !p.isDead && this.playerAbilityWorks(p));
     if (vortox && this.noExecutionToday) {
       await this.endGame('evil', '沃托克斯特殊胜利：白天无人被处决');
       return;
@@ -1367,9 +1368,10 @@ export class BOTCWorker extends BaseGameWorker {
 
     // 检查处女（Virgin）能力 - 首次被提名时，若提名者是镇民，提名者立即被处决
     if (nominee.role?.id === 'virgin' && !nominee.isDead && !nominee.reminders.includes('No ability')) {
-      // Virgin 只要被提名就失去能力
+      const virginAbilityWorks = this.playerAbilityWorks(nominee);
+      // Virgin 首次被提名后失去能力；若当时中毒/醉酒，则不产生立即处决。
       nominee.reminders.push('No ability');
-      if (nominator.role?.team === Team.TOWNSFOLK) {
+      if (virginAbilityWorks && nominator.role?.team === Team.TOWNSFOLK) {
         // 提名者是镇民，Virgin能力成功触发
         await this.executePlayer(playerId, data.nomineeId);
         this.sendToRoom('gameMessage', {
@@ -1611,6 +1613,12 @@ export class BOTCWorker extends BaseGameWorker {
     const player = this.gamePlayers.get(playerId);
     if (!player) return;
 
+    this.gameState.execution = {
+      playerId,
+      executedBy: [executedBy],
+      timestamp: Date.now()
+    };
+
     // 死亡玩家可以被提名并处决，但不能再次“死亡”。僵怖第一次死亡后只是登记为死亡，
     // 再次被处决时才真正死亡。
     if (player.isDead) {
@@ -1621,6 +1629,7 @@ export class BOTCWorker extends BaseGameWorker {
       };
 
       if (isGoodTwinPlayer(player) && hasLivingEvilTwin(Array.from(this.gamePlayers.values()))) {
+        this.addReminder(player, GOOD_TWIN_EXECUTED_REMINDER);
         await this.endGame('evil', '善良双子被处决，邪恶阵营获胜');
         return;
       }
@@ -1643,7 +1652,7 @@ export class BOTCWorker extends BaseGameWorker {
             return;
           }
 
-          const mastermind = Array.from(this.gamePlayers.values()).find(p => p.role?.id === 'mastermind' && !p.isDead);
+          const mastermind = Array.from(this.gamePlayers.values()).find(p => p.role?.id === 'mastermind' && !p.isDead && this.playerAbilityWorks(p));
           if (mastermind) {
             this.gameState.grimoire.mastermindTriggered = true;
             this.gameState.grimoire.mastermindResolveDay = this.gameState.day + 1;
@@ -1697,11 +1706,18 @@ export class BOTCWorker extends BaseGameWorker {
         type: 'warning'
       });
       this.broadcastGameState();
+
+      if (isGoodTwinPlayer(player) && hasLivingEvilTwin(Array.from(this.gamePlayers.values()))) {
+        this.addReminder(player, GOOD_TWIN_EXECUTED_REMINDER);
+        await this.endGame('evil', '善良双子被处决，邪恶阵营获胜');
+        return;
+      }
+
       return;
     }
 
     // 处理圣徒被处决 - 善良阵营直接失败
-    if (player.role?.id === 'saint') {
+    if (player.role?.id === 'saint' && this.playerAbilityWorks(player)) {
       await this.endGame('evil', '圣徒被处决，善良阵营失败');
       return;
     }
@@ -1757,6 +1773,12 @@ export class BOTCWorker extends BaseGameWorker {
     });
     this.broadcastGameState();
 
+    if (isGoodTwinPlayer(player) && hasLivingEvilTwin(Array.from(this.gamePlayers.values()))) {
+      this.addReminder(player, GOOD_TWIN_EXECUTED_REMINDER);
+      await this.endGame('evil', '善良双子被处决，邪恶阵营获胜');
+      return;
+    }
+
     // 恶魔被处决后，先处理红颜；若红颜成功接任，游戏并未因恶魔死亡而结束，幕后黑手不触发。
     if (player.role?.team === Team.DEMON) {
       const scarletWomanPromoted = this.promoteScarletWomanIfNeeded(playerId);
@@ -1765,7 +1787,7 @@ export class BOTCWorker extends BaseGameWorker {
         return;
       }
 
-      const mastermind = Array.from(this.gamePlayers.values()).find(p => p.role?.id === 'mastermind' && !p.isDead);
+      const mastermind = Array.from(this.gamePlayers.values()).find(p => p.role?.id === 'mastermind' && !p.isDead && this.playerAbilityWorks(p));
       if (mastermind) {
         this.gameState.grimoire.mastermindTriggered = true;
         this.gameState.grimoire.mastermindResolveDay = this.gameState.day + 1;
