@@ -241,6 +241,25 @@ export class BOTCWorker extends BaseGameWorker {
     }
   }
 
+  private advanceCourtierDrunkMarkers(): void {
+    const courtierMarkerPattern = /^Courtier Drunk ([123])$/;
+
+    this.gamePlayers.forEach(player => {
+      const marker = player.reminders.find(reminder => courtierMarkerPattern.test(reminder));
+      if (!marker) return;
+
+      const remainingNights = Number(marker.match(courtierMarkerPattern)?.[1] || 0);
+      player.reminders = player.reminders.filter(reminder => !courtierMarkerPattern.test(reminder));
+
+      if (remainingNights <= 1) {
+        this.removeDebuffSource(player, 'Drunk', 'courtier');
+        return;
+      }
+
+      this.addReminder(player, `Courtier Drunk ${remainingNights - 1}`);
+    });
+  }
+
   private clearExpiredTemporaryDebuffs(): void {
     this.gamePlayers.forEach(player => {
       // 投毒者的中毒持续到下一个黄昏；进入下一夜时必须过期。
@@ -249,6 +268,7 @@ export class BOTCWorker extends BaseGameWorker {
       this.removeDebuffSource(player, 'Drunk', 'sailor');
       this.removeDebuffSource(player, 'Drunk', 'innkeeper');
     });
+    this.advanceCourtierDrunkMarkers();
   }
 
   private getNightKillCause(action: NightAction): string {
@@ -2214,11 +2234,28 @@ export class BOTCWorker extends BaseGameWorker {
       }
     }
 
+    // 处理仅用于能力结算的显示角色改变（例如哲学家获得某角色能力）
+    if (effects.displayRoleChanges) {
+      for (const change of effects.displayRoleChanges) {
+        const player = this.gamePlayers.get(change.playerId);
+        const newRole = getRoleById(change.roleId);
+        if (!player || !newRole) continue;
+
+        player.displayRole = { ...newRole };
+        player.nightInfo = null;
+        this.sendRoleStateToPlayer(player.playerId);
+        this.sendNightInfoToPlayer(player.playerId, {
+          role: newRole.id,
+          information: { message: change.message || `你获得了${newRole.name}能力` }
+        });
+      }
+    }
+
     // 处理醉酒
     if (effects.drunk) {
       const actingPlayer = this.gamePlayers.get(action.playerId);
       const sourceRoleId = action.roleId || (actingPlayer ? this.getEffectiveRole(actingPlayer)?.id : '') || '';
-      const source = sourceRoleId === 'sailor' || sourceRoleId === 'innkeeper' ? sourceRoleId : undefined;
+      const source = ['sailor', 'innkeeper', 'courtier', 'philosopher'].includes(sourceRoleId) ? sourceRoleId : undefined;
       for (const playerId of effects.drunk) {
         const player = this.gamePlayers.get(playerId);
         if (player) {
@@ -2373,17 +2410,6 @@ export class BOTCWorker extends BaseGameWorker {
         }
 
         // === 需要向说书人提问的角色 ===
-        else if (roleId === 'philosopher') {
-          const characterId = action?.data?.characterId || action?.data?.ability || action?.data?.roleId;
-          if (!characterId) {
-            this.sendToPlayer(playerId, 'actionError', { message: '哲学家必须选择一个善良角色' });
-            continue;
-          }
-          this.sendStorytellerQuestion(playerId, 'characterAbility', {
-            characterId
-          });
-        }
-
         else if (roleId === 'artist') {
           const question = action?.data?.question || '';
           if (!question) {
@@ -2396,16 +2422,6 @@ export class BOTCWorker extends BaseGameWorker {
           });
         }
 
-        else if (roleId === 'courtier') {
-          const characterId = action?.data?.characterId;
-          if (!characterId) {
-            this.sendToPlayer(playerId, 'actionError', { message: '侍臣必须选择一个角色' });
-            continue;
-          }
-          this.sendStorytellerQuestion(playerId, 'characterAbility', {
-            characterId
-          });
-        }
         else if (roleId === 'highpriestess') {
           const randomAlive = allPlayers.filter(p => !p.isDead && p.playerId !== playerId);
           const target = randomAlive[Math.floor(Math.random() * randomAlive.length)];

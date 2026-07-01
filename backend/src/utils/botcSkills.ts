@@ -9,7 +9,7 @@ import {
   getNeighbors, 
   countAdjacentEvilPairs 
 } from './botcUtils';
-import { getRoleById } from './botcData';
+import { getAllRoles, getRoleById } from './botcData';
 
 /**
  * 血染钟楼角色技能处理器 - 完整版本
@@ -28,6 +28,7 @@ export interface SkillResult {
     reminders?: { playerId: string; reminder: string }[];
     revived?: string[];
     roleChanges?: { playerId: string; roleId: string; poison?: boolean; message?: string }[];
+    displayRoleChanges?: { playerId: string; roleId: string; message?: string }[];
     roleSwaps?: { playerA: string; playerB: string; poisonPlayerId?: string; message?: string }[];
     globalReminders?: { reminder: string; data?: any }[];
     message?: string;
@@ -111,6 +112,7 @@ export function processNightAction(
     exorcist: () => processExorcist(action, allPlayers),
     innkeeper: () => processInnkeeper(action, allPlayers),
     gambler: () => processGambler(action, allPlayers),
+    courtier: () => processCourtier(action, allPlayers),
     professor: () => processProfessor(action, allPlayers),
     godfather: () => processGodfather(action, allPlayers),
     devilsadvocate: () => processDevilsAdvocate(action, allPlayers),
@@ -915,19 +917,89 @@ function processWitch(action: NightAction, allPlayers: GamePlayer[]): SkillResul
   };
 }
 
-function processPhilosopher(action: NightAction, allPlayers: GamePlayer[]): SkillResult {
-  const ability = action.data?.ability;
-  if (!ability) {
-    return { success: false, message: '哲学家必须选择一个能力' };
+function resolveRoleInput(input: unknown) {
+  const raw = String(input || '').trim();
+  if (!raw) return undefined;
+
+  const normalized = raw.toLowerCase();
+  return getRoleById(normalized) || getAllRoles().find(role =>
+    role.id.toLowerCase() === normalized ||
+    role.name === raw ||
+    role.name.toLowerCase() === normalized
+  );
+}
+
+function findPlayersWithRealRole(allPlayers: GamePlayer[], roleId: string): GamePlayer[] {
+  return allPlayers.filter(player => player.role?.id === roleId);
+}
+
+function hasUsedOncePerGameAbility(player: GamePlayer | undefined): boolean {
+  return Boolean(player?.reminders.some(reminder =>
+    reminder === 'No ability' ||
+    reminder === '已使用' ||
+    reminder === 'Is the Philosopher'
+  ));
+}
+
+function processCourtier(action: NightAction, allPlayers: GamePlayer[]): SkillResult {
+  const actor = allPlayers.find(player => player.playerId === action.playerId);
+  if (hasUsedOncePerGameAbility(actor)) {
+    return { success: true, message: '朝臣能力已经使用过' };
   }
+
+  const chosenRole = resolveRoleInput(action.data?.characterId || action.data?.character || action.data?.roleId);
+  if (!chosenRole) {
+    return { success: false, message: '朝臣必须选择一个有效角色' };
+  }
+
+  const drunkTargets = findPlayersWithRealRole(allPlayers, chosenRole.id).map(player => player.playerId);
+  const reminders = [
+    { playerId: action.playerId, reminder: 'No ability' },
+    ...drunkTargets.map(playerId => ({ playerId, reminder: 'Courtier Drunk 3' }))
+  ];
 
   return {
     success: true,
     effects: {
+      drunk: drunkTargets,
+      reminders
+    },
+    message: `朝臣选择了${chosenRole.name}`
+  };
+}
+
+function processPhilosopher(action: NightAction, allPlayers: GamePlayer[]): SkillResult {
+  const actor = allPlayers.find(player => player.playerId === action.playerId);
+  if (hasUsedOncePerGameAbility(actor)) {
+    return { success: true, message: '哲学家能力已经使用过' };
+  }
+
+  const chosenRole = resolveRoleInput(action.data?.ability || action.data?.characterId || action.data?.roleId);
+  if (!chosenRole) {
+    return { success: false, message: '哲学家必须选择一个有效角色' };
+  }
+  if (chosenRole.team !== Team.TOWNSFOLK && chosenRole.team !== Team.OUTSIDER) {
+    return { success: false, message: '哲学家只能选择善良角色' };
+  }
+
+  const drunkTargets = findPlayersWithRealRole(allPlayers, chosenRole.id)
+    .filter(player => player.playerId !== action.playerId)
+    .map(player => player.playerId);
+
+  return {
+    success: true,
+    effects: {
+      displayRoleChanges: [
+        { playerId: action.playerId, roleId: chosenRole.id, message: `你获得了${chosenRole.name}能力` }
+      ],
+      drunk: drunkTargets,
       reminders: [
-        { playerId: action.playerId, reminder: `获得${ability}能力` }
+        { playerId: action.playerId, reminder: 'No ability' },
+        { playerId: action.playerId, reminder: 'Is the Philosopher' },
+        ...drunkTargets.map(playerId => ({ playerId, reminder: 'Philosopher Drunk' }))
       ]
-    }
+    },
+    message: `哲学家获得了${chosenRole.name}能力`
   };
 }
 
