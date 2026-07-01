@@ -2406,20 +2406,6 @@ export class BOTCWorker extends BaseGameWorker {
             characterId
           });
         }
-
-        else if (roleId === 'spy') {
-          const targets = selectedPlayers(action);
-          if (targets.length !== 1) {
-            this.sendStorytellerQuestion(playerId, 'role', {
-              targetId: this.getRandomAlivePlayer(allPlayers, playerId) || ''
-            });
-          } else {
-            this.sendStorytellerQuestion(playerId, 'role', {
-              targetId: targets[0].playerId
-            });
-          }
-        }
-
         else if (roleId === 'highpriestess') {
           const randomAlive = allPlayers.filter(p => !p.isDead && p.playerId !== playerId);
           const target = randomAlive[Math.floor(Math.random() * randomAlive.length)];
