@@ -1175,13 +1175,15 @@ class TexasHoldemWorker extends BaseGameWorker {
         this.clearActionTimer();
         this.handleCall(playerId, toCall);
         break;
-      case 'raise':
-        if (!amount || amount <= gs.currentBet) {
+      case 'raise': {
+        const raiseTo = Math.floor(Number(amount));
+        if (!Number.isFinite(raiseTo) || raiseTo <= gs.currentBet) {
           return;
         }
         this.clearActionTimer();
-        this.handleRaise(playerId, amount);
+        this.handleRaise(playerId, raiseTo);
         break;
+      }
       case 'all-in':
       case 'allin':
         this.clearActionTimer();
@@ -1474,10 +1476,22 @@ class TexasHoldemWorker extends BaseGameWorker {
     const player = this.room.players.find(p => p.id === playerId);
     if (!player) return;
 
+    if (!Number.isFinite(raiseAmount) || raiseAmount <= 0) {
+      this.sendToPlayer(playerId, 'error', { message: '加注金额无效' });
+      this.restartActionTimerForPlayer(playerId);
+      return;
+    }
+
     const currentBet = gs.bets[playerId] || 0;
     const needToPay = raiseAmount - currentBet;
     const previousTableBet = gs.currentBet;
     const minRaiseTo = previousTableBet + gs.lastRaiseAmount;
+
+    if (!Number.isFinite(needToPay) || needToPay <= 0) {
+      this.sendToPlayer(playerId, 'error', { message: '加注金额无效' });
+      this.restartActionTimerForPlayer(playerId);
+      return;
+    }
 
     if ((gs.raiseLocked || []).includes(playerId)) {
       this.sendToPlayer(playerId, 'error', { message: '短码全下未构成完整加注，不能再加注' });

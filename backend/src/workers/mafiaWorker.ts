@@ -254,6 +254,12 @@ class MafiaWorker extends BaseGameWorker {
       const message = `${player.nickname}已断开连接`;
       this.sendToRoom('player_offline', { message });
     }
+
+    const gameState = this.gameState as MafiaGameState;
+    if (gameState.status === GameStatus.NIGHT) {
+      this.refreshNightLocksForOnlinePlayers();
+      this.endNightIfNoPendingActions();
+    }
   }
 
   async gameAction(playerId: string, actionType: string, actionData: any): Promise<void> {
@@ -797,9 +803,7 @@ class MafiaWorker extends BaseGameWorker {
       gameState.copActionLock = false;
       gameState.inspect = {};
       // 检查是否可以结束夜晚
-      if (!gameState.copActionLock && !gameState.killerActionLock && !gameState.doctorActionLock && !gameState.sniperActionLock) {
-        this.endNight();
-      }
+      this.endNightIfNoPendingActions();
     } else {
       this.sendToPlayer(playerId, 'inspect_pending', {
         message: '验人选择已记录，等待其他警察选择'
@@ -871,9 +875,7 @@ class MafiaWorker extends BaseGameWorker {
       gameState.doctorActionLock = false;
       gameState.wantToSave = {};
       // 检查是否可以结束夜晚
-      if (!gameState.copActionLock && !gameState.killerActionLock && !gameState.doctorActionLock && !gameState.sniperActionLock) {
-        this.endNight();
-      }
+      this.endNightIfNoPendingActions();
     } else {
       this.sendToPlayer(playerId, 'save_pending', {
         message: '救人选择已记录，等待其他医生选择'
@@ -919,9 +921,7 @@ class MafiaWorker extends BaseGameWorker {
     this.sendToPlayer(playerId, 'snipe_result', { message });
 
     // 检查是否可以结束夜晚
-    if (!gameState.copActionLock && !gameState.killerActionLock && !gameState.doctorActionLock && !gameState.sniperActionLock) {
-      this.endNight();
-    }
+    this.endNightIfNoPendingActions();
   }
 
   private handleKillPerson(playerId: string, targetId: string): void {
@@ -969,9 +969,7 @@ class MafiaWorker extends BaseGameWorker {
       gameState.topSecret.killer.forEach(kId => this.sendToPlayer(kId, 'kill_result', { message }));
 
       // 检查是否可以结束夜晚（所有角色都完成行动）
-      if (!gameState.copActionLock && !gameState.killerActionLock && !gameState.doctorActionLock && !gameState.sniperActionLock) {
-        this.endNight();
-      }
+      this.endNightIfNoPendingActions();
     } else {
       this.sendToPlayer(playerId, 'kill_pending', {
         message: isChangingChoice
@@ -1331,10 +1329,79 @@ class MafiaWorker extends BaseGameWorker {
       return false;
     }
 
-    // 当前夜晚没有任何在线可行动角色时，按夜晚超时的安全路径直接进入白天。
-    // 不能调用 endNight()，因为没有死亡目标时 endNight() 会直接返回并停留在夜晚。
-    this.nightTimeout();
+    const gameState = this.gameState as MafiaGameState;
+    if (gameState.personWillDie || gameState.sniperTarget) {
+      this.endNight();
+    } else {
+      // 当前夜晚没有任何死亡目标时，按夜晚超时的安全路径直接进入白天。
+      // 不能调用 endNight()，因为没有死亡目标时 endNight() 会直接返回并停留在夜晚。
+      this.nightTimeout();
+    }
     return true;
+  }
+
+  private refreshNightLocksForOnlinePlayers(): void {
+    const gameState = this.gameState as MafiaGameState;
+    if (gameState.status !== GameStatus.NIGHT) {
+      return;
+    }
+
+    const aliveOfflineCops = this.getAliveOfflineCops();
+    aliveOfflineCops.forEach(copId => {
+      delete gameState.inspect[copId];
+    });
+    if (gameState.copActionLock) {
+      const aliveOnlineCops = this.getAliveOnlineCops();
+      if (aliveOnlineCops.length === 0 || aliveOnlineCops.every(copId => copId in gameState.inspect)) {
+        gameState.copActionLock = false;
+        gameState.inspect = {};
+      }
+    }
+
+    const aliveOfflineDoctors = this.getAliveOfflineDoctors();
+    aliveOfflineDoctors.forEach(docId => {
+      delete gameState.wantToSave[docId];
+    });
+    if (gameState.doctorActionLock) {
+      const aliveOnlineDoctors = this.getAliveOnlineDoctors();
+      if (aliveOnlineDoctors.length === 0 || aliveOnlineDoctors.every(docId => docId in gameState.wantToSave)) {
+        gameState.personSaved = [...new Set(Object.values(gameState.wantToSave as Record<string, string>))];
+        gameState.doctorActionLock = false;
+        gameState.wantToSave = {};
+      }
+    }
+
+    if (gameState.sniperActionLock && this.getAliveOnlineSnipers().length === 0) {
+      gameState.sniperActionLock = false;
+      gameState.wantToSnipe = {};
+    }
+
+    const aliveOfflineKillers = this.getAliveOfflineKillers();
+    aliveOfflineKillers.forEach(killerId => {
+      delete gameState.wantToKill[killerId];
+    });
+    if (gameState.killerActionLock) {
+      const aliveOnlineKillers = this.getAliveOnlineKillers();
+      if (aliveOnlineKillers.length === 0) {
+        gameState.killerActionLock = false;
+        gameState.wantToKill = {};
+      } else {
+        const allKillersChosen = aliveOnlineKillers.every(killerId => killerId in gameState.wantToKill);
+        const choices = aliveOnlineKillers
+          .map(killerId => gameState.wantToKill[killerId])
+          .filter((targetId): targetId is string => Boolean(targetId));
+        const allSameChoice = choices.length > 0 && new Set(choices).size === 1;
+        if (allKillersChosen && allSameChoice) {
+          const personWillDie = choices[0];
+          gameState.personWillDie = personWillDie;
+          gameState.killerActionLock = false;
+          gameState.wantToKill = {};
+
+          const message = `你们合伙谋害了${this.getPlayerName(personWillDie)}`;
+          aliveOnlineKillers.forEach(kId => this.sendToPlayer(kId, 'kill_result', { message }));
+        }
+      }
+    }
   }
 
   private getAliveOnlineCops(): string[] {
@@ -1457,8 +1524,6 @@ class MafiaWorker extends BaseGameWorker {
         }
         return;
       }
-      const savedAny = gameState.personSaved.length > 0;
-      const savedName = savedAny ? this.getPlayerName(gameState.personSaved[0]) : '';
       gameState.step += 1;
       gameState.status = GameStatus.SPEAK;
       gameState.operators = [firstPlayer];
@@ -1468,9 +1533,7 @@ class MafiaWorker extends BaseGameWorker {
       gameState.operateEndTime = new Date(Date.now() + this.config.speakTime * 1000);
 
       this.setTimer(this.config.speakTime * 1000, () => this.handleTimeout());
-      const message = savedAny
-        ? `昨夜${savedName}被医生救下, 无人遇害, 请${this.getPlayerName(firstPlayer)}发言`
-        : `昨夜无人遇害, 请${this.getPlayerName(firstPlayer)}发言`;
+      const message = `昨夜无人遇害, 请${this.getPlayerName(firstPlayer)}发言`;
       this.sendToRoom('day_start', { message, gameInfo: this.getGameInfo() });
     } else {
       this.endNight();
@@ -1546,7 +1609,7 @@ class MafiaWorker extends BaseGameWorker {
         }
         return;
       }
-      const message = `昨夜${this.getPlayerName(killerTarget)}被医生救下, 无人遇害, 请${this.getPlayerName(firstPlayer)}发言`;
+      const message = `昨夜无人遇害, 请${this.getPlayerName(firstPlayer)}发言`;
       
       gameState.personWillDie = null;
       gameState.sniperTarget = null;
