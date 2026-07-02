@@ -120,9 +120,11 @@ function mergePlayerFromWorker(existing: Player | undefined, worker: Player): Pl
   return {
     ...worker,
     // socket/online/heartbeat are owned by the controller thread; worker room snapshots can be stale.
-    socketId: existing.socketId || worker.socketId,
+    // Preserve an explicit empty socketId set by active leave_room; otherwise a stale worker
+    // update can reattach private game messages to a socket that already left the room.
+    socketId: existing.socketId,
     online: existing.online,
-    lastHeartbeat: existing.lastHeartbeat || worker.lastHeartbeat,
+    lastHeartbeat: existing.lastHeartbeat ?? worker.lastHeartbeat,
     name: worker.name || worker.nickname || existing.name,
     nickname: worker.nickname || existing.nickname,
     gameMetadata: {

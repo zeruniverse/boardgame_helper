@@ -197,10 +197,7 @@ class OnuWerewolfWorker extends BaseGameWorker {
     if (this.gameState.status === OnuWerewolfGameStatus.NIGHT) {
       const currentSkillItem = this.skillQueue[this.currentSkillIndex];
       if (currentSkillItem?.player.id === playerId && !currentSkillItem.player.skillUsed) {
-        this.sendToRoom('onu_system_message', {
-          message: `${currentSkillItem.player.name} 已断开连接，系统自动跳过其夜间技能`
-        });
-        await this.handleSkipSkill(playerId);
+        await this.skipOfflineNightSkill(playerId);
       }
       return;
     }
@@ -225,6 +222,11 @@ class OnuWerewolfWorker extends BaseGameWorker {
       message: `${player.name} 已断开连接，系统自动完成其投票`
     });
     await this.handleVote(playerId, { targetSeat: target.seat });
+  }
+
+  private async skipOfflineNightSkill(playerId: string): Promise<void> {
+    // 夜间技能身份是隐藏信息；不要把“某玩家被跳过夜间技能”广播到房间。
+    await this.handleSkipSkill(playerId);
   }
 
   async gameAction(playerId: string, actionType: string, actionData: any): Promise<void> {
@@ -677,10 +679,7 @@ class OnuWerewolfWorker extends BaseGameWorker {
     }
 
     if (this.room.players.find(p => p.id === player.id)?.online === false) {
-      this.sendToRoom('onu_system_message', {
-        message: `${player.name} 已断开连接，系统自动跳过其夜间技能`
-      });
-      void this.handleSkipSkill(player.id);
+      void this.skipOfflineNightSkill(player.id);
       return;
     }
 

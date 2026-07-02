@@ -1528,10 +1528,13 @@ export const WolfKillCheckHandler: StateHandler = {
     }));
 
     const voteMsg = votes.map(v => `${v.index}号->${v.target === 0 ? '弃票' : v.target + '号'}`).join(', ');
-    context.sendToRoom('show_message', {
-      message: `狼人投票情况: ${voteMsg}`,
-      showTime: 5
-    });
+    (Object.values(gameState.players) as WerewolfPlayerState[])
+      .filter(player => player.character === 'WEREWOLF' && player.isAlive)
+      .forEach(wolf => {
+        context.sendToPlayer(wolf.id, 'system_message', {
+          message: `狼人投票情况: ${voteMsg}`
+        });
+      });
 
     scheduleStateTask(gameState, () => {
       WolfKillCheckHandler.endOfState(gameState, context);

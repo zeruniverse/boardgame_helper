@@ -449,6 +449,7 @@ class TexasHoldemWorker extends BaseGameWorker {
         data: {
           type: 'emit_to_socket',
           event,
+          playerId,
           socketId: player.socketId,
           data
         }
@@ -498,6 +499,7 @@ class TexasHoldemWorker extends BaseGameWorker {
       data: {
         type: 'emit_to_socket',
         event: 'room_update',
+        playerId,
         socketId,
         data: this.room
       }
@@ -518,6 +520,7 @@ class TexasHoldemWorker extends BaseGameWorker {
         data: {
           type: 'emit_to_socket',
           event: 'game_started',
+          playerId,
           socketId,
           data: {}
         }
@@ -531,6 +534,7 @@ class TexasHoldemWorker extends BaseGameWorker {
       data: {
         type: 'emit_to_socket',
         event: 'game_state',
+        playerId,
         socketId,
         data: this.buildPublicGameState()
       }
@@ -544,6 +548,7 @@ class TexasHoldemWorker extends BaseGameWorker {
         data: {
           type: 'emit_to_socket',
           event: 'deal_hand',
+          playerId,
           socketId,
           data: { hand: gs.playerHands[playerId] }
         }
@@ -558,6 +563,7 @@ class TexasHoldemWorker extends BaseGameWorker {
         data: {
           type: 'emit_to_socket',
           event: 'action_request',
+          playerId,
           socketId,
           data: {
             playerId: this.room.players[gs.currentTurn].id,

@@ -438,9 +438,15 @@ export class RoomThreadManager {
 
     if (socketEventTypes.has(payload.type)) {
       let socketId = payload.socketId;
-      if (!socketId && payload.playerId) {
+      if (payload.playerId) {
         const room = this.roomData.get(payload.roomId || roomId);
-        socketId = room?.players.find(p => p.id === payload.playerId)?.socketId;
+        const currentPlayer = room?.players.find(p => p.id === payload.playerId);
+        if (currentPlayer) {
+          // The controller thread owns the live socket mapping. Prefer it over a
+          // socketId carried by a worker snapshot so private events are not sent
+          // to a socket that has already left or reconnected elsewhere.
+          socketId = currentPlayer.socketId;
+        }
       }
       if (!socketId) {
         console.warn(`房间 ${roomId} 无法投递给玩家/socket的Worker消息:`, payload);

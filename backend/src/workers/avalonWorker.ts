@@ -512,6 +512,7 @@ class AvalonWorker extends BaseGameWorker {
         success: true,
         data: {
           type: 'player_message',
+          playerId,
           socketId: player.socketId,
           event,
           data
@@ -530,6 +531,7 @@ class AvalonWorker extends BaseGameWorker {
       success: true,
       data: {
         type: 'player_message',
+        playerId,
         socketId,
         event: 'game_state_sync',
         data: {

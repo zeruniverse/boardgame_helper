@@ -431,6 +431,7 @@ class MafiaWorker extends BaseGameWorker {
         taskId: 'emit',
         data: {
           type: 'player',
+          playerId,
           socketId: player.socketId,
           event,
           data
@@ -444,6 +445,7 @@ class MafiaWorker extends BaseGameWorker {
       taskId: 'emit',
       data: {
         type: 'socket',
+        playerId,
         socketId,
         event: 'game_state_sync',
         data: {

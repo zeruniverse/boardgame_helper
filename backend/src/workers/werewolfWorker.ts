@@ -195,6 +195,42 @@ class WerewolfWorker extends BaseGameWorker {
     return this.room.players.find(p => p.id === playerId)?.online !== false;
   }
 
+  private getAliveWerewolfIds(): string[] {
+    return (Object.values(this.gameState.players) as WerewolfPlayerState[])
+      .filter(player => player.character === 'WEREWOLF' && player.isAlive)
+      .map(player => player.id);
+  }
+
+  private notifyAliveWerewolves(message: string): void {
+    this.getAliveWerewolfIds().forEach(playerId => {
+      this.sendToPlayer(playerId, 'system_message', { message });
+    });
+  }
+
+  private notifyOfflineOperatorSkipped(gamePlayer: WerewolfPlayerState): void {
+    const publicStatuses = new Set<GameStatus>([
+      GameStatus.SHERIFF_ELECT,
+      GameStatus.HUNTER_SHOOT,
+      GameStatus.SHERIFF_ASSIGN,
+      GameStatus.LEAVE_MSG,
+      GameStatus.DAY_DISCUSS,
+      GameStatus.SHERIFF_SPEECH,
+      GameStatus.EXILE_VOTE,
+      GameStatus.SHERIFF_VOTE
+    ]);
+
+    if (publicStatuses.has(this.gameState.status)) {
+      this.sendToRoom('system_message', {
+        message: `${gamePlayer.index}号 ${gamePlayer.name} 离线，系统自动跳过其当前操作`
+      });
+      return;
+    }
+
+    if (this.gameState.status === GameStatus.WOLF_KILL) {
+      this.notifyAliveWerewolves(`${gamePlayer.index}号 ${gamePlayer.name} 离线，系统自动跳过其狼人行动`);
+    }
+  }
+
   private getSkippableOfflineOperator(): string | undefined {
     const offlineOperators = [...(this.gameState.operators || [])].filter(id => !this.isPlayerOnline(id));
     if (offlineOperators.length === 0) {
@@ -256,9 +292,7 @@ class WerewolfWorker extends BaseGameWorker {
       return;
     }
 
-    this.sendToRoom('system_message', {
-      message: `${gamePlayer.index}号 ${gamePlayer.name} 离线，系统自动跳过其当前操作`
-    });
+    this.notifyOfflineOperatorSkipped(gamePlayer);
 
     switch (this.gameState.status) {
       case GameStatus.WOLF_KILL:
@@ -316,6 +350,7 @@ class WerewolfWorker extends BaseGameWorker {
     if (player && parentPort) {
       parentPort.postMessage({
         type: 'send_to_player',
+        playerId,
         socketId: player.socketId,
         event,
         data
@@ -922,9 +957,7 @@ class WerewolfWorker extends BaseGameWorker {
 
     if (votedCount >= allWerewolves.length) {
       // 所有狼人都已投票，提前结束状态
-      this.sendToRoom('system_message', {
-        message: '所有狼人已完成选择'
-      });
+      this.notifyAliveWerewolves('所有狼人已完成选择');
 
       // 延迟进入下一状态
       this.saveTimeout(() => {
