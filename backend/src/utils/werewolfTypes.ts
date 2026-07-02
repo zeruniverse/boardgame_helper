@@ -48,6 +48,7 @@ export interface WerewolfGameState {
     seerResult?: boolean;      // 预言家查验结果
   };
   votes?: Record<string, string>;  // 投票记录 playerId -> targetId
+  sheriffElectResponses?: Record<string, boolean>;  // 警长竞选响应 playerId -> 是否上警
   speakOrder?: number[];  // 发言顺序（玩家index数组）
   currentSpeakerIndex?: number;  // 当前发言者在speakOrder中的索引
   deathChainDepth?: number;  // 死亡链递归深度（防止无限连锁）

@@ -48,6 +48,7 @@ interface GameTaskResponse {
 class WerewolfWorker extends BaseGameWorker {
   private config!: WerewolfConfig;
   private timers: NodeJS.Timeout[] = [];
+  private skippingOfflineOperators = false;
 
   constructor() {
     super();
@@ -186,6 +187,113 @@ class WerewolfWorker extends BaseGameWorker {
       const message = `${player.nickname}已断开连接`;
       this.sendToRoom('player_offline', { message });
     }
+
+    this.skipOfflineOperators();
+  }
+
+  private isPlayerOnline(playerId: string): boolean {
+    return this.room.players.find(p => p.id === playerId)?.online !== false;
+  }
+
+  private getSkippableOfflineOperator(): string | undefined {
+    const offlineOperators = [...(this.gameState.operators || [])].filter(id => !this.isPlayerOnline(id));
+    if (offlineOperators.length === 0) {
+      return undefined;
+    }
+
+    switch (this.gameState.status) {
+      case GameStatus.WOLF_KILL:
+        return offlineOperators.find(id =>
+          this.gameState.players[id]?.characterStatus.wantToKills?.[this.gameState.currentDay] === undefined
+        );
+      case GameStatus.SHERIFF_ELECT:
+        return offlineOperators.find(id => this.gameState.sheriffElectResponses?.[id] === undefined);
+      case GameStatus.EXILE_VOTE:
+        return offlineOperators.find(id => this.gameState.players[id]?.hasVotedAt?.[this.gameState.currentDay] === undefined);
+      case GameStatus.SHERIFF_VOTE:
+        return offlineOperators.find(id => this.gameState.players[id]?.sheriffVotes?.[this.gameState.currentDay] === undefined);
+      default:
+        return offlineOperators[0];
+    }
+  }
+
+  private skipOfflineOperators(): void {
+    if (this.skippingOfflineOperators) {
+      return;
+    }
+
+    this.skippingOfflineOperators = true;
+    try {
+      while (this.gameState.status !== GameStatus.WAITING && this.gameState.status !== GameStatus.OVER) {
+        const offlineOperator = this.getSkippableOfflineOperator();
+        if (!offlineOperator) {
+          return;
+        }
+
+        const statusBefore = this.gameState.status;
+        this.handleOfflineOperator(offlineOperator);
+
+        if (![
+          GameStatus.WOLF_KILL,
+          GameStatus.SHERIFF_ELECT,
+          GameStatus.EXILE_VOTE,
+          GameStatus.SHERIFF_VOTE
+        ].includes(statusBefore)) {
+          return;
+        }
+      }
+    } finally {
+      this.skippingOfflineOperators = false;
+    }
+  }
+
+  private handleOfflineOperator(playerId: string): void {
+    const gamePlayer = this.gameState.players[playerId];
+    if (!gamePlayer || this.gameState.status === GameStatus.WAITING || this.gameState.status === GameStatus.OVER) {
+      return;
+    }
+    if (!this.gameState.operators?.includes(playerId)) {
+      return;
+    }
+
+    this.sendToRoom('system_message', {
+      message: `${gamePlayer.index}号 ${gamePlayer.name} 离线，系统自动跳过其当前操作`
+    });
+
+    switch (this.gameState.status) {
+      case GameStatus.WOLF_KILL:
+        this.handleWolfKill(playerId, { targetId: null });
+        break;
+      case GameStatus.SEER_CHECK:
+        this.handleSeerCheck(playerId, { targetId: null });
+        break;
+      case GameStatus.WITCH_ACT:
+        this.handleWitchAct(playerId, { actionType: 'skip' });
+        break;
+      case GameStatus.GUARD_PROTECT:
+        this.handleGuardProtect(playerId, { targetId: null });
+        break;
+      case GameStatus.SHERIFF_ELECT:
+        this.handleSheriffElect(playerId, { participate: false });
+        break;
+      case GameStatus.HUNTER_SHOOT:
+        this.handleHunterShoot(playerId, { targetId: null });
+        break;
+      case GameStatus.SHERIFF_ASSIGN:
+        this.handleSheriffAssign(playerId, { targetId: null });
+        break;
+      case GameStatus.LEAVE_MSG:
+        this.handleLeaveMsg(playerId, { message: '（玩家离线，系统跳过遗言）' });
+        break;
+      case GameStatus.DAY_DISCUSS:
+      case GameStatus.SHERIFF_SPEECH:
+        this.handleEndSpeak(playerId);
+        break;
+      case GameStatus.EXILE_VOTE:
+      case GameStatus.SHERIFF_VOTE:
+        this.handleVote(playerId, { targetId: null });
+        break;
+    }
   }
 
   protected sendToRoom(event: string, data: any): void {
@@ -196,6 +304,10 @@ class WerewolfWorker extends BaseGameWorker {
         event,
         data
       });
+    }
+
+    if (event === 'status_changed') {
+      setTimeout(() => this.skipOfflineOperators(), 0);
     }
   }
 
@@ -444,7 +556,7 @@ class WerewolfWorker extends BaseGameWorker {
           this.handleEndSpeak(playerId);
           break;
         case 'sheriff_elect':
-          this.handleSheriffElect(playerId);
+          this.handleSheriffElect(playerId, actionData);
           break;
         case 'sheriff_assign':
           this.handleSheriffAssign(playerId, actionData);
@@ -1313,7 +1425,7 @@ class WerewolfWorker extends BaseGameWorker {
   }
 
   // ==================== 警长竞选 ====================
-  private handleSheriffElect(playerId: string): void {
+  private handleSheriffElect(playerId: string, actionData: any = {}): void {
     const gamePlayer = this.gameState.players[playerId];
     if (!gamePlayer || !gamePlayer.isAlive) {
       this.sendToPlayer(playerId, 'error', { message: '你不能参与警长竞选' });
@@ -1325,10 +1437,56 @@ class WerewolfWorker extends BaseGameWorker {
       return;
     }
 
-    gamePlayer.canBeVoted = true;
-    this.sendToPlayer(playerId, 'system_message', { message: '你选择上警' });
+    const participate = actionData?.participate !== false &&
+      actionData?.join !== false &&
+      actionData?.candidate !== false;
+
+    if (!this.gameState.sheriffElectResponses) {
+      this.gameState.sheriffElectResponses = {};
+    }
+    this.gameState.sheriffElectResponses[playerId] = participate;
+    gamePlayer.canBeVoted = participate;
+
+    this.sendToPlayer(playerId, 'system_message', {
+      message: participate ? '你选择上警' : '你选择不上警'
+    });
     this.sendToRoom('system_message', {
-      message: `${gamePlayer.index}号 ${gamePlayer.name} 选择上警`
+      message: `${gamePlayer.index}号 ${gamePlayer.name} ${participate ? '选择上警' : '选择不上警'}`
+    });
+
+    if (this.allOnlinePlayersRespondedToSheriffElect()) {
+      this.markOfflinePlayersAsNotElectingSheriff();
+      this.sendToRoom('system_message', { message: '所有在线玩家已完成警长竞选选择' });
+      stateHandlers[GameStatus.SHERIFF_ELECT].endOfState(this.gameState, this.createContext());
+    } else {
+      this.sendToRoom('game_info', {
+        gameInfo: this.getGameInfo()
+      });
+    }
+  }
+
+  private allOnlinePlayersRespondedToSheriffElect(): boolean {
+    const responses = this.gameState.sheriffElectResponses || {};
+    const alivePlayers = (Object.values(this.gameState.players) as WerewolfPlayerState[]).filter(p => p.isAlive);
+    const onlineAlivePlayers = alivePlayers.filter(p => {
+      const roomPlayer = this.room.players.find(rp => rp.id === p.id);
+      return roomPlayer?.online !== false;
+    });
+
+    return onlineAlivePlayers.length > 0 && onlineAlivePlayers.every(p => responses[p.id] !== undefined);
+  }
+
+  private markOfflinePlayersAsNotElectingSheriff(): void {
+    if (!this.gameState.sheriffElectResponses) {
+      this.gameState.sheriffElectResponses = {};
+    }
+
+    (Object.values(this.gameState.players) as WerewolfPlayerState[]).forEach(p => {
+      const roomPlayer = this.room.players.find(rp => rp.id === p.id);
+      if (p.isAlive && roomPlayer?.online === false && this.gameState.sheriffElectResponses![p.id] === undefined) {
+        this.gameState.sheriffElectResponses![p.id] = false;
+        p.canBeVoted = false;
+      }
     });
   }
 

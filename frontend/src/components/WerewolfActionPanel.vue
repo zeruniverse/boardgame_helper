@@ -642,10 +642,7 @@ const handleGuardSkip = () => {
 }
 
 const handleSheriffElect = (participate: boolean) => {
-  if (participate) {
-    emit('gameAction', 'sheriff_elect', {})
-  }
-  // 不上警不需要发送动作
+  emit('gameAction', 'sheriff_elect', { participate })
 }
 
 const handleEndSpeak = () => {

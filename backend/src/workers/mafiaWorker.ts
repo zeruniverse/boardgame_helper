@@ -137,6 +137,7 @@ const MIN_PLAYER_COUNT = 6;
 class MafiaWorker extends BaseGameWorker {
   private config!: MafiaConfig;
   private actionTimer: NodeJS.Timeout | null = null;
+  private skippingOfflineOperators = false;
 
   constructor() {
     super();
@@ -259,6 +260,70 @@ class MafiaWorker extends BaseGameWorker {
     if (gameState.status === GameStatus.NIGHT) {
       this.refreshNightLocksForOnlinePlayers();
       this.endNightIfNoPendingActions();
+      return;
+    }
+
+    this.skipOfflineOperators();
+  }
+
+  private skipOfflineOperators(): void {
+    if (this.skippingOfflineOperators) {
+      return;
+    }
+
+    this.skippingOfflineOperators = true;
+    try {
+      while (true) {
+        const gameState = this.gameState as MafiaGameState;
+        if ([GameStatus.WAITING, GameStatus.NIGHT, GameStatus.OVER].includes(gameState.status)) {
+          return;
+        }
+
+        const offlineOperator = [...gameState.operators].find(id => !this.isPlayerOnline(id));
+        if (!offlineOperator) {
+          return;
+        }
+
+        const before = `${gameState.status}|${gameState.step}|${gameState.operators.join(',')}`;
+        this.handleOfflineOperator(offlineOperator);
+        const nextState = this.gameState as MafiaGameState;
+        const after = `${nextState.status}|${nextState.step}|${nextState.operators.join(',')}`;
+        if (after === before) {
+          return;
+        }
+      }
+    } finally {
+      this.skippingOfflineOperators = false;
+    }
+  }
+
+  private handleOfflineOperator(playerId: string): void {
+    const gameState = this.gameState as MafiaGameState;
+    if (gameState.status === GameStatus.WAITING || gameState.status === GameStatus.OVER) {
+      return;
+    }
+
+    const player = gameState.players[playerId];
+    if (!player?.alive || !gameState.operators.includes(playerId)) {
+      return;
+    }
+
+    const playerName = this.getPlayerName(playerId);
+    switch (gameState.status) {
+      case GameStatus.SPEAK:
+      case GameStatus.PK:
+        this.sendToRoom('system_message', { message: `${playerName}离线，系统自动结束其发言` });
+        this.handleEndSpeak(playerId);
+        break;
+      case GameStatus.LAST_WORD:
+      case GameStatus.LAST_WORD_DAYTIME:
+        this.sendToRoom('system_message', { message: `${playerName}离线，系统自动跳过其遗言` });
+        this.handleEndLastWord(playerId);
+        break;
+      case GameStatus.VOTE:
+        this.sendToRoom('system_message', { message: `${playerName}离线，系统自动弃票` });
+        this.handleVote(playerId, 'give_up');
+        break;
     }
   }
 
@@ -1016,6 +1081,7 @@ class MafiaWorker extends BaseGameWorker {
 
       const message = `请${this.getPlayerName(nextSpeaker)}发言`;
       this.sendToRoom('day_start', { message, gameInfo: this.getGameInfo() });
+      this.skipOfflineOperators();
     } else {
       // 白天遗言结束，进入夜晚
       gameState.players[playerId].alive = false;
@@ -1079,6 +1145,7 @@ class MafiaWorker extends BaseGameWorker {
 
         const message = "请投票选出您认为最像杀手的玩家, 得票最多者将被驱逐, 平票将进入PK阶段";
         this.sendToRoom('vote_start', { message, gameInfo: this.getGameInfo() });
+        this.skipOfflineOperators();
       } else {
         // 下一个人发言
         const nextSpeaker = this.getNextPlayer(playerId);
@@ -1091,6 +1158,7 @@ class MafiaWorker extends BaseGameWorker {
 
         const message = `请${this.getPlayerName(nextSpeaker)}发言`;
         this.sendToRoom('speak_continue', { message, gameInfo: this.getGameInfo() });
+        this.skipOfflineOperators();
       }
     } else if (gameState.status === GameStatus.PK) {
       gameState.pkSpeakedCount += 1;
@@ -1110,6 +1178,7 @@ class MafiaWorker extends BaseGameWorker {
 
         const message = "请在PK玩家中投票选出您认为最像杀手的玩家, 平票将直接进入夜晚";
         this.sendToRoom('pk_vote_start', { message, gameInfo: this.getGameInfo() });
+        this.skipOfflineOperators();
       } else {
         // 下一个PK玩家发言
         const nextSpeaker = gameState.pkPlayers[gameState.pkSpeakedCount];
@@ -1121,6 +1190,7 @@ class MafiaWorker extends BaseGameWorker {
 
         const message = `请${this.getPlayerName(nextSpeaker)}开始PK阶段发言`;
         this.sendToRoom('pk_speak_continue', { message, gameInfo: this.getGameInfo() });
+        this.skipOfflineOperators();
       }
     }
   }
@@ -1313,7 +1383,7 @@ class MafiaWorker extends BaseGameWorker {
   }
 
   private isPlayerOnline(playerId: string): boolean {
-    return this.room.players.find(p => p.id === playerId)?.online === true;
+    return this.room.players.find(p => p.id === playerId)?.online !== false;
   }
 
   private nightHasPendingActions(): boolean {
@@ -1535,6 +1605,7 @@ class MafiaWorker extends BaseGameWorker {
       this.setTimer(this.config.speakTime * 1000, () => this.handleTimeout());
       const message = `昨夜无人遇害, 请${this.getPlayerName(firstPlayer)}发言`;
       this.sendToRoom('day_start', { message, gameInfo: this.getGameInfo() });
+      this.skipOfflineOperators();
     } else {
       this.endNight();
     }
@@ -1622,6 +1693,7 @@ class MafiaWorker extends BaseGameWorker {
 
       this.setTimer(this.config.speakTime * 1000, () => this.handleTimeout());
       this.sendToRoom('day_start', { message, gameInfo: this.getGameInfo() });
+      this.skipOfflineOperators();
       return;
     }
 
@@ -1663,6 +1735,7 @@ class MafiaWorker extends BaseGameWorker {
         this.setTimer(this.config.speakTime * 1000, () => this.handleTimeout());
 
         this.sendToRoom('day_start', { message: fullMessage, gameInfo: this.getGameInfo() });
+        this.skipOfflineOperators();
       }
     } else if (deaths.length >= 2) {
       // 多人死亡（杀手杀了一个，狙击手杀了另一个）
@@ -1704,6 +1777,7 @@ class MafiaWorker extends BaseGameWorker {
         ? `${message}, 多人死亡无遗言, 请${this.getPlayerName(firstPlayer)}发言`
         : `${message}, 本轮已没有遗言, 请${this.getPlayerName(firstPlayer)}发言`;
       this.sendToRoom('day_start', { message: fullMessage, gameInfo: this.getGameInfo() });
+      this.skipOfflineOperators();
     }
   }
 
@@ -1784,6 +1858,7 @@ class MafiaWorker extends BaseGameWorker {
 
     const message = `${baseMessage}, 请聆听${this.getPlayerName(playerId)}最后的交代...`;
     this.sendToRoom('last_word_start', { message, gameInfo: this.getGameInfo() });
+    this.skipOfflineOperators();
   }
 
   private enterNight(playerId: string, baseMessage: string): void {
@@ -1868,6 +1943,7 @@ class MafiaWorker extends BaseGameWorker {
 
         const message = `平票! ${maxVotedPlayers.map(id => this.getPlayerName(id)).join('、')}各${maxVotes}票, 进入PK阶段\n请${this.getPlayerName(firstPkSpeaker)}开始PK发言`;
         this.sendToRoom('pk_start', { message, gameInfo: this.getGameInfo() });
+        this.skipOfflineOperators();
       }
     } else {
       // 有唯一最高票，放逐该玩家

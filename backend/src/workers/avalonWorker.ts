@@ -166,6 +166,7 @@ class AvalonWorker extends BaseGameWorker {
   private config!: AvalonConfig;
   private actionTimer: NodeJS.Timeout | null = null;
   private assassinationTimer: NodeJS.Timeout | null = null;
+  private skippingOfflineOperators = false;
 
   constructor() {
     super();
@@ -292,6 +293,110 @@ class AvalonWorker extends BaseGameWorker {
         type: 'system'
       });
     }
+
+    this.skipOfflineOperators();
+  }
+
+  private isPlayerOnline(playerId: string): boolean {
+    return this.room.players.find(p => p.id === playerId)?.online !== false;
+  }
+
+  private skipOfflineOperators(): void {
+    if (this.skippingOfflineOperators) {
+      return;
+    }
+
+    this.skippingOfflineOperators = true;
+    try {
+      while (true) {
+        const state = this.gameState as AvalonGameState;
+        if (state.status === GameStatus.WAITING || state.status === GameStatus.OVER) {
+          return;
+        }
+
+        const offlineOperator = [...state.operators].find(id => !this.isPlayerOnline(id));
+        if (!offlineOperator) {
+          return;
+        }
+
+        const before = `${state.status}|${state.step}|${state.operators.join(',')}`;
+        this.handleOfflineOperator(offlineOperator);
+        const nextState = this.gameState as AvalonGameState;
+        const after = `${nextState.status}|${nextState.step}|${nextState.operators.join(',')}`;
+        if (after === before) {
+          return;
+        }
+      }
+    } finally {
+      this.skippingOfflineOperators = false;
+    }
+  }
+
+  private handleOfflineOperator(playerId: string): void {
+    const state = this.gameState as AvalonGameState;
+    if (state.status === GameStatus.WAITING || state.status === GameStatus.OVER) {
+      return;
+    }
+    if (!state.players[playerId] || !state.operators.includes(playerId)) {
+      return;
+    }
+
+    this.sendGameMessage(`${this.getPlayerName(playerId)} 断开连接，系统自动处理其当前操作`);
+    switch (state.status) {
+      case GameStatus.CAPTAIN:
+        this.handleCaptainSpeak(playerId, true);
+        break;
+      case GameStatus.SPEAK:
+        this.handleEndSpeak(playerId);
+        break;
+      case GameStatus.PICK:
+        this.autoPickTeam(playerId);
+        break;
+      case GameStatus.VOTE:
+        this.handleVote(playerId, false);
+        break;
+      case GameStatus.ACTION:
+        this.handleTakeAction(playerId, true);
+        break;
+      case GameStatus.ASSASSINATE:
+        this.autoAssassinate(playerId);
+        break;
+      case GameStatus.LADY:
+        this.autoLadyInspect(playerId);
+        break;
+    }
+  }
+
+  private autoPickTeam(playerId: string): void {
+    const state = this.gameState as AvalonGameState;
+    const teamSize = state.scoreBoard[state.mission - 1][0];
+    const allPlayers = Object.keys(state.players);
+    const randomTeam = this.shuffleArray([...allPlayers]).slice(0, teamSize);
+    this.handlePickTeam(playerId, randomTeam);
+  }
+
+  private autoAssassinate(playerId: string): void {
+    const state = this.gameState as AvalonGameState;
+    const candidateTargets = Object.keys(state.players);
+    const randomTarget = candidateTargets[Math.floor(Math.random() * candidateTargets.length)];
+    this.handleAssassinate(playerId, randomTarget);
+  }
+
+  private autoLadyInspect(playerId: string): void {
+    const state = this.gameState as AvalonGameState;
+    const availableTargets = Object.keys(state.players).filter(
+      id => id !== playerId && !state.ladys.includes(id)
+    );
+
+    if (availableTargets.length > 0) {
+      const randomTarget = availableTargets[Math.floor(Math.random() * availableTargets.length)];
+      this.handleLadyInspect(playerId, randomTarget);
+      return;
+    }
+
+    state.mission += 1;
+    state.captain = this.getNextPlayer(state.captain);
+    this.startNewRound();
   }
 
   async gameAction(playerId: string, actionType: string, actionData: any): Promise<void> {
@@ -1265,6 +1370,7 @@ class AvalonWorker extends BaseGameWorker {
       message,
       timestamp: Date.now()
     });
+    this.skipOfflineOperators();
   }
 
   private initializeGame(players: Player[]): void {

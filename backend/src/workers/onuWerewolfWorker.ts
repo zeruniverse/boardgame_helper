@@ -189,6 +189,42 @@ class OnuWerewolfWorker extends BaseGameWorker {
       const message = `${player.nickname} 已断开连接`;
       this.sendToRoom('onu_player_offline', { message });
     }
+
+    await this.handleOfflinePlayerAction(playerId);
+  }
+
+  private async handleOfflinePlayerAction(playerId: string): Promise<void> {
+    if (this.gameState.status === OnuWerewolfGameStatus.NIGHT) {
+      const currentSkillItem = this.skillQueue[this.currentSkillIndex];
+      if (currentSkillItem?.player.id === playerId && !currentSkillItem.player.skillUsed) {
+        this.sendToRoom('onu_system_message', {
+          message: `${currentSkillItem.player.name} 已断开连接，系统自动跳过其夜间技能`
+        });
+        await this.handleSkipSkill(playerId);
+      }
+      return;
+    }
+
+    if (this.gameState.status !== OnuWerewolfGameStatus.VOTING || this.gameTimer) {
+      return;
+    }
+
+    const player = this.gameState.players[playerId];
+    if (!player || player.voted) {
+      return;
+    }
+
+    const target = Object.values(this.gameState.players)
+      .filter(p => p.id !== playerId)
+      .sort((a, b) => a.seat - b.seat)[0];
+    if (!target) {
+      return;
+    }
+
+    this.sendToRoom('onu_system_message', {
+      message: `${player.name} 已断开连接，系统自动完成其投票`
+    });
+    await this.handleVote(playerId, { targetSeat: target.seat });
   }
 
   async gameAction(playerId: string, actionType: string, actionData: any): Promise<void> {
@@ -640,6 +676,14 @@ class OnuWerewolfWorker extends BaseGameWorker {
       return;
     }
 
+    if (this.room.players.find(p => p.id === player.id)?.online === false) {
+      this.sendToRoom('onu_system_message', {
+        message: `${player.name} 已断开连接，系统自动跳过其夜间技能`
+      });
+      void this.handleSkipSkill(player.id);
+      return;
+    }
+
     // 通知该玩家可以使用技能
     this.sendToPlayer(player.id, 'onu_skill_ready', {
       message: '轮到你使用技能了',
@@ -952,6 +996,33 @@ class OnuWerewolfWorker extends BaseGameWorker {
 
     // 设置投票阶段计时器
     this.setTimer((this.config.discussTime + this.config.votingTime) * 1000, () => this.endVotingPhase());
+    if (!this.gameTimer) {
+      void this.autoVoteOfflinePlayersWithoutTimer();
+    }
+  }
+
+  private async autoVoteOfflinePlayersWithoutTimer(): Promise<void> {
+    if (this.gameState.status !== OnuWerewolfGameStatus.VOTING) {
+      return;
+    }
+
+    const offlinePlayers = Object.values(this.gameState.players)
+      .filter(player => !player.voted && this.room.players.find(p => p.id === player.id)?.online === false)
+      .sort((a, b) => a.seat - b.seat);
+
+    for (const player of offlinePlayers) {
+      const target = Object.values(this.gameState.players)
+        .filter(p => p.id !== player.id)
+        .sort((a, b) => a.seat - b.seat)[0];
+      if (!target || this.gameState.status !== OnuWerewolfGameStatus.VOTING || player.voted) {
+        continue;
+      }
+
+      this.sendToRoom('onu_system_message', {
+        message: `${player.name} 已断开连接，系统自动完成其投票`
+      });
+      await this.handleVote(player.id, { targetSeat: target.seat });
+    }
   }
 
   private resolveVoteTargetSeat(actionData: any): number | undefined {

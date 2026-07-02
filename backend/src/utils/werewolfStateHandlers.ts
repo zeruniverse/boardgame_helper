@@ -695,12 +695,13 @@ export const SheriffElectHandler: StateHandler = {
 
   startOfState(gameState, context) {
     // 注意：天数不再在这里递增，统一在WolfKillHandler中递增
-    startCurrentState(this, gameState, context);
-
     // 初始没有候选人；玩家主动上警后才可被投票
+    gameState.sheriffElectResponses = {};
     Object.values(gameState.players).forEach(p => {
       p.canBeVoted = false;
     });
+
+    startCurrentState(this, gameState, context);
 
     context.sendToRoom('show_message', {
       message: '天亮了，警长竞选开始，请选择是否上警',
