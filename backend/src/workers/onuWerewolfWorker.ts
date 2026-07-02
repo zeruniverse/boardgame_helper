@@ -202,7 +202,7 @@ class OnuWerewolfWorker extends BaseGameWorker {
       return;
     }
 
-    if (this.gameState.status !== OnuWerewolfGameStatus.VOTING || this.gameTimer) {
+    if (this.gameState.status !== OnuWerewolfGameStatus.VOTING) {
       return;
     }
 
@@ -211,17 +211,9 @@ class OnuWerewolfWorker extends BaseGameWorker {
       return;
     }
 
-    const target = Object.values(this.gameState.players)
-      .filter(p => p.id !== playerId)
-      .sort((a, b) => a.seat - b.seat)[0];
-    if (!target) {
-      return;
+    if (this.autoVotePlayer(player, `${player.name} 已断开连接，系统自动完成其投票`) && this.hasAllPlayersVoted()) {
+      await this.endVotingPhase();
     }
-
-    this.sendToRoom('onu_system_message', {
-      message: `${player.name} 已断开连接，系统自动完成其投票`
-    });
-    await this.handleVote(playerId, { targetSeat: target.seat });
   }
 
   private async skipOfflineNightSkill(playerId: string): Promise<void> {
@@ -1010,17 +1002,59 @@ class OnuWerewolfWorker extends BaseGameWorker {
       .sort((a, b) => a.seat - b.seat);
 
     for (const player of offlinePlayers) {
-      const target = Object.values(this.gameState.players)
-        .filter(p => p.id !== player.id)
-        .sort((a, b) => a.seat - b.seat)[0];
-      if (!target || this.gameState.status !== OnuWerewolfGameStatus.VOTING || player.voted) {
-        continue;
-      }
+      this.autoVotePlayer(player, `${player.name} 已断开连接，系统自动完成其投票`);
+    }
 
-      this.sendToRoom('onu_system_message', {
-        message: `${player.name} 已断开连接，系统自动完成其投票`
-      });
-      await this.handleVote(player.id, { targetSeat: target.seat });
+    if (this.hasAllPlayersVoted()) {
+      await this.endVotingPhase();
+    }
+  }
+
+  private getDefaultVoteTarget(playerId: string): OnuWerewolfPlayer | undefined {
+    return Object.values(this.gameState.players)
+      .filter(player => player.id !== playerId)
+      .sort((a, b) => a.seat - b.seat)[0];
+  }
+
+  private hasAllPlayersVoted(): boolean {
+    return Object.values(this.gameState.players).every(player => player.voted);
+  }
+
+  private recordVote(player: OnuWerewolfPlayer, target: OnuWerewolfPlayer): void {
+    this.gameState.votes[player.id] = target.id;
+    player.voted = true;
+    player.lynchTarget = target.id;
+
+    this.sendToRoom('onu_vote_cast', {
+      playerId: player.id,
+      message: `${player.name} 已投票`,
+      votedCount: Object.keys(this.gameState.votes).length,
+      totalPlayers: Object.keys(this.gameState.players).length
+    });
+  }
+
+  private autoVotePlayer(player: OnuWerewolfPlayer, message: string): boolean {
+    if (this.gameState.status !== OnuWerewolfGameStatus.VOTING || player.voted) {
+      return false;
+    }
+
+    const target = this.getDefaultVoteTarget(player.id);
+    if (!target) {
+      return false;
+    }
+
+    this.sendToRoom('onu_system_message', { message });
+    this.recordVote(player, target);
+    return true;
+  }
+
+  private autoVotePendingPlayers(reasonBuilder: (player: OnuWerewolfPlayer) => string): void {
+    const pendingPlayers = Object.values(this.gameState.players)
+      .filter(player => !player.voted)
+      .sort((a, b) => a.seat - b.seat);
+
+    for (const player of pendingPlayers) {
+      this.autoVotePlayer(player, reasonBuilder(player));
     }
   }
 
@@ -1053,7 +1087,7 @@ class OnuWerewolfWorker extends BaseGameWorker {
 
     const targetSeat = this.resolveVoteTargetSeat(actionData || {});
     const totalPlayers = Object.keys(this.gameState.players).length;
-    if (!targetSeat || isNaN(targetSeat) || targetSeat < 1 || targetSeat > totalPlayers) {
+    if (targetSeat === undefined || isNaN(targetSeat) || targetSeat < 1 || targetSeat > totalPlayers) {
       throw new Error('无效的投票目标');
     }
 
@@ -1066,22 +1100,9 @@ class OnuWerewolfWorker extends BaseGameWorker {
       throw new Error('不能投票给自己');
     }
 
-    // 记录投票
-    this.gameState.votes[playerId] = target.id;
-    player.voted = true;
-    player.lynchTarget = target.id;
+    this.recordVote(player, target);
 
-    this.sendToRoom('onu_vote_cast', {
-      playerId,
-      message: `${player.name} 已投票`,
-      votedCount: Object.keys(this.gameState.votes).length,
-      totalPlayers: Object.keys(this.gameState.players).length
-    });
-
-    // 检查是否所有玩家都已投票
-    const votedPlayers = Object.keys(this.gameState.votes).length;
-    
-    if (votedPlayers === totalPlayers) {
+    if (this.hasAllPlayersVoted()) {
       await this.endVotingPhase();
     }
   }
@@ -1125,7 +1146,13 @@ class OnuWerewolfWorker extends BaseGameWorker {
   }
 
   private async endVotingPhase(): Promise<void> {
+    if (this.gameState.status !== OnuWerewolfGameStatus.VOTING) {
+      return;
+    }
+
     this.clearTimer();
+
+    this.autoVotePendingPlayers(player => `${player.name} 未在投票截止前完成投票，系统自动完成其投票`);
 
     this.gameState.status = OnuWerewolfGameStatus.REVEALING;
     this.gameState.currentPhase = '揭示结果';
