@@ -1565,7 +1565,7 @@ class MafiaWorker extends BaseGameWorker {
         this.handleVoteTimeout();
         break;
       case GameStatus.OVER:
-        this.resetGame();
+        // 游戏结束状态需要保留复盘信息；只允许房主通过 restartGame 显式重置。
         break;
     }
   }
@@ -1822,9 +1822,13 @@ class MafiaWorker extends BaseGameWorker {
     gameState.winner = winner;
     gameState.operators = excludePlayerId ? [excludePlayerId] : [];
     gameState.step += 1;
-    gameState.operateEndTime = new Date(Date.now() + 5000);
+    // 不再自动重置：否则 game_over 刚广播后 5 秒内角色、死亡记录和复盘信息会被清空。
+    gameState.operateEndTime = new Date(0);
 
-    this.setTimer(5000, () => this.handleTimeout());
+    if (this.actionTimer) {
+      clearTimeout(this.actionTimer);
+      this.actionTimer = null;
+    }
 
     const winnerMessage = winner === Team.BLUE
       ? "游戏结束, 好人阵营获胜!"

@@ -17,7 +17,7 @@
               :key="role.value"
               class="role-card"
               :class="{ 
-                selected: selectedRoles.includes(role.value),
+                selected: roleCount(role.value) > 0,
                 required: requiredRoles.includes(role.value)
               }"
               @click="toggleRole(role.value)"
@@ -25,6 +25,7 @@
               <div class="role-name">{{ role.label }}</div>
               <div class="role-desc">{{ role.description }}</div>
               <div v-if="requiredRoles.includes(role.value)" class="required-tag">必选</div>
+              <div v-if="roleCount(role.value) > 1" class="count-tag">×{{ roleCount(role.value) }}</div>
             </div>
           </div>
         </div>
@@ -511,9 +512,11 @@ const availableRoles = [
   { value: OnuWerewolfRole.Troublemaker, label: '捣蛋鬼', description: '可以交换其他两名玩家的角色卡' },
   { value: OnuWerewolfRole.Drunk, label: '酒鬼', description: '必须与一张中心卡牌交换角色' },
   { value: OnuWerewolfRole.Insomniac, label: '失眠者', description: '在夜晚结束时查看自己的最终角色' },
-  { value: OnuWerewolfRole.Mason, label: '石匠', description: '与其他石匠互相认识' },
+  { value: OnuWerewolfRole.Mason, label: '石匠', description: '必须成对加入；石匠互相认识' },
+  { value: OnuWerewolfRole.Minion, label: '爪牙', description: '看见狼人；爪牙属于狼人阵营但不是狼人' },
   { value: OnuWerewolfRole.Hunter, label: '猎人', description: '如果被投票出局，可以带走一名玩家' },
   { value: OnuWerewolfRole.Tanner, label: '皮匠', description: '只有被投票出局才能获胜' },
+  { value: OnuWerewolfRole.ApprenticeTanner, label: '皮匠学徒', description: '查看皮匠；若没有皮匠，则自己被投票出局获胜' },
   { value: OnuWerewolfRole.Doppelganger, label: '化身', description: '选择一名玩家复制其角色' },
   { value: OnuWerewolfRole.AlphaWolf, label: '狼王', description: '与其他狼人互相认识，必须将中心狼人牌与一名非狼人玩家交换' },
   { value: OnuWerewolfRole.MysticWolf, label: '神秘狼', description: '与其他狼人互相认识，还可查看一名非狼人玩家的角色' },
@@ -764,7 +767,23 @@ const buildSkillSelection = (): any => {
 };
 
 // 方法
+const roleCount = (role: OnuWerewolfRole) => selectedRoles.value.filter(r => r === role).length;
+
+const removeRole = (role: OnuWerewolfRole) => {
+  selectedRoles.value = selectedRoles.value.filter(r => r !== role);
+};
+
 const toggleRole = (role: OnuWerewolfRole) => {
+  // 后端校验要求石匠只能 0 个或 2 个；前端也按一组石匠来增删，避免房主选出不可提交配置。
+  if (role === OnuWerewolfRole.Mason) {
+    if (roleCount(role) > 0) {
+      removeRole(role);
+    } else {
+      selectedRoles.value.push(role, role);
+    }
+    return;
+  }
+
   const index = selectedRoles.value.indexOf(role);
   if (index > -1) {
     if (!requiredRoles.includes(role)) {
@@ -836,6 +855,7 @@ const getAutoSkillText = (role: OnuWerewolfRole | null | undefined) => {
     case OnuWerewolfRole.Werewolf: return '你将自动查看其他狼人同伴（如果没有同伴则查看一张中心卡）';
     case OnuWerewolfRole.Minion: return '你将自动查看狼人的位置';
     case OnuWerewolfRole.Mason: return '你将自动查看其他石匠';
+    case OnuWerewolfRole.ApprenticeTanner: return '你将自动查看本局是否有其他皮匠';
     case OnuWerewolfRole.Insomniac: return '你将自动查看自己的最终角色';
     case OnuWerewolfRole.AuraSeer: return '你将自动看到哪些玩家的角色被变动过';
     default: return '点击"使用技能"执行';
@@ -1235,5 +1255,16 @@ onUnmounted(() => {
 .result-info {
   font-size: 12px;
   font-weight: 600;
+}
+
+.count-tag {
+  position: absolute;
+  top: 28px;
+  right: 5px;
+  background: #28a745;
+  color: white;
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 4px;
 }
 </style>

@@ -50,7 +50,7 @@
           :myRole="myRole"
           :mySeat="mySeat"
           :currentUserId="currentUserId"
-          :playerCount="room?.players?.length || 0"
+          :playerCount="activeRoomPlayerCount"
           :allPlayers="gameState?.players || room?.players || []"
           :skipDiscussionCount="skipDiscussionCount"
           :skipDiscussionTotal="skipDiscussionTotal"
@@ -106,6 +106,9 @@ const canVote = computed(() => store.canVote);
 const myRole = computed(() => store.myRole);
 const mySeat = computed(() => store.mySeat);
 const socket = computed(() => store.socket);
+const activeRoomPlayerCount = computed(() => {
+  return room.value?.players?.filter((player: any) => player.online !== false).length || 0;
+});
 
 const nickname = computed(() => {
   return localStorage.getItem('onu_werewolf_nickname') || '玩家';
