@@ -262,10 +262,28 @@ class TexasHoldemWorker extends BaseGameWorker {
         message: `${player.nickname} 断开连接`
       });
 
-      if (this.participants.includes(playerId)) {
+      if (this.participants.includes(playerId) && this.gameState.stage === 'playing') {
         const gs = this.gameState as TexasHoldemGameState;
         if (!gs.folded.includes(playerId)) {
-          if (gs.currentTurn >= 0 && gs.currentTurn < this.room.players.length && this.room.players[gs.currentTurn].id === playerId) {
+          const isCurrentTurn = gs.currentTurn >= 0 &&
+            gs.currentTurn < this.room.players.length &&
+            this.room.players[gs.currentTurn].id === playerId;
+          const isAllIn = Number(player.gameMetadata.chips || 0) <= 0;
+
+          if (isAllIn) {
+            if (!gs.acted.includes(playerId)) {
+              gs.acted.push(playerId);
+            }
+            this.unlockRaiseForPlayer(playerId);
+            this.sendToRoom('chat_broadcast', {
+              message: `${player.nickname} 已全下，离线后保留摊牌资格`,
+              type: 'system'
+            });
+            if (isCurrentTurn) {
+              this.clearActionTimer();
+              this.continueToNextPlayer();
+            }
+          } else if (isCurrentTurn) {
             // 是当前回合，通过handleFold统一处理
             this.sendToRoom('chat_broadcast', { message: `${player.nickname} 离线自动弃牌`, type: 'system' });
             this.handleFold(playerId);
