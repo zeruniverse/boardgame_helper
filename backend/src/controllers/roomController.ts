@@ -258,6 +258,53 @@ export function roomController(io: Server) {
     io.emit('lobby_update', { rooms: getPublicRooms() });
   };
 
+  async function detachSocketsRemovedByWorker(existingRoom: Room | undefined, workerRoom: Room): Promise<void> {
+    if (!existingRoom || !workerRoom?.id || !Array.isArray(workerRoom.players)) return;
+
+    const incomingPlayerIds = new Set(workerRoom.players.map(player => player.id));
+    const removedPlayers = (existingRoom.players || []).filter(player => !incomingPlayerIds.has(player.id));
+    if (removedPlayers.length === 0) return;
+
+    // 如果worker回传的是比主线程更新前更旧的房间快照，不能据此清理新加入玩家的socket订阅。
+    if ((workerRoom.lastActiveTime || 0) < (existingRoom.lastActiveTime || 0)) {
+      console.warn(`房间 ${workerRoom.id} 收到较旧的worker成员快照，跳过socket移除同步`);
+      return;
+    }
+
+    for (const removedPlayer of removedPlayers) {
+      if (!removedPlayer.socketId) continue;
+
+      const removedSocket = io.sockets.sockets.get(removedPlayer.socketId);
+      if (!removedSocket) continue;
+
+      await removedSocket.leave(workerRoom.id);
+      removedSocket.emit('room_left', { roomId: workerRoom.id });
+      console.log(`玩家 ${removedPlayer.nickname} 已由worker移出房间 ${workerRoom.id}，同步清理socket房间订阅`);
+    }
+  }
+
+  async function applyWorkerRoomUpdate(event: string, payload: any): Promise<any> {
+    if (event !== 'room_update' || !payload?.id) {
+      return payload;
+    }
+
+    const existingRoom = rooms.get(payload.id);
+    const oldPrivate = existingRoom?.private;
+
+    await detachSocketsRemovedByWorker(existingRoom, payload as Room);
+
+    const mergedRoom = mergeRoomUpdateFromWorker(existingRoom, payload as Room);
+    rooms.set(payload.id, mergedRoom);
+    threadManager.updateRoomData(payload.id, mergedRoom);
+
+    // 如果房间的private状态发生变化，广播大厅更新
+    if (oldPrivate !== undefined && mergedRoom.private !== oldPrivate) {
+      broadcastLobbyUpdate();
+    }
+
+    return mergedRoom;
+  }
+
   // 处理来自worker线程的消息
   async function handleThreadMessage(data: any) {
     try {
@@ -265,36 +312,12 @@ export function roomController(io: Server) {
       if (data.type === 'emit') {
         // 广播到房间内所有客户端
         console.log(`广播事件到房间 ${data.roomId}: ${data.event}`, data.data);
-        let outgoingData = data.data;
-        if (data.event === 'room_update' && data.data?.id) {
-          const existingRoom = rooms.get(data.data.id);
-          const oldPrivate = existingRoom?.private;
-          const mergedRoom = mergeRoomUpdateFromWorker(existingRoom, data.data);
-          rooms.set(data.data.id, mergedRoom);
-          threadManager.updateRoomData(data.data.id, mergedRoom);
-          outgoingData = mergedRoom;
-          // 如果房间的private状态发生变化，广播大厅更新
-          if (oldPrivate !== undefined && mergedRoom.private !== oldPrivate) {
-            broadcastLobbyUpdate();
-          }
-        }
+        const outgoingData = await applyWorkerRoomUpdate(data.event, data.data);
         io.to(data.roomId).emit(data.event, serializeEventData(data.event, outgoingData));
       } else if (data.type === 'emit_to_socket') {
         // 发送到特定socket
         console.log(`发送事件到socket ${data.socketId}: ${data.event}`, data.data);
-        let outgoingData = data.data;
-        if (data.event === 'room_update' && data.data?.id) {
-          const existingRoom = rooms.get(data.data.id);
-          const oldPrivate = existingRoom?.private;
-          const mergedRoom = mergeRoomUpdateFromWorker(existingRoom, data.data);
-          rooms.set(data.data.id, mergedRoom);
-          threadManager.updateRoomData(data.data.id, mergedRoom);
-          outgoingData = mergedRoom;
-          // 如果房间的private状态发生变化，广播大厅更新
-          if (oldPrivate !== undefined && mergedRoom.private !== oldPrivate) {
-            broadcastLobbyUpdate();
-          }
-        }
+        const outgoingData = await applyWorkerRoomUpdate(data.event, data.data);
         io.to(data.socketId).emit(data.event, serializeEventData(data.event, outgoingData));
       }
     } catch (error) {
@@ -864,6 +887,10 @@ export function roomController(io: Server) {
 
         const player = room.players.find(p => p.socketId === socket.id);
         if (!player) {
+          // 玩家可能已先被具体游戏worker从房间移除（例如德州扑克cash out）。
+          // 这种情况下仍需清理Socket.IO房间订阅，避免旧房间广播继续进入大厅或其他房间页面。
+          await socket.leave(room.id);
+          socket.emit('room_left', { roomId: room.id });
           return;
         }
 

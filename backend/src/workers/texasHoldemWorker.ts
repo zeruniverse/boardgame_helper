@@ -667,6 +667,7 @@ class TexasHoldemWorker extends BaseGameWorker {
       this.room.gameMetadata = {};
     }
     this.room.gameMetadata.participants = [...this.participants];
+    this.room.lastActiveTime = Date.now();
 
     this.sendToRoom('chat_broadcast', { message: `${player.nickname} cash out 并退出房间`, type: 'cashout' });
     this.sendToRoom('room_update', this.room);
