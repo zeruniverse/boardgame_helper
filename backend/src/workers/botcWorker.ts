@@ -557,6 +557,66 @@ export class BOTCWorker extends BaseGameWorker {
     return 'demon';
   }
 
+  private getNightActionRoleId(action: NightAction): string {
+    const actingPlayer = this.gamePlayers.get(action.playerId);
+    return action.roleId || (actingPlayer ? this.getEffectiveRole(actingPlayer)?.id : '') || '';
+  }
+
+  private async tryResolveFangGuJump(fangGuId: string, targetId: string): Promise<boolean> {
+    const fangGu = this.gamePlayers.get(fangGuId);
+    const target = this.gamePlayers.get(targetId);
+    const fangGuRole = getRoleById('fanggu');
+
+    if (!fangGu || !target || !fangGuRole) {
+      return false;
+    }
+
+    if (this.getEffectiveRole(fangGu)?.id !== 'fanggu') {
+      return false;
+    }
+
+    // Fang Gu can jump only once per game. Keep the marker on the new Fang Gu
+    // as well, so later Fang Gu attacks kill Outsiders normally.
+    if (fangGu.reminders.includes('Fang Gu Jumped')) {
+      return false;
+    }
+
+    if (target.isDead || target.role?.team !== Team.OUTSIDER) {
+      return false;
+    }
+
+    // The jump only happens if the Fang Gu would die and the Outsider would be
+    // killed by this attack. If either side is protected, fall back to the
+    // normal demon-kill path so protection rules stay centralized in killPlayer.
+    if (fangGu.isProtected || target.isProtected || this.getTeaLadyProtectedPlayerIds().has(target.playerId)) {
+      return false;
+    }
+
+    this.addReminder(fangGu, 'Fang Gu Jumped');
+    target.role = { ...fangGuRole };
+    target.displayRole = undefined;
+    target.nightInfo = null;
+    this.addReminder(target, 'Fang Gu Jumped');
+    this.refreshAlignmentLists();
+
+    this.sendRoleStateToPlayer(target.playerId);
+    this.sendNightInfoToPlayer(target.playerId, {
+      role: 'fanggu',
+      information: {
+        message: '你已变成邪恶阵营的彊尸。',
+        newRole: 'fanggu',
+        alignment: 'evil'
+      }
+    });
+    this.sendToPlayer(this.gameConfig.storytellerId, 'gameMessage', {
+      message: `彊尸转移：${this.getPlayerName(target.playerId)} 成为新的邪恶彊尸，${this.getPlayerName(fangGu.playerId)} 死亡`,
+      type: 'warning'
+    });
+
+    await this.killPlayer(fangGu.playerId, 'fanggu');
+    return true;
+  }
+
   private refreshAlignmentLists(): void {
     const allPlayers = Array.from(this.gamePlayers.values());
     this.gameState.evilPlayers = allPlayers
@@ -2596,7 +2656,14 @@ export class BOTCWorker extends BaseGameWorker {
     // 处理击杀
     if (effects.killed) {
       const killCause = this.getNightKillCause(action);
+      const roleId = this.getNightActionRoleId(action);
       for (const playerId of effects.killed) {
+        if (roleId === 'fanggu') {
+          const jumped = await this.tryResolveFangGuJump(action.playerId, playerId);
+          if (jumped) {
+            continue;
+          }
+        }
         await this.killPlayer(playerId, killCause);
       }
     }
