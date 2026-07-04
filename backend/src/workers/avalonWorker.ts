@@ -231,6 +231,11 @@ class AvalonWorker extends BaseGameWorker {
   }
 
   async changeConfig(config: AvalonRawConfig = {}): Promise<void> {
+    const state = this.gameState as AvalonGameState;
+    if (state.status !== GameStatus.WAITING) {
+      throw new Error('游戏已开始，无法修改配置');
+    }
+
     this.config = this.normalizeConfig(config, this.config);
 
     this.sendToRoom('chat_broadcast', {
@@ -674,6 +679,12 @@ class AvalonWorker extends BaseGameWorker {
 
   // 游戏处理方法实现
   private handleReady(playerId: string): void {
+    const state = this.gameState as AvalonGameState;
+    if (state.status !== GameStatus.WAITING) {
+      this.sendToPlayer(playerId, 'game_error', { message: '游戏已开始，无法准备' });
+      return;
+    }
+
     const player = this.room.players.find(p => p.id === playerId);
     if (player && !player.gameMetadata.ready) {
       player.gameMetadata.ready = true;
@@ -689,6 +700,12 @@ class AvalonWorker extends BaseGameWorker {
   }
 
   private handleUnready(playerId: string): void {
+    const state = this.gameState as AvalonGameState;
+    if (state.status !== GameStatus.WAITING) {
+      this.sendToPlayer(playerId, 'game_error', { message: '游戏已开始，无法取消准备' });
+      return;
+    }
+
     const player = this.room.players.find(p => p.id === playerId);
     if (player && player.gameMetadata.ready) {
       player.gameMetadata.ready = false;
@@ -705,7 +722,21 @@ class AvalonWorker extends BaseGameWorker {
   private handleStartGame(playerId: string): void {
     if (playerId !== this.room.hostId) return;
 
-    const readyPlayers = this.room.players.filter(p => p.online !== false && p.gameMetadata?.ready);
+    const state = this.gameState as AvalonGameState;
+    if (state.status !== GameStatus.WAITING) {
+      this.sendToPlayer(playerId, 'game_error', { message: '游戏已经开始' });
+      return;
+    }
+
+    const onlinePlayers = this.room.players.filter(p => p.online !== false);
+    const readyPlayers = onlinePlayers.filter(p => p.gameMetadata?.ready);
+    if (readyPlayers.length !== onlinePlayers.length) {
+      this.sendToPlayer(playerId, 'game_error', {
+        message: '所有在线玩家都必须准备才能开始游戏'
+      });
+      return;
+    }
+
     if (readyPlayers.length < 5 || readyPlayers.length > 10) {
       this.sendToPlayer(playerId, 'game_error', {
         message: '游戏人数必须在5-10人之间'

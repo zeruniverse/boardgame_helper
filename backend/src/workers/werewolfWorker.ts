@@ -650,6 +650,11 @@ class WerewolfWorker extends BaseGameWorker {
   // ==================== 核心动作处理方法 ====================
 
   private handleReady(playerId: string): void {
+    if (this.gameState.status !== GameStatus.WAITING) {
+      this.sendToPlayer(playerId, 'error', { message: '游戏已开始，无法准备' });
+      return;
+    }
+
     const player = this.room.players.find(p => p.id === playerId);
     if (player && player.gameMetadata) {
       player.gameMetadata.ready = true;
@@ -664,6 +669,11 @@ class WerewolfWorker extends BaseGameWorker {
   }
 
   private handleUnready(playerId: string): void {
+    if (this.gameState.status !== GameStatus.WAITING) {
+      this.sendToPlayer(playerId, 'error', { message: '游戏已开始，无法取消准备' });
+      return;
+    }
+
     const player = this.room.players.find(p => p.id === playerId);
     if (player && player.gameMetadata) {
       player.gameMetadata.ready = false;
@@ -705,6 +715,11 @@ class WerewolfWorker extends BaseGameWorker {
     // 只有房主能重新开始游戏
     if (this.room.hostId !== playerId) {
       this.sendToPlayer(playerId, 'error', { message: '只有房主可以重新开始游戏' });
+      return;
+    }
+
+    if (this.gameState.status !== GameStatus.OVER) {
+      this.sendToPlayer(playerId, 'error', { message: '只有游戏结束后才能重新开始' });
       return;
     }
 
