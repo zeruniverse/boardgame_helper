@@ -34,7 +34,7 @@ import {
   GOOD_TWIN_EXECUTED_REMINDER,
   hasLivingEvilTwin
 } from '../utils/botcUtils';
-import { EDITIONS, getEditionById, getRoleById, getRolesByTeam } from '../utils/botcData';
+import { EDITIONS, getAllRoles, getEditionById, getRoleById, getRolesByTeam } from '../utils/botcData';
 import { processFirstNightInfo, processNightAction, processDeathAbility } from '../utils/botcSkills';
 import { normalizeChatChannel, normalizeChatText } from '../utils/chat';
 
@@ -156,6 +156,153 @@ export class BOTCWorker extends BaseGameWorker {
 
   private didOutsiderDieToday(): boolean {
     return this.deathsToday.some(entry => entry.team === Team.OUTSIDER);
+  }
+
+  private resolveSubmittedRole(input: unknown): Role | null {
+    const raw = String(input || '').trim();
+    if (!raw) return null;
+
+    const normalized = raw.toLowerCase();
+    return getRoleById(normalized) || getAllRoles().find(role =>
+      role.id.toLowerCase() === normalized ||
+      role.name === raw ||
+      role.name.toLowerCase() === normalized
+    ) || null;
+  }
+
+  private validateNightActionSubmission(player: GamePlayer, action: NightAction): string | null {
+    const effectiveRole = this.getEffectiveRole(player);
+    const roleId = effectiveRole?.id || action.roleId;
+    const rawTargets = Array.isArray(action.targets) ? action.targets : [];
+    const targets = rawTargets.filter((target): target is string => typeof target === 'string' && target.length > 0);
+
+    if (!roleId) return '角色信息不存在，无法执行夜晚行动';
+    if (targets.length !== rawTargets.length) return '目标玩家不存在';
+
+    const uniqueTargets = new Set(targets);
+    if (uniqueTargets.size !== targets.length) return '不能重复选择同一名玩家';
+
+    const targetPlayers = targets.map(targetId => this.gamePlayers.get(targetId));
+    if (targetPlayers.some(target => !target)) return '目标玩家不存在';
+
+    const requireTargetCount = (min: number, max: number, message: string): string | null => {
+      if (targets.length < min || targets.length > max) return message;
+      return null;
+    };
+    const requireExactlyOne = (message: string): string | null => requireTargetCount(1, 1, message);
+    const targetPlayer = (index = 0): GamePlayer | undefined => targetPlayers[index];
+    const hasUsedOncePerGameAbility = player.reminders.some(reminder =>
+      reminder === 'No ability' ||
+      reminder === '已使用' ||
+      reminder === 'Is the Philosopher'
+    );
+    const isFirstNight = this.gameState.phase === GamePhase.FIRST_NIGHT;
+
+    switch (roleId) {
+      case 'poisoner':
+        return requireExactlyOne('投毒者必须选择一名玩家');
+      case 'monk':
+        return requireExactlyOne('僧侣必须选择一名玩家') ||
+          (targets[0] === player.playerId ? '僧侣不能保护自己' : null);
+      case 'imp':
+        return requireExactlyOne('小恶魔必须选择一名玩家');
+      case 'butler':
+        return requireExactlyOne('管家必须选择一名主人') ||
+          (targets[0] === player.playerId ? '管家不能选择自己为主人' : null);
+      case 'sailor':
+        return requireExactlyOne('水手必须选择一名玩家');
+      case 'exorcist':
+        return requireExactlyOne('驱魔师必须选择一名玩家');
+      case 'innkeeper':
+        return requireTargetCount(2, 2, '酒馆老板必须选择两名玩家');
+      case 'gambler':
+        return requireExactlyOne('赌徒必须选择一名玩家') ||
+          (!String(action.data?.guess || '').trim() ? '赌徒必须填写猜测角色' : null);
+      case 'godfather':
+        if (isFirstNight || !this.didOutsiderDieToday()) {
+          return null;
+        }
+        return requireExactlyOne('今天有外来者死亡，教父必须选择一名玩家');
+      case 'zombuul':
+        if (isFirstNight || this.didAnyoneDieToday()) {
+          return null;
+        }
+        return requireExactlyOne('今天无人死亡，僵怖必须选择一名玩家');
+      case 'pukka':
+        return requireExactlyOne('普卡必须选择一名玩家');
+      case 'devilsadvocate':
+        return requireExactlyOne('恶魔律师必须选择一名存活玩家') ||
+          (targetPlayer()?.isDead ? '恶魔律师必须选择一名存活玩家' : null);
+      case 'assassin':
+        return hasUsedOncePerGameAbility ? null : requireExactlyOne('刺客必须选择一名玩家');
+      case 'shabaloth':
+        return requireTargetCount(1, 2, '沙巴洛斯必须选择一到两名玩家');
+      case 'po': {
+        const charged = player.reminders.includes('Po Charged') && !player.reminders.includes('Po Charged Used');
+        if (!charged && targets.length === 0) return null;
+        if (!charged) return requireExactlyOne('未蓄力的珀只能选择一名玩家，或不选目标进行蓄力');
+        return requireTargetCount(1, 3, '蓄力后的珀必须选择一到三名玩家');
+      }
+      case 'professor':
+        if (hasUsedOncePerGameAbility || targets.length === 0) return null;
+        return requireExactlyOne('教授最多选择一名死亡玩家') ||
+          (!targetPlayer()?.isDead ? '教授必须选择一名死亡玩家' : null);
+      case 'snakecharmer':
+        return requireExactlyOne('蛇魅必须选择一名存活玩家') ||
+          (targets[0] === player.playerId ? '蛇魅不能选择自己' : null) ||
+          (targetPlayer()?.isDead ? '蛇魅必须选择一名存活玩家' : null);
+      case 'witch':
+        return requireExactlyOne('女巫必须选择一名玩家');
+      case 'courtier': {
+        if (hasUsedOncePerGameAbility) return null;
+        const role = this.resolveSubmittedRole(action.data?.characterId || action.data?.character || action.data?.roleId);
+        return role ? null : '朝臣必须选择一个有效角色';
+      }
+      case 'philosopher': {
+        if (hasUsedOncePerGameAbility) return null;
+        const role = this.resolveSubmittedRole(action.data?.ability || action.data?.characterId || action.data?.roleId);
+        if (!role) return '哲学家必须选择一个有效角色';
+        if (role.team !== Team.TOWNSFOLK && role.team !== Team.OUTSIDER) return '哲学家只能选择善良角色';
+        return null;
+      }
+      case 'cerenovus':
+        return requireExactlyOne('洗脑师必须选择一名玩家') ||
+          (!String(action.data?.characterId || action.data?.character || action.data?.roleId || '').trim() ? '洗脑师必须填写目标要疯狂声称的角色' : null);
+      case 'pithag': {
+        const role = this.resolveSubmittedRole(action.data?.characterId || action.data?.character || action.data?.roleId);
+        return requireExactlyOne('坑巫必须选择一名玩家') ||
+          (!role ? '坑巫选择的角色不存在' : null);
+      }
+      case 'fanggu':
+        return requireExactlyOne('彊尸必须选择一名玩家');
+      case 'vigormortis':
+        return requireExactlyOne('维格莫提斯必须选择一名玩家');
+      case 'nodashii':
+        return requireExactlyOne('诺达希必须选择一名玩家');
+      case 'vortox':
+        return requireExactlyOne('沃托克斯必须选择一名玩家');
+      case 'fortuneteller':
+        return requireTargetCount(2, 2, '占卜师必须选择两名玩家');
+      case 'dreamer':
+        return requireExactlyOne('筑梦师必须选择一名玩家');
+      case 'seamstress':
+        return player.reminders.includes('Seamstress used')
+          ? null
+          : requireTargetCount(2, 2, '女裁缝必须选择两名玩家') ||
+            (targets.includes(player.playerId) ? '女裁缝必须选择两名非自己的玩家' : null);
+      case 'chambermaid':
+        return requireTargetCount(2, 2, '侍女必须选择两名玩家') ||
+          (targets.includes(player.playerId) ? '侍女必须选择两名存活且非自己的玩家' : null) ||
+          (targetPlayers.some(target => target?.isDead) ? '侍女必须选择两名存活且非自己的玩家' : null);
+      case 'artist':
+        return !String(action.data?.question || '').trim() ? '艺术家必须提交一个问题' : null;
+      case 'bureaucrat':
+        return requireExactlyOne('官僚必须选择一名玩家');
+      case 'thief':
+        return requireExactlyOne('盗贼必须选择一名玩家');
+      default:
+        return null;
+    }
   }
 
   private applyZombuulFirstDeath(player: GamePlayer, cause: string): boolean {
@@ -1856,6 +2003,12 @@ export class BOTCWorker extends BaseGameWorker {
       data: data.data || {},
       timestamp: Date.now()
     };
+
+    const validationError = this.validateNightActionSubmission(player, action);
+    if (validationError) {
+      this.sendToPlayer(playerId, 'actionError', { message: validationError });
+      return;
+    }
 
     this.nightActions.push(action);
     player.hasActed = true;

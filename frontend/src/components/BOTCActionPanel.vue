@@ -470,10 +470,17 @@ const watchDeathAbility = watch(() => props.nightInfo, (info) => {
   }
 })
 
+const watchNightActionConfirmation = watch(() => props.nightInfo, (info) => {
+  if (info?.playerId === props.currentUserId && info?.actionType) {
+    nightActionCompleted.value = true
+  }
+})
+
 onUnmounted(() => {
   watchPhase()
   watchRole()
   watchDeathAbility()
+  watchNightActionConfirmation()
 })
 
 // 计算属性
@@ -737,7 +744,6 @@ const buildNightActionData = () => {
 
 const submitNightAction = () => {
   if (!canConfirmNightAction.value) return
-  nightActionCompleted.value = true
   emit('game-action', {
     type: 'nightAction',
     data: buildNightActionData()
