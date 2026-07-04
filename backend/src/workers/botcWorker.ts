@@ -173,6 +173,14 @@ export class BOTCWorker extends BaseGameWorker {
     return true;
   }
 
+  private isFunctionallyAlive(player: GamePlayer): boolean {
+    return !player.isDead || isZombuulLivingWhileRegisteredDead(player);
+  }
+
+  private hasFunctionallyAliveDemon(players: GamePlayer[]): boolean {
+    return players.some(p => p.role?.team === Team.DEMON && this.isFunctionallyAlive(p));
+  }
+
   private finishRegisteredDeadZombuul(player: GamePlayer, cause: string): void {
     player.reminders = player.reminders.filter(reminder => reminder !== ZOMBUUL_ALIVE_REMINDER);
     player.deathCause = cause;
@@ -594,7 +602,7 @@ export class BOTCWorker extends BaseGameWorker {
     const allPlayers = Array.from(this.gamePlayers.values());
     const lowerQ = question.toLowerCase();
     if (lowerQ.includes('恶魔') || lowerQ.includes('坏') || lowerQ.includes('邪恶')) {
-      return allPlayers.some(p => !p.isDead && p.role?.team === Team.DEMON);
+      return this.hasFunctionallyAliveDemon(allPlayers);
     }
     if (lowerQ.includes('镇民') || lowerQ.includes('好人')) {
       return allPlayers.some(p => !p.isDead && !isEvilPlayer(p));
@@ -660,16 +668,19 @@ export class BOTCWorker extends BaseGameWorker {
 
   private promoteScarletWomanIfNeeded(dyingDemonId?: string): boolean {
     const allPlayers = Array.from(this.gamePlayers.values());
-    const alivePlayers = allPlayers.filter(p => !p.isDead);
-    const aliveDemon = alivePlayers.find(p => p.role?.team === Team.DEMON);
-    if (aliveDemon) {
+    const functionallyAlivePlayers = allPlayers.filter(p => this.isFunctionallyAlive(p));
+    if (this.hasFunctionallyAliveDemon(allPlayers)) {
       return false;
     }
 
-    const scarletWoman = alivePlayers.find(p => p.role?.id === 'scarletwoman');
+    const scarletWoman = functionallyAlivePlayers.find(p => p.role?.id === 'scarletwoman');
     const dyingDemon = dyingDemonId ? allPlayers.find(p => p.playerId === dyingDemonId && p.role?.team === Team.DEMON) : undefined;
-    const aliveNonTravelerCountAtDemonDeath = alivePlayers.filter(p => p.role?.team !== Team.TRAVELER).length
-      + (dyingDemon && dyingDemon.isDead && dyingDemon.role?.team !== Team.TRAVELER ? 1 : 0);
+    const shouldCountDyingDemon = !!dyingDemon &&
+      dyingDemon.isDead &&
+      !isZombuulLivingWhileRegisteredDead(dyingDemon) &&
+      dyingDemon.role?.team !== Team.TRAVELER;
+    const aliveNonTravelerCountAtDemonDeath = functionallyAlivePlayers.filter(p => p.role?.team !== Team.TRAVELER).length
+      + (shouldCountDyingDemon ? 1 : 0);
     if (!scarletWoman || !this.playerAbilityWorks(scarletWoman) || aliveNonTravelerCountAtDemonDeath < 5) {
       return false;
     }
@@ -2778,6 +2789,9 @@ export class BOTCWorker extends BaseGameWorker {
         cause,
         finalDeath: true
       });
+      if (player.role?.team === Team.DEMON) {
+        this.promoteScarletWomanIfNeeded(playerId);
+      }
       this.broadcastGameState();
       return;
     }
@@ -3210,7 +3224,7 @@ export class BOTCWorker extends BaseGameWorker {
         { const pithagTarget = this.selectPitHagTarget(allPlayers, aiBias, isGoodStrong, isEvilStrong);
           actionData.targets = [pithagTarget];
           // AI说书人：如果场上已有存活恶魔，绝不变出第二个恶魔
-          const hasAliveDemon = allPlayers.some(p => p.role?.team === Team.DEMON && !p.isDead);
+          const hasAliveDemon = this.hasFunctionallyAliveDemon(allPlayers);
           const safeOutsiderRoles = ['drunk', 'recluse', 'saint', 'tinker', 'moonchild', 'goon', 'mutant', 'sweetheart', 'barber', 'klutz'];
           actionData.data = { 
             character: hasAliveDemon 
@@ -3380,7 +3394,7 @@ export class BOTCWorker extends BaseGameWorker {
     
     // AI说书人不会选择创造恶魔导致场上存在两个恶魔
     // 如果场上已有恶魔存活，绝不将好人变成恶魔
-    const hasAliveDemon = demons.some(p => !p.isDead);
+    const hasAliveDemon = demons.some(p => this.isFunctionallyAlive(p));
     if (hasAliveDemon) {
       // 选择一个非恶魔角色的目标
       const target = aliveGood[Math.floor(Math.random() * aliveGood.length)];
