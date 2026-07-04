@@ -1454,6 +1454,14 @@ export class BOTCWorker extends BaseGameWorker {
    * 结束白天阶段
    */
   private async endDay(): Promise<void> {
+    const activeNomination = this.getActiveNomination();
+    if (activeNomination) {
+      await this.endVoting(activeNomination);
+      if (this.gameState.phase !== GamePhase.DAY) {
+        return;
+      }
+    }
+
     this.clearTimers();
 
     const executionCandidate = this.getExecutionCandidate();
@@ -1531,6 +1539,10 @@ export class BOTCWorker extends BaseGameWorker {
     await this.startNight(false);
   }
 
+  private getActiveNomination(): Nomination | undefined {
+    return this.gameState.nominations.find(n => n.isOnTrial);
+  }
+
   private getExecutionCandidate(): Nomination | undefined {
     const alivePlayers = Array.from(this.gamePlayers.values()).filter(p => !p.isDead).length;
     const requiredVotes = Math.ceil(alivePlayers / 2);
@@ -1591,7 +1603,7 @@ export class BOTCWorker extends BaseGameWorker {
     }
 
     // 检查是否已经有提名在进行
-    const activeNomination = this.gameState.nominations.find(n => n.isOnTrial);
+    const activeNomination = this.getActiveNomination();
     if (activeNomination) {
       this.sendToPlayer(playerId, 'actionError', { message: '当前有提名正在进行投票' });
       return;
@@ -1718,7 +1730,7 @@ export class BOTCWorker extends BaseGameWorker {
    * 处理投票
    */
   private async handleVote(playerId: string, data: { vote: 'for' | 'against' | 'abstain' }): Promise<void> {
-    const activeNomination = this.gameState.nominations.find(n => n.isOnTrial);
+    const activeNomination = this.getActiveNomination();
     if (!activeNomination) {
       this.sendToPlayer(playerId, 'actionError', { message: '当前没有进行中的投票' });
       return;
@@ -2171,7 +2183,7 @@ export class BOTCWorker extends BaseGameWorker {
         await this.startDay();
         break;
       case 'endVoting': {
-        const activeNomination = this.gameState.nominations.find(n => n.isOnTrial);
+        const activeNomination = this.getActiveNomination();
         if (!activeNomination) {
           this.sendToPlayer(playerId, 'actionError', { message: '当前没有正在进行的投票' });
           return;
@@ -2182,7 +2194,7 @@ export class BOTCWorker extends BaseGameWorker {
       case 'nextPhase':
         // 白天若仍有提名投票在进行，先由说书人结算当前投票；再次点击才进入夜晚。
         if (this.gameState.phase === GamePhase.DAY) {
-          const activeNomination = this.gameState.nominations.find(n => n.isOnTrial);
+          const activeNomination = this.getActiveNomination();
           if (activeNomination) {
             await this.endVoting(activeNomination);
             return;

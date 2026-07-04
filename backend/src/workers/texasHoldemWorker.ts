@@ -757,21 +757,10 @@ class TexasHoldemWorker extends BaseGameWorker {
     this.room.gameMetadata.participants = [...this.participants];
     this.room.gameMetadata.allowSystemDealing = this.config.allowSystemDealing;
 
-    // 同步状态
+    // 同步状态并请求第一个需要行动的玩家；盲注后已全下的玩家会被立即跳过。
     this.sendToRoom('room_update', this.room);
     this.sendToRoom('game_started', {});
-    this.sendToRoom('game_state', this.buildPublicGameState());
-
-    // 请求第一个玩家行动
-    this.sendToRoom('action_request', { playerId: nextPlayer.id, seconds: 30 });
-
-    // 清除已有定时器并立即启动新的
-    this.clearActionTimer();
-    this.actionDeadline = Date.now() + 30000;
-    this.actionTimer = setTimeout(() => {
-      this.actionDeadline = null;
-      this.handleTimeout();
-    }, 30000);
+    this.requestActionForCurrentTurn();
   }
 
   private handleStartGame(playerId: string, data: any) {
@@ -852,6 +841,87 @@ class TexasHoldemWorker extends BaseGameWorker {
     this.actionDeadline = null;
   }
 
+  private playerNeedsAction(player: Player | undefined): boolean {
+    const gs = this.gameState as TexasHoldemGameState;
+    if (!player || !this.participants.includes(player.id) || gs.folded.includes(player.id)) {
+      return false;
+    }
+
+    const chips = Number(player.gameMetadata?.chips || 0);
+    if (chips <= 0) {
+      return false;
+    }
+
+    const playerBet = gs.bets[player.id] || 0;
+    if (playerBet < gs.currentBet) {
+      return true;
+    }
+
+    return !gs.acted.includes(player.id);
+  }
+
+  private findNextActionPlayerGlobalIndex(startParticipantIdx: number): number {
+    const participatingPlayers = this.room.players.filter(p => this.participants.includes(p.id));
+    if (participatingPlayers.length === 0) {
+      return -1;
+    }
+
+    let nextParticipantIdx = ((startParticipantIdx % participatingPlayers.length) + participatingPlayers.length) % participatingPlayers.length;
+    for (let attempts = 0; attempts < participatingPlayers.length; attempts++) {
+      const nextPlayer = participatingPlayers[nextParticipantIdx];
+      if (this.playerNeedsAction(nextPlayer)) {
+        return this.room.players.findIndex(p => p.id === nextPlayer.id);
+      }
+      nextParticipantIdx = (nextParticipantIdx + 1) % participatingPlayers.length;
+    }
+
+    return -1;
+  }
+
+  private requestActionForCurrentTurn(): void {
+    const gs = this.gameState as TexasHoldemGameState;
+    if (!this.participants || this.participants.length === 0) {
+      return;
+    }
+
+    let currentPlayer = gs.currentTurn >= 0 && gs.currentTurn < this.room.players.length
+      ? this.room.players[gs.currentTurn]
+      : undefined;
+
+    if (!this.playerNeedsAction(currentPlayer)) {
+      const participatingPlayers = this.room.players.filter(p => this.participants.includes(p.id));
+      const currentPlayerInParticipants = currentPlayer
+        ? participatingPlayers.findIndex(p => p.id === currentPlayer!.id)
+        : -1;
+      const startParticipantIdx = currentPlayerInParticipants >= 0 ? currentPlayerInParticipants + 1 : 0;
+      const nextGlobalIdx = this.findNextActionPlayerGlobalIndex(startParticipantIdx);
+      if (nextGlobalIdx < 0) {
+        this.checkRoundEnd();
+        return;
+      }
+
+      gs.currentTurn = nextGlobalIdx;
+      currentPlayer = this.room.players[gs.currentTurn];
+    }
+
+    if (!currentPlayer) {
+      this.checkRoundEnd();
+      return;
+    }
+
+    // 广播游戏状态更新并请求当前玩家行动
+    this.sendToRoom('game_state', this.buildPublicGameState());
+    this.sendToRoom('action_request', { playerId: currentPlayer.id, seconds: 30 });
+
+    // 清除已有定时器并立即启动新的
+    this.clearActionTimer();
+    this.actionDeadline = Date.now() + 30000;
+    this.actionTimer = setTimeout(() => {
+      this.actionDeadline = null;
+      this.handleTimeout();
+    }, 30000);
+  }
+
   private handleTimeout() {
     const gs = this.gameState as TexasHoldemGameState;
 
@@ -861,25 +931,29 @@ class TexasHoldemWorker extends BaseGameWorker {
       return;
     }
 
-    // 安全检查：currentTurn 有效性
+    // 安全检查：currentTurn 有效性。无效时不能只丢弃计时器，否则牌局会停在无人行动状态。
     if (gs.currentTurn < 0 || gs.currentTurn >= this.room.players.length) {
-      console.log('currentTurn 无效，忽略超时处理');
+      console.log('currentTurn 无效，尝试恢复行动指针');
+      this.clearActionTimer();
+      this.requestActionForCurrentTurn();
       return;
     }
 
     const player = this.room.players[gs.currentTurn];
     if (!player || !this.participants.includes(player.id)) {
-      console.log('当前玩家已不在游戏中，忽略超时处理');
+      console.log('当前玩家已不在游戏中，尝试跳过');
+      this.clearActionTimer();
+      this.requestActionForCurrentTurn();
       return;
     }
 
-    if (gs.folded.includes(player.id) || gs.acted.includes(player.id) || player.gameMetadata.chips === 0) {
+    if (!this.playerNeedsAction(player)) {
       this.clearActionTimer();
       // 如果是全下玩家，确保他们被标记为已行动并继续游戏
-      if (player.gameMetadata.chips === 0 && !gs.acted.includes(player.id) && !gs.folded.includes(player.id)) {
+      if (Number(player.gameMetadata?.chips || 0) <= 0 && !gs.acted.includes(player.id) && !gs.folded.includes(player.id)) {
         gs.acted.push(player.id);
-        this.continueToNextPlayer();
       }
+      this.requestActionForCurrentTurn();
       return;
     }
 
@@ -911,11 +985,14 @@ class TexasHoldemWorker extends BaseGameWorker {
     }
 
     const participatingPlayers = this.room.players.filter(p => this.participants.includes(p.id));
+    if (participatingPlayers.length === 0) {
+      return;
+    }
 
     // 安全检查：currentTurn 有效性
     if (gs.currentTurn < 0 || gs.currentTurn >= this.room.players.length) {
-      console.log('continueToNextPlayer: currentTurn 无效');
-      this.checkRoundEnd();
+      console.log('continueToNextPlayer: currentTurn 无效，尝试恢复');
+      this.requestActionForCurrentTurn();
       return;
     }
 
@@ -944,54 +1021,17 @@ class TexasHoldemWorker extends BaseGameWorker {
       }
     }
 
-    // 寻找下一个可以行动的玩家
-    let nextParticipantIdx = (currentPlayerInParticipants + 1) % participatingPlayers.length;
-    let attempts = 0;
-    const maxAttempts = Math.max(participatingPlayers.length * 2, 1);
-
-    while (attempts < maxAttempts) {
-      const nextPlayer = participatingPlayers[nextParticipantIdx];
-
-      // 安全检查：玩家存在且没有弃牌，且有筹码
-      if (nextPlayer && !gs.folded.includes(nextPlayer.id) && nextPlayer.gameMetadata.chips > 0) {
-        break;
-      }
-
-      nextParticipantIdx = (nextParticipantIdx + 1) % participatingPlayers.length;
-      attempts++;
-    }
-
-    if (attempts >= maxAttempts) {
-      console.log('无法找到下一个可行动的玩家，尝试结束回合');
-      this.checkRoundEnd();
-      return;
-    }
-
-    if (attempts >= participatingPlayers.length) {
+    const startParticipantIdx = currentPlayerInParticipants >= 0 ? currentPlayerInParticipants + 1 : 0;
+    const nextGlobalIdx = this.findNextActionPlayerGlobalIndex(startParticipantIdx);
+    if (nextGlobalIdx < 0) {
+      console.log('无法找到下一个需要行动的玩家，尝试结束回合');
       this.sendToRoom('game_state', this.buildPublicGameState());
       this.checkRoundEnd();
       return;
     }
 
-    const nextGlobalIdx = this.room.players.findIndex(p => p.id === participatingPlayers[nextParticipantIdx].id);
-    if (nextGlobalIdx < 0) {
-      console.log('无法找到下一个玩家的全局索引');
-      this.checkRoundEnd();
-      return;
-    }
     gs.currentTurn = nextGlobalIdx;
-
-    // 广播游戏状态更新并请求下一个玩家行动
-    this.sendToRoom('game_state', this.buildPublicGameState());
-    this.sendToRoom('action_request', { playerId: this.room.players[gs.currentTurn].id, seconds: 30 });
-
-    // 清除已有定时器并立即启动新的
-    this.clearActionTimer();
-    this.actionDeadline = Date.now() + 30000;
-    this.actionTimer = setTimeout(() => {
-      this.actionDeadline = null;
-      this.handleTimeout();
-    }, 30000);
+    this.requestActionForCurrentTurn();
   }
 
   // 游戏结束处理
@@ -1772,16 +1812,8 @@ class TexasHoldemWorker extends BaseGameWorker {
       }
     }
 
-    // 广播游戏状态（将currentTurn从索引转换为playerId）
-    this.sendToRoom('game_state', this.buildPublicGameState());
-
-    this.clearActionTimer();
-    this.actionDeadline = Date.now() + 30000;
-    this.sendToRoom('action_request', { playerId: this.room.players[gs.currentTurn].id, seconds: 30 });
-    this.actionTimer = setTimeout(() => {
-      this.actionDeadline = null;
-      this.handleTimeout();
-    }, 30000);
+    // 广播游戏状态并请求下一个需要行动的玩家。
+    this.requestActionForCurrentTurn();
   }
 
   // 系统发牌模式下，德州扑克在翻牌、转牌、河牌前各烧掉一张牌。
