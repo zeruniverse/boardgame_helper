@@ -235,14 +235,14 @@ const requestRoomState = () => {
 
 // 如果未加入此房间，则尝试重新加入
 onMounted(() => {
-  // 初始化socket监听器
-  store.initTexasHoldemSocket();
-  
-  // 确保socket已初始化
-  if (!store.socket || !store.socket.connected) {
-    const mainStore = useMainStore();
+  // 确保主 socket 已存在，再注册德州扑克专属监听器。
+  // 注意：socket.io 连接中的 socket 也可以先挂监听/缓存 emit；不要因为尚未 connected 就重新创建，
+  // 否则直接刷新房间页时会丢失 game_state/deal_hand/current_turn 等监听器。
+  const mainStore = useMainStore();
+  if (!store.socket) {
     mainStore.initSocket();
   }
+  store.initTexasHoldemSocket();
 
   const socket = store.socket;
   if (!socket) return;

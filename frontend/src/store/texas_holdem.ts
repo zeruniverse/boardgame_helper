@@ -74,6 +74,11 @@ export const useTexasHoldemStore = defineStore('texas_holdem', {
     // 初始化德州扑克特有的Socket监听器
     initTexasHoldemSocket() {
       const mainStore = useMainStore();
+      // 直接刷新/输入德州房间 URL 时，大厅 store 可能尚未创建 socket。
+      // 这里先确保主 socket 存在，再注册德州专属 game_state/deal_hand 等监听器。
+      if (!mainStore.socket) {
+        mainStore.initSocket();
+      }
       if (!mainStore.socket) return;
 
       // 先移除之前的监听器，防止重复注册
