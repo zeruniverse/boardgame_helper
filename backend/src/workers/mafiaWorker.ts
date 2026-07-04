@@ -1087,11 +1087,13 @@ class MafiaWorker extends BaseGameWorker {
     } else {
       // 白天遗言结束，进入夜晚
       gameState.players[playerId].alive = false;
-      gameState.deathQueue.push({
-        playerId,
-        deathReason: '被投票放逐',
-        deathDay: gameState.day
-      });
+      if (!gameState.deathQueue.some(entry => entry.playerId === playerId)) {
+        gameState.deathQueue.push({
+          playerId,
+          deathReason: '被投票放逐',
+          deathDay: gameState.day
+        });
+      }
 
       const gameResult = this.checkGameEnd();
       if (gameResult) {
@@ -1242,20 +1244,31 @@ class MafiaWorker extends BaseGameWorker {
     const playerIsValid = gameState.players[playerId]?.alive && 
                          gameState.topSecret.killer.includes(playerId);
     
-    // 检查游戏状态（白天遗言阶段且是当前发言者则不能自爆）
-    const statusIsValid = [GameStatus.SPEAK, GameStatus.LAST_WORD, GameStatus.LAST_WORD_DAYTIME].includes(gameState.status);
-    const canConfess = gameState.status !== GameStatus.LAST_WORD_DAYTIME || !gameState.operators.includes(playerId);
+    // 自爆只能发生在白天正常流程中。遗言阶段还有待结算的死亡玩家，
+    // 如果允许其他杀手插入自爆，会覆盖 operators 并导致原遗言玩家无法被标记死亡。
+    // 与前端入口保持一致：发言、PK 发言、投票阶段可自爆。
+    const statusIsValid = [GameStatus.SPEAK, GameStatus.PK, GameStatus.VOTE].includes(gameState.status);
+    const canConfess = statusIsValid;
     
     if (!playerIsValid || !statusIsValid || !canConfess) {
       return;
     }
 
-    // 检查游戏是否结束
-    const gameResult = this.checkGameEnd(playerId);
     let message = `${this.getPlayerName(playerId)}坦白ta是杀手, 并自爆出局\n`;
+    gameState.players[playerId].alive = false;
+    if (!gameState.deathQueue.some(entry => entry.playerId === playerId)) {
+      gameState.deathQueue.push({
+        playerId,
+        deathReason: '自爆出局',
+        deathDay: gameState.day
+      });
+    }
+
+    // 自爆先视为出局，再检查游戏是否结束，避免复盘/最终状态仍显示自爆者存活。
+    const gameResult = this.checkGameEnd();
 
     if (gameResult) {
-      this.endGame(gameResult, playerId, message);
+      this.endGame(gameResult, undefined, message);
     } else {
       // 游戏继续，进入遗言或夜晚
       if (gameState.lastWordCount > 0) {
