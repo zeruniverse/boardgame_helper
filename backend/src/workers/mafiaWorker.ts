@@ -2009,29 +2009,14 @@ class MafiaWorker extends BaseGameWorker {
 
   private handleVoteTimeout(): void {
     const gameState = this.gameState as MafiaGameState;
-    const alivePlayers = this.getAlivePlayers();
-    
-    // 为未投票的玩家自动投票
+
+    // 超时/离线未投票都应按弃票处理。随机代投会在玩家未行动时处决随机目标，
+    // 进而改变放逐结果和胜负判定；也与 handleOfflineOperator 的“自动弃票”语义不一致。
     gameState.operators.forEach(playerId => {
-      let ticket: string;
-      
-      if (gameState.pkPlayers.length > 0) {
-        // PK投票：随机选择一个PK玩家
-        ticket = gameState.pkPlayers[Math.floor(Math.random() * gameState.pkPlayers.length)];
-      } else {
-        // 普通投票：随机选择一个其他存活玩家（不能投自己）
-        const otherPlayers = alivePlayers.filter(id => id !== playerId);
-        if (otherPlayers.length > 0) {
-          ticket = otherPlayers[Math.floor(Math.random() * otherPlayers.length)];
-        } else {
-          ticket = 'give_up';
-        }
-      }
-      
-      gameState.voteResult[playerId] = ticket;
+      gameState.voteResult[playerId] = 'give_up';
       gameState.systemVote.push(playerId);
     });
-    
+
     gameState.operators = [];
     this.processVoteResult();
   }
