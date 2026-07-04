@@ -19,6 +19,46 @@ const hostKickVotes: Map<string, {
   timer: NodeJS.Timeout;
 }> = new Map();
 
+// 每个房间座位的服务端会话令牌。令牌只通过 room_joined 返回给本人，
+// 不进入 room_update / player.gameMetadata，避免房间内其他玩家凭公开 playerId 冒用座位。
+const playerSessionTokens: Map<string, string> = new Map();
+
+function playerSessionKey(roomId: string, playerId: string): string {
+  return `${roomId}:${playerId}`;
+}
+
+function ensurePlayerSessionToken(roomId: string, playerId: string): string {
+  const key = playerSessionKey(roomId, playerId);
+  const existingToken = playerSessionTokens.get(key);
+  if (existingToken) return existingToken;
+
+  const generatedToken = uuidv4() as string;
+  playerSessionTokens.set(key, generatedToken);
+  return generatedToken;
+}
+
+function isValidPlayerSessionToken(roomId: string, playerId: string, token: unknown): boolean {
+  const expected = playerSessionTokens.get(playerSessionKey(roomId, playerId));
+  return typeof token === 'string' && expected === token;
+}
+
+function clearPlayerSessionToken(roomId: string, playerId: string): void {
+  playerSessionTokens.delete(playerSessionKey(roomId, playerId));
+}
+
+function clearRoomSessionTokens(roomId: string): void {
+  const prefix = `${roomId}:`;
+  for (const key of Array.from(playerSessionTokens.keys())) {
+    if (key.startsWith(prefix)) playerSessionTokens.delete(key);
+  }
+}
+
+function rejectInvalidPlayerSession(socket: Socket, ack?: (response: any) => void): void {
+  const message = '重连身份校验失败，请使用原设备或原链接重新进入';
+  socket.emit('error', { message });
+  ack?.({ success: false, error: message });
+}
+
 // 广播大厅更新函数，将在 roomController 中被赋值
 let broadcastLobbyUpdate: () => void = () => {
   console.warn('广播函数尚未初始化');
@@ -77,6 +117,17 @@ function toClientRoom(room: Room): any {
     players: (room.players || []).map(toClientPlayer),
     locked: room.locked === true,
     private: room.private === true
+  };
+}
+
+function buildRoomJoinedPayload(room: Room, player: Player): any {
+  const sessionToken = ensurePlayerSessionToken(room.id, player.id);
+  return {
+    room: toClientRoom(room),
+    player: toClientPlayer(player),
+    playerId: player.id,
+    isHost: room.hostId === player.id,
+    sessionToken
   };
 }
 
@@ -238,6 +289,7 @@ export function roomController(io: Server) {
       // 5. 清空所有房间
       rooms.clear();
       hostKickVotes.clear();
+      playerSessionTokens.clear();
       
       // 6. 重新初始化线程管理器
       threadManager = new RoomThreadManager(handleThreadMessage);
@@ -272,6 +324,7 @@ export function roomController(io: Server) {
     }
 
     for (const removedPlayer of removedPlayers) {
+      clearPlayerSessionToken(workerRoom.id, removedPlayer.id);
       if (!removedPlayer.socketId) continue;
 
       const removedSocket = io.sockets.sockets.get(removedPlayer.socketId);
@@ -369,6 +422,7 @@ export function roomController(io: Server) {
     if (targetIndex !== -1) {
       latestRoom.players.splice(targetIndex, 1);
     }
+    clearPlayerSessionToken(latestRoom.id, targetPlayer.id);
 
     if (latestRoom.hostId === targetPlayer.id) {
       const nextHost = latestRoom.players.find(p => p.online) || latestRoom.players[0];
@@ -528,6 +582,7 @@ export function roomController(io: Server) {
         };
 
         rooms.set(room.id, room);
+        ensurePlayerSessionToken(room.id, player.id);
 
         // 玩家加入房间频道
         await socket.join(room.id);
@@ -539,6 +594,7 @@ export function roomController(io: Server) {
           socket.emit('error', { message: '启动房间线程失败' });
           ack?.({ success: false, error: '启动房间线程失败' });
           rooms.delete(room.id);
+          clearRoomSessionTokens(room.id);
           socket.leave(room.id);
           return;
         }
@@ -552,12 +608,8 @@ export function roomController(io: Server) {
         await sendTaskToRoom(room.id, 'join_room', { player }, socket.id, player.id);
 
         const joinedRoom = rooms.get(room.id) || currentRoom;
-        const joinedPayload = { 
-          room: toClientRoom(joinedRoom),
-          player: toClientPlayer(player),
-          playerId: player.id,
-          isHost: true
-        };
+        const joinedPlayer = joinedRoom.players.find(p => p.id === player.id) || player;
+        const joinedPayload = buildRoomJoinedPayload(joinedRoom, joinedPlayer);
         socket.emit('room_joined', joinedPayload);
         ack?.({ success: true, ...joinedPayload });
 
@@ -573,13 +625,18 @@ export function roomController(io: Server) {
     });
 
     // 重连房间
-    socket.on('reconnect_room', async (data: { roomId: string; playerId: string }) => {
+    socket.on('reconnect_room', async (data: { roomId: string; playerId: string; sessionToken?: string }) => {
       try {
         const { roomId, playerId } = data;
         const room = rooms.get(roomId);
         const player = room?.players.find(p => p.id === playerId);
 
         if (room && player) {
+          if (!isValidPlayerSessionToken(room.id, player.id, data.sessionToken)) {
+            rejectInvalidPlayerSession(socket);
+            return;
+          }
+
           console.log(`玩家 ${player.nickname} (${playerId}) 正在重连到房间 ${roomId}`);
           
           // 更新玩家的 socketId 和在线状态
@@ -605,7 +662,8 @@ export function roomController(io: Server) {
           await sendTaskToRoom(roomId, 'player_online', { playerId });
 
           // 向重连的玩家发送完整的房间状态
-          socket.emit('room_joined', { room: toClientRoom(room), player: toClientPlayer(player), playerId: player.id, isHost: room.hostId === player.id });
+          const payload = buildRoomJoinedPayload(room, player);
+          socket.emit('room_joined', payload);
           socket.emit('room_update', toClientRoom(room));
 
           // 向房间内其他玩家广播玩家重新连接的消息
@@ -625,7 +683,7 @@ export function roomController(io: Server) {
     });
 
     // 加入房间
-    socket.on('join_room', async (data: { roomId?: string; roomName?: string; nickname?: string; playerId?: string; userId?: string; gameType?: string }, ack?: (response: any) => void) => {
+    socket.on('join_room', async (data: { roomId?: string; roomName?: string; nickname?: string; playerId?: string; userId?: string; gameType?: string; sessionToken?: string }, ack?: (response: any) => void) => {
       try {
         let room: Room | undefined;
 
@@ -647,6 +705,11 @@ export function roomController(io: Server) {
 
         // 如果同一个玩家ID已存在，按重连处理，避免创建/进房后页面切换导致重复人数。
         if (player) {
+          if (!isValidPlayerSessionToken(room.id, player.id, data.sessionToken)) {
+            rejectInvalidPlayerSession(socket, ack);
+            return;
+          }
+
           markPlayerOnlineForController(room, player, socket.id, data.nickname || player.nickname);
           room.lastActiveTime = Date.now();
 
@@ -664,7 +727,7 @@ export function roomController(io: Server) {
 
           const latestRoom = rooms.get(room.id) || room;
           const latestPlayer = latestRoom.players.find(p => p.id === player!.id) || player;
-          const payload = { room: toClientRoom(latestRoom), player: toClientPlayer(latestPlayer), playerId: latestPlayer!.id, isHost: latestRoom.hostId === latestPlayer!.id };
+          const payload = buildRoomJoinedPayload(latestRoom, latestPlayer!);
           socket.emit('room_joined', payload);
           socket.emit('room_update', toClientRoom(latestRoom));
           ack?.({ success: true, ...payload });
@@ -711,6 +774,7 @@ export function roomController(io: Server) {
 
         // 将玩家添加到房间
         room.players.push(player);
+        ensurePlayerSessionToken(room.id, player.id);
         room.lastActiveTime = Date.now();
         if (room.cleanupTimer) {
           clearTimeout(room.cleanupTimer);
@@ -733,7 +797,7 @@ export function roomController(io: Server) {
 
         const latestRoom = rooms.get(room.id) || room;
         const latestPlayer = latestRoom.players.find(p => p.id === player!.id) || player;
-        const payload = { room: toClientRoom(latestRoom), player: toClientPlayer(latestPlayer), playerId: latestPlayer!.id, isHost: latestRoom.hostId === latestPlayer!.id };
+        const payload = buildRoomJoinedPayload(latestRoom, latestPlayer!);
         socket.emit('room_joined', payload);
         socket.emit('room_update', toClientRoom(latestRoom));
         ack?.({ success: true, ...payload });
@@ -752,7 +816,7 @@ export function roomController(io: Server) {
     });
 
     // 通过房间名或ID加入房间（用于直接链接）
-    socket.on('join_room_by_name', async (data: { roomName: string; nickname?: string; playerId?: string; userId?: string }, ack?: (response: any) => void) => {
+    socket.on('join_room_by_name', async (data: { roomName: string; nickname?: string; playerId?: string; userId?: string; sessionToken?: string }, ack?: (response: any) => void) => {
       try {
         // 通过房间名查找房间
         const room = Array.from(rooms.values()).find(r => r.name === data.roomName);
@@ -768,6 +832,11 @@ export function roomController(io: Server) {
 
         // 旧版直接链接接口也支持按 playerId 重连，避免刷新/分享链接后重复占座。
         if (player) {
+          if (!isValidPlayerSessionToken(room.id, player.id, data.sessionToken)) {
+            rejectInvalidPlayerSession(socket, ack);
+            return;
+          }
+
           markPlayerOnlineForController(room, player, socket.id, data.nickname || player.nickname);
           room.lastActiveTime = Date.now();
 
@@ -785,7 +854,7 @@ export function roomController(io: Server) {
 
           const latestRoom = rooms.get(room.id) || room;
           const latestPlayer = latestRoom.players.find(p => p.id === player!.id) || player;
-          const payload = { room: toClientRoom(latestRoom), player: toClientPlayer(latestPlayer), playerId: latestPlayer!.id, isHost: latestRoom.hostId === latestPlayer!.id };
+          const payload = buildRoomJoinedPayload(latestRoom, latestPlayer!);
           socket.emit('room_joined', payload);
           socket.emit('room_update', toClientRoom(latestRoom));
           ack?.({ success: true, ...payload });
@@ -832,6 +901,7 @@ export function roomController(io: Server) {
 
         // 将玩家添加到房间
         room.players.push(player);
+        ensurePlayerSessionToken(room.id, player.id);
         room.lastActiveTime = Date.now();
         if (room.cleanupTimer) {
           clearTimeout(room.cleanupTimer);
@@ -854,12 +924,7 @@ export function roomController(io: Server) {
 
         const latestRoom = rooms.get(room.id) || room;
         const latestPlayer = latestRoom.players.find(p => p.id === player.id) || player;
-        const payload = {
-          room: toClientRoom(latestRoom),
-          player: toClientPlayer(latestPlayer),
-          playerId: latestPlayer.id,
-          isHost: latestRoom.hostId === latestPlayer.id
-        };
+        const payload = buildRoomJoinedPayload(latestRoom, latestPlayer);
         socket.emit('room_joined', payload);
         socket.emit('room_update', toClientRoom(latestRoom));
         ack?.({ success: true, ...payload });
@@ -959,6 +1024,7 @@ export function roomController(io: Server) {
               });
               rooms.delete(latestRoom.id);
               hostKickVotes.delete(latestRoom.id);
+              clearRoomSessionTokens(latestRoom.id);
               broadcastLobbyUpdate();
             }, config.server.roomCleanupTimeout || 60000);
             rooms.set(latestRoom.id, latestRoom);
@@ -976,6 +1042,7 @@ export function roomController(io: Server) {
         if (playerIndex !== -1) {
           latestRoom.players.splice(playerIndex, 1);
         }
+        clearPlayerSessionToken(latestRoom.id, player.id);
         latestRoom.lastActiveTime = Date.now();
 
         // 如果房间为空，删除房间
@@ -983,6 +1050,7 @@ export function roomController(io: Server) {
           await threadManager.stopRoomThread(latestRoom.id);
           rooms.delete(latestRoom.id);
           hostKickVotes.delete(latestRoom.id);
+          clearRoomSessionTokens(latestRoom.id);
           
           // 更新大厅
           if (!latestRoom.private) {
@@ -1335,6 +1403,7 @@ export function roomController(io: Server) {
             });
             rooms.delete(roomId);
             hostKickVotes.delete(roomId);
+            clearRoomSessionTokens(roomId);
 
             // 更新大厅
             broadcastLobbyUpdate();
@@ -1385,6 +1454,7 @@ export function roomController(io: Server) {
       }
       rooms.delete(roomId);
       hostKickVotes.delete(roomId);
+      clearRoomSessionTokens(roomId);
 
       // 更新大厅
       if (!room.private) {

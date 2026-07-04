@@ -5,11 +5,24 @@ export interface GameSession {
   playerId: string;
   nickname: string;
   roomId?: string;
+  sessionToken?: string;
 }
 
 export function createPlayerId(scope = 'player'): string {
   const normalizedScope = scope.replace(/[^a-z0-9_-]/gi, '_') || 'player';
   return `${normalizedScope}_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
+}
+
+function getSessionTokenKey(gameType: string): string | null {
+  const meta = getGameMeta(gameType);
+  if (!meta) return null;
+  return `${meta.storage.id}_sessionToken`;
+}
+
+export function getStoredSessionToken(gameType: string): string | undefined {
+  const key = getSessionTokenKey(gameType);
+  if (!key) return undefined;
+  return localStorage.getItem(key) || undefined;
 }
 
 export function ensureGameSession(gameType: string, nickname?: string, roomId?: string): GameSession {
@@ -33,10 +46,15 @@ export function ensureGameSession(gameType: string, nickname?: string, roomId?: 
     localStorage.setItem(meta.storage.room, roomId);
   }
 
-  return { playerId, nickname: finalNickname, roomId };
+  return {
+    playerId,
+    nickname: finalNickname,
+    roomId,
+    sessionToken: getStoredSessionToken(meta.type)
+  };
 }
 
-export function rememberGameSession(room: any, player: any): void {
+export function rememberGameSession(room: any, player: any, sessionToken?: string): void {
   const meta = getGameMeta(room?.type);
   if (!meta || !player) return;
 
@@ -45,6 +63,10 @@ export function rememberGameSession(room: any, player: any): void {
   if (playerId) localStorage.setItem(meta.storage.id, playerId);
   if (nickname) localStorage.setItem(meta.storage.nickname, nickname);
   if (meta.storage.room && room?.id) localStorage.setItem(meta.storage.room, room.id);
+
+  const token = sessionToken || player.sessionToken;
+  const tokenKey = getSessionTokenKey(meta.type);
+  if (token && tokenKey) localStorage.setItem(tokenKey, token);
 }
 
 export function clearGameSession(gameType: GameType | string): void {
@@ -53,6 +75,8 @@ export function clearGameSession(gameType: GameType | string): void {
   localStorage.removeItem(keys.id);
   localStorage.removeItem(keys.nickname);
   if (keys.room) localStorage.removeItem(keys.room);
+  const tokenKey = getSessionTokenKey(gameType);
+  if (tokenKey) localStorage.removeItem(tokenKey);
 }
 
 export function clearAllGameSessions(): void {

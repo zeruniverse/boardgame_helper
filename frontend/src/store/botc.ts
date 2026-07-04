@@ -111,7 +111,7 @@ export const useBOTCGameStore = defineStore('botc', () => {
           room.value = data.room
           currentRoomId.value = data.room.id
           currentUserId.value = data.player?.id || data.playerId || currentUserId.value
-          rememberGameSession(data.room, data.player || (data.playerId ? { id: data.playerId } : null))
+          rememberGameSession(data.room, data.player || (data.playerId ? { id: data.playerId } : null), data.sessionToken)
         })
 
         on('room_left', () => {
@@ -429,7 +429,7 @@ export const useBOTCGameStore = defineStore('botc', () => {
 
       currentUserId.value = userId
       currentRoomId.value = roomId
-      socket.value.emit('join_room', { roomId, gameType, playerId: userId, userId, nickname })
+      socket.value.emit('join_room', { roomId, gameType, playerId: userId, userId, nickname, sessionToken: session.sessionToken })
       return { success: true }
     } catch (error) {
       console.error('血染钟楼: 连接房间失败:', error)

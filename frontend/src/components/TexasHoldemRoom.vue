@@ -199,7 +199,7 @@ import TexasHoldemPlayerList from './TexasHoldemPlayerList.vue';
 import TexasHoldemActionBar from './TexasHoldemActionBar.vue';
 import { emitGameAction } from '../utils/gameSocket';
 import { GAME_STORAGE_KEYS } from '../utils/gameMeta';
-import { rememberGameSession } from '../utils/gameSession';
+import { ensureGameSession, rememberGameSession } from '../utils/gameSession';
 
 const store = useTexasHoldemStore();
 // 使用playerId而不是nickname来判断是否在房间
@@ -251,9 +251,11 @@ onMounted(() => {
   const isNewJoin = sessionStorage.getItem('texas_newJoin') === 'true';
   if (store.playerId && store.currentRoom === roomId && !isNewJoin) {
     console.log(`尝试重连房间 ${roomId}，玩家ID ${store.playerId}`);
+    const session = ensureGameSession('texas-holdem', undefined, roomId);
     socket.emit('reconnect_room', { 
       roomId: store.currentRoom, 
-      playerId: store.playerId 
+      playerId: store.playerId,
+      sessionToken: session.sessionToken
     });
   }
   // 成功加入或重连后，清除新加入标记
@@ -280,7 +282,7 @@ onMounted(() => {
   socket.on('room_update', onRoomUpdateHandler);
 
   // 监听房间加入成功事件（用于验证房间类型）
-  onRoomJoinedHandler = (data: { room: any; player: any; isHost: boolean }) => {
+  onRoomJoinedHandler = (data: { room: any; player: any; isHost: boolean; sessionToken?: string }) => {
     console.log('收到room_joined事件', data);
     if (data.room.type !== 'texas-holdem') {
       router.push({ name: 'Lobby' });
@@ -291,7 +293,7 @@ onMounted(() => {
     if (data.player && data.player.id) {
       store.playerId = data.player.id;
     }
-    rememberGameSession(data.room, data.player);
+    rememberGameSession(data.room, data.player, data.sessionToken);
     // 保存房间名称
     if (data.room.name) {
       roomName.value = data.room.name;

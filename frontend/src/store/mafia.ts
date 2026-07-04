@@ -210,11 +210,11 @@ export const useMafiaStore = defineStore('mafia', {
       });
 
       // 房间事件
-      on('room_joined', (data: { room: MafiaRoomState; player?: any; playerId?: string }) => {
+      on('room_joined', (data: { room: MafiaRoomState; player?: any; playerId?: string; sessionToken?: string }) => {
         this.room = data.room;
         this.currentUserId = data.player?.id || data.playerId || this.currentUserId;
         this.currentRoomId = data.room.id;
-        rememberGameSession(data.room, data.player || (data.playerId ? { id: data.playerId } : null));
+        rememberGameSession(data.room, data.player || (data.playerId ? { id: data.playerId } : null), data.sessionToken);
       });
 
       on('room_update', (room: MafiaRoomState) => {
@@ -412,7 +412,8 @@ export const useMafiaStore = defineStore('mafia', {
         userId,
         playerId: userId,
         nickname,
-        gameType
+        gameType,
+        sessionToken: session.sessionToken
       });
     },
 

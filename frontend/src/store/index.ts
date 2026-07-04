@@ -114,8 +114,8 @@ export const useMainStore = defineStore('main', {
       this.socketListeners.push(['lobby_update', lobbyUpdateHandler]);
 
       // 监听房间加入成功事件 - 通用路由处理
-      const roomJoinedHandler = (data: { room: any; player: any; playerId?: string; isHost: boolean }) => {
-        rememberGameSession(data.room, data.player);
+      const roomJoinedHandler = (data: { room: any; player: any; playerId?: string; isHost: boolean; sessionToken?: string }) => {
+        rememberGameSession(data.room, data.player, data.sessionToken);
         // 根据房间类型导航到对应的游戏页面
         const routeName = GAME_ROUTES[data.room?.type];
         if (data.room?.type === 'texas-holdem' && data.player) {

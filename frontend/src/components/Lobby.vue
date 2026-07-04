@@ -832,13 +832,17 @@ const creatingRoom = ref(false);
 
 const gameRoutes = GAME_ROUTES;
 
+function ensureLocalSession(gameType: string, nickname: string, roomId?: string) {
+  return ensureGameSession(gameType, nickname, roomId);
+}
+
 function ensureLocalPlayer(gameType: string, nickname: string, roomId?: string) {
-  return ensureGameSession(gameType, nickname, roomId).playerId;
+  return ensureLocalSession(gameType, nickname, roomId).playerId;
 }
 
 // Bug L1+L2: 使用作用域变量存储处理器引用，便于在onUnmounted中清理
 let handleConnect: (() => void) | null = null;
-let handleRoomJoined: ((data: { room: any; player: any; isHost: boolean }) => void) | null = null;
+let handleRoomJoined: ((data: { room: any; player: any; isHost: boolean; sessionToken?: string }) => void) | null = null;
 
 onMounted(() => {
   // 确保socket已初始化
@@ -856,10 +860,10 @@ onMounted(() => {
   store.socket?.on('connect', handleConnect);
 
   // Bug L2: 监听房间创建/加入成功事件，注册到作用域变量以便清理
-  handleRoomJoined = (data: { room: any; player: any; isHost: boolean }) => {
+  handleRoomJoined = (data: { room: any; player: any; isHost: boolean; sessionToken?: string }) => {
     console.log('大厅收到room_joined事件', data);
     
-    rememberGameSession(data.room, data.player);
+    rememberGameSession(data.room, data.player, data.sessionToken);
     ensureLocalPlayer(data.room.type, data.player?.nickname || data.player?.name || '', data.room.id);
     const routeName = gameRoutes[data.room.type];
     if (routeName) {
@@ -894,7 +898,8 @@ function enter(roomId: string) {
     return;
   }
 
-  const playerId = ensureLocalPlayer(room.type, nickname, roomId);
+  const session = ensureLocalSession(room.type, nickname, roomId);
+  const playerId = session.playerId;
   
   const routeName = gameRoutes[room.type];
   if (!routeName) {
@@ -964,14 +969,16 @@ function confirmJoinRoom() {
   const roomId = joinRoomForm.value.roomName.trim().toUpperCase();
   const nickname = joinRoomForm.value.nickname.trim();
   const room = rooms.value.find(r => r.id === roomId || r.name === roomId);
-  const playerId = room ? ensureLocalPlayer(room.type, nickname, room.id) : undefined;
+  const session = room ? ensureLocalSession(room.type, nickname, room.id) : undefined;
+  const playerId = session?.playerId;
 
   // Bug L4: 参数名使用roomId与后端期望一致（用户输入的是房间号）
   store.socket?.emit('join_room', {
     roomId,
     nickname,
     playerId,
-    userId: playerId
+    userId: playerId,
+    sessionToken: session?.sessionToken
   });
   joinRoomDialogVisible.value = false;
 }
