@@ -216,8 +216,37 @@
       </div>
     </div>
 
+    <!-- 投票结果显示 -->
+    <div v-if="showVoteResult" class="action-section vote-result-section">
+      <h4>投票结果</h4>
+      <div class="vote-result">
+        <p class="vote-agree">
+          <span class="vote-label">同意组队的玩家:</span>
+          <span class="vote-names">{{ getVoteAgreeNames() }}</span>
+        </p>
+        <p class="vote-disagree">
+          <span class="vote-label">反对组队的玩家:</span>
+          <span class="vote-names">{{ getVoteDisagreeNames() }}</span>
+        </p>
+      </div>
+    </div>
+
+    <!-- 任务破坏结果显示 -->
+    <div v-if="showMissionSabotage" class="action-section sabotage-result-section">
+      <h4>任务结果</h4>
+      <div class="sabotage-result">
+        <p class="sabotage-count">
+          <span class="sabotage-label">破坏人数:</span>
+          <span class="sabotage-number">{{ lastMissionSabotageCount }}人破坏</span>
+        </p>
+        <p class="mission-outcome" :class="lastMissionSuccess ? 'success' : 'failure'">
+          {{ lastMissionSuccess ? '任务成功' : '任务失败' }}
+        </p>
+      </div>
+    </div>
+
     <!-- 游戏结束 -->
-    <div v-else-if="gameState.status === 999" class="action-section">
+    <div v-if="gameState.status === 999" class="action-section">
       <h4>游戏结束</h4>
       <div class="game-over">
         <p class="winner">{{ getWinnerText() }}</p>
@@ -308,6 +337,60 @@ const hasVoted = computed(() => {
          props.gameState.voteResult.false?.includes(playerId)
 })
 
+// 是否显示投票结果（投票结束后显示）
+const showVoteResult = computed(() => {
+  if (!props.gameState?.voteResult) return false
+  const vr = props.gameState.voteResult
+  // 当前不在投票阶段，且投票结果非空时显示
+  const voteCompleted = props.gameState.status !== 4 &&
+    ((vr.true?.length ?? 0) > 0 || (vr.false?.length ?? 0) > 0)
+  return voteCompleted
+})
+
+// 是否显示任务破坏结果（行动阶段结束后显示）
+const showMissionSabotage = computed(() => {
+  // actionFailed > 0 表示当前任务刚结束且有人破坏
+  // 或者从 scoreBoard 中查看已完成任务的结果
+  if (props.gameState?.actionFailed > 0 && props.gameState.status !== 5) {
+    return true
+  }
+  // 从 scoreBoard 中检查已完成的任务
+  const scoreBoard = props.gameState?.scoreBoard || []
+  for (let i = 0; i < scoreBoard.length; i++) {
+    if (scoreBoard[i][2] > 0) {
+      return true
+    }
+  }
+  return false
+})
+
+// 最近一次任务的破坏数
+const lastMissionSabotageCount = computed(() => {
+  // 优先使用 actionFailed（当前任务刚结束时）
+  if (props.gameState?.actionFailed > 0 && props.gameState.status !== 5) {
+    return props.gameState.actionFailed
+  }
+  // 从 scoreBoard 中找到最后一个有结果的任务
+  const scoreBoard = props.gameState?.scoreBoard || []
+  for (let i = scoreBoard.length - 1; i >= 0; i--) {
+    if (scoreBoard[i][2] > 0) {
+      return scoreBoard[i][2]
+    }
+  }
+  return 0
+})
+
+// 最近一次任务是否成功
+const lastMissionSuccess = computed(() => {
+  const scoreBoard = props.gameState?.scoreBoard || []
+  for (let i = scoreBoard.length - 1; i >= 0; i--) {
+    if (scoreBoard[i][2] >= 0) {
+      return scoreBoard[i][2] === 0
+    }
+  }
+  return true
+})
+
 // 方法
 const getTeamSize = (): number => {
   const mission = props.gameState.mission - 1
@@ -316,6 +399,20 @@ const getTeamSize = (): number => {
 
 const getPlayerName = (playerId: string): string => {
   return props.gameState.players?.[playerId]?.name || '未知玩家'
+}
+
+// 获取同意组队的玩家名称列表
+const getVoteAgreeNames = (): string => {
+  const agreeIds = props.gameState?.voteResult?.true || []
+  if (agreeIds.length === 0) return '无'
+  return agreeIds.map((id: string) => getPlayerName(id)).join('、')
+}
+
+// 获取反对组队的玩家名称列表
+const getVoteDisagreeNames = (): string => {
+  const disagreeIds = props.gameState?.voteResult?.false || []
+  if (disagreeIds.length === 0) return '无'
+  return disagreeIds.map((id: string) => getPlayerName(id)).join('、')
 }
 
 const getAssassinateTargets = () => {
@@ -558,5 +655,86 @@ const handleRestartGame = () => {
   font-weight: bold;
   color: var(--app-text);
   margin-bottom: 20px;
+}
+
+/* 投票结果样式 */
+.vote-result-section {
+  background: var(--app-panel);
+  border: 1px solid var(--app-border);
+  border-radius: 8px;
+  padding: 12px;
+}
+
+.vote-result-section h4 {
+  margin: 0 0 10px 0;
+  color: var(--app-text);
+  text-align: center;
+}
+
+.vote-result p {
+  margin: 6px 0;
+  font-size: 14px;
+}
+
+.vote-label {
+  font-weight: bold;
+  margin-right: 8px;
+}
+
+.vote-agree .vote-label {
+  color: #059669;
+}
+
+.vote-disagree .vote-label {
+  color: #dc2626;
+}
+
+.vote-names {
+  color: var(--app-text);
+}
+
+/* 任务破坏结果样式 */
+.sabotage-result-section {
+  background: var(--app-panel);
+  border: 1px solid var(--app-border);
+  border-radius: 8px;
+  padding: 12px;
+}
+
+.sabotage-result-section h4 {
+  margin: 0 0 10px 0;
+  color: var(--app-text);
+  text-align: center;
+}
+
+.sabotage-result p {
+  margin: 6px 0;
+  font-size: 14px;
+  text-align: center;
+}
+
+.sabotage-label {
+  font-weight: bold;
+  margin-right: 8px;
+  color: var(--app-text);
+}
+
+.sabotage-number {
+  color: #dc2626;
+  font-weight: bold;
+  font-size: 16px;
+}
+
+.mission-outcome {
+  font-size: 18px;
+  font-weight: bold;
+}
+
+.mission-outcome.success {
+  color: #059669;
+}
+
+.mission-outcome.failure {
+  color: #dc2626;
 }
 </style> 

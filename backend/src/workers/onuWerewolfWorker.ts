@@ -222,6 +222,24 @@ class OnuWerewolfWorker extends BaseGameWorker {
   }
 
   async gameAction(playerId: string, actionType: string, actionData: any): Promise<void> {
+    // Validate inputs
+    if (!playerId || typeof playerId !== 'string') {
+      console.warn('onuWerewolf gameAction: invalid playerId');
+      return;
+    }
+    if (!actionType || typeof actionType !== 'string') {
+      console.warn('onuWerewolf gameAction: invalid actionType');
+      return;
+    }
+    if (!this.room || !this.room.players) {
+      console.warn('onuWerewolf gameAction: room not initialized');
+      return;
+    }
+    if (!this.gameState) {
+      console.warn('onuWerewolf gameAction: gameState not initialized');
+      return;
+    }
+
     const player = this.room.players.find(p => p.id === playerId);
     if (!player) return;
 
@@ -418,6 +436,9 @@ class OnuWerewolfWorker extends BaseGameWorker {
   }
 
   private async handleReady(playerId: string): Promise<void> {
+    if (!this.gameState || !this.room?.players) {
+      throw new Error('游戏状态未初始化');
+    }
     if (this.gameState.status !== OnuWerewolfGameStatus.WAITING) {
       throw new Error('游戏已开始，无法准备');
     }
@@ -437,6 +458,9 @@ class OnuWerewolfWorker extends BaseGameWorker {
   }
 
   private async handleUnready(playerId: string): Promise<void> {
+    if (!this.gameState || !this.room?.players) {
+      throw new Error('游戏状态未初始化');
+    }
     if (this.gameState.status !== OnuWerewolfGameStatus.WAITING) {
       throw new Error('游戏已开始，无法取消准备');
     }
@@ -456,6 +480,9 @@ class OnuWerewolfWorker extends BaseGameWorker {
   }
 
   private async handleStartGame(playerId: string): Promise<void> {
+    if (!this.room?.players || !this.gameState) {
+      throw new Error('游戏状态未初始化');
+    }
     const player = this.room.players.find(p => p.id === playerId);
     if (!player || player.id !== this.room.hostId) {
       throw new Error('只有房主可以开始游戏');

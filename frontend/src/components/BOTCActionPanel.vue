@@ -124,13 +124,6 @@
                 赞成处死 ({{ currentNomination.votesFor || 0 }})
               </el-button>
               <el-button 
-                type="success" 
-                @click="vote('against')"
-                :disabled="hasVoted"
-              >
-                反对处死 ({{ currentNomination.votesAgainst || 0 }})
-              </el-button>
-              <el-button 
                 type="info" 
                 @click="vote('abstain')"
                 :disabled="hasVoted"
@@ -139,6 +132,73 @@
               </el-button>
             </div>
             <p v-if="hasVoted" class="vote-status">你已投票</p>
+            <div v-if="currentNomination.votes && currentNomination.votes.length > 0" class="voting-players">
+              <p class="hint-text">未投票的存活玩家:</p>
+              <div class="unvoted-players">
+                <el-tag 
+                  v-for="player in getUnvotedPlayers()" 
+                  :key="player.id"
+                  type="warning"
+                  size="small"
+                >
+                  {{ player.name }}
+                </el-tag>
+                <span v-if="getUnvotedPlayers().length === 0" class="all-voted">全部已投票</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </el-card>
+
+      <!-- 提议结束白天 -->
+      <el-card v-if="canProposeEndDay" class="end-day-proposal-card">
+        <template #header>
+          <h4>结束白天投票</h4>
+        </template>
+        
+        <div v-if="!endDayProposalActive">
+          <el-button 
+            type="warning" 
+            @click="proposeEndDay"
+            :disabled="!canProposeEndDay"
+          >
+            提议结束白天
+          </el-button>
+        </div>
+        
+        <div v-else class="end-day-voting">
+          <p class="hint-text">{{ endDayProposalProposerName }} 提议结束白天，是否同意？</p>
+          <p class="timeout-hint">剩余时间: {{ endDayTimeLeft }}秒</p>
+          <div class="vote-buttons">
+            <el-button 
+              type="primary" 
+              @click="voteEndDay('agree')"
+              :disabled="hasVotedEndDay"
+            >
+              同意 ({{ endDayAgreeCount }})
+            </el-button>
+            <el-button 
+              type="info" 
+              @click="voteEndDay('disagree')"
+              :disabled="hasVotedEndDay"
+            >
+              不同意 ({{ endDayDisagreeCount }})
+            </el-button>
+          </div>
+          <p v-if="hasVotedEndDay" class="vote-status">你已投票</p>
+          <div class="voting-players">
+            <p class="hint-text">未投票的存活玩家:</p>
+            <div class="unvoted-players">
+              <el-tag 
+                v-for="player in getEndDayUnvotedPlayers()" 
+                :key="player.id"
+                type="warning"
+                size="small"
+              >
+                {{ player.name }}
+              </el-tag>
+              <span v-if="getEndDayUnvotedPlayers().length === 0" class="all-voted">全部已投票</span>
+            </div>
           </div>
         </div>
       </el-card>
@@ -189,10 +249,10 @@
           </p>
         </div>
         <div class="question-response-buttons">
-          <el-button type="success" size="small" @click="respondToStorytellerQuestion('是 / Yes')">是 (Yes)</el-button>
-          <el-button type="danger" size="small" @click="respondToStorytellerQuestion('否 / No')">否 (No)</el-button>
-          <el-button type="info" size="small" @click="respondToStorytellerQuestion('不确定 / Maybe')">不确定</el-button>
-          <el-button type="warning" size="small" @click="respondToStorytellerQuestion('无法回答 / Cannot answer')">无法回答</el-button>
+          <el-button type="success" size="small" @click="respondToStorytellerQuestion('是')">是</el-button>
+          <el-button type="danger" size="small" @click="respondToStorytellerQuestion('否')">否</el-button>
+          <el-button type="info" size="small" @click="respondToStorytellerQuestion('不确定')">不确定</el-button>
+          <el-button type="warning" size="small" @click="respondToStorytellerQuestion('无法回答')">无法回答</el-button>
         </div>
         <div class="question-custom-response">
           <el-input
@@ -341,10 +401,10 @@
           </p>
         </div>
         <div class="question-response-buttons">
-          <el-button type="success" size="small" @click="respondToStorytellerQuestion('是 / Yes')">是 (Yes)</el-button>
-          <el-button type="danger" size="small" @click="respondToStorytellerQuestion('否 / No')">否 (No)</el-button>
-          <el-button type="info" size="small" @click="respondToStorytellerQuestion('不确定 / Maybe')">不确定</el-button>
-          <el-button type="warning" size="small" @click="respondToStorytellerQuestion('无法回答 / Cannot answer')">无法回答</el-button>
+          <el-button type="success" size="small" @click="respondToStorytellerQuestion('是')">是</el-button>
+          <el-button type="danger" size="small" @click="respondToStorytellerQuestion('否')">否</el-button>
+          <el-button type="info" size="small" @click="respondToStorytellerQuestion('不确定')">不确定</el-button>
+          <el-button type="warning" size="small" @click="respondToStorytellerQuestion('无法回答')">无法回答</el-button>
         </div>
         <div class="question-custom-response">
           <el-input
@@ -438,6 +498,8 @@ const selectedDayTarget = ref('')
 const nightExtraInput = ref('')
 const dayAbilityInput = ref('')
 const storytellerResponseInput = ref('')
+const endDayTimeLeft = ref(60)
+let endDayTimerInterval: ReturnType<typeof setInterval> | null = null
 
 function resetNightActionInput() {
   nightActionCompleted.value = false
@@ -476,11 +538,19 @@ const watchNightActionConfirmation = watch(() => props.nightInfo, (info) => {
   }
 })
 
+const watchEndDayProposal = watch(() => props.gameState?.endDayProposal?.isActive, (isActive) => {
+  if (!isActive) {
+    stopEndDayTimer()
+  }
+})
+
 onUnmounted(() => {
   watchPhase()
   watchRole()
   watchDeathAbility()
   watchNightActionConfirmation()
+  watchEndDayProposal()
+  stopEndDayTimer()
 })
 
 // 计算属性
@@ -683,6 +753,38 @@ const nightInfo = computed(() => {
   return props.nightInfo || props.gameState?.nightInfo || null
 })
 
+const endDayProposalActive = computed(() => {
+  return props.gameState?.endDayProposal?.isActive === true
+})
+
+const canProposeEndDay = computed(() => {
+  if (props.isStoryteller) return false
+  if (props.gameState?.phase !== 'day') return false
+  if (!props.currentUserId) return false
+  const myPlayer = props.gameState?.players?.find((p: any) => p.id === props.currentUserId)
+  return myPlayer && !myPlayer.isDead
+})
+
+const endDayProposalProposerName = computed(() => {
+  const proposerId = props.gameState?.endDayProposal?.proposerId
+  if (!proposerId) return ''
+  const player = props.gameState?.players?.find((p: any) => p.id === proposerId)
+  return player?.name || proposerId
+})
+
+const hasVotedEndDay = computed(() => {
+  if (!props.currentUserId) return false
+  return props.gameState?.endDayProposal?.votes?.some((v: any) => v.playerId === props.currentUserId) || false
+})
+
+const endDayAgreeCount = computed(() => {
+  return props.gameState?.endDayProposal?.votes?.filter((v: any) => v.vote === 'agree').length || 0
+})
+
+const endDayDisagreeCount = computed(() => {
+  return props.gameState?.endDayProposal?.votes?.filter((v: any) => v.vote === 'disagree').length || 0
+})
+
 // 方法
 const startGame = () => {
   emit('game-action', {
@@ -719,10 +821,65 @@ const submitDayAbility = () => {
   })
 }
 
-const vote = (voteChoice: 'for' | 'against' | 'abstain') => {
+const vote = (voteChoice: 'for' | 'abstain') => {
   emit('game-action', {
     type: 'vote',
     data: { vote: voteChoice }
+  })
+}
+
+const proposeEndDay = () => {
+  emit('game-action', {
+    type: 'proposeEndDay',
+    data: {}
+  })
+  startEndDayTimer()
+}
+
+const voteEndDay = (voteChoice: 'agree' | 'disagree') => {
+  emit('game-action', {
+    type: 'voteEndDay',
+    data: { vote: voteChoice }
+  })
+}
+
+const startEndDayTimer = () => {
+  endDayTimeLeft.value = 60
+  if (endDayTimerInterval) {
+    clearInterval(endDayTimerInterval)
+  }
+  endDayTimerInterval = setInterval(() => {
+    endDayTimeLeft.value--
+    if (endDayTimeLeft.value <= 0) {
+      if (endDayTimerInterval) {
+        clearInterval(endDayTimerInterval)
+        endDayTimerInterval = null
+      }
+    }
+  }, 1000)
+}
+
+const stopEndDayTimer = () => {
+  if (endDayTimerInterval) {
+    clearInterval(endDayTimerInterval)
+    endDayTimerInterval = null
+  }
+  endDayTimeLeft.value = 60
+}
+
+const getUnvotedPlayers = () => {
+  if (!currentNomination.value || !props.gameState?.players) return []
+  const votedIds = new Set(currentNomination.value.votes?.map((v: any) => v.playerId) || [])
+  return props.gameState.players.filter((p: any) => {
+    return !p.isDead && !votedIds.has(p.id)
+  })
+}
+
+const getEndDayUnvotedPlayers = () => {
+  if (!props.gameState?.endDayProposal?.votes || !props.gameState?.players) return []
+  const votedIds = new Set(props.gameState.endDayProposal.votes.map((v: any) => v.playerId))
+  return props.gameState.players.filter((p: any) => {
+    return !p.isDead && !votedIds.has(p.id)
   })
 }
 
@@ -980,6 +1137,41 @@ const formatNightInfo = (info: any) => {
     const roleNames = info.roles.map((role: any) => role.roleName || role.roleId).join(' / ')
     return `${info.playerName || getGamePlayerName(info.playerId)} 可能是: ${roleNames}`
   }
+  if (info.playerId) {
+    return `${info.playerName || getGamePlayerName(info.playerId)} 的角色是: ${info.roleName || info.roleId || '未知'}`
+  }
+  if (info.roleId) {
+    return `角色: ${info.roleName || info.roleId}, 玩家: ${(info.players || []).map((p: string) => getGamePlayerName(p)).join('、') || '未知'}`
+  }
+  if (info.pairs !== undefined) {
+    return `相邻邪恶对数: ${info.pairs}`
+  }
+  if (info.evilCount !== undefined) {
+    return `邪恶邻居数: ${info.evilCount}`
+  }
+  if (info.grandchild) {
+    return `孙子: ${info.grandchild}, 角色: ${info.grandchildRole?.name || '未知'}`
+  }
+  if (info.distance !== undefined) {
+    return `恶魔最近距离: ${info.distance}`
+  }
+  if (info.isDemon !== undefined) {
+    return info.isDemon ? '是恶魔！' : '不是恶魔'
+  }
+  if (info.isCorrect !== undefined) {
+    return info.isCorrect ? '猜测正确！' : '猜测错误！'
+  }
+  if (info.abnormalCount !== undefined) {
+    return `异常玩家数: ${info.abnormalCount}`
+  }
+  if (info.sameAlignment !== undefined) {
+    return info.sameAlignment ? '两名玩家同阵营' : '两名玩家不同阵营'
+  }
+  if (Array.isArray(info.outsiderRoles)) {
+    return info.outsiderRoles.length > 0
+      ? `在场外来者角色：${info.outsiderRoles.map((role: any) => role.roleName || role.roleId).join('、')}`
+      : '没有外来者角色在场'
+  }
 
   return JSON.stringify(info)
 }
@@ -1047,6 +1239,39 @@ const formatNightInfo = (info: any) => {
   color: #28a745;
   font-weight: bold;
   margin-top: 8px;
+}
+
+.voting-players {
+  margin-top: 12px;
+  text-align: center;
+}
+
+.unvoted-players {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.all-voted {
+  color: #67c23a;
+  font-size: 12px;
+}
+
+.end-day-proposal-card {
+  margin-bottom: 16px;
+}
+
+.end-day-voting {
+  text-align: center;
+}
+
+.timeout-hint {
+  color: #f56c6c;
+  font-size: 14px;
+  font-weight: bold;
+  margin: 8px 0;
 }
 
 .storyteller-panel {

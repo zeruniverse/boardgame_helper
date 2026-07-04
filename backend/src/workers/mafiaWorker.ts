@@ -329,6 +329,24 @@ class MafiaWorker extends BaseGameWorker {
 
   async gameAction(playerId: string, actionType: string, actionData: any): Promise<void> {
     try {
+      // Validate inputs
+      if (!playerId || typeof playerId !== 'string') {
+        console.warn('mafia gameAction: invalid playerId');
+        return;
+      }
+      if (!actionType || typeof actionType !== 'string') {
+        console.warn('mafia gameAction: invalid actionType');
+        return;
+      }
+      if (!this.room || !this.room.players) {
+        console.warn('mafia gameAction: room not initialized');
+        return;
+      }
+      if (!this.gameState) {
+        console.warn('mafia gameAction: gameState not initialized');
+        return;
+      }
+
       switch (actionType) {
         case 'toggleRoomLock':
           this.toggleRoomLock(playerId);
@@ -669,36 +687,39 @@ class MafiaWorker extends BaseGameWorker {
   }
 
   private handleReady(playerId: string): void {
+    if (!this.room?.players) return;
     const player = this.room.players.find(p => p.id === playerId);
     if (player) {
       player.gameMetadata.ready = true;
       const message = `${player.nickname}已准备`;
-      this.sendToRoom('player_ready', { 
-        message, 
-        playerId, 
-        gameInfo: this.getGameInfo() 
+      this.sendToRoom('player_ready', {
+        message,
+        playerId,
+        gameInfo: this.getGameInfo()
       });
       this.sendToRoom('room_update', this.room);
     }
   }
 
   private handleUnready(playerId: string): void {
+    if (!this.room?.players) return;
     const player = this.room.players.find(p => p.id === playerId);
     if (player) {
       player.gameMetadata.ready = false;
       const message = `${player.nickname}取消准备`;
-      this.sendToRoom('player_unready', { 
-        message, 
-        playerId, 
-        gameInfo: this.getGameInfo() 
+      this.sendToRoom('player_unready', {
+        message,
+        playerId,
+        gameInfo: this.getGameInfo()
       });
       this.sendToRoom('room_update', this.room);
     }
   }
 
   private handleStartGame(playerId: string): void {
+    if (!this.room || !this.gameState) return;
     const gameState = this.gameState as MafiaGameState;
-    
+
     // 检查是否为房主
     if (playerId !== this.room.hostId) {
       return;
@@ -825,17 +846,18 @@ class MafiaWorker extends BaseGameWorker {
   }
 
   private handleInspectSuspect(playerId: string, suspectId: string): void {
+    if (!this.gameState) return;
     const gameState = this.gameState as MafiaGameState;
-    
+
     // 检查游戏状态和玩家身份
     if (gameState.status !== GameStatus.NIGHT ||
         !gameState.copActionLock ||
-        !gameState.topSecret.cop.includes(playerId) ||
-        !gameState.players[playerId]?.alive) {
+        !gameState.topSecret?.cop?.includes(playerId) ||
+        !gameState.players?.[playerId]?.alive) {
       return;
     }
 
-    const target = gameState.players[suspectId];
+    const target = gameState.players?.[suspectId];
     if (!target || !target.alive) {
       this.sendToPlayer(playerId, 'inspect_rejected', { message: '验人目标无效或已死亡' });
       return;
@@ -879,17 +901,18 @@ class MafiaWorker extends BaseGameWorker {
   }
 
   private handleDoctorSave(playerId: string, targetId: string): void {
+    if (!this.gameState) return;
     const gameState = this.gameState as MafiaGameState;
 
     // 检查游戏状态和玩家身份
     if (gameState.status !== GameStatus.NIGHT ||
         !gameState.doctorActionLock ||
-        !gameState.topSecret.doctor.includes(playerId) ||
-        !gameState.players[playerId]?.alive) {
+        !gameState.topSecret?.doctor?.includes(playerId) ||
+        !gameState.players?.[playerId]?.alive) {
       return;
     }
 
-    const target = gameState.players[targetId];
+    const target = gameState.players?.[targetId];
     if (!target || !target.alive) {
       this.sendToPlayer(playerId, 'save_rejected', { message: '救人目标无效或已死亡' });
       return;
@@ -951,17 +974,18 @@ class MafiaWorker extends BaseGameWorker {
   }
 
   private handleSniperShoot(playerId: string, targetId: string): void {
+    if (!this.gameState) return;
     const gameState = this.gameState as MafiaGameState;
 
     // 检查游戏状态和玩家身份
     if (gameState.status !== GameStatus.NIGHT ||
         !gameState.sniperActionLock ||
-        !gameState.topSecret.sniper.includes(playerId) ||
-        !gameState.players[playerId]?.alive) {
+        !gameState.topSecret?.sniper?.includes(playerId) ||
+        !gameState.players?.[playerId]?.alive) {
       return;
     }
 
-    const target = gameState.players[targetId];
+    const target = gameState.players?.[targetId];
     if (!target || !target.alive) {
       this.sendToPlayer(playerId, 'snipe_rejected', { message: '狙击目标无效' });
       return;
@@ -992,17 +1016,18 @@ class MafiaWorker extends BaseGameWorker {
   }
 
   private handleKillPerson(playerId: string, targetId: string): void {
+    if (!this.gameState) return;
     const gameState = this.gameState as MafiaGameState;
-    
+
     // 检查游戏状态和玩家身份
     if (gameState.status !== GameStatus.NIGHT ||
         !gameState.killerActionLock ||
-        !gameState.topSecret.killer.includes(playerId) ||
-        !gameState.players[playerId]?.alive) {
+        !gameState.topSecret?.killer?.includes(playerId) ||
+        !gameState.players?.[playerId]?.alive) {
       return;
     }
 
-    const target = gameState.players[targetId];
+    const target = gameState.players?.[targetId];
     if (!target || !target.alive || gameState.topSecret.killer.includes(targetId)) {
       this.sendToPlayer(playerId, 'kill_rejected', { message: '杀人目标无效' });
       return;
@@ -1047,9 +1072,10 @@ class MafiaWorker extends BaseGameWorker {
   }
 
   private handleEndLastWord(playerId: string): void {
+    if (!this.gameState) return;
     const gameState = this.gameState as MafiaGameState;
-    
-    if (!gameState.operators.includes(playerId) || 
+
+    if (!gameState.operators?.includes(playerId) ||
         ![GameStatus.LAST_WORD, GameStatus.LAST_WORD_DAYTIME].includes(gameState.status)) {
       return;
     }
@@ -1123,9 +1149,10 @@ class MafiaWorker extends BaseGameWorker {
   }
 
   private handleEndSpeak(playerId: string): void {
+    if (!this.gameState) return;
     const gameState = this.gameState as MafiaGameState;
-    
-    if (!gameState.operators.includes(playerId) || 
+
+    if (!gameState.operators?.includes(playerId) ||
         ![GameStatus.SPEAK, GameStatus.PK].includes(gameState.status)) {
       return;
     }
@@ -1200,9 +1227,10 @@ class MafiaWorker extends BaseGameWorker {
   }
 
   private handleVote(playerId: string, targetId: string): void {
+    if (!this.gameState) return;
     const gameState = this.gameState as MafiaGameState;
-    
-    if (!gameState.operators.includes(playerId) || gameState.status !== GameStatus.VOTE) {
+
+    if (!gameState.operators?.includes(playerId) || gameState.status !== GameStatus.VOTE) {
       return;
     }
 
@@ -1215,8 +1243,8 @@ class MafiaWorker extends BaseGameWorker {
     }
 
     // 检查投票目标是否有效
-    const validTarget = gameState.pkPlayers.length === 0 
-      ? (gameState.players[targetId]?.alive || targetId === 'give_up')
+    const validTarget = !gameState.pkPlayers || gameState.pkPlayers.length === 0
+      ? (gameState.players?.[targetId]?.alive || targetId === 'give_up')
       : (gameState.pkPlayers.includes(targetId) || targetId === 'give_up');
 
     if (!validTarget) {
@@ -1238,24 +1266,27 @@ class MafiaWorker extends BaseGameWorker {
   }
 
   private handleConfess(playerId: string): void {
+    if (!this.gameState) return;
     const gameState = this.gameState as MafiaGameState;
-    
+
     // 检查玩家是否为活着的杀手
-    const playerIsValid = gameState.players[playerId]?.alive && 
-                         gameState.topSecret.killer.includes(playerId);
-    
+    const playerIsValid = gameState.players?.[playerId]?.alive &&
+                         gameState.topSecret?.killer?.includes(playerId);
+
     // 自爆只能发生在白天正常流程中。遗言阶段还有待结算的死亡玩家，
     // 如果允许其他杀手插入自爆，会覆盖 operators 并导致原遗言玩家无法被标记死亡。
     // 与前端入口保持一致：发言、PK 发言、投票阶段可自爆。
     const statusIsValid = [GameStatus.SPEAK, GameStatus.PK, GameStatus.VOTE].includes(gameState.status);
     const canConfess = statusIsValid;
-    
+
     if (!playerIsValid || !statusIsValid || !canConfess) {
       return;
     }
 
     let message = `${this.getPlayerName(playerId)}坦白ta是杀手, 并自爆出局\n`;
-    gameState.players[playerId].alive = false;
+    if (gameState.players[playerId]) {
+      gameState.players[playerId].alive = false;
+    }
     if (!gameState.deathQueue.some(entry => entry.playerId === playerId)) {
       gameState.deathQueue.push({
         playerId,
@@ -1280,18 +1311,19 @@ class MafiaWorker extends BaseGameWorker {
   }
 
   private handleChatMessage(playerId: string, data: any): void {
+    if (!this.room?.players) return;
     const player = this.room.players.find(p => p.id === playerId);
     const message = normalizeChatText(data?.message);
     if (!player || !message) return;
 
     const gameState = this.gameState as MafiaGameState;
     let channel = data?.channel === 'killer' ? 'killer' : 'all';
-    if ((gameState.status === GameStatus.WAITING || gameState.status === GameStatus.OVER) && channel === 'killer') {
+    if (!gameState || (gameState.status === GameStatus.WAITING || gameState.status === GameStatus.OVER) && channel === 'killer') {
       channel = 'all';
     }
 
-    if (gameState.status !== GameStatus.WAITING && gameState.status !== GameStatus.OVER) {
-      const gamePlayer = gameState.players[playerId];
+    if (gameState && gameState.status !== GameStatus.WAITING && gameState.status !== GameStatus.OVER) {
+      const gamePlayer = gameState.players?.[playerId];
       if (!gamePlayer) {
         this.sendToPlayer(playerId, 'game_error', { message: '旁观者在游戏进行中不能发言' });
         return;

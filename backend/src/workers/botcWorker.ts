@@ -58,6 +58,13 @@ export class BOTCWorker extends BaseGameWorker {
   private noExecutionToday: boolean = true;
   private deathsToday: Array<{ playerId: string; roleId?: string; team?: Team; cause: string }> = [];
   private firstNightInfoPlayerIds: Set<string> = new Set();
+  private endDayProposal: {
+    isActive: boolean;
+    proposerId: string;
+    votes: Array<{ playerId: string; vote: 'agree' | 'disagree' }>;
+    timer: NodeJS.Timeout | null;
+    startTime: number;
+  } = { isActive: false, proposerId: '', votes: [], timer: null, startTime: 0 };
 
   /**
    * 获取玩家显示名称的辅助函数
@@ -1181,11 +1188,34 @@ export class BOTCWorker extends BaseGameWorker {
   }
 
   async gameAction(playerId: string, actionType: string, actionData: any): Promise<void> {
-    // 私聊消息特殊处理
-    if (actionType === 'private_message' || actionType === 'privateMessage') {
-      await this.handlePrivateChat(playerId, actionData);
+    // 验证玩家ID和房间数据
+    if (!playerId || typeof playerId !== 'string') {
+      console.error('gameAction: 无效的玩家ID');
       return;
     }
+    if (!actionType || typeof actionType !== 'string') {
+      this.sendToPlayer(playerId, 'actionError', { message: '无效的操作类型' });
+      return;
+    }
+    if (!this.gameState) {
+      this.sendToPlayer(playerId, 'actionError', { message: '游戏状态未初始化' });
+      return;
+    }
+    if (!this.gameConfig) {
+      this.sendToPlayer(playerId, 'actionError', { message: '游戏配置未初始化' });
+      return;
+    }
+    if (!this.room || !this.room.players) {
+      this.sendToPlayer(playerId, 'actionError', { message: '房间数据异常' });
+      return;
+    }
+
+    try {
+      // 私聊消息特殊处理
+      if (actionType === 'private_message' || actionType === 'privateMessage') {
+        await this.handlePrivateChat(playerId, actionData);
+        return;
+      }
 
     // 房间锁定切换特殊处理（不需要游戏进行中）
     if (actionType === 'toggleRoomLock') {
@@ -1200,6 +1230,16 @@ export class BOTCWorker extends BaseGameWorker {
 
     if (actionType === 'deathAbilityAction') {
       await this.handleDeathAbilityAction(playerId, actionData);
+      return;
+    }
+
+    if (actionType === 'proposeEndDay') {
+      await this.handleProposeEndDay(playerId);
+      return;
+    }
+
+    if (actionType === 'voteEndDay') {
+      await this.handleVoteEndDay(playerId, actionData);
       return;
     }
 
@@ -1243,6 +1283,10 @@ export class BOTCWorker extends BaseGameWorker {
         break;
       default:
         this.sendToPlayer(playerId, 'actionError', { message: '未知操作类型' });
+      }
+    } catch (error) {
+      console.error(`gameAction处理失败 (${actionType}):`, error);
+      this.sendToPlayer(playerId, 'actionError', { message: '操作处理失败，请重试' });
     }
   }
 
@@ -1628,6 +1672,7 @@ export class BOTCWorker extends BaseGameWorker {
     this.gameState.execution = undefined;
     this.noExecutionToday = true;
     this.deathsToday = [];
+    this.clearEndDayProposal();
 
     // 女巫在只剩3名存活玩家时失去能力，现有诅咒立即移除
     if (this.gameState.livingPlayers <= 3) {
@@ -2058,6 +2103,133 @@ export class BOTCWorker extends BaseGameWorker {
         : null
     });
     this.broadcastGameState();
+  }
+
+  /**
+   * 处理提议结束白天
+   */
+  private async handleProposeEndDay(playerId: string): Promise<void> {
+    if (this.gameState.phase !== GamePhase.DAY) {
+      this.sendToPlayer(playerId, 'actionError', { message: '现在不是白天阶段' });
+      return;
+    }
+
+    if (this.endDayProposal.isActive) {
+      this.sendToPlayer(playerId, 'actionError', { message: '已经有一个结束白天的提议正在进行' });
+      return;
+    }
+
+    const player = this.gamePlayers.get(playerId);
+    if (!player || player.isDead) {
+      this.sendToPlayer(playerId, 'actionError', { message: '死亡玩家不能提议结束白天' });
+      return;
+    }
+
+    this.endDayProposal = {
+      isActive: true,
+      proposerId: playerId,
+      votes: [{ playerId, vote: 'agree' }],
+      timer: setTimeout(() => {
+        this.autoAbstainEndDayVoters();
+      }, 60000),
+      startTime: Date.now()
+    };
+
+    this.sendToRoom('endDayProposed', {
+      proposerId: playerId,
+      proposerName: this.getPlayerName(playerId)
+    });
+    this.broadcastGameState();
+  }
+
+  /**
+   * 处理结束白天投票
+   */
+  private async handleVoteEndDay(playerId: string, data: { vote: 'agree' | 'disagree' }): Promise<void> {
+    if (!this.endDayProposal.isActive) {
+      this.sendToPlayer(playerId, 'actionError', { message: '当前没有结束白天的提议' });
+      return;
+    }
+
+    const player = this.gamePlayers.get(playerId);
+    if (!player || player.isDead) {
+      this.sendToPlayer(playerId, 'actionError', { message: '死亡玩家不能投票' });
+      return;
+    }
+
+    const alreadyVoted = this.endDayProposal.votes.some(v => v.playerId === playerId);
+    if (alreadyVoted) {
+      this.sendToPlayer(playerId, 'actionError', { message: '已经投过票了' });
+      return;
+    }
+
+    this.endDayProposal.votes.push({ playerId, vote: data.vote });
+
+    this.sendToRoom('endDayVoteSubmitted', {
+      playerId,
+      playerName: this.getPlayerName(playerId),
+      vote: data.vote
+    });
+
+    // 检查是否超过半数存活玩家同意
+    const alivePlayers = Array.from(this.gamePlayers.values()).filter(p => !p.isDead);
+    const agreeCount = this.endDayProposal.votes.filter(v => v.vote === 'agree').length;
+    const requiredVotes = Math.floor(alivePlayers.length / 2) + 1;
+
+    if (agreeCount >= requiredVotes) {
+      this.sendToRoom('gameMessage', {
+        message: `超过半数玩家同意结束白天，白天即将结束`,
+        type: 'info'
+      });
+      this.clearEndDayProposal();
+      await this.endDay();
+      return;
+    }
+
+    // 检查是否所有人都投票了
+    if (this.endDayProposal.votes.length >= alivePlayers.length) {
+      this.sendToRoom('gameMessage', {
+        message: `结束白天投票未通过（${agreeCount}/${requiredVotes}），白天继续`,
+        type: 'info'
+      });
+      this.clearEndDayProposal();
+      this.broadcastGameState();
+      return;
+    }
+
+    this.broadcastGameState();
+  }
+
+  /**
+   * 自动弃权未投票的玩家
+   */
+  private async autoAbstainEndDayVoters(): Promise<void> {
+    if (!this.endDayProposal.isActive) return;
+
+    const alivePlayers = Array.from(this.gamePlayers.values()).filter(p => !p.isDead);
+    const votedIds = new Set(this.endDayProposal.votes.map(v => v.playerId));
+
+    for (const player of alivePlayers) {
+      if (!votedIds.has(player.playerId)) {
+        this.endDayProposal.votes.push({ playerId: player.playerId, vote: 'disagree' });
+      }
+    }
+
+    const agreeCount = this.endDayProposal.votes.filter(v => v.vote === 'agree').length;
+    const requiredVotes = Math.floor(alivePlayers.length / 2) + 1;
+
+    this.sendToRoom('gameMessage', {
+      message: `结束白天投票超时，未投票玩家自动弃权`,
+      type: 'info'
+    });
+
+    if (agreeCount >= requiredVotes) {
+      this.clearEndDayProposal();
+      await this.endDay();
+    } else {
+      this.clearEndDayProposal();
+      this.broadcastGameState();
+    }
   }
 
   /**
@@ -3993,7 +4165,12 @@ export class BOTCWorker extends BaseGameWorker {
         nominations: p.nominations
       })),
       playerCount: this.room.players.length,
-      nightOrder: viewerNightOrder
+      nightOrder: viewerNightOrder,
+      endDayProposal: this.endDayProposal.isActive ? {
+        isActive: this.endDayProposal.isActive,
+        proposerId: this.endDayProposal.proposerId,
+        votes: this.endDayProposal.votes
+      } : undefined
     };
   }
 
@@ -4003,6 +4180,21 @@ export class BOTCWorker extends BaseGameWorker {
   private clearTimers(): void {
     this.dayTimers.forEach(timer => clearTimeout(timer));
     this.dayTimers.clear();
+    this.clearEndDayProposal();
+  }
+
+  private clearEndDayProposal(): void {
+    if (this.endDayProposal.timer) {
+      clearTimeout(this.endDayProposal.timer);
+      this.endDayProposal.timer = null;
+    }
+    this.endDayProposal = {
+      isActive: false,
+      proposerId: '',
+      votes: [],
+      timer: null,
+      startTime: 0
+    };
   }
 
   /**

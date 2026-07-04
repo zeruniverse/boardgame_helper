@@ -385,6 +385,21 @@
         <div v-if="skillResult" class="skill-result">
           <el-alert :title="skillResult" type="success" :closable="false" />
         </div>
+
+        <!-- 唯一狼人中心卡信息展示 (Issue i fix) -->
+        <div v-if="loneWolfCenterCard" class="lone-wolf-vision">
+          <el-alert :title="`你作为唯一狼人查看到的中心卡: ${getCenterCardLabel(loneWolfCenterCard.position)} - ${getRoleName(loneWolfCenterCard.role)}`" type="warning" :closable="false" />
+        </div>
+
+        <!-- 通用视野卡片展示 (预言家/学徒等看到的中心卡) -->
+        <div v-if="visionCards.length > 0" class="vision-cards">
+          <h5>你查看到的中心卡:</h5>
+          <div v-for="card in visionCards" :key="card.position" class="vision-card">
+            <el-tag type="primary" size="large">
+              {{ getCenterCardLabel(card.position) }}: {{ getRoleName(card.role) }}
+            </el-tag>
+          </div>
+        </div>
         
         <div class="skill-actions">
           <el-button type="primary" @click="executeSkill" :disabled="!canExecuteSkill">
@@ -503,10 +518,9 @@ import {
 } from '../store/onuWerewolf';
 import { Loading } from '@element-plus/icons-vue';
 
-// 角色定义
+// 角色定义（一夜狼人没有村民角色，守夜人/哨兵必须有0个或2个）
 const availableRoles = [
   { value: OnuWerewolfRole.Werewolf, label: '狼人', description: '与其他狼人互相认识，目标是不被投票出局' },
-  { value: OnuWerewolfRole.Villager, label: '村民', description: '没有特殊能力，依靠推理找出狼人' },
   { value: OnuWerewolfRole.Seer, label: '预言家', description: '可以查看一名玩家或两张中心卡牌的角色' },
   { value: OnuWerewolfRole.Robber, label: '强盗', description: '可以与另一名玩家交换角色卡' },
   { value: OnuWerewolfRole.Troublemaker, label: '捣蛋鬼', description: '可以交换其他两名玩家的角色卡' },
@@ -531,7 +545,7 @@ const availableRoles = [
 ];
 
 // 必选角色（至少需要的角色）
-const requiredRoles = [OnuWerewolfRole.Werewolf, OnuWerewolfRole.Villager];
+const requiredRoles = [OnuWerewolfRole.Werewolf];
 
 interface GamePlayer {
   id: string;
@@ -625,6 +639,11 @@ const canUpdateConfig = computed(() => {
   if (masonCount === 1) {
     return false;
   }
+  // 守夜人/哨兵必须成对出现（0个或2个）
+  const sentinelCount = selectedRoles.value.filter(r => r === OnuWerewolfRole.Sentinel).length;
+  if (sentinelCount === 1) {
+    return false;
+  }
   return true;
 });
 
@@ -635,6 +654,10 @@ const configError = computed(() => {
   const masonCount = selectedRoles.value.filter(r => r === OnuWerewolfRole.Mason).length;
   if (masonCount === 1) {
     return '石匠角色必须有0个或2个，不能只有1个';
+  }
+  const sentinelCount = selectedRoles.value.filter(r => r === OnuWerewolfRole.Sentinel).length;
+  if (sentinelCount === 1) {
+    return '守夜人/哨兵角色必须有0个或2个，不能只有1个';
   }
   return '';
 });
@@ -670,6 +693,26 @@ const votablePlayers = computed(() => {
 
 const otherPlayers = computed(() => {
   return props.allPlayers?.filter((p: any) => p.id !== props.currentUserId) || [];
+});
+
+// 唯一狼人查看到的中心卡 (Issue i fix)
+const loneWolfCenterCard = computed(() => {
+  const vision = props.playerSecret?.vision;
+  if (!vision?.cards || vision.cards.length === 0) return null;
+  // 只在狼人角色且有中心卡视野时显示
+  if (props.myRole === OnuWerewolfRole.Werewolf || props.playerSecret?.activeSkillRole === OnuWerewolfRole.Werewolf) {
+    return vision.cards[0];
+  }
+  return null;
+});
+
+// 通用视野卡片展示（预言家/学徒/女巫等看到的中心卡）
+const visionCards = computed(() => {
+  const vision = props.playerSecret?.vision;
+  if (!vision?.cards || vision.cards.length === 0) return [];
+  // 排除狼人（已在loneWolfCenterCard中显示）
+  if (props.myRole === OnuWerewolfRole.Werewolf) return [];
+  return vision.cards;
 });
 
 // 判断技能是否可以执行
@@ -776,6 +819,16 @@ const removeRole = (role: OnuWerewolfRole) => {
 const toggleRole = (role: OnuWerewolfRole) => {
   // 后端校验要求石匠只能 0 个或 2 个；前端也按一组石匠来增删，避免房主选出不可提交配置。
   if (role === OnuWerewolfRole.Mason) {
+    if (roleCount(role) > 0) {
+      removeRole(role);
+    } else {
+      selectedRoles.value.push(role, role);
+    }
+    return;
+  }
+
+  // 守夜人/哨兵同样必须成对出现（0个或2个）
+  if (role === OnuWerewolfRole.Sentinel) {
     if (roleCount(role) > 0) {
       removeRole(role);
     } else {
@@ -1266,5 +1319,30 @@ onUnmounted(() => {
   font-size: 10px;
   padding: 2px 6px;
   border-radius: 4px;
+}
+
+/* 唯一狼人中心卡展示 (Issue i fix) */
+.lone-wolf-vision {
+  margin-bottom: 15px;
+}
+
+.vision-cards {
+  margin-bottom: 15px;
+  padding: 15px;
+  background: #fff3e0;
+  border-radius: 8px;
+}
+
+.vision-cards h5 {
+  margin: 0 0 10px 0;
+  color: #e65100;
+}
+
+.vision-card {
+  margin-bottom: 8px;
+}
+
+.vision-card:last-child {
+  margin-bottom: 0;
 }
 </style>

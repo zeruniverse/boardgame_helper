@@ -209,16 +209,26 @@ export const useMafiaStore = defineStore('mafia', {
         this.connected = false;
       });
 
+      // 辅助：将后端 room 格式（含 gameMetadata.gameConfig）转换为前端 MafiaRoomState（含 config）
+      const normalizeRoom = (room: any): MafiaRoomState => {
+        if (!room) return room;
+        const config = room.config || room.gameMetadata?.gameConfig || undefined;
+        return {
+          ...room,
+          config,
+        };
+      };
+
       // 房间事件
-      on('room_joined', (data: { room: MafiaRoomState; player?: any; playerId?: string; sessionToken?: string }) => {
-        this.room = data.room;
+      on('room_joined', (data: { room: any; player?: any; playerId?: string; sessionToken?: string }) => {
+        this.room = normalizeRoom(data.room);
         this.currentUserId = data.player?.id || data.playerId || this.currentUserId;
         this.currentRoomId = data.room.id;
-        rememberGameSession(data.room, data.player || (data.playerId ? { id: data.playerId } : null), data.sessionToken);
+        rememberGameSession(this.room, data.player || (data.playerId ? { id: data.playerId } : null), data.sessionToken);
       });
 
-      on('room_update', (room: MafiaRoomState) => {
-        this.room = room;
+      on('room_update', (room: any) => {
+        this.room = normalizeRoom(room);
       });
 
       // 游戏事件

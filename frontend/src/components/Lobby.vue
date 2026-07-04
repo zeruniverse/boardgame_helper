@@ -728,9 +728,9 @@
               </el-form-item>
               <el-form-item label="剧本选择">
                 <el-select v-model="createRoomForm.edition" placeholder="选择剧本">
-                  <el-option label="Trouble Brewing (初学者)" value="tb" />
-                  <el-option label="Bad Moon Rising (中级)" value="bmr" />
-                  <el-option label="Sects & Violets (中级)" value="snv" />
+                  <el-option label="暗流涌动 (入门)" value="tb" />
+                  <el-option label="黯月初升 (进阶)" value="bmr" />
+                  <el-option label="教派与紫罗兰 (进阶)" value="snv" />
                 </el-select>
               </el-form-item>
               <el-form-item label="白天时间">
@@ -1015,6 +1015,11 @@ async function confirmCreateRoom() {
       gameConfig.dayTime = createRoomForm.value.dayTime;
       gameConfig.nightTime = createRoomForm.value.nightTime;
     } else if (createRoomForm.value.gameType === 'werewolf') {
+      gameConfig.playerCount = createRoomForm.value.maxPlayers;
+      gameConfig.speakTime = createRoomForm.value.speakTime;
+      gameConfig.actionTime = createRoomForm.value.actionTime;
+      gameConfig.nightTime = createRoomForm.value.nightTime;
+    } else if (createRoomForm.value.gameType === 'mafia') {
       gameConfig.playerCount = createRoomForm.value.maxPlayers;
       gameConfig.speakTime = createRoomForm.value.speakTime;
       gameConfig.actionTime = createRoomForm.value.actionTime;

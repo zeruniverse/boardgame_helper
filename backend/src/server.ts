@@ -16,7 +16,7 @@ const io = new SocketIOServer(httpServer, {
     origin: '*',
     methods: ['GET', 'POST']
   }
-});
+} as any);
 
 // 初始化房间控制器
 roomController(io);

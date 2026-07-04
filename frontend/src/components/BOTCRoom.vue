@@ -44,7 +44,7 @@
             <h4>你的角色</h4>
             <div class="my-role" :class="getTeamClass(store.playerRole.team)">
               <div class="role-avatar">
-                <img :src="getRoleAvatar(store.playerRole.id)" :alt="store.playerRole.name" />
+                <span class="role-initial">{{ store.playerRole.name?.charAt(0) || '?' }}</span>
               </div>
               <div class="role-details">
                 <div class="role-name">{{ store.playerRole.name }}</div>
@@ -254,9 +254,9 @@ const getStatusMessage = () => {
 // 获取版本名称
 const getEditionName = (editionId: string) => {
   const editionNames: Record<string, string> = {
-    'tb': 'Trouble Brewing',
-    'bmr': 'Bad Moon Rising',
-    'snv': 'Sects & Violets'
+    'tb': '暗流涌动',
+    'bmr': '黯月初升',
+    'snv': '教派与紫罗兰'
   }
   return editionNames[editionId] || editionId
 }
@@ -347,6 +347,48 @@ const formatNightInfo = (info: any) => {
   }
   if (info.deadEvilCount !== undefined) {
     return `死亡的邪恶玩家数: ${info.deadEvilCount}`
+  }
+  if (info.wokeCount !== undefined) {
+    return `两名目标中今晚醒来的玩家数: ${info.wokeCount}`
+  }
+  if (Array.isArray(info.roles)) {
+    const roleNames = info.roles.map((role: any) => role.roleName || role.roleId).join(' / ')
+    return `${info.playerName || getPlayerName(info.playerId)} 可能是: ${roleNames}`
+  }
+  if (info.playerId) {
+    return `${info.playerName || getPlayerName(info.playerId)} 的角色是: ${info.roleName || info.roleId || '未知'}`
+  }
+  if (info.roleId) {
+    return `角色: ${info.roleName || info.roleId}, 玩家: ${(info.players || []).map((p: string) => getPlayerName(p)).join('、') || '未知'}`
+  }
+  if (info.pairs !== undefined) {
+    return `相邻邪恶对数: ${info.pairs}`
+  }
+  if (info.evilCount !== undefined) {
+    return `邪恶邻居数: ${info.evilCount}`
+  }
+  if (info.grandchild) {
+    return `孙子: ${getPlayerName(info.grandchild)}, 角色: ${info.grandchildRole?.name || '未知'}`
+  }
+  if (info.distance !== undefined) {
+    return `恶魔最近距离: ${info.distance}`
+  }
+  if (info.isDemon !== undefined) {
+    return info.isDemon ? '是恶魔！' : '不是恶魔'
+  }
+  if (info.isCorrect !== undefined) {
+    return info.isCorrect ? '猜测正确！' : '猜测错误！'
+  }
+  if (info.abnormalCount !== undefined) {
+    return `异常玩家数: ${info.abnormalCount}`
+  }
+  if (info.sameAlignment !== undefined) {
+    return info.sameAlignment ? '两名玩家同阵营' : '两名玩家不同阵营'
+  }
+  if (Array.isArray(info.outsiderRoles)) {
+    return info.outsiderRoles.length > 0
+      ? `在场外来者角色：${info.outsiderRoles.map((role: any) => role.roleName || role.roleId).join('、')}`
+      : '没有外来者角色在场'
   }
 
   return JSON.stringify(info)
@@ -588,12 +630,16 @@ const handleStartGame = (config: any) => {
   border-radius: 8px;
   overflow: hidden;
   border: 2px solid rgba(255, 255, 255, 0.3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.2);
 }
 
-.role-avatar img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
+.role-initial {
+  font-size: 28px;
+  font-weight: bold;
+  color: white;
 }
 
 .role-details {

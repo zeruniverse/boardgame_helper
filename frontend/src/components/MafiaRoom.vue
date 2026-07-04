@@ -137,6 +137,7 @@
           :game-state="gameState"
           :operators="gameState?.operators"
           :vote-result="gameState?.voteResult"
+          :room-config="room?.config"
           @transfer-host="handleTransferHost"
           @kick-player="handleKickPlayer"
         />
@@ -157,7 +158,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useMafiaGameStore } from '../store/mafia'
 import { Back, Loading } from '@element-plus/icons-vue'
@@ -230,17 +231,34 @@ const onRoomReady = (data: any) => {
   }
 }
 
+// 当room数据到达时自动隐藏准备中遮罩
+watch(room, (newRoom) => {
+  if (newRoom && newRoom.id === roomId) {
+    console.log('MafiaRoom: room数据已到达，显示房间UI')
+    roomPreparing.value = false
+    if (statusCheckInterval) {
+      clearInterval(statusCheckInterval)
+      statusCheckInterval = null
+    }
+  }
+}, { immediate: true })
+
 onMounted(() => {
   if (!roomId) {
     router.push('/')
     return
   }
-  
+
+  // 先初始化socket并注册监听器，再连接房间，避免错过事件
+  if (!store.socket) {
+    store.initSocket()
+  }
+
+  // 监听房间准备完成事件（在connectToRoom之前注册，避免错过）
+  store.socket?.on('room_ready', onRoomReady)
+
   // 连接到房间
   store.connectToRoom(roomId, 'mafia')
-  
-  // 监听房间准备完成事件
-  store.socket?.on('room_ready', onRoomReady)
 
   // 开始定时检查房间状态
   if (!statusCheckInterval) {
@@ -249,7 +267,7 @@ onMounted(() => {
     // 然后每3秒检查一次
     statusCheckInterval = setInterval(checkRoomStatus, 3000)
   }
-  
+
   // 启动本地倒计时
   startLocalTimer()
 })

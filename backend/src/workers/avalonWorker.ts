@@ -406,6 +406,24 @@ class AvalonWorker extends BaseGameWorker {
 
   async gameAction(playerId: string, actionType: string, actionData: any): Promise<void> {
     try {
+      // Validate inputs
+      if (!playerId || typeof playerId !== 'string') {
+        console.warn('avalon gameAction: invalid playerId');
+        return;
+      }
+      if (!actionType || typeof actionType !== 'string') {
+        console.warn('avalon gameAction: invalid actionType');
+        return;
+      }
+      if (!this.room || !this.room.players) {
+        console.warn('avalon gameAction: room not initialized');
+        return;
+      }
+      if (!this.gameState) {
+        console.warn('avalon gameAction: gameState not initialized');
+        return;
+      }
+
       switch (actionType) {
         case 'toggleRoomLock':
           this.toggleRoomLock(playerId);
@@ -679,6 +697,8 @@ class AvalonWorker extends BaseGameWorker {
 
   // 游戏处理方法实现
   private handleReady(playerId: string): void {
+    if (!this.room?.players || !this.gameState) return;
+
     const state = this.gameState as AvalonGameState;
     if (state.status !== GameStatus.WAITING) {
       this.sendToPlayer(playerId, 'game_error', { message: '游戏已开始，无法准备' });
@@ -700,6 +720,8 @@ class AvalonWorker extends BaseGameWorker {
   }
 
   private handleUnready(playerId: string): void {
+    if (!this.room?.players || !this.gameState) return;
+
     const state = this.gameState as AvalonGameState;
     if (state.status !== GameStatus.WAITING) {
       this.sendToPlayer(playerId, 'game_error', { message: '游戏已开始，无法取消准备' });
@@ -720,6 +742,7 @@ class AvalonWorker extends BaseGameWorker {
   }
 
   private handleStartGame(playerId: string): void {
+    if (!this.room || !this.gameState) return;
     if (playerId !== this.room.hostId) return;
 
     const state = this.gameState as AvalonGameState;
@@ -748,6 +771,7 @@ class AvalonWorker extends BaseGameWorker {
   }
 
   private handleCaptainSpeak(playerId: string, speakFirst: boolean): void {
+    if (!this.gameState) return;
     const state = this.gameState as AvalonGameState;
     if (state.status !== GameStatus.CAPTAIN || !state.operators.includes(playerId)) return;
 
@@ -768,6 +792,7 @@ class AvalonWorker extends BaseGameWorker {
   }
 
   private handleEndSpeak(playerId: string): void {
+    if (!this.gameState) return;
     const state = this.gameState as AvalonGameState;
     if (state.status !== GameStatus.SPEAK || !state.operators.includes(playerId)) return;
 
@@ -803,6 +828,7 @@ class AvalonWorker extends BaseGameWorker {
   }
 
   private handlePickTeam(playerId: string, team: string[]): void {
+    if (!this.gameState || !this.room) return;
     const state = this.gameState as AvalonGameState;
     if (state.status !== GameStatus.PICK || !state.operators.includes(playerId)) return;
 
@@ -846,6 +872,7 @@ class AvalonWorker extends BaseGameWorker {
   }
 
   private handleVote(playerId: string, agree: boolean): void {
+    if (!this.gameState || !this.room) return;
     const state = this.gameState as AvalonGameState;
     if (state.status !== GameStatus.VOTE || !state.operators.includes(playerId)) return;
 
@@ -886,6 +913,7 @@ class AvalonWorker extends BaseGameWorker {
   }
 
   private handleTakeAction(playerId: string, success: boolean): void {
+    if (!this.gameState || !this.room) return;
     const state = this.gameState as AvalonGameState;
     if (state.status !== GameStatus.ACTION || !state.operators.includes(playerId)) return;
 
@@ -981,13 +1009,14 @@ class AvalonWorker extends BaseGameWorker {
   }
 
   private handleAssassinate(playerId: string, targetId: string): void {
+    if (!this.gameState) return;
     const state = this.gameState as AvalonGameState;
     if (state.status !== GameStatus.ASSASSINATE || state.topSecret.red[playerId] !== Role.ASSASSIN) {
       return;
     }
 
     // 刺杀本质是猜梅林；选择非梅林（包括邪恶方或自己）都应视为刺杀失败，不能让刺客重试。
-    if (!state.players[targetId]) {
+    if (!state.players || !state.players[targetId]) {
       this.sendToPlayer(playerId, 'game_error', {
         message: '无效的刺杀目标'
       });

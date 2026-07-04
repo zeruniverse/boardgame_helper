@@ -47,8 +47,7 @@
           v-model="input" 
           @keyup.enter="send" 
           :placeholder="getInputPlaceholder()"
-          style="flex:1; margin-right:8px;" 
-          :disabled="!canSend"
+          style="flex:1; margin-right:8px;"
         />
         <el-button type="primary" @click="send" :disabled="!canSend">发送</el-button>
         <el-button 

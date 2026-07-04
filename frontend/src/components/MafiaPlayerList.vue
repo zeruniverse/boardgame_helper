@@ -121,25 +121,15 @@
       <el-divider>游戏设置</el-divider>
       <div class="config-item">
         <label>发言时间:</label>
-        <el-input-number 
-          v-model="speakTime" 
-          :min="30" 
-          :max="180" 
-          :step="10"
-          size="small"
-        />
-        <span>秒</span>
+        <span>{{ speakTime }}秒</span>
       </div>
       <div class="config-item">
         <label>行动时间:</label>
-        <el-input-number 
-          v-model="actionTime" 
-          :min="30" 
-          :max="180" 
-          :step="10"
-          size="small"
-        />
-        <span>秒</span>
+        <span>{{ actionTime }}秒</span>
+      </div>
+      <div class="config-item">
+        <label>夜晚时间:</label>
+        <span>{{ nightTime }}秒</span>
       </div>
     </div>
 
@@ -175,7 +165,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed } from 'vue'
 import { House, MoreFilled, Select } from '@element-plus/icons-vue'
 
 interface Player {
@@ -186,6 +176,14 @@ interface Player {
   alive?: boolean
   role?: 'KILLER' | 'COP' | 'DOCTOR' | 'SNIPER' | 'CIVILIAN'
   team?: 'RED' | 'BLUE'
+}
+
+interface RoomConfig {
+  speakTime?: number
+  actionTime?: number
+  nightTime?: number
+  lastWordRound?: number
+  maxPlayers?: number
 }
 
 interface Props {
@@ -201,6 +199,7 @@ interface Props {
   gameState?: any
   operators?: string[]
   voteResult?: Record<string, string>
+  roomConfig?: RoomConfig
 }
 
 const props = defineProps<Props>()
@@ -209,10 +208,11 @@ defineEmits<{
   kickPlayer: [playerId: string]
 }>()
 
-// 游戏配置
-const speakTime = ref(60)
-const actionTime = ref(60)
-const maxPlayers = 20
+// 游戏配置 - 优先使用房间配置
+const speakTime = computed(() => props.roomConfig?.speakTime ?? 60)
+const actionTime = computed(() => props.roomConfig?.actionTime ?? 60)
+const nightTime = computed(() => props.roomConfig?.nightTime ?? 60)
+const maxPlayers = computed(() => props.roomConfig?.maxPlayers ?? 20)
 
 // 角色配置 - 与后端 MAFIA_TEAM_CONFIG 和 doc/mafia.md 一致
 const roleConfigs = {

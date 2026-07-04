@@ -560,21 +560,21 @@ export const useBOTCGameStore = defineStore('botc', () => {
     const editions: Record<string, any> = {
       'tb': {
         id: 'tb',
-        name: 'Trouble Brewing',
+        name: '暗流涌动',
         description: '初学者版本，适合新手玩家',
-        level: 'Beginner'
+        level: '入门'
       },
       'bmr': {
         id: 'bmr',
-        name: 'Bad Moon Rising',
+        name: '黯月初升',
         description: '中级版本，包含更复杂的角色机制',
-        level: 'Intermediate'
+        level: '进阶'
       },
       'snv': {
         id: 'snv',
-        name: 'Sects & Violets',
+        name: '教派与紫罗兰',
         description: '中级版本，注重信息操控和疯狂机制',
-        level: 'Intermediate'
+        level: '进阶'
       }
     }
     return editions[editionId] || null

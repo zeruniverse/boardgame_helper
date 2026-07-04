@@ -133,6 +133,15 @@ export function onuValidateGameConfig(roles: OnuWerewolfRole[]): {
     return { valid: false, error: '石匠角色必须有0个或2个' };
   }
 
+  // 守夜人/哨兵最多2个，且必须成对出现（0个或2个）
+  const sentinelCount = roles.filter(r => r === OnuWerewolfRole.Sentinel).length;
+  if (sentinelCount > 2) {
+    return { valid: false, error: '守夜人/哨兵角色最多2个' };
+  }
+  if (sentinelCount === 1) {
+    return { valid: false, error: '守夜人/哨兵角色必须有0个或2个' };
+  }
+
   const playerCount = roles.length - 3; // 3张中心卡牌
   return {
     valid: true,

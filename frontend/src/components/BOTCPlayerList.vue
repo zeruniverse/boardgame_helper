@@ -24,9 +24,9 @@
         <!-- 玩家基本信息 -->
         <div class="player-info">
           <div class="player-avatar">
-            <el-avatar :size="32" :src="getPlayerAvatar(player.id)">
+            <div class="player-avatar-circle" :style="getPlayerAvatarStyle(player.id)">
               {{ (player.name || '?').charAt(0) }}
-            </el-avatar>
+            </div>
             <div class="player-status" :class="getStatusClass(player)"></div>
           </div>
           
@@ -163,7 +163,7 @@
           >
             <div class="edition-option">
               <span>{{ edition.name }}</span>
-              <el-tag size="small" :type="edition.level === 'Beginner' ? 'success' : 'warning'">
+              <el-tag size="small" :type="edition.level === '入门' ? 'success' : 'warning'">
                 {{ edition.level }}
               </el-tag>
             </div>
@@ -229,9 +229,9 @@ const computerStorytellers = [
 
 // 可用剧本
 const availableEditions = [
-  { id: 'tb', name: 'Trouble Brewing', level: 'Beginner' },
-  { id: 'bmr', name: 'Bad Moon Rising', level: 'Intermediate' },
-  { id: 'snv', name: 'Sects & Violets', level: 'Intermediate' }
+  { id: 'tb', name: '暗流涌动', level: '入门' },
+  { id: 'bmr', name: '黯月初升', level: '进阶' },
+  { id: 'snv', name: '教派与紫罗兰', level: '进阶' }
 ]
 
 // 计算属性
@@ -321,9 +321,26 @@ const getTeamClass = (team: string) => {
   return `team-${team?.toLowerCase() || 'unknown'}`
 }
 
-// 获取玩家头像
-const getPlayerAvatar = (playerId: string) => {
-  return `https://api.dicebear.com/7.x/avataaars/svg?seed=${playerId}`
+// 生成头像颜色
+const getPlayerAvatarStyle = (playerId: string) => {
+  const colors = ['#3498db', '#e74c3c', '#2ecc71', '#f39c12', '#9b59b6', '#1abc9c', '#e67e22', '#34495e', '#16a085', '#c0392b']
+  let hash = 0
+  for (let i = 0; i < playerId.length; i++) {
+    hash = playerId.charCodeAt(i) + ((hash << 5) - hash)
+  }
+  const color = colors[Math.abs(hash) % colors.length]
+  return {
+    backgroundColor: color,
+    color: '#fff',
+    width: '32px',
+    height: '32px',
+    borderRadius: '50%',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    fontSize: '14px',
+    fontWeight: 'bold'
+  }
 }
 
 // 开始私聊

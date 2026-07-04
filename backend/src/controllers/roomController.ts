@@ -221,6 +221,25 @@ function defaultOnuRoles(playerCount: number): OnuWerewolfRole[] {
   return getRecommendedRoles(count);
 }
 
+// Input validation helpers
+function isValidRoomId(roomId: unknown): roomId is string {
+  return typeof roomId === 'string' && roomId.trim().length > 0;
+}
+
+function isValidPlayerId(playerId: unknown): playerId is string {
+  return typeof playerId === 'string' && playerId.trim().length > 0;
+}
+
+function validateRoomExists(roomId: string, rooms: Map<string, Room>): Room | null {
+  if (!isValidRoomId(roomId)) return null;
+  return rooms.get(roomId) || null;
+}
+
+function sendErrorResponse(socket: Socket, message: string, ack?: (response: any) => void): void {
+  socket.emit('error', { message });
+  ack?.({ success: false, error: message });
+}
+
 function buildGameConfig(gameType: string, incomingConfig: any): any {
   const baseConfig = config.games[gameType]?.gameSpecificConfig || {};
   const gameConfig = { ...baseConfig, ...(incomingConfig || {}) };
@@ -381,6 +400,12 @@ export function roomController(io: Server) {
   // 向房间线程发送任务
   async function sendTaskToRoom(roomId: string, taskType: string, taskData: any, socketId?: string, playerId?: string) {
     try {
+      // Validate that the room still exists before sending task
+      if (!rooms.has(roomId)) {
+        console.warn(`sendTaskToRoom: room ${roomId} no longer exists, skipping task ${taskType}`);
+        throw new Error(`房间 ${roomId} 不存在或已被删除`);
+      }
+
       const response = await threadManager.sendTask(roomId, {
         type: taskType,
         roomId,
@@ -388,12 +413,12 @@ export function roomController(io: Server) {
         socketId,
         playerId
       });
-      
+
       if (!response.success) {
         console.error(`房间 ${roomId} 任务失败:`, response.error);
         throw new Error(response.error || `房间 ${roomId} 任务 ${taskType} 失败`);
       }
-      
+
       return response;
     } catch (error) {
       console.error(`向房间 ${roomId} 发送任务失败:`, error);
@@ -498,22 +523,38 @@ export function roomController(io: Server) {
 
     // 前端请求获取房间当前状态
     socket.on('get_room_state', (data: { roomId: string }) => {
-      const room = rooms.get(data.roomId);
-      if (room) {
-        socket.emit('room_update', toClientRoom(room));
+      try {
+        if (!data || !isValidRoomId(data.roomId)) {
+          console.warn(`get_room_state: invalid roomId from socket ${socket.id}`);
+          return;
+        }
+        const room = rooms.get(data.roomId);
+        if (room) {
+          socket.emit('room_update', toClientRoom(room));
+        }
+      } catch (error) {
+        console.error('get_room_state handler error:', error);
       }
     });
 
     // 新的房间状态检查接口，只有房间存在时才响应
     socket.on('room_status_check', (data: { roomId: string }) => {
-      const room = rooms.get(data.roomId);
-      if (room) {
-        socket.emit('room_ready', { 
-          roomId: room.id,
-          status: room.threadStatus === 'running' ? 'ready' : 'starting',
-          room: toClientRoom(room)
-        });
-        socket.emit('room_update', toClientRoom(room));
+      try {
+        if (!data || !isValidRoomId(data.roomId)) {
+          console.warn(`room_status_check: invalid roomId from socket ${socket.id}`);
+          return;
+        }
+        const room = rooms.get(data.roomId);
+        if (room) {
+          socket.emit('room_ready', {
+            roomId: room.id,
+            status: room.threadStatus === 'running' ? 'ready' : 'starting',
+            room: toClientRoom(room)
+          });
+          socket.emit('room_update', toClientRoom(room));
+        }
+      } catch (error) {
+        console.error('room_status_check handler error:', error);
       }
     });
 
@@ -530,23 +571,27 @@ export function roomController(io: Server) {
     });
 
     // 创建房间
-    socket.on('create_room', async (data: { 
-      gameType: string; 
-      gameConfig: any; 
-      isPrivate?: boolean 
+    socket.on('create_room', async (data: {
+      gameType: string;
+      gameConfig: any;
+      isPrivate?: boolean
     }, ack?: (response: any) => void) => {
       try {
+        // Validate input
+        if (!data || !data.gameType || typeof data.gameType !== 'string') {
+          sendErrorResponse(socket, '无效的游戏类型', ack);
+          return;
+        }
+
         // 检查房间数量限制
         if (rooms.size >= config.server.maxRooms) {
-          socket.emit('error', { message: '服务器房间数量已达上限' });
-          ack?.({ success: false, error: '服务器房间数量已达上限' });
+          sendErrorResponse(socket, '服务器房间数量已达上限', ack);
           return;
         }
 
         // 验证游戏类型
         if (!config.games[data.gameType]) {
-          socket.emit('error', { message: '不支持的游戏类型' });
-          ack?.({ success: false, error: '不支持的游戏类型' });
+          sendErrorResponse(socket, '不支持的游戏类型', ack);
           return;
         }
 
@@ -627,6 +672,10 @@ export function roomController(io: Server) {
     // 重连房间
     socket.on('reconnect_room', async (data: { roomId: string; playerId: string; sessionToken?: string }) => {
       try {
+        if (!data || !isValidRoomId(data.roomId) || !isValidPlayerId(data.playerId)) {
+          socket.emit('error', { message: '重连失败，无效的房间ID或玩家ID' });
+          return;
+        }
         const { roomId, playerId } = data;
         const room = rooms.get(roomId);
         const player = room?.players.find(p => p.id === playerId);
@@ -685,6 +734,11 @@ export function roomController(io: Server) {
     // 加入房间
     socket.on('join_room', async (data: { roomId?: string; roomName?: string; nickname?: string; playerId?: string; userId?: string; gameType?: string; sessionToken?: string }, ack?: (response: any) => void) => {
       try {
+        if (!data || (!isValidRoomId(data.roomId) && !data.roomName)) {
+          sendErrorResponse(socket, '无效的房间ID或房间名', ack);
+          return;
+        }
+
         let room: Room | undefined;
 
         // 通过房间ID或房间名查找房间
@@ -695,8 +749,7 @@ export function roomController(io: Server) {
         }
 
         if (!room) {
-          socket.emit('error', { message: '房间不存在' });
-          ack?.({ success: false, error: '房间不存在' });
+          sendErrorResponse(socket, '房间不存在', ack);
           return;
         }
 
@@ -818,12 +871,15 @@ export function roomController(io: Server) {
     // 通过房间名或ID加入房间（用于直接链接）
     socket.on('join_room_by_name', async (data: { roomName: string; nickname?: string; playerId?: string; userId?: string; sessionToken?: string }, ack?: (response: any) => void) => {
       try {
+        if (!data || !data.roomName || typeof data.roomName !== 'string') {
+          sendErrorResponse(socket, '无效的房间名', ack);
+          return;
+        }
         // 通过房间名查找房间
         const room = Array.from(rooms.values()).find(r => r.name === data.roomName);
 
         if (!room) {
-          socket.emit('error', { message: '房间不存在' });
-          ack?.({ success: false, error: '房间不存在' });
+          sendErrorResponse(socket, '房间不存在', ack);
           return;
         }
 
@@ -945,6 +1001,10 @@ export function roomController(io: Server) {
     // 离开房间
     socket.on('leave_room', async (data: { roomId: string }) => {
       try {
+        if (!data || !isValidRoomId(data.roomId)) {
+          console.warn(`leave_room: invalid roomId from socket ${socket.id}`);
+          return;
+        }
         const room = rooms.get(data.roomId);
         if (!room) {
           return;
@@ -1087,34 +1147,52 @@ export function roomController(io: Server) {
     });
 
     // 游戏行动
-    socket.on('game_action', async (data: { 
-      roomId: string; 
-      actionType: string; 
-      actionData: any 
+    socket.on('game_action', async (data: {
+      roomId: string;
+      actionType: string;
+      actionData: any
     }, ack?: (response: any) => void) => {
       try {
+        // Validate input
+        if (!data || !isValidRoomId(data.roomId)) {
+          sendErrorResponse(socket, '无效的房间ID', ack);
+          return;
+        }
+        if (!data.actionType || typeof data.actionType !== 'string') {
+          sendErrorResponse(socket, '无效的操作类型', ack);
+          return;
+        }
+
         const room = rooms.get(data.roomId);
         if (!room) {
-          socket.emit('error', { message: '房间不存在' });
-          ack?.({ success: false, error: '房间不存在' });
+          sendErrorResponse(socket, '房间不存在', ack);
           return;
         }
 
         const player = room.players.find(p => p.socketId === socket.id);
         if (!player) {
-          socket.emit('error', { message: '您不在此房间中' });
-          ack?.({ success: false, error: '您不在此房间中' });
+          sendErrorResponse(socket, '您不在此房间中', ack);
           return;
         }
 
         if (data.actionType === 'transfer_host' || data.actionType === 'transferHost') {
-          const result = await transferHostInRoom(room, player, data.actionData?.newHostId || data.actionData?.targetId || data.actionData?.playerId);
+          const targetId = data.actionData?.newHostId || data.actionData?.targetId || data.actionData?.playerId;
+          if (!isValidPlayerId(targetId)) {
+            sendErrorResponse(socket, '无效的目标玩家ID', ack);
+            return;
+          }
+          const result = await transferHostInRoom(room, player, targetId);
           ack?.(result);
           return;
         }
 
         if (data.actionType === 'kick_player' || data.actionType === 'kickPlayer') {
-          const result = await kickPlayerFromRoom(room, player, data.actionData?.targetId || data.actionData?.playerId);
+          const targetId = data.actionData?.targetId || data.actionData?.playerId;
+          if (!isValidPlayerId(targetId)) {
+            sendErrorResponse(socket, '无效的目标玩家ID', ack);
+            return;
+          }
+          const result = await kickPlayerFromRoom(room, player, targetId);
           ack?.(result);
           return;
         }
@@ -1125,13 +1203,13 @@ export function roomController(io: Server) {
 
         // 发送游戏行动到房间线程
         await sendTaskToRoom(
-          room.id, 
-          'game_action', 
-          { 
-            actionType: data.actionType, 
-            actionData: data.actionData 
-          }, 
-          socket.id, 
+          room.id,
+          'game_action',
+          {
+            actionType: data.actionType,
+            actionData: data.actionData
+          },
+          socket.id,
           player.id
         );
         ack?.({ success: true });
@@ -1146,21 +1224,29 @@ export function roomController(io: Server) {
     // 兼容旧前端直发房主转让事件
     socket.on('transfer_host', async (data: { roomId: string; targetId?: string; playerId?: string; newHostId?: string }, ack?: (response: any) => void) => {
       try {
+        if (!data || !isValidRoomId(data.roomId)) {
+          sendErrorResponse(socket, '无效的房间ID', ack);
+          return;
+        }
         const room = rooms.get(data.roomId);
         if (!room) {
-          socket.emit('error', { message: '房间不存在' });
-          ack?.({ success: false, error: '房间不存在' });
+          sendErrorResponse(socket, '房间不存在', ack);
           return;
         }
 
         const player = room.players.find(p => p.socketId === socket.id);
         if (!player) {
-          socket.emit('error', { message: '您不在此房间中' });
-          ack?.({ success: false, error: '您不在此房间中' });
+          sendErrorResponse(socket, '您不在此房间中', ack);
           return;
         }
 
-        const result = await transferHostInRoom(room, player, data.newHostId || data.targetId || data.playerId || '');
+        const newHostId = data.newHostId || data.targetId || data.playerId || '';
+        if (!isValidPlayerId(newHostId)) {
+          sendErrorResponse(socket, '无效的目标玩家ID', ack);
+          return;
+        }
+
+        const result = await transferHostInRoom(room, player, newHostId);
         if (!result.success) {
           socket.emit('error', { message: result.error || '转让房主失败' });
         }
@@ -1176,10 +1262,18 @@ export function roomController(io: Server) {
     // 兼容旧前端直发聊天事件
     socket.on('chat_message', async (data: { roomId: string; message: string; channel?: string }, ack?: (response: any) => void) => {
       try {
+        if (!data || !isValidRoomId(data.roomId)) {
+          sendErrorResponse(socket, '无效的房间ID', ack);
+          return;
+        }
+        if (!data.message || typeof data.message !== 'string') {
+          sendErrorResponse(socket, '无效的消息内容', ack);
+          return;
+        }
         const room = rooms.get(data.roomId);
-        if (!room) { socket.emit('error', { message: '房间不存在' }); ack?.({ success: false, error: '房间不存在' }); return; }
+        if (!room) { sendErrorResponse(socket, '房间不存在', ack); return; }
         const player = room.players.find(p => p.socketId === socket.id);
-        if (!player) { socket.emit('error', { message: '您不在此房间中' }); ack?.({ success: false, error: '您不在此房间中' }); return; }
+        if (!player) { sendErrorResponse(socket, '您不在此房间中', ack); return; }
         const normalizedChannel = normalizeChatChannel(data.channel, [
           'all',
           'team',
@@ -1202,25 +1296,30 @@ export function roomController(io: Server) {
     // 踢出玩家
     socket.on('kick_player', async (data: { roomId: string; targetId?: string; playerId?: string }, ack?: (response: any) => void) => {
       try {
+        if (!data || !isValidRoomId(data.roomId)) {
+          sendErrorResponse(socket, '无效的房间ID', ack);
+          return;
+        }
         const room = rooms.get(data.roomId);
         if (!room) {
-          socket.emit('error', { message: '房间不存在' });
-          ack?.({ success: false, error: '房间不存在' });
+          sendErrorResponse(socket, '房间不存在', ack);
           return;
         }
 
         const player = room.players.find(p => p.socketId === socket.id);
         if (!player) {
-          socket.emit('error', { message: '您不在此房间中' });
-          ack?.({ success: false, error: '您不在此房间中' });
+          sendErrorResponse(socket, '您不在此房间中', ack);
           return;
         }
 
         const targetId = data.targetId || data.playerId || '';
+        if (!isValidPlayerId(targetId)) {
+          sendErrorResponse(socket, '无效的目标玩家ID', ack);
+          return;
+        }
         const targetPlayer = room.players.find(p => p.id === targetId);
         if (!targetPlayer) {
-          socket.emit('error', { message: '目标玩家不存在' });
-          ack?.({ success: false, error: '目标玩家不存在' });
+          sendErrorResponse(socket, '目标玩家不存在', ack);
           return;
         }
 
@@ -1414,12 +1513,16 @@ export function roomController(io: Server) {
 
     // 处理心跳
     socket.on('heartbeat', () => {
-      for (const room of rooms.values()) {
-        const player = room.players.find(p => p.socketId === socket.id);
-        if (player) {
-          player.lastHeartbeat = Date.now();
-          break;
+      try {
+        for (const room of rooms.values()) {
+          const player = room.players.find(p => p.socketId === socket.id);
+          if (player) {
+            player.lastHeartbeat = Date.now();
+            break;
+          }
         }
+      } catch (error) {
+        console.error('heartbeat handler error:', error);
       }
     });
   });

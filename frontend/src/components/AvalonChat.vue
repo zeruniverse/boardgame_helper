@@ -141,7 +141,7 @@ const getMessageColor = (type: string) => {
     case 'mission':
       return '#059669'; // 绿色 - 任务消息
     default:
-      return undefined; // 默认颜色
+      return 'var(--app-text)'; // 默认颜色
   }
 };
 
@@ -252,8 +252,8 @@ function send() {
   margin-bottom: 8px;
   min-height: 250px;
   max-height: 500px;
-  background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
-  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: var(--app-panel);
+  border: 1px solid var(--app-border);
 }
 
 .chat-input {
@@ -293,7 +293,7 @@ function send() {
   padding: 4px 6px;
   border-radius: 4px;
   transition: all 0.2s;
-  color: rgba(255, 255, 255, 0.9);
+  color: var(--app-text);
 }
 
 .chat-message:hover {
