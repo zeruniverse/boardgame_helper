@@ -22,6 +22,7 @@ import {
   checkGameEnd,
   getNeighbors,
   isEvilPlayer,
+  isGoodPlayer,
   countAdjacentEvilPairs,
   validatePlayerAction,
   getRoleName,
@@ -130,6 +131,78 @@ export class BOTCWorker extends BaseGameWorker {
 
   private playerAbilityWorks(player: GamePlayer): boolean {
     return !this.isPlayerPoisoned(player) && !this.isPlayerDrunk(player);
+  }
+
+  /**
+   * 茶艺师的保护是持续效果，死亡结算发生时必须按当前存活邻座即时判断。
+   * 不能只在夜晚结束后打 Protected 标记，否则同一夜的击杀会先于保护结算。
+   */
+  private getTeaLadyProtectedPlayerIds(): Set<string> {
+    const protectedPlayerIds = new Set<string>();
+    const allPlayers = Array.from(this.gamePlayers.values());
+
+    for (const teaLady of allPlayers) {
+      if (teaLady.role?.id !== 'tealady' || teaLady.isDead || !this.playerAbilityWorks(teaLady)) {
+        continue;
+      }
+
+      const neighbors = getNeighbors(teaLady.playerId, allPlayers)
+        .filter((neighbor, index, arr) => arr.findIndex(p => p.playerId === neighbor.playerId) === index);
+
+      if (neighbors.length === 2 && neighbors.every(neighbor => !neighbor.isDead && isGoodPlayer(neighbor))) {
+        for (const neighbor of neighbors) {
+          protectedPlayerIds.add(neighbor.playerId);
+        }
+      }
+    }
+
+    return protectedPlayerIds;
+  }
+
+  private isTeaLadyProtected(playerId: string): boolean {
+    return this.getTeaLadyProtectedPlayerIds().has(playerId);
+  }
+
+  private isSoberSailor(player: GamePlayer): boolean {
+    return player.role?.id === 'sailor' && this.playerAbilityWorks(player);
+  }
+
+  private deathProtectionBypassed(cause: string): boolean {
+    return cause === 'assassin';
+  }
+
+  private async resolveSurvivedExecution(player: GamePlayer, executedBy: string, reason?: string): Promise<void> {
+    const playerId = player.playerId;
+    this.noExecutionToday = false;
+    this.gameState.execution = {
+      playerId,
+      executedBy: [executedBy],
+      timestamp: Date.now()
+    };
+
+    this.sendToRoom('playerExecuted', {
+      playerId,
+      playerName: this.getPlayerName(playerId),
+      executedBy: this.getPlayerName(executedBy),
+      survivedExecution: true
+    });
+    this.sendToRoom('gameMessage', {
+      message: `${this.getPlayerName(playerId)} 被处决，但没有死亡`,
+      type: 'warning'
+    });
+    if (reason) {
+      this.sendToPlayer(this.gameConfig.storytellerId, 'playerProtected', {
+        playerId,
+        playerName: this.getPlayerName(playerId),
+        reason
+      });
+    }
+    this.broadcastGameState();
+
+    if (isGoodTwinPlayer(player) && hasLivingEvilTwin(Array.from(this.gamePlayers.values()))) {
+      this.addReminder(player, GOOD_TWIN_EXECUTED_REMINDER);
+      await this.endGame('evil', '善良双子被处决，邪恶阵营获胜');
+    }
   }
 
   private addReminder(player: GamePlayer, reminder: string): void {
@@ -1843,34 +1916,26 @@ export class BOTCWorker extends BaseGameWorker {
       return;
     }
 
-    // 恶魔律师保护：玩家仍被处决，但不会因处决死亡。
+    // 恶魔律师、茶艺师、水手、愚者等防死效果：玩家仍被处决，但不会因处决死亡。
     if (player.reminders.includes('Survives execution') || player.reminders.includes('DA Protected')) {
       player.reminders = player.reminders.filter(r => r !== 'Survives execution' && r !== 'DA Protected');
-      this.noExecutionToday = false;
-      this.gameState.execution = {
-        playerId,
-        executedBy: [executedBy],
-        timestamp: Date.now()
-      };
+      await this.resolveSurvivedExecution(player, executedBy);
+      return;
+    }
 
-      this.sendToRoom('playerExecuted', {
-        playerId,
-        playerName: this.getPlayerName(playerId),
-        executedBy: this.getPlayerName(executedBy),
-        survivedExecution: true
-      });
-      this.sendToRoom('gameMessage', {
-        message: `${this.getPlayerName(playerId)} 被处决，但没有死亡`,
-        type: 'warning'
-      });
-      this.broadcastGameState();
+    if (this.isTeaLadyProtected(playerId)) {
+      await this.resolveSurvivedExecution(player, executedBy, '茶艺师保护');
+      return;
+    }
 
-      if (isGoodTwinPlayer(player) && hasLivingEvilTwin(Array.from(this.gamePlayers.values()))) {
-        this.addReminder(player, GOOD_TWIN_EXECUTED_REMINDER);
-        await this.endGame('evil', '善良双子被处决，邪恶阵营获胜');
-        return;
-      }
+    if (this.isSoberSailor(player)) {
+      await this.resolveSurvivedExecution(player, executedBy, '水手清醒，不能死亡');
+      return;
+    }
 
+    if (player.role?.id === 'fool' && this.playerAbilityWorks(player) && !player.reminders?.includes('foolUsed')) {
+      this.addReminder(player, 'foolUsed');
+      await this.resolveSurvivedExecution(player, executedBy, '愚者首次免死');
       return;
     }
 
@@ -2906,22 +2971,13 @@ export class BOTCWorker extends BaseGameWorker {
       }
     }
 
-    // 处理Tea Lady效果：如果两个邻座都是好人，他们不能死亡
-    const teaLady = alivePlayers.find(p => p.role?.id === 'tealady');
-    if (teaLady && this.playerAbilityWorks(teaLady)) {
-      const neighbors = getNeighbors(teaLady.playerId, allPlayers);
-      if (neighbors.length === 2 && neighbors.every(n => !isEvilPlayer(n))) {
-        for (const neighbor of neighbors) {
-          neighbor.isProtected = true;
-          neighbor.reminders.push('Protected');
-        }
+    // 同步茶艺师保护标记给魔典/信息角色查看；真正的死亡免疫在 killPlayer/executePlayer 中即时判断。
+    for (const protectedPlayerId of this.getTeaLadyProtectedPlayerIds()) {
+      const protectedPlayer = this.gamePlayers.get(protectedPlayerId);
+      if (protectedPlayer) {
+        protectedPlayer.isProtected = true;
+        this.addReminder(protectedPlayer, 'Protected');
       }
-    }
-
-    // 处理Fool（愚者）的免死效果 - 标记为已使用
-    const fool = alivePlayers.find(p => p.role?.id === 'fool');
-    if (fool && this.playerAbilityWorks(fool) && fool.reminders.includes('Protected') && !fool.reminders.includes('foolUsed')) {
-      fool.reminders.push('foolUsed');
     }
   }
 
@@ -2949,19 +3005,39 @@ export class BOTCWorker extends BaseGameWorker {
       return;
     }
 
-    // 检查愚者（Fool）免死效果
-    if (player.role?.id === 'fool' && this.playerAbilityWorks(player) && !player.reminders?.includes('foolUsed')) {
-      player.reminders.push('foolUsed');
-      this.sendToRoom('gameMessage', { message: `${this.getPlayerName(playerId)} 使用了愚者的免死能力！`, type: 'info' });
-      return;
-    }
+    const ignoresDeathProtection = this.deathProtectionBypassed(cause);
 
-    // 检查保护效果（僧侣保护）
+    // 检查保护效果（僧侣等夜间保护）
     if (player.isProtected && (cause === 'demon' || cause === 'godfather')) {
       this.sendToPlayer(this.gameConfig.storytellerId, 'playerProtected', {
         playerId,
         playerName: this.getPlayerName(playerId)
       });
+      return;
+    }
+
+    if (!ignoresDeathProtection && this.isTeaLadyProtected(playerId)) {
+      this.sendToPlayer(this.gameConfig.storytellerId, 'playerProtected', {
+        playerId,
+        playerName: this.getPlayerName(playerId),
+        reason: '茶艺师保护'
+      });
+      return;
+    }
+
+    if (!ignoresDeathProtection && this.isSoberSailor(player)) {
+      this.sendToPlayer(this.gameConfig.storytellerId, 'playerProtected', {
+        playerId,
+        playerName: this.getPlayerName(playerId),
+        reason: '水手清醒，不能死亡'
+      });
+      return;
+    }
+
+    // 检查愚者（Fool）免死效果。刺客会绕过一切防死效果；其他保护先生效，避免白白消耗愚者。
+    if (!ignoresDeathProtection && player.role?.id === 'fool' && this.playerAbilityWorks(player) && !player.reminders?.includes('foolUsed')) {
+      this.addReminder(player, 'foolUsed');
+      this.sendToRoom('gameMessage', { message: `${this.getPlayerName(playerId)} 使用了愚者的免死能力！`, type: 'info' });
       return;
     }
 
