@@ -582,6 +582,12 @@ class TexasHoldemWorker extends BaseGameWorker {
       return;
     }
 
+    const gs = this.gameState as TexasHoldemGameState;
+    if (gs.stage !== 'idle') {
+      this.sendToPlayer(playerId, 'error', { message: '牌局进行中或分奖池中，不能 Cash In；请在本局结束后再充值' });
+      return;
+    }
+
     const defaultStack = Number(this.config.defaultStack) || 1000;
     const rawAmount = data?.amount ?? defaultStack;
     const amount = Math.floor(Number(rawAmount));

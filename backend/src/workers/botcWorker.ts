@@ -133,6 +133,30 @@ export class BOTCWorker extends BaseGameWorker {
     return !this.isPlayerPoisoned(player) && !this.isPlayerDrunk(player);
   }
 
+  private hasActiveVortox(): boolean {
+    return Array.from(this.gamePlayers.values()).some(player =>
+      player.role?.id === 'vortox' &&
+      !player.isDead &&
+      this.playerAbilityWorks(player)
+    );
+  }
+
+  private shouldCorruptInfoForPlayer(player: GamePlayer, effectiveRole: Role | null = this.getEffectiveRole(player)): boolean {
+    return !this.playerAbilityWorks(player) ||
+      (effectiveRole?.team === Team.TOWNSFOLK && this.hasActiveVortox());
+  }
+
+  private prepareInfoForPlayer(
+    player: GamePlayer,
+    information: any,
+    roleId: string,
+    effectiveRole: Role | null = this.getEffectiveRole(player)
+  ): any {
+    return this.shouldCorruptInfoForPlayer(player, effectiveRole)
+      ? this.corruptInfo(information, roleId)
+      : information;
+  }
+
   /**
    * 茶艺师的保护是持续效果，死亡结算发生时必须按当前存活邻座即时判断。
    * 不能只在夜晚结束后打 Protected 标记，否则同一夜的击杀会先于保护结算。
@@ -756,7 +780,6 @@ export class BOTCWorker extends BaseGameWorker {
         }
         return {
           answer: reportedEvil ? '坏人' : '好人',
-          actualAnswer: actuallyEvil ? '坏人' : '好人',
           targetId,
           targetName: this.getPlayerName(targetId)
         };
@@ -783,7 +806,6 @@ export class BOTCWorker extends BaseGameWorker {
         return {
           answer: reportedRole?.name || '未知',
           roleId: reportedRole?.id,
-          actualRoleId: actualRole?.id,
           targetId,
           targetName: this.getPlayerName(targetId)
         };
@@ -801,8 +823,7 @@ export class BOTCWorker extends BaseGameWorker {
           answer = !actualAnswer;
         }
         return {
-          answer: answer ? '是' : '否',
-          actualAnswer: actualAnswer ? '是' : '否'
+          answer: answer ? '是' : '否'
         };
       }
 
@@ -819,7 +840,6 @@ export class BOTCWorker extends BaseGameWorker {
         }
         return {
           answer: `${reportedCount}个坏人相邻`,
-          actualAnswer: `${actualCount}个坏人相邻`,
           count: reportedCount
         };
       }
@@ -838,14 +858,79 @@ export class BOTCWorker extends BaseGameWorker {
         return {
           answer: answer ? '该角色在场且能力有效' : '该角色不在场或能力无效',
           characterId,
-          characterName: characterRole?.name || characterId,
-          isInPlay
+          characterName: characterRole?.name || characterId
         };
       }
 
       default:
         return { answer: '说书人无法回答此问题' };
     }
+  }
+
+  private corruptStorytellerResponse(questionType: string, data: any, response: any): any {
+    const corrupted = { ...(response || {}) };
+
+    switch (questionType) {
+      case 'yesNo': {
+        const actualAnswer = Boolean(data?.actualAnswer);
+        corrupted.answer = actualAnswer ? '否' : '是';
+        break;
+      }
+      case 'alignment': {
+        const target = data?.targetId ? this.gamePlayers.get(data.targetId) : null;
+        if (target) {
+          corrupted.answer = isEvilPlayer(target) ? '好人' : '坏人';
+        } else if (corrupted.answer === '好人') {
+          corrupted.answer = '坏人';
+        } else if (corrupted.answer === '坏人') {
+          corrupted.answer = '好人';
+        }
+        break;
+      }
+      case 'role': {
+        const target = data?.targetId ? this.gamePlayers.get(data.targetId) : null;
+        const actualRole = target ? this.getEffectiveRole(target) : null;
+        const edition = getEditionById(this.gameConfig.edition);
+        const rolePool = edition?.roles
+          .map(roleId => getRoleById(roleId))
+          .filter((role): role is Role => Boolean(role)) || getAllRoles();
+        const fakePool = rolePool.filter(role => role.id !== actualRole?.id);
+        const fakeRole = fakePool[Math.floor(Math.random() * fakePool.length)];
+        if (fakeRole) {
+          corrupted.answer = fakeRole.name;
+          corrupted.roleId = fakeRole.id;
+        }
+        break;
+      }
+      case 'adjacentEvil': {
+        const actualCount = Number(data?.adjacentEvilPairs ?? 0);
+        const fakeCounts = [0, 1, 2, 3].filter(count => count !== actualCount);
+        const fakeCount = fakeCounts[Math.floor(Math.random() * fakeCounts.length)] ?? Math.max(0, actualCount + 1);
+        corrupted.answer = `${fakeCount}个坏人相邻`;
+        corrupted.count = fakeCount;
+        break;
+      }
+      case 'characterAbility': {
+        const characterId = data?.characterId;
+        const allPlayers = Array.from(this.gamePlayers.values());
+        const actuallyInPlay = allPlayers.some(p => !p.isDead && (p.role?.id === characterId || p.displayRole?.id === characterId));
+        corrupted.answer = actuallyInPlay ? '该角色不在场或能力无效' : '该角色在场且能力有效';
+        break;
+      }
+      default:
+        break;
+    }
+
+    return this.sanitizeStorytellerResponseForPlayer(corrupted);
+  }
+
+  private sanitizeStorytellerResponseForPlayer(response: any): any {
+    if (!response || typeof response !== 'object') {
+      return response;
+    }
+
+    const { actualAnswer, actualRoleId, isInPlay, ...safeResponse } = response;
+    return safeResponse;
   }
 
   private buildStorytellerQuestionText(player: GamePlayer, questionType: string, questionData: any): string {
@@ -903,7 +988,10 @@ export class BOTCWorker extends BaseGameWorker {
     const question = this.buildStorytellerQuestionText(player, questionType, questionData);
 
     if (isAI) {
-      const response = this.generateAIStorytellerResponse(player, questionType, questionData);
+      const rawResponse = this.generateAIStorytellerResponse(player, questionType, questionData);
+      const response = this.shouldCorruptInfoForPlayer(player, visibleRole)
+        ? this.corruptStorytellerResponse(questionType, questionData, rawResponse)
+        : this.sanitizeStorytellerResponseForPlayer(rawResponse);
       const answerPayload = {
         question,
         questionType,
@@ -1385,10 +1473,6 @@ export class BOTCWorker extends BaseGameWorker {
       const effectiveRole = player ? this.getEffectiveRole(player) : null;
       if (!player || !effectiveRole) continue;
 
-      // 检查玩家是否中毒/醉酒（首夜时投毒者已行动后处理）
-      const isPoisoned = this.isPlayerPoisoned(player);
-      const isDrunk = this.isPlayerDrunk(player);
-
       try {
         const result = processFirstNightInfo(player, allPlayers, this.gameConfig.edition);
         
@@ -1403,10 +1487,8 @@ export class BOTCWorker extends BaseGameWorker {
           // 只有实际信息才发送给玩家；元数据（如requiresTargets）仅供内部使用，
           // 不应发送给玩家，避免泄露说书人信息（如占卜师的redHerring）
           if (!isMetaInfo) {
-            // 如果中毒或醉酒，提供错误信息，但不泄露真实角色
-            const finalInfo = (isPoisoned || isDrunk) 
-              ? this.corruptInfo(result.information, effectiveRole.id)
-              : result.information;
+            // 中毒/醉酒或有效 Vortox 在场时，镇民信息必须为错误信息，且不能向玩家泄露被污染状态。
+            const finalInfo = this.prepareInfoForPlayer(player, result.information, effectiveRole.id, effectiveRole);
 
             this.sendNightInfoToPlayer(playerId, {
               role: effectiveRole.id,
@@ -1426,40 +1508,109 @@ export class BOTCWorker extends BaseGameWorker {
   }
 
   /**
-   * 污染信息（中毒/醉酒时）
+   * 污染信息（中毒/醉酒或 Vortox 导致信息失真时）
    */
   private corruptInfo(information: any, roleId: string): any {
-    // 简单随机化信息
-    if (typeof information === 'object') {
-      const corrupted = { ...information };
-      if (information.pairs !== undefined) {
-        corrupted.pairs = Math.floor(Math.random() * 3);
-      }
-      if (information.evilCount !== undefined) {
-        corrupted.evilCount = Math.floor(Math.random() * 3);
-      }
-      if (information.grandchild !== undefined) {
-        // 随机替换孙子
-        const allPlayers = Array.from(this.gamePlayers.values());
-        const randomPlayer = allPlayers[Math.floor(Math.random() * allPlayers.length)];
-        corrupted.grandchild = randomPlayer?.playerId;
-      }
-      for (const key of ['isDemon', 'sameAlignment', 'demonVoted', 'minionNominated']) {
-        if (typeof information[key] === 'boolean') {
-          corrupted[key] = !information[key];
-        }
-      }
-      for (const key of ['deadEvilCount', 'abnormalCount', 'wokeCount']) {
-        if (typeof information[key] === 'number') {
-          corrupted[key] = Math.max(0, information[key] + (Math.random() < 0.5 ? -1 : 1));
-        }
-      }
-      if (Array.isArray(information.roles) && information.roles.length > 1) {
-        corrupted.roles = [...information.roles].reverse();
-      }
-      return corrupted;
+    if (!information || typeof information !== 'object') {
+      return information;
     }
-    return information;
+
+    const corrupted = { ...information };
+    const allPlayers = Array.from(this.gamePlayers.values());
+    const edition = getEditionById(this.gameConfig.edition);
+    const allRoles = edition?.roles
+      .map(roleId => getRoleById(roleId))
+      .filter((role): role is Role => Boolean(role)) || getAllRoles();
+    const pickRandom = <T>(items: T[]): T | undefined => items[Math.floor(Math.random() * items.length)];
+    const roleForPlayerId = (playerId: string | null | undefined): Role | null => {
+      const player = playerId ? this.gamePlayers.get(playerId) : null;
+      return player ? (this.getEffectiveRole(player) || player.role) : null;
+    };
+    const pickDifferentRole = (blockedRoleIds: Array<string | null | undefined>): Role | undefined => {
+      const blocked = new Set(blockedRoleIds.filter((id): id is string => Boolean(id)));
+      return pickRandom(allRoles.filter(role => !blocked.has(role.id))) || pickRandom(allRoles);
+    };
+    const pickDifferentCount = (value: number, maxValue = Math.max(3, allPlayers.length)): number => {
+      const normalized = Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0;
+      const candidates = Array.from({ length: maxValue + 1 }, (_, index) => index).filter(count => count !== normalized);
+      return pickRandom(candidates) ?? normalized + 1;
+    };
+
+    // 洗衣妇/图书管理员/调查员：不要只打乱玩家顺序，否则仍可能给出真信息。
+    if (Array.isArray(information.players) && Object.prototype.hasOwnProperty.call(information, 'roleId')) {
+      let playerIds: string[] = information.players.filter((id: unknown): id is string => typeof id === 'string');
+      if (playerIds.length === 0) {
+        playerIds = allPlayers
+          .filter(player => player.playerId !== undefined)
+          .sort(() => Math.random() - 0.5)
+          .slice(0, Math.min(2, allPlayers.length))
+          .map(player => player.playerId);
+        corrupted.players = playerIds;
+      }
+
+      const rolesShownAmongPlayers = playerIds.map(playerId => roleForPlayerId(playerId)?.id);
+      const fakeRole = pickDifferentRole([information.roleId, roleId, ...rolesShownAmongPlayers]);
+      if (fakeRole) {
+        corrupted.roleId = fakeRole.id;
+        corrupted.roleName = fakeRole.name;
+      }
+    }
+
+    // 掘墓人/乌鸦饲养员等“某玩家的角色是 X”的信息。
+    if (!Array.isArray(information.players) && Object.prototype.hasOwnProperty.call(information, 'roleId')) {
+      const actualRole = roleForPlayerId(information.playerId);
+      const fakeRole = pickDifferentRole([information.roleId, actualRole?.id, roleId]);
+      if (fakeRole) {
+        corrupted.roleId = fakeRole.id;
+        corrupted.roleName = fakeRole.name;
+      }
+    }
+
+    // 筑梦师：在信息被污染时，两张牌都不能是目标真实角色。
+    if (Array.isArray(information.roles)) {
+      const actualRole = roleForPlayerId(information.playerId);
+      const blocked = new Set([actualRole?.id, roleId].filter((id): id is string => Boolean(id)));
+      const fakeRoles = allRoles.filter(role => !blocked.has(role.id)).sort(() => Math.random() - 0.5).slice(0, 2);
+      if (fakeRoles.length > 0) {
+        corrupted.roles = fakeRoles.map(role => ({ roleId: role.id, roleName: role.name }));
+      }
+    }
+
+    if (information.grandchild !== undefined) {
+      const candidates = allPlayers.filter(player => player.playerId !== information.grandchild);
+      const fakeGrandchild = pickRandom(candidates);
+      if (fakeGrandchild) {
+        corrupted.grandchild = fakeGrandchild.playerId;
+      }
+      const shownGrandchildRole = roleForPlayerId(corrupted.grandchild);
+      const fakeRole = pickDifferentRole([shownGrandchildRole?.id, information.grandchildRole?.id, roleId]);
+      if (fakeRole) {
+        corrupted.grandchildRole = fakeRole;
+      }
+    }
+
+    if (Array.isArray(information.outsiderRoles)) {
+      if (information.outsiderRoles.length > 0) {
+        corrupted.outsiderRoles = [];
+      } else {
+        const outsider = pickRandom(getRolesByTeam(this.gameConfig.edition, Team.OUTSIDER));
+        corrupted.outsiderRoles = outsider ? [{ roleId: outsider.id, roleName: outsider.name }] : [];
+      }
+    }
+
+    for (const key of ['pairs', 'evilCount', 'deadEvilCount', 'evilDeadCount', 'abnormalCount', 'wokeCount', 'distance']) {
+      if (typeof information[key] === 'number') {
+        corrupted[key] = pickDifferentCount(information[key]);
+      }
+    }
+
+    for (const key of ['isDemon', 'sameAlignment', 'demonVoted', 'minionNominated', 'isCorrect', 'isTownsfolk']) {
+      if (typeof information[key] === 'boolean') {
+        corrupted[key] = !information[key];
+      }
+    }
+
+    return corrupted;
   }
 
   /**
@@ -1921,6 +2072,8 @@ export class BOTCWorker extends BaseGameWorker {
       executedBy: [executedBy],
       timestamp: Date.now()
     };
+    // BOTC 中“处决”和“死亡”不同：即使目标已死亡或被防死，仍然算今天发生过处决。
+    this.noExecutionToday = false;
 
     // 死亡玩家可以被提名并处决，但不能再次“死亡”。僵怖第一次死亡后只是登记为死亡，
     // 再次被处决时才真正死亡。
@@ -2504,9 +2657,12 @@ export class BOTCWorker extends BaseGameWorker {
           
           // 处理信息
           if (result.information) {
-            const finalInfo = abilityWorks 
-              ? result.information
-              : this.corruptInfo(result.information, effectiveRole?.id || player.role.id);
+            const finalInfo = this.prepareInfoForPlayer(
+              player,
+              result.information,
+              effectiveRole?.id || player.role.id,
+              effectiveRole
+            );
 
             this.sendNightInfoToPlayer(action.playerId, {
               role: effectiveRole?.id || player.role.id,
@@ -2790,10 +2946,8 @@ export class BOTCWorker extends BaseGameWorker {
         .map(targetId => this.gamePlayers.get(targetId))
         .filter((p): p is GamePlayer => Boolean(p));
     };
-    const sendInfo = (playerId: string, player: GamePlayer, roleId: string, information: any) => {
-      const finalInfo = this.playerAbilityWorks(player)
-        ? information
-        : this.corruptInfo(information, roleId);
+    const sendInfo = (playerId: string, player: GamePlayer, roleId: string, information: any, effectiveRole: Role | null = this.getEffectiveRole(player)) => {
+      const finalInfo = this.prepareInfoForPlayer(player, information, roleId, effectiveRole);
       this.sendNightInfoToPlayer(playerId, {
         role: roleId,
         information: finalInfo,
