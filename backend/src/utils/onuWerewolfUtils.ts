@@ -277,6 +277,7 @@ export function onuCalculateWinner(
 ): OnuWerewolfTeam {
   const allPlayers = Object.values(players);
   const currentWerewolves = allPlayers.filter(p => onuIsWerewolf(p.actualRole));
+  const currentMinions = allPlayers.filter(p => p.actualRole === OnuWerewolfRole.Minion);
   const executedPlayers = lynched
     .map(playerId => players[playerId])
     .filter((player): player is OnuWerewolfPlayer => Boolean(player));
@@ -286,13 +287,20 @@ export function onuCalculateWinner(
     return OnuWerewolfTeam.Villager;
   }
 
-  const tannerDied = executedPlayers.some(player => player.actualRole === OnuWerewolfRole.Tanner);
+  const tannerDied = executedPlayers.some(player => onuIsTannerTeam(player.actualRole));
   if (tannerDied) {
     return OnuWerewolfTeam.Tanner;
   }
 
-  if (lynched.length === 0 && currentWerewolves.length === 0) {
-    return OnuWerewolfTeam.Villager;
+  if (currentWerewolves.length === 0) {
+    if (currentMinions.length > 0) {
+      const nonMinionDied = executedPlayers.some(player => player.actualRole !== OnuWerewolfRole.Minion);
+      return nonMinionDied ? OnuWerewolfTeam.Werewolf : OnuWerewolfTeam.Villager;
+    }
+
+    if (lynched.length === 0) {
+      return OnuWerewolfTeam.Villager;
+    }
   }
 
   return OnuWerewolfTeam.Werewolf;
@@ -309,9 +317,23 @@ export function onuIsPlayerWinner(
   lynched: string[],
   players?: Record<string, OnuWerewolfPlayer>
 ): boolean {
-  const tannerDied = player.actualRole === OnuWerewolfRole.Tanner && lynched.includes(player.id);
+  const allPlayers = players ? Object.values(players) : [];
+  const executedPlayers = players
+    ? lynched.map(playerId => players[playerId]).filter((p): p is OnuWerewolfPlayer => Boolean(p))
+    : [];
+
+  const tannerDied = onuIsTannerTeam(player.actualRole) && lynched.includes(player.id);
   if (tannerDied) {
     return true;
+  }
+
+  // 爪牙特殊规则：若最终没有真正的狼人，爪牙需要让“非爪牙”的任意玩家死亡才获胜；
+  // 这可以与皮匠死亡同时成立。若只有爪牙自己死亡，则爪牙不胜。
+  if (player.actualRole === OnuWerewolfRole.Minion && allPlayers.length > 0) {
+    const hasRealWerewolf = allPlayers.some(p => onuIsWerewolf(p.actualRole));
+    if (!hasRealWerewolf) {
+      return executedPlayers.some(p => p.actualRole !== OnuWerewolfRole.Minion);
+    }
   }
 
   if (winner === OnuWerewolfTeam.Tanner) {

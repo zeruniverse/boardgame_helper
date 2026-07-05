@@ -25,6 +25,7 @@ import {
   onuGenerateRandomString,
   onuCalculateVoteResult,
   onuCalculateWinner,
+  onuProcessHunterRevenge,
   onuIsPlayerWinner,
   onuCreateVision,
   onuFormatTime,
@@ -1270,16 +1271,17 @@ class OnuWerewolfWorker extends BaseGameWorker {
     this.gameState.status = OnuWerewolfGameStatus.REVEALING;
     this.gameState.currentPhase = '揭示结果';
 
-    // 计算投票结果与胜负：以当前身份为准，支持平票处决与皮匠/狼人同时死亡结算。
+    // 计算投票结果与胜负：以当前身份为准，支持平票处决、猎人连带出局与皮匠/狼人同时死亡结算。
     const voteResult = onuCalculateVoteResult(this.gameState.votes, this.gameState.players);
-    this.gameState.lynchResults = voteResult.lynched;
+    const lynchResults = onuProcessHunterRevenge(this.gameState.players, voteResult.lynched, this.gameState.votes);
+    this.gameState.lynchResults = lynchResults;
 
     const winner = onuCalculateWinner(this.gameState.players, this.gameState.lynchResults);
     this.gameState.winner = winner;
 
     this.sendToRoom('onu_voting_ended', {
       message: '投票结束，正在计算结果...',
-      voteResult,
+      voteResult: { ...voteResult, lynched: lynchResults },
       winner
     });
 

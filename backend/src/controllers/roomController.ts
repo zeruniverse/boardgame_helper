@@ -301,6 +301,23 @@ function rejectDuplicateNickname(socket: Socket, ack?: (response: any) => void):
   sendErrorResponse(socket, '昵称已被占用，请更换昵称后再加入房间', ack);
 }
 
+function rejectLockedRoom(socket: Socket, ack?: (response: any) => void): void {
+  sendErrorResponse(socket, '房间已被锁定，不允许新成员加入', ack);
+}
+
+function isSameNicknameForPlayer(player: Player, nickname: string): boolean {
+  return nicknameKey(nickname) === nicknameKey(player.nickname || player.name);
+}
+
+function findNicknameTakeoverTarget(room: Room, nickname: string, preferredPlayer?: Player): Player | undefined {
+  const requestedName = nicknameKey(nickname);
+  if (!requestedName) return undefined;
+  if (preferredPlayer && isSameNicknameForPlayer(preferredPlayer, requestedName)) {
+    return preferredPlayer;
+  }
+  return findPlayerByNickname(room, requestedName);
+}
+
 function buildGameConfig(gameType: string, incomingConfig: any): any {
   const baseConfig = config.games[gameType]?.gameSpecificConfig || {};
   const gameConfig = { ...baseConfig, ...(incomingConfig || {}) };
@@ -902,14 +919,26 @@ export function roomController(io: Server) {
         const requestedPlayerId = data.playerId || data.userId;
         let player = requestedPlayerId ? room.players.find(p => p.id === requestedPlayerId) : undefined;
 
-        // 如果同一个玩家ID已存在，按重连处理，避免创建/进房后页面切换导致重复人数。
+        // 如果同一个玩家ID已存在，优先按有效会话重连处理。
+        // 若本地会话令牌丢失/被轮换，但请求昵称仍命中房内座位，在未锁房间内按
+        // “同昵称接管”处理，避免用户因为旧 playerId + 失效 token 被卡在房间外。
         if (player) {
+          const suppliedNickname = nicknameKey(data.nickname);
+          const nextNickname = normalizeNickname(data.nickname, player.nickname);
           if (!isValidPlayerSessionToken(room.id, player.id, data.sessionToken)) {
+            const takeoverTarget = findNicknameTakeoverTarget(room, suppliedNickname, player);
+            if (takeoverTarget) {
+              if (room.locked === true) {
+                rejectLockedRoom(socket, ack);
+                return;
+              }
+              await takeOverPlayerByNickname(room, takeoverTarget, normalizeNickname(data.nickname, takeoverTarget.nickname), socket, ack);
+              return;
+            }
             rejectInvalidPlayerSession(socket, ack);
             return;
           }
 
-          const nextNickname = normalizeNickname(data.nickname, player.nickname);
           if (hasDuplicateNickname(room, nextNickname, player.id)) {
             rejectDuplicateNickname(socket, ack);
             return;
@@ -946,8 +975,7 @@ export function roomController(io: Server) {
 
         // 检查房间是否被锁定（非重连的新玩家）
         if (room.locked === true && !player) {
-          socket.emit('error', { message: '房间已被锁定，不允许新成员加入' });
-          ack?.({ success: false, error: '房间已被锁定，不允许新成员加入' });
+          rejectLockedRoom(socket, ack);
           return;
         }
 
@@ -1045,13 +1073,24 @@ export function roomController(io: Server) {
         let player = requestedPlayerId ? room.players.find(p => p.id === requestedPlayerId) : undefined;
 
         // 旧版直接链接接口也支持按 playerId 重连，避免刷新/分享链接后重复占座。
+        // 令牌失效但请求昵称仍命中房内座位时，在未锁房间中降级为同昵称接管。
         if (player) {
+          const suppliedNickname = nicknameKey(data.nickname);
+          const nextNickname = normalizeNickname(data.nickname, player.nickname);
           if (!isValidPlayerSessionToken(room.id, player.id, data.sessionToken)) {
+            const takeoverTarget = findNicknameTakeoverTarget(room, suppliedNickname, player);
+            if (takeoverTarget) {
+              if (room.locked === true) {
+                rejectLockedRoom(socket, ack);
+                return;
+              }
+              await takeOverPlayerByNickname(room, takeoverTarget, normalizeNickname(data.nickname, takeoverTarget.nickname), socket, ack);
+              return;
+            }
             rejectInvalidPlayerSession(socket, ack);
             return;
           }
 
-          const nextNickname = normalizeNickname(data.nickname, player.nickname);
           if (hasDuplicateNickname(room, nextNickname, player.id)) {
             rejectDuplicateNickname(socket, ack);
             return;
@@ -1088,8 +1127,7 @@ export function roomController(io: Server) {
 
         // 检查房间是否被锁定
         if (room.locked === true) {
-          socket.emit('error', { message: '房间已被锁定，不允许新成员加入' });
-          ack?.({ success: false, error: '房间已被锁定，不允许新成员加入' });
+          rejectLockedRoom(socket, ack);
           return;
         }
 
