@@ -15,7 +15,8 @@ import {
   OnuWerewolfSelection,
   OnuWerewolfVision,
   OnuWerewolfGameResult,
-  ONU_WEREWOLF_ROLE_NAMES
+  ONU_WEREWOLF_ROLE_NAMES,
+  ONU_WEREWOLF_CENTER_VOTE_TARGET
 } from '../utils/onuWerewolfTypes';
 
 import {
@@ -27,9 +28,7 @@ import {
   onuIsPlayerWinner,
   onuCreateVision,
   onuFormatTime,
-  onuGetRoleTeam,
-  onuProcessHunterRevenge,
-  onuIsWerewolf
+  onuGetRoleTeam
 } from '../utils/onuWerewolfUtils';
 
 import {
@@ -548,22 +547,13 @@ class OnuWerewolfWorker extends BaseGameWorker {
       this.gameState.players[player.id] = gamePlayer;
     });
 
-    // 创建中心卡牌。
-    // 狼王(Alpha Wolf)按 Daybreak 规则需要一张额外的“中心狼人牌”，
-    // 它不计入玩家数 + 3 张普通中心牌的配置数量。
+    // 创建中心卡牌。参考实现固定为3张墓地/中心牌；头狼效果直接把一名玩家变成普通狼人，
+    // 不额外添加第4张中心牌，避免前后端中心卡数量和配置校验不一致。
     this.gameState.centerCards = centerCards.map((role, index) => ({
       position: index,
       role,
       revealed: false
     }));
-    if (this.config.roles.includes(OnuWerewolfRole.AlphaWolf)) {
-      this.gameState.centerCards.push({
-        position: 3,
-        role: OnuWerewolfRole.Werewolf,
-        revealed: false,
-        flags: [OnuWerewolfRole.AlphaWolf]
-      });
-    }
 
     this.sendToRoom('onu_game_started', {
       message: '游戏开始！角色已分发',
@@ -641,6 +631,44 @@ class OnuWerewolfWorker extends BaseGameWorker {
     });
   }
 
+  private isInitialWolfRole(role: OnuWerewolfRole): boolean {
+    return [
+      OnuWerewolfRole.Werewolf,
+      OnuWerewolfRole.AlphaWolf,
+      OnuWerewolfRole.MysticWolf
+    ].includes(role);
+  }
+
+  private buildInitialWolfVisionFor(player: OnuWerewolfPlayer): OnuWerewolfVision | undefined {
+    const visibleWolves = Object.values(this.gameState.players)
+      .filter(p => p.id !== player.id && this.isInitialWolfRole(p.initialRole))
+      .map(p => ({
+        ...p,
+        actualRole: OnuWerewolfRole.Werewolf,
+        revealed: true
+      }));
+
+    if (visibleWolves.length > 0) {
+      return onuCreateVision(visibleWolves);
+    }
+
+    // 参考实现允许唯一狼人查看一张中心牌；头狼/狼先知也属于“所有狼人”阶段。
+    // 当前前端没有独立的狼人阶段交互，故至少给唯一头狼/狼先知默认展示一张中心牌，避免关键阵营信息缺失。
+    const defaultCenterCard = this.gameState.centerCards[0];
+    return defaultCenterCard ? onuCreateVision([], [defaultCenterCard]) : undefined;
+  }
+
+  private sendInitialWolfVisionBeforeAction(player: OnuWerewolfPlayer, role: OnuWerewolfRole): void {
+    if (role !== OnuWerewolfRole.AlphaWolf && role !== OnuWerewolfRole.MysticWolf) {
+      return;
+    }
+
+    const vision = this.buildInitialWolfVisionFor(player);
+    if (vision) {
+      this.sendToPlayer(player.id, 'onu_board_info', { vision });
+    }
+  }
+
   private shouldResolveDoppelgangerFollowUpImmediately(role: OnuWerewolfRole): boolean {
     return [
       OnuWerewolfRole.Minion,
@@ -702,11 +730,14 @@ class OnuWerewolfWorker extends BaseGameWorker {
       return;
     }
 
+    const skillRole = currentSkillItem.skill.getRole();
+    this.sendInitialWolfVisionBeforeAction(player, skillRole);
+
     // 通知该玩家可以使用技能
     this.sendToPlayer(player.id, 'onu_skill_ready', {
       message: '轮到你使用技能了',
-      role: currentSkillItem.skill.getRole(),
-      roleName: ONU_WEREWOLF_ROLE_NAMES[currentSkillItem.skill.getRole()] || '未知角色',
+      role: skillRole,
+      roleName: ONU_WEREWOLF_ROLE_NAMES[skillRole] || '未知角色',
       timeLeft: this.gameState.timeLeft
     });
 
@@ -751,7 +782,48 @@ class OnuWerewolfWorker extends BaseGameWorker {
     }
 
     const { skill } = currentSkillItem;
-    const selection: OnuWerewolfSelection = actionData.selection || {};
+    let selection: OnuWerewolfSelection = actionData.selection || {};
+
+    // 女巫参考实现是两步交互：先查看一张中心牌，再选择一名玩家交换。
+    // 若旧客户端一次性提交了“中心牌+玩家”，仍兼容为一次完成。
+    if (skill.getRole() === OnuWerewolfRole.Witch) {
+      const storedWitchCard = player.skillData?.witchCardPosition as number | undefined;
+      const hasCardOnlySelection = selection.cards?.length === 1 && (!selection.players || selection.players.length === 0);
+
+      if (storedWitchCard === undefined && hasCardOnlySelection) {
+        const position = selection.cards![0];
+        const card = this.gameState.centerCards.find(c => c.position === position);
+        if (!card) {
+          throw new Error('中心卡牌不存在');
+        }
+
+        player.skillData = {
+          ...(player.skillData || {}),
+          witchCardPosition: position
+        };
+
+        this.sendToPlayer(playerId, 'onu_skill_result', {
+          message: `你查看了中心卡${position}（${ONU_WEREWOLF_ROLE_NAMES[card.role] || '未知'}），请选择一名玩家交换`,
+          vision: onuCreateVision([], [card]),
+          skillData: { witchCardPosition: position }
+        });
+        this.sendToPlayer(playerId, 'onu_skill_ready', {
+          message: '女巫请选择一名玩家，将已查看的中心卡交给他',
+          role: OnuWerewolfRole.Witch,
+          roleName: ONU_WEREWOLF_ROLE_NAMES[OnuWerewolfRole.Witch],
+          timeLeft: this.gameState.timeLeft,
+          skillData: { witchCardPosition: position }
+        });
+        return;
+      }
+
+      if (storedWitchCard !== undefined) {
+        selection = {
+          cards: [storedWitchCard],
+          players: selection.players
+        };
+      }
+    }
 
     // 验证技能使用
     if (!skill.canUse(selection)) {
@@ -770,6 +842,10 @@ class OnuWerewolfWorker extends BaseGameWorker {
 
     // 应用技能结果
     this.applySkillResult(result);
+
+    if (skill.getRole() === OnuWerewolfRole.Witch && player.skillData?.witchCardPosition !== undefined) {
+      delete player.skillData.witchCardPosition;
+    }
 
     // 标记技能已使用
     player.skillUsed = true;
@@ -802,7 +878,7 @@ class OnuWerewolfWorker extends BaseGameWorker {
     this.currentSkillIndex++;
 
     // 化身(Doppelganger)的复制技能需要按官方夜晚顺序处理：
-    // 预言家/强盗/捣蛋鬼/酒鬼/爪牙立即执行；狼人/石匠/失眠者等在对应阶段执行。
+    // 预言家/强盗/捣蛋鬼/酒鬼/爪牙立即执行；狼人/守夜人/失眠者等在对应阶段执行。
     if (result.skillData?.needsFollowUp) {
       this.enqueueDoppelgangerFollowUp(player, result.skillData.copiedRole);
     }
@@ -821,7 +897,7 @@ class OnuWerewolfWorker extends BaseGameWorker {
 
     if (skill.getRole() === OnuWerewolfRole.AlphaWolf) {
       const target = Object.values(this.gameState.players)
-        .filter(p => p.id !== player.id && !p.shielded && !onuIsWerewolf(p.actualRole))
+        .filter(p => p.id !== player.id && !p.shielded)
         .sort((a, b) => a.seat - b.seat)[0];
 
       if (!target) {
@@ -987,7 +1063,7 @@ class OnuWerewolfWorker extends BaseGameWorker {
     }
 
     // 如果夜间总时限耗尽而技能队列仍未完成，剩余技能按超时处理。
-    // 狼王把中心狼人牌给一名玩家是强制效果，不能被总时限直接跳过。
+    // 头狼把一名玩家变成普通狼人是强制效果，不能被总时限直接跳过。
     while (this.currentSkillIndex < this.skillQueue.length) {
       const currentSkillItem = this.skillQueue[this.currentSkillIndex];
       if (currentSkillItem && !currentSkillItem.player.skillUsed) {
@@ -1047,10 +1123,10 @@ class OnuWerewolfWorker extends BaseGameWorker {
     return Object.values(this.gameState.players).every(player => player.voted);
   }
 
-  private recordVote(player: OnuWerewolfPlayer, target: OnuWerewolfPlayer): void {
-    this.gameState.votes[player.id] = target.id;
+  private recordVote(player: OnuWerewolfPlayer, targetId: string): void {
+    this.gameState.votes[player.id] = targetId;
     player.voted = true;
-    player.lynchTarget = target.id;
+    player.lynchTarget = targetId;
 
     this.sendToRoom('onu_vote_cast', {
       playerId: player.id,
@@ -1071,7 +1147,7 @@ class OnuWerewolfWorker extends BaseGameWorker {
     }
 
     this.sendToRoom('onu_system_message', { message });
-    this.recordVote(player, target);
+    this.recordVote(player, target.id);
     return true;
   }
 
@@ -1087,12 +1163,18 @@ class OnuWerewolfWorker extends BaseGameWorker {
 
   private resolveVoteTargetSeat(actionData: any): number | undefined {
     const rawSeat = actionData?.target ?? actionData?.targetSeat ?? actionData?.seat;
+    if (rawSeat === 'center' || rawSeat === 'graveyard' || rawSeat === '墓地') {
+      return -1;
+    }
     if (rawSeat !== undefined && rawSeat !== null && rawSeat !== '') {
       const seat = Number(rawSeat);
       return Number.isFinite(seat) ? seat : undefined;
     }
 
     const targetId = actionData?.targetId;
+    if (targetId === ONU_WEREWOLF_CENTER_VOTE_TARGET || targetId === 'center' || targetId === 'graveyard') {
+      return -1;
+    }
     if (targetId && this.gameState.players[targetId]) {
       return this.gameState.players[targetId].seat;
     }
@@ -1114,20 +1196,24 @@ class OnuWerewolfWorker extends BaseGameWorker {
 
     const targetSeat = this.resolveVoteTargetSeat(actionData || {});
     const totalPlayers = Object.keys(this.gameState.players).length;
-    if (targetSeat === undefined || isNaN(targetSeat) || targetSeat < 1 || targetSeat > totalPlayers) {
+    if (targetSeat === undefined || isNaN(targetSeat) || targetSeat < -1 || targetSeat === 0 || targetSeat > totalPlayers) {
       throw new Error('无效的投票目标');
     }
 
-    const target = Object.values(this.gameState.players).find(p => p.seat === targetSeat);
-    if (!target) {
-      throw new Error('投票目标不存在');
-    }
+    if (targetSeat === -1) {
+      this.recordVote(player, ONU_WEREWOLF_CENTER_VOTE_TARGET);
+    } else {
+      const target = Object.values(this.gameState.players).find(p => p.seat === targetSeat);
+      if (!target) {
+        throw new Error('投票目标不存在');
+      }
 
-    if (target.id === playerId) {
-      throw new Error('不能投票给自己');
-    }
+      if (target.id === playerId) {
+        throw new Error('不能投票给自己');
+      }
 
-    this.recordVote(player, target);
+      this.recordVote(player, target.id);
+    }
 
     if (this.hasAllPlayersVoted()) {
       await this.endVotingPhase();
@@ -1184,35 +1270,12 @@ class OnuWerewolfWorker extends BaseGameWorker {
     this.gameState.status = OnuWerewolfGameStatus.REVEALING;
     this.gameState.currentPhase = '揭示结果';
 
-    // 计算投票结果
+    // 计算投票结果与胜负：以当前身份为准；皮匠只有自己唯一最高票时获胜。
     const voteResult = onuCalculateVoteResult(this.gameState.votes, this.gameState.players);
+    this.gameState.lynchResults = voteResult.lynched;
 
-    // 处理猎人复仇击杀：被处决的猎人带走其投票目标
-    this.gameState.lynchResults = onuProcessHunterRevenge(
-      this.gameState.players,
-      voteResult.lynched,
-      this.gameState.votes
-    );
-
-    // 检查皮匠(Tanner)特殊胜利：投票处决或猎人复仇带走导致皮匠死亡，皮匠都应获胜。
-    let winner: OnuWerewolfTeam;
-    const tannerExecuted = this.gameState.lynchResults
-      .some(pid => this.gameState.players[pid]?.actualRole === OnuWerewolfRole.Tanner);
-    if (tannerExecuted) {
-      winner = OnuWerewolfTeam.Tanner;
-      this.gameState.winner = winner;
-      const lynchedSeats = this.gameState.lynchResults
-        .map(pid => this.gameState.players[pid]?.seat)
-        .filter((s): s is number => s > 0);
-      this.sendToRoom('onu_tanner_victory', {
-        message: `皮匠死亡！皮匠阵营达成胜利条件！死亡玩家：${lynchedSeats.join('号, ')}号`,
-        executedPlayers: lynchedSeats
-      });
-    } else {
-      // 计算胜利者（正常逻辑）
-      winner = onuCalculateWinner(this.gameState.players, this.gameState.lynchResults);
-      this.gameState.winner = winner;
-    }
+    const winner = onuCalculateWinner(this.gameState.players, this.gameState.lynchResults);
+    this.gameState.winner = winner;
 
     this.sendToRoom('onu_voting_ended', {
       message: '投票结束，正在计算结果...',
@@ -1262,7 +1325,7 @@ class OnuWerewolfWorker extends BaseGameWorker {
       const target = this.gameState.players[targetId];
       return {
         source: voter.seat,
-        target: target.seat
+        target: targetId === ONU_WEREWOLF_CENTER_VOTE_TARGET ? -1 : target?.seat ?? -1
       };
     });
 

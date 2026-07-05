@@ -16,7 +16,6 @@ import {
 
 import {
   onuIsWerewolf,
-  onuIsWerewolfTeam,
   onuIsTannerTeam,
   onuCreateVision
 } from './onuWerewolfUtils';
@@ -123,7 +122,7 @@ export class OnuWerewolfSkill extends OnuBaseSkill {
   }
 
   execute(selection?: OnuWerewolfSelection): OnuSkillResult {
-    const werewolves = this.getOtherPlayers().filter(p => onuIsWerewolf(p.actualRole));
+    const werewolves = this.getOtherPlayers().filter(p => onuIsWerewolf(p.initialRole));
     
     if (werewolves.length === 0) {
       // 如果没有其他狼人，可以选择查看一张中心卡牌；兼容旧客户端或玩家未选择中心卡时，
@@ -171,54 +170,27 @@ export class OnuWerewolfSkill extends OnuBaseSkill {
 // 预言家技能
 export class OnuSeerSkill extends OnuBaseSkill {
   canUse(selection?: OnuWerewolfSelection): boolean {
-    if (!selection) return false;
-
-    // 可以查看一个玩家或两张中心卡牌
-    if (selection.players && selection.players.length === 1) {
-      const seat = selection.players[0];
-      const target = this.getPlayerBySeat(seat);
-      return target !== undefined && target.id !== this.owner.id && !target.shielded;
+    if (!selection || !selection.players || selection.players.length !== 1) {
+      return false;
     }
-
-    if (selection.cards && selection.cards.length === 2) {
-      const uniqueCards = new Set(selection.cards);
-      return uniqueCards.size === 2 && selection.cards.every(pos => this.getCenterCard(pos) !== undefined);
-    }
-
-    return false;
+    const target = this.getPlayerBySeat(selection.players[0]);
+    return target !== undefined && target.id !== this.owner.id && !target.shielded;
   }
 
   execute(selection: OnuWerewolfSelection): OnuSkillResult {
-    if (selection.players && selection.players.length === 1) {
-      const target = this.getPlayerBySeat(selection.players[0]);
-      if (!target) {
-        return { success: false, error: '目标玩家不存在' };
-      }
-      if (target.shielded) {
-        return { success: false, error: '目标玩家被哨兵保护，无法查看' };
-      }
+    const target = this.getPlayerBySeat(selection.players![0]);
+    if (!target) {
+      return { success: false, error: '目标玩家不存在' };
+    }
+    if (target.shielded) {
+      return { success: false, error: '目标玩家被保护，无法查看' };
+    }
 
-      return {
-        success: true,
-        vision: onuCreateVision([{ ...target, revealed: true }]),
-        message: `你查看了${target.name}的角色`
-      };
-    }
-    
-    if (selection.cards && selection.cards.length === 2) {
-      const cards = selection.cards.map(pos => this.getCenterCard(pos)).filter(Boolean) as OnuWerewolfCenterCard[];
-      if (cards.length !== 2) {
-        return { success: false, error: '中心卡牌不存在' };
-      }
-      
-      return {
-        success: true,
-        vision: onuCreateVision([], cards),
-        message: '你查看了两张中心卡牌'
-      };
-    }
-    
-    return { success: false, error: '无效的选择' };
+    return {
+      success: true,
+      vision: onuCreateVision([{ ...target, revealed: true }]),
+      message: `你查看了${target.name}的角色`
+    };
   }
 }
 
@@ -354,15 +326,15 @@ export class OnuInsomniacSkill extends OnuBaseSkill {
   }
 }
 
-// 石匠技能
+// 守夜人技能
 export class OnuMasonSkill extends OnuBaseSkill {
   canUse(): boolean {
-    return true; // 石匠总是可以查看其他石匠
+    return true; // 守夜人总是可以查看其他守夜人
   }
 
   execute(): OnuSkillResult {
-    // 石匠查看当前夜晚已成为 Mason 的玩家，包含化身复制石匠后的情况。
-    const masons = this.getOtherPlayers().filter(p => p.actualRole === OnuWerewolfRole.Mason);
+    // 参考实现按初始身份让守夜人互认；夜晚身份交换不会改变“本阶段谁醒来”。
+    const masons = this.getOtherPlayers().filter(p => p.initialRole === OnuWerewolfRole.Mason);
     const visibleMasons = masons.map(p => ({
       ...p,
       actualRole: OnuWerewolfRole.Mason,
@@ -373,8 +345,8 @@ export class OnuMasonSkill extends OnuBaseSkill {
       success: true,
       vision: onuCreateVision(visibleMasons),
       message: masons.length > 0 ?
-        `你看到了其他石匠：${masons.map(p => p.name).join(', ')}` :
-        '没有其他石匠'
+        `你看到了其他守夜人：${masons.map(p => p.name).join(', ')}` :
+        '没有其他守夜人'
     };
   }
 }
@@ -386,7 +358,7 @@ export class OnuMinionSkill extends OnuBaseSkill {
   }
 
   execute(): OnuSkillResult {
-    const werewolves = this.getOtherPlayers().filter(p => onuIsWerewolf(p.actualRole));
+    const werewolves = this.getOtherPlayers().filter(p => onuIsWerewolf(p.initialRole));
     
     // 爪牙看到的是狼人的身份，但不知道具体角色
     const maskedWerewolves = werewolves.map(p => ({
@@ -468,17 +440,11 @@ export class OnuDoppelgangerSkill extends OnuBaseSkill {
 // 女巫技能 - 查看中心卡并选择与玩家交换
 export class OnuWitchSkill extends OnuBaseSkill {
   canUse(selection?: OnuWerewolfSelection): boolean {
-    if (!selection) return false;
-    // 阶段2：选择是否将看到的卡与某玩家交换（优先判断，避免与阶段1条件重叠）
-    if (selection.cards && selection.cards.length === 1 && selection.players && selection.players.length === 1) {
-      const target = this.getPlayerBySeat(selection.players[0]);
-      return target !== undefined && !target.shielded && this.getCenterCard(selection.cards[0]) !== undefined;
+    if (!selection || !selection.cards || selection.cards.length !== 1 || !selection.players || selection.players.length !== 1) {
+      return false;
     }
-    // 阶段1：查看一张中心卡（仅选择卡牌，无玩家）
-    if (selection.cards && selection.cards.length === 1 && (!selection.players || selection.players.length === 0)) {
-      return this.getCenterCard(selection.cards[0]) !== undefined;
-    }
-    return false;
+    const target = this.getPlayerBySeat(selection.players[0]);
+    return target !== undefined && !target.shielded && this.getCenterCard(selection.cards[0]) !== undefined;
   }
 
   execute(selection: OnuWerewolfSelection): OnuSkillResult {
@@ -488,31 +454,21 @@ export class OnuWitchSkill extends OnuBaseSkill {
       return { success: false, error: '中心卡牌不存在' };
     }
 
-    // 如果选择了玩家，则交换
-    if (selection.players && selection.players.length === 1) {
-      const target = this.getPlayerBySeat(selection.players[0]);
-      if (!target) {
-        return { success: false, error: '目标玩家不存在' };
-      }
-      const targetRole = target.actualRole;
-      return {
-        success: true,
-        vision: onuCreateVision([], [{ position, role: card.role, revealed: true }]),
-        roleChanges: [
-          { playerId: target.id, newRole: card.role, type: 'actual' }
-        ],
-        cardChanges: [
-          { position, newRole: targetRole }
-        ],
-        message: `你查看了中心卡${position}（${card.role}），并将它与${target.name}交换了`
-      };
+    const target = this.getPlayerBySeat(selection.players![0]);
+    if (!target) {
+      return { success: false, error: '目标玩家不存在' };
     }
-
-    // 只查看，不交换
+    const targetRole = target.actualRole;
     return {
       success: true,
       vision: onuCreateVision([], [{ position, role: card.role, revealed: true }]),
-      message: `你查看了中心卡${position}（${card.role}），选择不交换`
+      roleChanges: [
+        { playerId: target.id, newRole: card.role, type: 'actual' }
+      ],
+      cardChanges: [
+        { position, newRole: targetRole }
+      ],
+      message: `你查看了中心卡${position}（${ONU_WEREWOLF_ROLE_NAMES[card.role] || '未知'}），并将它与${target.name}交换了`
     };
   }
 }
@@ -611,7 +567,7 @@ export class OnuVillageIdiotSkill extends OnuBaseSkill {
   }
 }
 
-// 揭示者技能 - 公开揭示一名玩家的村民阵营角色卡；非村民阵营看后须盖回去
+// 揭示者技能 - 公开揭示一名非狼人玩家；普通狼人、头狼、狼先知看后须盖回去
 export class OnuRevealerSkill extends OnuBaseSkill {
   canUse(selection?: OnuWerewolfSelection): boolean {
     if (!selection || !selection.players || selection.players.length !== 1) {
@@ -628,7 +584,7 @@ export class OnuRevealerSkill extends OnuBaseSkill {
       return { success: false, error: '目标玩家不存在' };
     }
 
-    const shouldStayRevealed = !onuIsWerewolfTeam(target.actualRole) && !onuIsTannerTeam(target.actualRole);
+    const shouldStayRevealed = !onuIsWerewolf(target.actualRole);
 
     return {
       success: true,
@@ -638,7 +594,7 @@ export class OnuRevealerSkill extends OnuBaseSkill {
         : undefined,
       message: shouldStayRevealed
         ? `你公开揭示了${target.name}的角色卡`
-        : `你查看了${target.name}的角色卡，但该角色不是村民阵营，必须盖回去`
+        : `你查看了${target.name}的角色卡，但该角色是狼人，必须盖回去`
     };
   }
 }
@@ -697,7 +653,7 @@ export class OnuSentinelSkill extends OnuBaseSkill {
   }
 }
 
-// 预言家学徒技能 - 查看一张中心卡
+// 学徒预言家技能 - 查看一张中心卡
 export class OnuApprenticeSeerSkill extends OnuBaseSkill {
   canUse(selection?: OnuWerewolfSelection): boolean {
     if (!selection || !selection.cards || selection.cards.length !== 1) {
@@ -763,54 +719,42 @@ export class OnuApprenticeTannerSkill extends OnuBaseSkill {
   }
 }
 
-// 狼王技能 - 像狼人查看同伴 + 可移动狼人标记
+// 头狼技能 - 将一名玩家变成普通狼人
 export class OnuAlphaWolfSkill extends OnuBaseSkill {
   canUse(selection?: OnuWerewolfSelection): boolean {
     if (!selection || !selection.players || selection.players.length !== 1) return false;
     const target = this.getPlayerBySeat(selection.players[0]);
-    return target !== undefined &&
-      target.id !== this.owner.id &&
-      !onuIsWerewolf(target.actualRole) &&
-      !target.shielded &&
-      this.getAlphaWolfCenterCard() !== undefined;
+    return target !== undefined && !target.shielded;
   }
 
   execute(selection?: OnuWerewolfSelection): OnuSkillResult {
-    const werewolves = this.getOtherPlayers().filter(p => onuIsWerewolf(p.actualRole));
+    const target = selection?.players?.length === 1 ? this.getPlayerBySeat(selection.players[0]) : undefined;
+    if (!target || target.shielded) {
+      return { success: false, error: '头狼必须选择一名未被保护的玩家变成普通狼人' };
+    }
+
+    const werewolves = this.getOtherPlayers().filter(p => onuIsWerewolf(p.initialRole));
     const visibleWerewolves = werewolves.map(p => ({
       ...p,
       actualRole: OnuWerewolfRole.Werewolf,
       revealed: true
     }));
+    const teammateMessage = werewolves.length > 0
+      ? `狼人同伴：${werewolves.map(p => p.name).join(', ')}。`
+      : '没有其他初始狼人同伴。';
 
-    const baseResult: OnuSkillResult = {
+    return {
       success: true,
-      vision: werewolves.length > 0 ? onuCreateVision(visibleWerewolves) : onuCreateVision([], [this.centerCards[0]]),
-      message: werewolves.length > 0 ?
-        `你看到了其他狼人：${werewolves.map(p => p.name).join(', ')}` :
-        '你是唯一的狼人，查看了第一张中心卡牌'
+      vision: visibleWerewolves.length > 0 ? onuCreateVision(visibleWerewolves) : undefined,
+      roleChanges: [
+        { playerId: target.id, newRole: OnuWerewolfRole.Werewolf, type: 'actual' }
+      ],
+      message: `${teammateMessage}你将${target.name}变成了普通狼人`
     };
-
-    const target = selection?.players?.length === 1 ? this.getPlayerBySeat(selection.players[0]) : undefined;
-    const centerWolfCard = this.getAlphaWolfCenterCard();
-    if (!target || target.id === this.owner.id || onuIsWerewolf(target.actualRole) || target.shielded || !centerWolfCard) {
-      return { success: false, error: '狼王必须将中心狼人牌与一名未被保护的非狼人玩家交换' };
-    }
-
-    const targetRole = target.actualRole;
-    baseResult.roleChanges = [
-      { playerId: target.id, newRole: centerWolfCard.role, type: 'actual' }
-    ];
-    baseResult.cardChanges = [
-      { position: centerWolfCard.position, newRole: targetRole }
-    ];
-    baseResult.message += `，你将中心狼人牌与${target.name}的角色卡交换`;
-
-    return baseResult;
   }
 }
 
-// 神秘狼技能 - 像狼人查看 + 可查看一名非狼人玩家
+// 狼先知技能 - 像狼人查看同伴，并查看一名其他玩家
 export class OnuMysticWolfSkill extends OnuBaseSkill {
   canUse(selection?: OnuWerewolfSelection): boolean {
     if (!selection || !selection.players || selection.players.length !== 1) {
@@ -818,11 +762,13 @@ export class OnuMysticWolfSkill extends OnuBaseSkill {
     }
     const seat = selection.players[0];
     const target = this.getPlayerBySeat(seat);
-    return target !== undefined && target.id !== this.owner.id && !onuIsWerewolf(target.actualRole) && !target.shielded;
+    return target !== undefined && target.id !== this.owner.id && !target.shielded;
   }
 
   execute(selection: OnuWerewolfSelection): OnuSkillResult {
-    const werewolves = this.getOtherPlayers().filter(p => onuIsWerewolf(p.actualRole));
+    // 参考实现中狼先知与普通狼人、头狼互认依据夜晚开始时的初始狼人身份，
+    // 不能把头狼刚转化出的普通狼人误报为原狼同伴。
+    const werewolves = this.getOtherPlayers().filter(p => onuIsWerewolf(p.initialRole));
     const target = this.getPlayerBySeat(selection.players![0]);
     if (!target) {
       return { success: false, error: '目标玩家不存在' };

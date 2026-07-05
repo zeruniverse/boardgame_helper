@@ -66,8 +66,8 @@
             <strong>角色列表:</strong>
             <div class="role-list">
               <span 
-                v-for="role in gameState.config.roles" 
-                :key="role"
+                v-for="(role, index) in gameState.config.roles"
+                :key="`${role}-${index}`"
                 class="role-tag"
               >
                 {{ getRoleName(role) }}
@@ -144,38 +144,20 @@
         
         <!-- 技能目标选择UI (H1 fix) -->
         <div class="skill-selection">
-          <!-- 预言家/学徒: 选择1名玩家 或 2张中心卡 -->
-          <div v-if="activeRole === OnuWerewolfRole.Seer" class="selection-options">
-            <el-radio-group v-model="seerMode">
-              <el-radio-button label="player">查看1名玩家</el-radio-button>
-              <el-radio-button label="cards">查看2张中心卡</el-radio-button>
-            </el-radio-group>
-            <div v-if="seerMode === 'player'" class="player-select">
-              <p>选择一名玩家查看:</p>
-              <el-select v-model="selectedPlayer" placeholder="选择玩家">
-                <el-option
-                  v-for="p in otherPlayers"
-                  :key="p.seat"
-                  :label="`座位${p.seat} - ${displayPlayerName(p)}`"
-                  :value="p.seat"
-                />
-              </el-select>
-            </div>
-            <div v-else class="card-select">
-              <p>选择两张中心卡查看:</p>
-              <el-checkbox-group v-model="selectedCards">
-                <el-checkbox-button
-                  v-for="pos in centerCardOptions"
-                  :key="pos"
-                  :value="pos"
-                >
-                  {{ getCenterCardLabel(pos) }}
-                </el-checkbox-button>
-              </el-checkbox-group>
-            </div>
+          <!-- 预言家: 选择1名玩家查看 -->
+          <div v-if="activeRole === OnuWerewolfRole.Seer" class="player-select">
+            <p>选择一名玩家查看:</p>
+            <el-select v-model="selectedPlayer" placeholder="选择玩家">
+              <el-option
+                v-for="p in otherPlayers"
+                :key="p.seat"
+                :label="`座位${p.seat} - ${displayPlayerName(p)}`"
+                :value="p.seat"
+              />
+            </el-select>
           </div>
 
-          <!-- 预言家学徒: 选择1张中心卡 -->
+          <!-- 学徒预言家: 选择1张中心卡 -->
           <div v-else-if="activeRole === OnuWerewolfRole.ApprenticeSeer" class="card-select">
             <p>选择一张中心卡查看:</p>
             <el-select v-model="selectedCard" placeholder="选择中心卡">
@@ -248,11 +230,11 @@
             </el-select>
           </div>
 
-          <!-- 女巫: 查看中心卡并可选择与玩家交换 -->
+          <!-- 女巫: 先查看中心卡，再交给一名玩家 -->
           <div v-else-if="activeRole === OnuWerewolfRole.Witch" class="selection-options">
             <div class="card-select">
-              <p>选择一张中心卡查看:</p>
-              <el-select v-model="selectedCard" placeholder="选择中心卡">
+              <p>{{ witchCardRevealed ? '已查看该中心卡，请选择交换目标:' : '先选择一张中心卡查看:' }}</p>
+              <el-select v-model="selectedCard" placeholder="选择中心卡" :disabled="witchCardRevealed">
                 <el-option
                   v-for="pos in centerCardOptions"
                   :key="pos"
@@ -261,9 +243,9 @@
                 />
               </el-select>
             </div>
-            <div class="player-select">
-              <p>选择是否将该卡与某玩家交换（可选）:</p>
-              <el-select v-model="selectedPlayer" placeholder="不交换" clearable>
+            <div v-if="witchCardRevealed" class="player-select">
+              <p>选择一名玩家，将该中心卡交给他（可以是自己）:</p>
+              <el-select v-model="selectedPlayer" placeholder="选择玩家">
                 <el-option
                   v-for="p in allPlayersList"
                   :key="p.seat"
@@ -272,6 +254,13 @@
                 />
               </el-select>
             </div>
+            <el-alert
+              v-else
+              title="先点击使用技能查看中心卡，再选择要交换的玩家。"
+              type="info"
+              :closable="false"
+              show-icon
+            />
           </div>
 
           <!-- 超自然调查员: 选择最多两名其他玩家依次查看 -->
@@ -336,12 +325,12 @@
             </el-select>
           </div>
 
-          <!-- 狼王: 选择1名非狼人玩家与中心狼人牌交换 -->
+          <!-- 头狼: 选择1名玩家变成普通狼人 -->
           <div v-else-if="activeRole === OnuWerewolfRole.AlphaWolf" class="player-select">
-            <p>查看狼人同伴后，选择一名非狼人玩家与中心狼人牌交换:</p>
+            <p>查看狼人同伴后，选择一名玩家变成普通狼人:</p>
             <el-select v-model="selectedPlayer" placeholder="选择玩家">
               <el-option
-                v-for="p in otherPlayers"
+                v-for="p in allPlayersList"
                 :key="p.seat"
                 :label="`座位${p.seat} - ${displayPlayerName(p)}`"
                 :value="p.seat"
@@ -349,9 +338,9 @@
             </el-select>
           </div>
 
-          <!-- 神秘狼: 查看狼人后选择1名非狼人玩家查看角色 -->
+          <!-- 狼先知: 查看狼人后选择1名其他玩家查看角色 -->
           <div v-else-if="activeRole === OnuWerewolfRole.MysticWolf" class="player-select">
-            <p>查看狼人同伴后，选择一名非狼人玩家查看其角色:</p>
+            <p>查看狼人同伴后，选择一名其他玩家查看其角色:</p>
             <el-select v-model="selectedPlayer" placeholder="选择玩家">
               <el-option
                 v-for="p in otherPlayers"
@@ -375,7 +364,7 @@
             </el-select>
           </div>
 
-          <!-- 爪牙/石匠/失眠者: 无需选择 -->
+          <!-- 爪牙/守夜人/失眠者: 无需选择 -->
           <div v-else class="no-selection">
             <p>{{ getAutoSkillText(activeRole) }}</p>
           </div>
@@ -391,12 +380,21 @@
           <el-alert :title="`你作为唯一狼人查看到的中心卡: ${getCenterCardLabel(loneWolfCenterCard.position)} - ${getRoleName(loneWolfCenterCard.role)}`" type="warning" :closable="false" />
         </div>
 
-        <!-- 通用视野卡片展示 (预言家/学徒等看到的中心卡) -->
+        <!-- 通用视野卡片展示 (学徒预言家/女巫等看到的中心卡) -->
         <div v-if="visionCards.length > 0" class="vision-cards">
           <h5>你查看到的中心卡:</h5>
           <div v-for="card in visionCards" :key="card.position" class="vision-card">
             <el-tag type="primary" size="large">
               {{ getCenterCardLabel(card.position) }}: {{ getRoleName(card.role) }}
+            </el-tag>
+          </div>
+        </div>
+
+        <div v-if="visionPlayers.length > 0" class="vision-players">
+          <h5>你查看到的玩家角色:</h5>
+          <div v-for="player in visionPlayers" :key="player.seat" class="vision-player">
+            <el-tag type="success" size="large">
+              {{ displayVisionPlayerName(player.seat) }}: {{ getRoleName(player.role) }}
             </el-tag>
           </div>
         </div>
@@ -445,7 +443,7 @@
 
       <!-- 投票区域 -->
       <div v-if="canVote" class="vote-panel">
-        <h4>选择要投票的玩家:</h4>
+        <h4>选择要投票的对象:</h4>
         <div class="vote-buttons">
           <el-button
             v-for="player in votablePlayers"
@@ -456,8 +454,15 @@
           >
             投票给 {{ displayPlayerName(player) }} (座位{{ player.seat }})
           </el-button>
+          <el-button
+            @click="vote(-1)"
+            type="info"
+            size="large"
+          >
+            投票给墓地（中心牌）
+          </el-button>
           <el-alert
-            title="规则提示：必须投票给另一名玩家；若每名玩家最多获得1票，则无人被处决。"
+            title="规则提示：可以投票给另一名玩家或墓地；墓地得票不低于玩家最高票时无人被处决。"
             type="info"
             :closable="false"
             show-icon
@@ -520,34 +525,47 @@ import { Loading } from '@element-plus/icons-vue';
 import { ElMessage } from 'element-plus';
 import { formatPlayerName } from '../utils/playerName';
 
-// 角色定义（一夜狼人没有村民角色；项目配置约束：石匠最多1个，守夜人/哨兵必须有0个或2个）
+// 角色定义：本项目一夜狼人按 one_night_ref/README.md 的参考实现开放角色
 const availableRoles = [
-  { value: OnuWerewolfRole.Werewolf, label: '狼人', description: '与其他狼人互相认识，目标是不被投票出局' },
-  { value: OnuWerewolfRole.Seer, label: '预言家', description: '可以查看一名玩家或两张中心卡牌的角色' },
-  { value: OnuWerewolfRole.Robber, label: '强盗', description: '可以与另一名玩家交换角色卡' },
+  { value: OnuWerewolfRole.Werewolf, label: '普通狼人', description: '与其他狼人互相认识，目标是不被投票出局' },
+  { value: OnuWerewolfRole.AlphaWolf, label: '头狼', description: '与其他狼人互相认识，并选择一名玩家变成普通狼人' },
+  { value: OnuWerewolfRole.MysticWolf, label: '狼先知', description: '与其他狼人互相认识，还可查看一名其他玩家的角色' },
+  { value: OnuWerewolfRole.Minion, label: '爪牙', description: '看见初始狼人；属于狼人阵营但不是狼人' },
+  { value: OnuWerewolfRole.Seer, label: '预言家', description: '可以查看一名其他玩家的角色' },
+  { value: OnuWerewolfRole.ApprenticeSeer, label: '学徒预言家', description: '可以查看一张中心卡牌' },
+  { value: OnuWerewolfRole.Witch, label: '女巫', description: '查看一张中心卡牌，并将其交给一名玩家' },
+  { value: OnuWerewolfRole.Revealer, label: '揭示者', description: '可以公开揭示一名非狼人玩家的角色卡' },
+  { value: OnuWerewolfRole.Robber, label: '强盗', description: '可以与另一名玩家交换角色卡，并查看自己的新角色' },
   { value: OnuWerewolfRole.Troublemaker, label: '捣蛋鬼', description: '可以交换其他两名玩家的角色卡' },
-  { value: OnuWerewolfRole.Drunk, label: '酒鬼', description: '必须与一张中心卡牌交换角色' },
   { value: OnuWerewolfRole.Insomniac, label: '失眠者', description: '在夜晚结束时查看自己的最终角色' },
-  { value: OnuWerewolfRole.Mason, label: '石匠', description: '最多只能加入1个；可查看是否有其他石匠' },
-  { value: OnuWerewolfRole.Minion, label: '爪牙', description: '看见狼人；爪牙属于狼人阵营但不是狼人' },
-  { value: OnuWerewolfRole.Hunter, label: '猎人', description: '如果被投票出局，可以带走一名玩家' },
-  { value: OnuWerewolfRole.Tanner, label: '皮匠', description: '只有被投票出局才能获胜' },
-  { value: OnuWerewolfRole.ApprenticeTanner, label: '皮匠学徒', description: '查看皮匠；若没有皮匠，则自己被投票出局获胜' },
-  { value: OnuWerewolfRole.Doppelganger, label: '化身', description: '选择一名玩家复制其角色' },
-  { value: OnuWerewolfRole.AlphaWolf, label: '狼王', description: '与其他狼人互相认识，必须将中心狼人牌与一名非狼人玩家交换' },
-  { value: OnuWerewolfRole.MysticWolf, label: '神秘狼', description: '与其他狼人互相认识，还可查看一名非狼人玩家的角色' },
-  { value: OnuWerewolfRole.ApprenticeSeer, label: '预言家学徒', description: '可以查看一张中心卡牌' },
-  { value: OnuWerewolfRole.ParanormalInvestigator, label: '超自然调查员', description: '可依次查看最多两名玩家，若看到狼人或皮匠则变成该角色' },
-  { value: OnuWerewolfRole.Witch, label: '女巫', description: '查看一张中心卡牌，可选择与一名玩家交换' },
-  { value: OnuWerewolfRole.VillageIdiot, label: '村庄白痴', description: '将除自己外的其他玩家角色卡整体左移或右移' },
-  { value: OnuWerewolfRole.Revealer, label: '揭示者', description: '公开揭示一名村民阵营玩家的角色卡' },
-  { value: OnuWerewolfRole.Curator, label: '馆长', description: '给一名玩家放置文物标记' },
-  { value: OnuWerewolfRole.Sentinel, label: '哨兵', description: '保护一名玩家不被查看或交换角色' },
-  { value: OnuWerewolfRole.AuraSeer, label: '光环预言家', description: '查看哪些玩家的角色被变动过' }
+  { value: OnuWerewolfRole.Drunk, label: '酒鬼', description: '必须与一张中心卡牌交换角色' },
+  { value: OnuWerewolfRole.Mason, label: '守夜人', description: '必须成对加入（0个或2个）；可查看是否有其他守夜人' },
+  { value: OnuWerewolfRole.Villager, label: '村民', description: '没有夜间技能，属于好人阵营' },
+  { value: OnuWerewolfRole.Tanner, label: '皮匠', description: '只有自己成为唯一得票最多并被处决时获胜' }
 ];
 
-// 必选角色（至少需要的角色）
-const requiredRoles = [OnuWerewolfRole.Werewolf];
+const referenceRoleSet = new Set<OnuWerewolfRole>(availableRoles.map(role => role.value));
+const duplicateAllowedRoles = new Set<OnuWerewolfRole>([
+  OnuWerewolfRole.Werewolf,
+  OnuWerewolfRole.Villager
+]);
+const uniqueRoles = new Set<OnuWerewolfRole>([
+  OnuWerewolfRole.AlphaWolf,
+  OnuWerewolfRole.MysticWolf,
+  OnuWerewolfRole.Minion,
+  OnuWerewolfRole.Seer,
+  OnuWerewolfRole.ApprenticeSeer,
+  OnuWerewolfRole.Witch,
+  OnuWerewolfRole.Revealer,
+  OnuWerewolfRole.Robber,
+  OnuWerewolfRole.Troublemaker,
+  OnuWerewolfRole.Drunk,
+  OnuWerewolfRole.Insomniac,
+  OnuWerewolfRole.Tanner
+]);
+
+// 无硬性必选单角色；合法性由后端和本面板统一校验。
+const requiredRoles: OnuWerewolfRole[] = [];
 
 interface GamePlayer {
   id: string;
@@ -577,7 +595,7 @@ interface PlayerSecret {
   activeSkillRole?: OnuWerewolfRole;
   mySeat?: number;
   skillUsed?: boolean;
-  myVote?: number;
+  myVote?: number | string;
   vision?: {
     players?: Array<{ seat: number; role: OnuWerewolfRole }>;
     cards?: Array<{ position: number; role: OnuWerewolfRole }>;
@@ -617,63 +635,48 @@ const emit = defineEmits<{
   'game-action': [actionType: string, actionData?: any];
 }>();
 
-const sanitizeMasonRoles = (roles: OnuWerewolfRole[]): OnuWerewolfRole[] => {
-  let hasMason = false;
-  return roles.filter(role => {
-    if (role !== OnuWerewolfRole.Mason) return true;
-    if (hasMason) return false;
-    hasMason = true;
-    return true;
-  });
-};
+const countRoleIn = (roles: OnuWerewolfRole[], role: OnuWerewolfRole) => roles.filter(r => r === role).length;
 
 // 响应式数据
-const selectedRoles = ref<OnuWerewolfRole[]>([...requiredRoles]);
+const selectedRoles = ref<OnuWerewolfRole[]>([]);
 const allowRoleReveal = ref(true);
 const hasSkippedDiscussion = ref(false);
 
 // 技能选择状态 (H1 fix)
-const seerMode = ref<'player' | 'cards'>('player');
 const selectedPlayer = ref<number | undefined>(undefined);
 const selectedPlayer1 = ref<number | undefined>(undefined);
 const selectedPlayer2 = ref<number | undefined>(undefined);
 const selectedPlayers = ref<number[]>([]);
 const selectedCard = ref<number | undefined>(undefined);
-const selectedCards = ref<number[]>([]);
 const villageIdiotDirection = ref<'left' | 'right'>('left');
 const skillResult = ref<string>('');
 
 // 计算属性
-const canUpdateConfig = computed(() => {
-  if (selectedRoles.value.length !== props.playerCount + 3) {
-    return false;
-  }
-  const masonCount = selectedRoles.value.filter(r => r === OnuWerewolfRole.Mason).length;
-  if (masonCount > 1) {
-    return false;
-  }
-  // 守夜人/哨兵必须成对出现（0个或2个）
-  const sentinelCount = selectedRoles.value.filter(r => r === OnuWerewolfRole.Sentinel).length;
-  if (sentinelCount === 1) {
-    return false;
-  }
-  return true;
-});
-
 const configError = computed(() => {
   if (selectedRoles.value.length !== props.playerCount + 3) {
     return `需要选择 ${props.playerCount + 3} 个角色（${props.playerCount} 玩家 + 3 中心卡），当前已选 ${selectedRoles.value.length} 个`;
   }
-  const masonCount = selectedRoles.value.filter(r => r === OnuWerewolfRole.Mason).length;
-  if (masonCount > 1) {
-    return '石匠角色最多只能有一个';
+
+  const unsupportedRole = selectedRoles.value.find(role => !referenceRoleSet.has(role));
+  if (unsupportedRole !== undefined) {
+    return `当前参考规则不支持角色：${getRoleName(unsupportedRole)}`;
   }
-  const sentinelCount = selectedRoles.value.filter(r => r === OnuWerewolfRole.Sentinel).length;
-  if (sentinelCount === 1) {
-    return '守夜人/哨兵角色必须有0个或2个，不能只有1个';
+
+  const masonCount = countRoleIn(selectedRoles.value, OnuWerewolfRole.Mason);
+  if (masonCount !== 0 && masonCount !== 2) {
+    return '守夜人必须配置为0个或2个，不能配置1个或超过2个';
   }
+
+  for (const role of uniqueRoles) {
+    if (countRoleIn(selectedRoles.value, role) > 1) {
+      return `${getRoleName(role)}最多只能配置1个`;
+    }
+  }
+
   return '';
 });
+
+const canUpdateConfig = computed(() => !configError.value);
 
 const gameResult = computed(() => {
   return props.playerSecret?.gameResult;
@@ -692,11 +695,7 @@ const displayResultPlayerName = (player: { seat: number; name: string }) => {
   return formatPlayerName({ id: roomPlayer?.id, name: player.name }, props.currentUserId);
 };
 
-const centerCardOptions = computed(() => {
-  const roles = props.gameState?.config?.roles || selectedRoles.value;
-  const baseCards = [0, 1, 2];
-  return roles.includes(OnuWerewolfRole.AlphaWolf) ? [...baseCards, 3] : baseCards;
-});
+const centerCardOptions = computed(() => [0, 1, 2]);
 
 const activeRole = computed(() => props.playerSecret?.activeSkillRole ?? props.myRole);
 const mandatoryNightRoles = new Set<OnuWerewolfRole>([
@@ -706,7 +705,7 @@ const mandatoryNightRoles = new Set<OnuWerewolfRole>([
 const canSkipSkill = computed(() => Boolean(activeRole.value) && !mandatoryNightRoles.has(activeRole.value!));
 
 const getCenterCardLabel = (position: number) => {
-  return position === 3 ? '中心狼人牌' : `中心卡 ${position}`;
+  return `中心卡 ${position}`;
 };
 
 const votablePlayers = computed(() => {
@@ -728,13 +727,29 @@ const loneWolfCenterCard = computed(() => {
   return null;
 });
 
-// 通用视野卡片展示（预言家/学徒/女巫等看到的中心卡）
+// 通用视野卡片展示（学徒预言家/女巫等看到的中心卡）
 const visionCards = computed(() => {
   const vision = props.playerSecret?.vision;
   if (!vision?.cards || vision.cards.length === 0) return [];
-  // 排除狼人（已在loneWolfCenterCard中显示）
+  // 排除普通狼人独狼信息（已在loneWolfCenterCard中显示）
   if (props.myRole === OnuWerewolfRole.Werewolf) return [];
   return vision.cards;
+});
+
+const visionPlayers = computed(() => {
+  const vision = props.playerSecret?.vision;
+  if (!vision?.players || vision.players.length === 0) return [];
+  return vision.players.filter(player => player.role !== OnuWerewolfRole.Unknown);
+});
+
+const displayVisionPlayerName = (seat: number) => {
+  const player = props.allPlayers?.find(p => p.seat === seat);
+  return player ? `${displayPlayerName(player)} (座位${seat})` : `座位${seat}`;
+};
+
+const witchCardRevealed = computed(() => {
+  if (activeRole.value !== OnuWerewolfRole.Witch || selectedCard.value === undefined) return false;
+  return Boolean(props.playerSecret?.vision?.cards?.some(card => card.position === selectedCard.value));
 });
 
 // 判断技能是否可以执行
@@ -743,8 +758,7 @@ const canExecuteSkill = computed(() => {
   
   switch (activeRole.value) {
     case OnuWerewolfRole.Seer:
-      if (seerMode.value === 'player') return !!selectedPlayer.value;
-      return selectedCards.value.length === 2;
+      return !!selectedPlayer.value;
     case OnuWerewolfRole.ApprenticeSeer:
     case OnuWerewolfRole.Drunk:
       return selectedCard.value !== undefined;
@@ -758,7 +772,7 @@ const canExecuteSkill = computed(() => {
     case OnuWerewolfRole.Troublemaker:
       return !!selectedPlayer1.value && !!selectedPlayer2.value && selectedPlayer1.value !== selectedPlayer2.value;
     case OnuWerewolfRole.Witch:
-      return selectedCard.value !== undefined;
+      return selectedCard.value !== undefined && (witchCardRevealed.value ? selectedPlayer.value !== undefined : true);
     case OnuWerewolfRole.ParanormalInvestigator:
       return selectedPlayers.value.length >= 1 && selectedPlayers.value.length <= 2;
     case OnuWerewolfRole.VillageIdiot:
@@ -782,10 +796,7 @@ const buildSkillSelection = (): any => {
   
   switch (activeRole.value) {
     case OnuWerewolfRole.Seer:
-      if (seerMode.value === 'player' && selectedPlayer.value) {
-        return { selection: { players: [selectedPlayer.value] } };
-      }
-      return { selection: { cards: selectedCards.value.slice(0, 2) } };
+      return { selection: { players: [selectedPlayer.value!] } };
     
     case OnuWerewolfRole.ApprenticeSeer:
     case OnuWerewolfRole.Drunk:
@@ -803,10 +814,10 @@ const buildSkillSelection = (): any => {
       return { selection: { players: [selectedPlayer1.value!, selectedPlayer2.value!] } };
     
     case OnuWerewolfRole.Witch:
-      if (selectedPlayer.value !== undefined) {
-        return { selection: { cards: [selectedCard.value!], players: [selectedPlayer.value] } };
+      if (!witchCardRevealed.value) {
+        return { selection: { cards: [selectedCard.value!] } };
       }
-      return { selection: { cards: [selectedCard.value!] } };
+      return { selection: { cards: [selectedCard.value!], players: [selectedPlayer.value!] } };
 
     case OnuWerewolfRole.ParanormalInvestigator:
       return { selection: { players: selectedPlayers.value.slice(0, 2) } };
@@ -832,30 +843,30 @@ const buildSkillSelection = (): any => {
 };
 
 // 方法
-const roleCount = (role: OnuWerewolfRole) => selectedRoles.value.filter(r => r === role).length;
+const roleCount = (role: OnuWerewolfRole) => countRoleIn(selectedRoles.value, role);
 
 const removeRole = (role: OnuWerewolfRole) => {
   selectedRoles.value = selectedRoles.value.filter(r => r !== role);
 };
 
 const toggleRole = (role: OnuWerewolfRole) => {
-  // 项目配置约束：石匠最多1个；若旧配置中已有多个，点击会一次性清除多余状态。
+  if (!referenceRoleSet.has(role)) return;
+
   if (role === OnuWerewolfRole.Mason) {
     if (roleCount(role) > 0) {
       removeRole(role);
     } else {
-      selectedRoles.value.push(role);
+      selectedRoles.value.push(role, role);
     }
-    selectedRoles.value = sanitizeMasonRoles(selectedRoles.value);
     return;
   }
 
-  // 守夜人/哨兵同样必须成对出现（0个或2个）
-  if (role === OnuWerewolfRole.Sentinel) {
-    if (roleCount(role) > 0) {
-      removeRole(role);
+  if (duplicateAllowedRoles.has(role)) {
+    if (selectedRoles.value.length < props.playerCount + 3) {
+      selectedRoles.value.push(role);
     } else {
-      selectedRoles.value.push(role, role);
+      const index = selectedRoles.value.indexOf(role);
+      if (index >= 0) selectedRoles.value.splice(index, 1);
     }
     return;
   }
@@ -871,16 +882,14 @@ const toggleRole = (role: OnuWerewolfRole) => {
 };
 
 const updateConfig = () => {
-  const sanitizedRoles = sanitizeMasonRoles(selectedRoles.value);
-  if (sanitizedRoles.length !== selectedRoles.value.length) {
-    selectedRoles.value = sanitizedRoles;
-    ElMessage.warning('石匠最多只能有一个，已移除多余石匠，请补足角色后再提交');
+  if (configError.value) {
+    ElMessage.warning(configError.value);
     return;
   }
 
   // C3 fix: 不再嵌套config层
   emit('game-action', 'change_config', {
-    roles: sanitizedRoles,
+    roles: selectedRoles.value,
     nightTime: 300,
     discussTime: 180,
     votingTime: 300,
@@ -905,11 +914,11 @@ const skipSkill = () => {
 
 // C2 fix: 传递座位号而非玩家ID
 const vote = (targetSeat: number) => {
-  if (targetSeat === undefined || targetSeat === null || targetSeat < 0) {
+  if (targetSeat === undefined || targetSeat === null || targetSeat < -1 || targetSeat === 0) {
     console.error('Invalid vote target:', targetSeat);
     return;
   }
-  if (targetSeat === props.mySeat) {
+  if (targetSeat !== -1 && targetSeat === props.mySeat) {
     console.error('Invalid vote target: cannot vote for yourself');
     return;
   }
@@ -937,7 +946,7 @@ const getAutoSkillText = (role: OnuWerewolfRole | null | undefined) => {
   switch (role) {
     case OnuWerewolfRole.Werewolf: return '你将自动查看其他狼人同伴（如果没有同伴则查看一张中心卡）';
     case OnuWerewolfRole.Minion: return '你将自动查看狼人的位置';
-    case OnuWerewolfRole.Mason: return '你将自动查看是否有其他石匠';
+    case OnuWerewolfRole.Mason: return '你将自动查看是否有其他守夜人';
     case OnuWerewolfRole.ApprenticeTanner: return '你将自动查看本局是否有其他皮匠';
     case OnuWerewolfRole.Insomniac: return '你将自动查看自己的最终角色';
     case OnuWerewolfRole.AuraSeer: return '你将自动看到哪些玩家的角色被变动过';
@@ -970,8 +979,7 @@ const getTeamName = (team: OnuWerewolfTeam) => {
 // 监听游戏配置变化
 const watchConfig = watch(() => props.gameState?.config, (newConfig) => {
   if (newConfig) {
-    const sanitizedRoles = sanitizeMasonRoles([...newConfig.roles]);
-    selectedRoles.value = sanitizedRoles;
+    selectedRoles.value = [...newConfig.roles];
   }
 }, { immediate: true });
 
@@ -982,7 +990,6 @@ const watchRole = watch(() => activeRole.value, () => {
   selectedPlayer2.value = undefined;
   selectedPlayers.value = [];
   selectedCard.value = undefined;
-  selectedCards.value = [];
   villageIdiotDirection.value = 'left';
   skillResult.value = '';
 });
@@ -1357,23 +1364,27 @@ onUnmounted(() => {
   margin-bottom: 15px;
 }
 
-.vision-cards {
+.vision-cards,
+.vision-players {
   margin-bottom: 15px;
   padding: 15px;
   background: #fff3e0;
   border-radius: 8px;
 }
 
-.vision-cards h5 {
+.vision-cards h5,
+.vision-players h5 {
   margin: 0 0 10px 0;
   color: #e65100;
 }
 
-.vision-card {
+.vision-card,
+.vision-player {
   margin-bottom: 8px;
 }
 
-.vision-card:last-child {
+.vision-card:last-child,
+.vision-player:last-child {
   margin-bottom: 0;
 }
 </style>

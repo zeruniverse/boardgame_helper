@@ -12,7 +12,9 @@ import {
   OnuWerewolfPlayer, 
   OnuWerewolfCenterCard, 
   OnuWerewolfVision, 
-  OnuWerewolfSelection 
+  OnuWerewolfSelection,
+  ONU_WEREWOLF_REFERENCE_ROLES,
+  ONU_WEREWOLF_CENTER_VOTE_TARGET
 } from './onuWerewolfTypes';
 
 /**
@@ -84,7 +86,9 @@ export function onuGetDistance(seat1: number, seat2: number, totalSeats: number)
 }
 
 /**
- * 验证游戏配置是否有效
+ * 验证游戏配置是否有效。
+ * 以 one_night_ref/README.md 为准：守夜人必须 0 或 2 个；皮匠最多 1 个；
+ * 可配置角色限制在参考实现列出的角色范围内，避免旧扩展角色进入流程后破坏行动/胜负判定。
  */
 export function onuValidateGameConfig(roles: OnuWerewolfRole[]): {
   valid: boolean;
@@ -104,39 +108,43 @@ export function onuValidateGameConfig(roles: OnuWerewolfRole[]): {
     return { valid: false, error: '角色数量过多（最多20个）' };
   }
 
-  // 检查是否有重复的特殊角色（某些角色只能有一个）
+  const allowedRoles = new Set(ONU_WEREWOLF_REFERENCE_ROLES);
+  const unsupportedRole = roles.find(role => !allowedRoles.has(role));
+  if (unsupportedRole !== undefined) {
+    return {
+      valid: false,
+      error: `${ONU_WEREWOLF_ROLE_NAMES[unsupportedRole] || unsupportedRole} 不属于参考实现支持的一夜狼人角色`
+    };
+  }
+
   const uniqueRoles = [
-    OnuWerewolfRole.Doppelganger, 
-    OnuWerewolfRole.AlphaWolf, 
-    OnuWerewolfRole.MysticWolf, 
-    OnuWerewolfRole.Seer, 
-    OnuWerewolfRole.Robber, 
-    OnuWerewolfRole.Troublemaker, 
-    OnuWerewolfRole.Drunk, 
+    OnuWerewolfRole.AlphaWolf,
+    OnuWerewolfRole.MysticWolf,
+    OnuWerewolfRole.Minion,
+    OnuWerewolfRole.Seer,
+    OnuWerewolfRole.ApprenticeSeer,
+    OnuWerewolfRole.Witch,
+    OnuWerewolfRole.Revealer,
+    OnuWerewolfRole.Robber,
+    OnuWerewolfRole.Troublemaker,
+    OnuWerewolfRole.Drunk,
     OnuWerewolfRole.Insomniac,
     OnuWerewolfRole.Tanner
   ];
-  
+
   for (const uniqueRole of uniqueRoles) {
     const count = roles.filter(r => r === uniqueRole).length;
     if (count > 1) {
-      return { valid: false, error: `${ONU_WEREWOLF_ROLE_NAMES[uniqueRole] || uniqueRole} 角色只能有一个` };
+      return { valid: false, error: `${ONU_WEREWOLF_ROLE_NAMES[uniqueRole] || uniqueRole} 角色最多只能有一个` };
     }
   }
 
-  // 项目配置约束：石匠最多只能出现1个。
   const masonCount = roles.filter(r => r === OnuWerewolfRole.Mason).length;
-  if (masonCount > 1) {
-    return { valid: false, error: '石匠角色最多只能有一个' };
+  if (masonCount === 1) {
+    return { valid: false, error: '守夜人角色必须配置为0个或2个' };
   }
-
-  // 守夜人/哨兵最多2个，且必须成对出现（0个或2个）
-  const sentinelCount = roles.filter(r => r === OnuWerewolfRole.Sentinel).length;
-  if (sentinelCount > 2) {
-    return { valid: false, error: '守夜人/哨兵角色最多2个' };
-  }
-  if (sentinelCount === 1) {
-    return { valid: false, error: '守夜人/哨兵角色必须有0个或2个' };
+  if (masonCount > 2) {
+    return { valid: false, error: '守夜人角色最多只能有2个' };
   }
 
   const playerCount = roles.length - 3; // 3张中心卡牌
@@ -225,91 +233,75 @@ export function onuValidateSelection(
 }
 
 /**
- * 计算投票结果
+ * 计算投票结果。
+ * 参考实现允许投“墓地/中心牌”（selectedPlayer = -1）：当墓地得票不低于任何玩家时，
+ * 视为投墓地最高票，没有玩家被处决。否则所有最高票玩家被处决。
  */
 export function onuCalculateVoteResult(votes: Record<string, string>, players: Record<string, OnuWerewolfPlayer>): {
   voteCounts: Record<string, number>;
+  centerVotes: number;
   lynched: string[];
   maxVotes: number;
 } {
   const voteCounts: Record<string, number> = {};
-  
-  // 统计每个玩家获得的票数
-  for (const [voter, target] of Object.entries(votes)) {
-    if (players[target]) {
+  let centerVotes = 0;
+
+  for (const target of Object.values(votes)) {
+    if (target === ONU_WEREWOLF_CENTER_VOTE_TARGET) {
+      centerVotes++;
+    } else if (players[target]) {
       voteCounts[target] = (voteCounts[target] || 0) + 1;
     }
   }
 
-  // 找出最高票数
-  const maxVotes = Math.max(...Object.values(voteCounts), 0);
-  
-  // 找出所有获得最高票数的玩家
-  // 标准规则：无人获得多于1票时无人被处决；最高票并列且大于1票时并列者均被处决
-  const tiedPlayers = Object.keys(voteCounts).filter(playerId => voteCounts[playerId] === maxVotes);
-  const lynched = maxVotes <= 1 ? [] : tiedPlayers;
+  const playerMaxVotes = Math.max(...Object.values(voteCounts), 0);
+  const maxVotes = Math.max(playerMaxVotes, centerVotes);
 
-  return { voteCounts, lynched, maxVotes };
+  if (centerVotes >= playerMaxVotes) {
+    return { voteCounts, centerVotes, lynched: [], maxVotes };
+  }
+
+  const lynched = Object.keys(voteCounts).filter(playerId => voteCounts[playerId] === playerMaxVotes);
+  return { voteCounts, centerVotes, lynched, maxVotes };
 }
 
 /**
- * 计算游戏胜利者
+ * 计算游戏胜利者。
+ * 所有判断都基于夜晚行动结束后的当前身份。皮匠只有在“自己是唯一得票最多的玩家”
+ * 因而唯一被处决时获胜；平票含皮匠不再判为皮匠胜。
  */
 export function onuCalculateWinner(
   players: Record<string, OnuWerewolfPlayer>,
   lynched: string[]
 ): OnuWerewolfTeam {
   const allPlayers = Object.values(players);
-  const aliveWerewolves = allPlayers.filter(p => onuIsWerewolf(p.actualRole));
+  const currentWerewolves = allPlayers.filter(p => onuIsWerewolf(p.actualRole));
 
-  // 没有人被处决时：场上没有狼人则村民胜利；场上有狼人则狼人阵营胜利
   if (lynched.length === 0) {
-    return aliveWerewolves.length === 0 ? OnuWerewolfTeam.Villager : OnuWerewolfTeam.Werewolf;
+    return currentWerewolves.length > 0 ? OnuWerewolfTeam.Werewolf : OnuWerewolfTeam.Villager;
   }
 
-  // 检查是否有皮匠/皮匠学徒达成独立胜利。
-  // 官方规则：皮匠死则皮匠获胜；皮匠学徒在有皮匠时跟随“皮匠死亡”获胜，
-  // 若本局没有皮匠，皮匠学徒才按皮匠处理（自己死亡获胜）。
-  const hasTanner = allPlayers.some(p => p.actualRole === OnuWerewolfRole.Tanner);
-  const tannerExecuted = lynched.some(playerId => players[playerId]?.actualRole === OnuWerewolfRole.Tanner);
-  const apprenticeTannerExecutedWithoutTanner = !hasTanner && lynched.some(playerId =>
-    players[playerId]?.actualRole === OnuWerewolfRole.ApprenticeTanner
-  );
-
-  if (tannerExecuted || apprenticeTannerExecutedWithoutTanner) {
-    return OnuWerewolfTeam.Tanner;
+  if (lynched.length === 1) {
+    const executed = players[lynched[0]];
+    if (executed?.actualRole === OnuWerewolfRole.Tanner) {
+      return OnuWerewolfTeam.Tanner;
+    }
+    return executed && onuIsWerewolf(executed.actualRole)
+      ? OnuWerewolfTeam.Villager
+      : OnuWerewolfTeam.Werewolf;
   }
 
-  // 检查是否有狼人被处决
-  const lynchedWerewolves = lynched.filter(playerId => {
+  const allExecutedAreWerewolves = lynched.every(playerId => {
     const player = players[playerId];
-    return player && onuIsWerewolf(player.actualRole);
+    return Boolean(player && onuIsWerewolf(player.actualRole));
   });
 
-  if (lynchedWerewolves.length > 0) {
-    return OnuWerewolfTeam.Villager;
-  }
-
-  // 无真正狼人但有爪牙时，爪牙只有在“除自己之外的玩家”被处决时才代表狼人阵营获胜。
-  // 如果唯一被处决的是爪牙，狼人阵营没有达成目标，村民胜利。
-  if (aliveWerewolves.length === 0) {
-    const hasMinion = allPlayers.some(p => p.actualRole === OnuWerewolfRole.Minion);
-    if (hasMinion) {
-      const lynchedNonMinion = lynched.some(playerId => {
-        const player = players[playerId];
-        return player && player.actualRole !== OnuWerewolfRole.Minion;
-      });
-      return lynchedNonMinion ? OnuWerewolfTeam.Werewolf : OnuWerewolfTeam.Villager;
-    }
-  }
-
-  // 只要有人被处决且没有真正的狼人被处决，村民阵营没有达成目标。
-  // 特别注意：如果最终场上无狼人，村民只有在无人被处决时才获胜。
-  return OnuWerewolfTeam.Werewolf;
+  return allExecutedAreWerewolves ? OnuWerewolfTeam.Villager : OnuWerewolfTeam.Werewolf;
 }
 
 /**
- * 检查玩家是否胜利
+ * 检查玩家是否胜利。
+ * 参考实现只有村民/狼人/皮匠三个胜利阵营；玩家以最终身份所属阵营结算。
  */
 export function onuIsPlayerWinner(
   player: OnuWerewolfPlayer,
@@ -317,37 +309,11 @@ export function onuIsPlayerWinner(
   lynched: string[],
   players?: Record<string, OnuWerewolfPlayer>
 ): boolean {
-  const playerTeam = onuGetRoleTeam(player.actualRole);
-  const allPlayers = players ? Object.values(players) : [player];
-  const hasTanner = allPlayers.some(p => p.actualRole === OnuWerewolfRole.Tanner);
-  const tannerDied = lynched.some(playerId => players?.[playerId]?.actualRole === OnuWerewolfRole.Tanner);
-  const werewolfDied = lynched.some(playerId => {
-    const lynchedPlayer = players?.[playerId];
-    return Boolean(lynchedPlayer && onuIsWerewolf(lynchedPlayer.actualRole));
-  });
-
-  // 皮匠：自己死亡即胜利。
-  if (player.actualRole === OnuWerewolfRole.Tanner) {
-    return lynched.includes(player.id);
-  }
-
-  // 皮匠学徒：有皮匠时随皮匠死亡获胜；没有皮匠时才需要自己死亡。
-  if (player.actualRole === OnuWerewolfRole.ApprenticeTanner) {
-    return hasTanner ? tannerDied : lynched.includes(player.id);
-  }
-
-  // 皮匠死亡且狼人也死亡时，村民阵营也获胜；若只有皮匠死亡，村民不获胜。
   if (winner === OnuWerewolfTeam.Tanner) {
-    return playerTeam === OnuWerewolfTeam.Villager && werewolfDied;
+    return player.actualRole === OnuWerewolfRole.Tanner && lynched.length === 1 && lynched[0] === player.id;
   }
 
-  // 猎人属于村民阵营，胜负仍按最终阵营判断。
-  if (player.actualRole === OnuWerewolfRole.Hunter) {
-    return playerTeam === winner;
-  }
-
-  // 其他角色：根据团队胜利情况判断。
-  return playerTeam === winner;
+  return onuGetRoleTeam(player.actualRole) === winner;
 }
 
 /**

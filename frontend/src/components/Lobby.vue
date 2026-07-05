@@ -223,22 +223,26 @@
             <p><strong>特殊规则：</strong>只有一个夜晚和一个白天，角色可能在夜晚被交换。</p>
             <p><strong>角色介绍：</strong></p>
             <ul>
-              <li><strong>狼人：</strong>互相认识，如果只有一只狼人可以查看中心卡牌</li>
-              <li><strong>村民：</strong>没有特殊能力</li>
-              <li><strong>预言家：</strong>可以查看一名玩家的角色或两张中心卡牌</li>
+              <li><strong>普通狼人：</strong>互相认识，如果只有一只狼人可以查看中心卡牌</li>
+              <li><strong>头狼：</strong>选择一名玩家变成普通狼人</li>
+              <li><strong>狼先知：</strong>查看狼人同伴后，可查看一名其他玩家的角色</li>
+              <li><strong>爪牙：</strong>知道初始狼人身份，与狼人同一阵营</li>
+              <li><strong>预言家：</strong>可以查看一名其他玩家的角色</li>
+              <li><strong>学徒预言家：</strong>可以查看一张中心卡牌</li>
+              <li><strong>女巫：</strong>查看一张中心卡牌，并将其交给一名玩家</li>
+              <li><strong>揭示者：</strong>可以公开揭示一名非狼人玩家的角色</li>
               <li><strong>强盗：</strong>可以与另一名玩家交换角色卡</li>
               <li><strong>捣蛋鬼：</strong>可以交换其他两名玩家的角色卡</li>
               <li><strong>酒鬼：</strong>必须与一张中心卡牌交换角色</li>
               <li><strong>失眠者：</strong>在夜晚结束时查看自己的最终角色</li>
-              <li><strong>石匠：</strong>查看是否有其他石匠（本项目最多配置1个）</li>
-              <li><strong>猎人：</strong>如果被投票出局，可以带走一名玩家</li>
-              <li><strong>皮匠：</strong>只有被投票出局才能获胜</li>
-              <li><strong>爪牙：</strong>知道狼人身份，与狼人同一阵营</li>
+              <li><strong>守夜人：</strong>必须配置为0个或2个；夜晚查看是否有其他守夜人</li>
+              <li><strong>村民：</strong>没有特殊能力，属于好人阵营</li>
+              <li><strong>皮匠：</strong>只有自己成为唯一得票最多并被处决时获胜</li>
             </ul>
             <p><strong>游戏流程：</strong></p>
             <ol>
               <li><strong>夜晚阶段：</strong>按顺序执行各角色技能</li>
-              <li><strong>白天阶段：</strong>讨论并投票处决一名玩家</li>
+              <li><strong>白天阶段：</strong>讨论后投票给另一名玩家或墓地（中心牌）</li>
               <li><strong>结算：</strong>根据被处决者的身份判断胜负</li>
             </ol>
           </div>

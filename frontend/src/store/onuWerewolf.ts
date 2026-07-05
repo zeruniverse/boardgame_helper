@@ -56,21 +56,21 @@ export enum OnuWerewolfTeam {
 // 角色名称映射
 export const ONU_WEREWOLF_ROLE_NAMES: Record<OnuWerewolfRole, string> = {
   [OnuWerewolfRole.Unknown]: '未知',
-  [OnuWerewolfRole.Werewolf]: '狼人',
+  [OnuWerewolfRole.Werewolf]: '普通狼人',
   [OnuWerewolfRole.Villager]: '村民',
   [OnuWerewolfRole.Seer]: '预言家',
   [OnuWerewolfRole.Robber]: '强盗',
   [OnuWerewolfRole.Troublemaker]: '捣蛋鬼',
   [OnuWerewolfRole.Drunk]: '酒鬼',
   [OnuWerewolfRole.Insomniac]: '失眠者',
-  [OnuWerewolfRole.Mason]: '石匠',
+  [OnuWerewolfRole.Mason]: '守夜人',
   [OnuWerewolfRole.Minion]: '爪牙',
   [OnuWerewolfRole.Doppelganger]: '化身',
   [OnuWerewolfRole.Hunter]: '猎人',
   [OnuWerewolfRole.Tanner]: '皮匠',
-  [OnuWerewolfRole.AlphaWolf]: '狼王',
-  [OnuWerewolfRole.MysticWolf]: '神秘狼',
-  [OnuWerewolfRole.ApprenticeSeer]: '预言家学徒',
+  [OnuWerewolfRole.AlphaWolf]: '头狼',
+  [OnuWerewolfRole.MysticWolf]: '狼先知',
+  [OnuWerewolfRole.ApprenticeSeer]: '学徒预言家',
   [OnuWerewolfRole.ParanormalInvestigator]: '超自然调查员',
   [OnuWerewolfRole.Witch]: '女巫',
   [OnuWerewolfRole.VillageIdiot]: '村庄白痴',
@@ -437,6 +437,9 @@ export const useOnuWerewolfStore = defineStore('onuWerewolf', {
         if (data.role !== undefined) {
           this.playerSecret.activeSkillRole = data.role;
         }
+        if (data.skillData) {
+          this.playerSecret.skillData = { ...(this.playerSecret.skillData || {}), ...data.skillData };
+        }
         this.playerSecret.canUseSkill = true;
         this.addSystemMessage(data.message || '轮到你使用技能了');
       });
@@ -449,6 +452,9 @@ export const useOnuWerewolfStore = defineStore('onuWerewolf', {
         delete this.playerSecret.activeSkillRole;
         if (data.vision) {
           mergeVision(data.vision);
+        }
+        if (data.skillData) {
+          this.playerSecret.skillData = { ...(this.playerSecret.skillData || {}), ...data.skillData };
         }
         this.addSystemMessage(data.message || '技能使用完成');
       });

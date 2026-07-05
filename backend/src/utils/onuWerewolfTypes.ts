@@ -41,6 +41,28 @@ export enum OnuWerewolfRole {
   Thing = 26
 }
 
+// 本项目的一夜终极狼人以 one_night_ref/README.md 为权威参考。
+// 这些是参考实现中可配置的角色；内部仍保留扩展枚举，便于兼容旧存档/旧客户端显示。
+export const ONU_WEREWOLF_REFERENCE_ROLES: OnuWerewolfRole[] = [
+  OnuWerewolfRole.Werewolf,
+  OnuWerewolfRole.AlphaWolf,
+  OnuWerewolfRole.MysticWolf,
+  OnuWerewolfRole.Minion,
+  OnuWerewolfRole.Seer,
+  OnuWerewolfRole.ApprenticeSeer,
+  OnuWerewolfRole.Witch,
+  OnuWerewolfRole.Revealer,
+  OnuWerewolfRole.Robber,
+  OnuWerewolfRole.Troublemaker,
+  OnuWerewolfRole.Insomniac,
+  OnuWerewolfRole.Drunk,
+  OnuWerewolfRole.Mason,
+  OnuWerewolfRole.Villager,
+  OnuWerewolfRole.Tanner
+];
+
+export const ONU_WEREWOLF_CENTER_VOTE_TARGET = '__center__';
+
 // 团队枚举
 export enum OnuWerewolfTeam {
   Villager = 'villager',
@@ -137,21 +159,21 @@ export const ONU_WEREWOLF_ROLE_TEAM: Record<OnuWerewolfRole, OnuWerewolfTeam> = 
 // 角色名称映射
 export const ONU_WEREWOLF_ROLE_NAMES: Record<OnuWerewolfRole, string> = {
   [OnuWerewolfRole.Unknown]: '未知',
-  [OnuWerewolfRole.Werewolf]: '狼人',
+  [OnuWerewolfRole.Werewolf]: '普通狼人',
   [OnuWerewolfRole.Villager]: '村民',
   [OnuWerewolfRole.Seer]: '预言家',
   [OnuWerewolfRole.Robber]: '强盗',
   [OnuWerewolfRole.Troublemaker]: '捣蛋鬼',
   [OnuWerewolfRole.Drunk]: '酒鬼',
   [OnuWerewolfRole.Insomniac]: '失眠者',
-  [OnuWerewolfRole.Mason]: '石匠',
+  [OnuWerewolfRole.Mason]: '守夜人',
   [OnuWerewolfRole.Minion]: '爪牙',
   [OnuWerewolfRole.Doppelganger]: '化身',
   [OnuWerewolfRole.Hunter]: '猎人',
   [OnuWerewolfRole.Tanner]: '皮匠',
-  [OnuWerewolfRole.AlphaWolf]: '狼王',
-  [OnuWerewolfRole.MysticWolf]: '神秘狼',
-  [OnuWerewolfRole.ApprenticeSeer]: '预言家学徒',
+  [OnuWerewolfRole.AlphaWolf]: '头狼',
+  [OnuWerewolfRole.MysticWolf]: '狼先知',
+  [OnuWerewolfRole.ApprenticeSeer]: '学徒预言家',
   [OnuWerewolfRole.ParanormalInvestigator]: '超自然调查员',
   [OnuWerewolfRole.Witch]: '女巫',
   [OnuWerewolfRole.VillageIdiot]: '村庄白痴',
