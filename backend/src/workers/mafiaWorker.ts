@@ -91,6 +91,11 @@ interface MafiaConfig {
   actionTime: number;     // 行动时间（秒）
   nightTime: number;      // 夜晚时间（秒）
   lastWordRound: number;  // 遗言轮数
+  killerCount?: number;   // 杀手数量
+  copCount?: number;      // 警察数量
+  doctorCount?: number;   // 医生数量
+  sniperCount?: number;   // 狙击手数量
+  roleCountsCustomized?: boolean; // 是否由房主手动指定角色数量
 }
 
 // 任务接口
@@ -188,14 +193,99 @@ class MafiaWorker extends BaseGameWorker {
     } as MafiaGameState;
   }
 
+  private toBoundedInt(value: unknown, fallback: number, min: number, max: number): number {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) return fallback;
+    return Math.max(min, Math.min(max, Math.floor(parsed)));
+  }
+
+  private getDefaultRoleConfig(playerCount: number): [number, number, number, number, number] {
+    const count = Math.max(MIN_PLAYER_COUNT, Math.min(MAX_PLAYER_COUNT, Math.floor(playerCount || MIN_PLAYER_COUNT)));
+    return MAFIA_TEAM_CONFIG[count] || MAFIA_TEAM_CONFIG[MIN_PLAYER_COUNT];
+  }
+
+  private hasRoleCountFields(config: Partial<MafiaConfig> = {}): boolean {
+    return ['killerCount', 'copCount', 'doctorCount', 'sniperCount'].some(key =>
+      Object.prototype.hasOwnProperty.call(config, key)
+    );
+  }
+
+  private buildDisplayConfig(config: Partial<MafiaConfig> = this.config || {}): MafiaConfig {
+    const fallbackPlayerCount = this.room?.maxPlayers || this.room?.players?.length || MIN_PLAYER_COUNT;
+    const [defaultKillers, defaultCops, defaultDoctors, defaultSnipers] = this.getDefaultRoleConfig(fallbackPlayerCount);
+    return {
+      speakTime: this.toBoundedInt(config.speakTime, this.config?.speakTime ?? 60, 15, 600),
+      actionTime: this.toBoundedInt(config.actionTime, this.config?.actionTime ?? 60, 15, 600),
+      nightTime: this.toBoundedInt(config.nightTime, this.config?.nightTime ?? 60, 15, 600),
+      lastWordRound: this.toBoundedInt(config.lastWordRound, this.config?.lastWordRound ?? 3, 0, 10),
+      killerCount: this.toBoundedInt(config.killerCount, this.config?.killerCount ?? defaultKillers, 1, MAX_PLAYER_COUNT),
+      copCount: this.toBoundedInt(config.copCount, this.config?.copCount ?? defaultCops, 0, MAX_PLAYER_COUNT),
+      doctorCount: this.toBoundedInt(config.doctorCount, this.config?.doctorCount ?? defaultDoctors, 0, MAX_PLAYER_COUNT),
+      sniperCount: this.toBoundedInt(config.sniperCount, this.config?.sniperCount ?? defaultSnipers, 0, MAX_PLAYER_COUNT),
+      roleCountsCustomized: Boolean(config.roleCountsCustomized)
+    };
+  }
+
+  private getDisplayConfigForPlayerCount(playerCount?: number): MafiaConfig {
+    const displayConfig = this.buildDisplayConfig(this.config);
+    if (displayConfig.roleCountsCustomized) {
+      return displayConfig;
+    }
+
+    const onlinePlayerCount = this.room?.players?.filter(p => p.online !== false).length || 0;
+    const countForDefaults = playerCount || onlinePlayerCount || this.room?.maxPlayers || MIN_PLAYER_COUNT;
+    const [defaultKillers, defaultCops, defaultDoctors, defaultSnipers] = this.getDefaultRoleConfig(countForDefaults);
+    return {
+      ...displayConfig,
+      killerCount: defaultKillers,
+      copCount: defaultCops,
+      doctorCount: defaultDoctors,
+      sniperCount: defaultSnipers,
+      roleCountsCustomized: false
+    };
+  }
+
+  private getRoleConfigForPlayerCount(playerCount: number): [number, number, number, number, number] {
+    const fallback = this.getDefaultRoleConfig(playerCount);
+    if (!this.config?.roleCountsCustomized) {
+      return fallback;
+    }
+
+    const displayConfig = this.buildDisplayConfig(this.config);
+    const killerCount = this.toBoundedInt(displayConfig.killerCount, fallback[0], 1, playerCount);
+    const copCount = this.toBoundedInt(displayConfig.copCount, fallback[1], 0, playerCount);
+    const doctorCount = this.toBoundedInt(displayConfig.doctorCount, fallback[2], 0, playerCount);
+    const sniperCount = this.toBoundedInt(displayConfig.sniperCount, fallback[3], 0, playerCount);
+    const specialCount = killerCount + copCount + doctorCount + sniperCount;
+
+    if (killerCount >= playerCount) {
+      throw new Error('角色配置不合法：杀手数量必须少于总人数');
+    }
+    if (specialCount > playerCount) {
+      throw new Error('角色配置不合法：特殊角色总数不能超过参与人数');
+    }
+
+    return [killerCount, copCount, doctorCount, sniperCount, playerCount - specialCount];
+  }
+
+  private syncConfigToRoom(): void {
+    if (!this.room.gameMetadata) {
+      this.room.gameMetadata = {};
+    }
+    this.room.gameMetadata.gameConfig = {
+      ...(this.room.gameMetadata.gameConfig || {}),
+      ...this.config
+    };
+  }
+
   async prepareRoom(room: Room, config: MafiaConfig): Promise<void> {
     this.room = room;
+    const incomingConfig = config || {};
     this.config = {
-      speakTime: config.speakTime ?? 60,
-      actionTime: config.actionTime ?? 60,
-      nightTime: config.nightTime ?? 60,
-      lastWordRound: config.lastWordRound ?? 3
+      ...this.buildDisplayConfig(incomingConfig),
+      roleCountsCustomized: Boolean(incomingConfig.roleCountsCustomized) || this.hasRoleCountFields(incomingConfig)
     };
+    this.syncConfigToRoom();
 
     this.gameState.lastWordCount = this.config.lastWordRound;
 
@@ -214,13 +304,22 @@ class MafiaWorker extends BaseGameWorker {
   }
 
   async changeConfig(config: Partial<MafiaConfig>): Promise<void> {
+    const incomingConfig = config || {};
+    const roleCountsCustomized = Boolean(this.config?.roleCountsCustomized) || this.hasRoleCountFields(incomingConfig);
     this.config = {
-      speakTime: config.speakTime ?? this.config.speakTime,
-      actionTime: config.actionTime ?? this.config.actionTime,
-      nightTime: config.nightTime ?? this.config.nightTime,
-      lastWordRound: config.lastWordRound ?? this.config.lastWordRound
+      ...this.buildDisplayConfig({
+        ...this.config,
+        ...incomingConfig
+      }),
+      roleCountsCustomized
     };
+    this.syncConfigToRoom();
+    if ((this.gameState as MafiaGameState).status === GameStatus.WAITING) {
+      this.gameState.lastWordCount = this.config.lastWordRound;
+    }
     this.sendToRoom('config_changed', { config: this.config });
+    this.sendToRoom('room_update', this.room);
+    this.sendToRoom('game_update', this.getGameInfo());
   }
 
   async joinRoom(player: Player): Promise<void> {
@@ -359,6 +458,11 @@ class MafiaWorker extends BaseGameWorker {
           break;
         case 'startGame':
           this.handleStartGame(playerId);
+          break;
+        case 'updateConfig':
+        case 'update_config':
+        case 'change_config':
+          await this.handleChangeConfig(playerId, actionData?.config || actionData);
           break;
         case 'inspect_suspect':
           this.handleInspectSuspect(playerId, actionData.suspectId);
@@ -508,6 +612,8 @@ class MafiaWorker extends BaseGameWorker {
   private getGameInfo(): any {
     const gameState = this.gameState as MafiaGameState;
     const timeLeft = this.getTimeLeft();
+    const displayConfig = this.getDisplayConfigForPlayerCount();
+    const waitingForStart = gameState.status === GameStatus.WAITING;
     
     // 计算投票统计
     const voteCounts: Record<string, number> = {};
@@ -545,10 +651,11 @@ class MafiaWorker extends BaseGameWorker {
         [GameStatus.LAST_WORD, GameStatus.LAST_WORD_DAYTIME].includes(gameState.status) 
         ? gameState.operators[0] : null,
       winner: gameState.winner,
-      killerCount: gameState.killerCount,
-      copCount: gameState.copCount,
-      doctorCount: gameState.doctorCount,
-      sniperCount: gameState.sniperCount,
+      killerCount: waitingForStart ? displayConfig.killerCount : gameState.killerCount,
+      copCount: waitingForStart ? displayConfig.copCount : gameState.copCount,
+      doctorCount: waitingForStart ? displayConfig.doctorCount : gameState.doctorCount,
+      sniperCount: waitingForStart ? displayConfig.sniperCount : gameState.sniperCount,
+      config: displayConfig,
       timeLeft,
       statusMessage: this.getStatusMessage(),
       muteList: this.getMuteList(),
@@ -772,12 +879,37 @@ class MafiaWorker extends BaseGameWorker {
     this.startGame(readyPlayers);
   }
 
+  private async handleChangeConfig(playerId: string, config: Partial<MafiaConfig>): Promise<void> {
+    if (this.room.hostId !== playerId) {
+      this.sendToPlayer(playerId, 'game_error', { message: '只有房主可以修改房间配置' });
+      return;
+    }
+
+    const gameState = this.gameState as MafiaGameState;
+    if (gameState.status !== GameStatus.WAITING) {
+      this.sendToPlayer(playerId, 'game_error', { message: '游戏进行中不能修改角色配置' });
+      return;
+    }
+
+    await this.changeConfig(config || {});
+    this.sendToRoom('system_message', { message: '房主更新了杀人游戏配置' });
+  }
+
   private startGame(readyPlayers: Player[]): void {
     const gameState = this.gameState as MafiaGameState;
     const playerCount = readyPlayers.length;
     
     // 获取角色配置 [杀手数, 警察数, 医生数, 狙击手数, 平民数]
-    const [killerCount, copCount, doctorCount, sniperCount, civilianCount] = MAFIA_TEAM_CONFIG[playerCount];
+    let roleConfig: [number, number, number, number, number];
+    try {
+      roleConfig = this.getRoleConfigForPlayerCount(playerCount);
+    } catch (error: any) {
+      const message = error?.message || '角色配置不合法，无法开始游戏';
+      this.sendToPlayer(this.room.hostId, 'game_error', { message });
+      this.sendToRoom('system_message', { message });
+      return;
+    }
+    const [killerCount, copCount, doctorCount, sniperCount, civilianCount] = roleConfig;
     
     // 分配角色
     const roles: Role[] = [
@@ -1343,49 +1475,26 @@ class MafiaWorker extends BaseGameWorker {
     if (!player || !message) return;
 
     const gameState = this.gameState as MafiaGameState;
-    let channel = data?.channel === 'killer' ? 'killer' : 'all';
-    if (!gameState || (gameState.status === GameStatus.WAITING || gameState.status === GameStatus.OVER) && channel === 'killer') {
-      channel = 'all';
-    }
-
     if (gameState && gameState.status !== GameStatus.WAITING && gameState.status !== GameStatus.OVER) {
       const gamePlayer = gameState.players?.[playerId];
       if (!gamePlayer) {
         this.sendToPlayer(playerId, 'game_error', { message: '旁观者在游戏进行中不能发言' });
         return;
       }
-
-      if (channel === 'killer') {
-        const canUseKillerChannel = gameState.status === GameStatus.NIGHT &&
-          gamePlayer.alive &&
-          gameState.topSecret.killer.includes(playerId);
-        if (!canUseKillerChannel) {
-          this.sendToPlayer(playerId, 'game_error', { message: '只有夜晚存活杀手可以使用杀手频道' });
-          return;
-        }
-      } else if (this.getMuteList().includes(playerId)) {
+      if (this.getMuteList().includes(playerId)) {
         this.sendToPlayer(playerId, 'game_error', { message: '当前阶段无法发言' });
         return;
       }
     }
 
-    const payload = {
+    this.sendToRoom('chat_message', {
       playerId,
       playerName: player.nickname,
       message,
-      channel,
-      type: channel === 'killer' ? 'killer' : 'chat',
+      channel: 'all',
+      type: 'chat',
       timestamp: Date.now()
-    };
-
-    if (channel === 'killer') {
-      gameState.topSecret.killer
-        .filter(killerId => gameState.players[killerId]?.alive)
-        .forEach(killerId => this.sendToPlayer(killerId, 'chat_message', payload));
-      return;
-    }
-
-    this.sendToRoom('chat_message', payload);
+    });
   }
 
   private handleHeartbeat(playerId: string): void {

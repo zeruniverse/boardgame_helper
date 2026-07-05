@@ -222,8 +222,8 @@ interface Player {
   name: string
   nickname?: string
   alive?: boolean
-  team?: 'RED' | 'BLUE'
-  role?: 'KILLER' | 'COP' | 'DOCTOR' | 'SNIPER' | 'CIVILIAN'
+  team?: 'RED' | 'BLUE' | 'NONE'
+  role?: 'KILLER' | 'COP' | 'DOCTOR' | 'SNIPER' | 'CIVILIAN' | 'GUEST'
 }
 
 interface GameState {
@@ -241,8 +241,8 @@ interface GameState {
 }
 
 interface PlayerSecret {
-  role: 'KILLER' | 'COP' | 'DOCTOR' | 'SNIPER' | 'CIVILIAN'
-  team: 'RED' | 'BLUE'
+  role: 'KILLER' | 'COP' | 'DOCTOR' | 'SNIPER' | 'CIVILIAN' | 'GUEST'
+  team: 'RED' | 'BLUE' | 'NONE'
   teammates?: string[]
   inspectResults?: Array<{ target: string; day: number; result: 'RED' | 'BLUE' }>
   sniperShot?: boolean

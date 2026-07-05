@@ -296,7 +296,8 @@ const getRoleName = (role: string): string => {
     'assassin': '刺客',
     'oberon': '奥伯伦',
     'mordred': '莫德雷德',
-    'bad': '爪牙'
+    'bad': '爪牙',
+    'guest': '旁观者'
   }
   return roleNames[role] || role
 }
@@ -304,7 +305,8 @@ const getRoleName = (role: string): string => {
 const getTeamName = (team: string): string => {
   const teamNames: Record<string, string> = {
     'blue': '亚瑟方',
-    'red': '莫德雷德方'
+    'red': '莫德雷德方',
+    'guest': '旁观者'
   }
   return teamNames[team] || team
 }

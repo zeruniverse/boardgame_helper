@@ -122,48 +122,72 @@
       </div>
     </div>
 
-    <!-- 游戏配置（仅房主可见） -->
-    <div v-if="isHost && !gameStarted" class="game-config">
+    <!-- 等待阶段房间配置 -->
+    <div v-if="!gameStarted" class="game-config">
       <el-divider>游戏设置</el-divider>
-      <div class="config-item">
-        <label>发言时间:</label>
-        <span>{{ speakTime }}秒</span>
-      </div>
-      <div class="config-item">
-        <label>行动时间:</label>
-        <span>{{ actionTime }}秒</span>
-      </div>
-      <div class="config-item">
-        <label>夜晚时间:</label>
-        <span>{{ nightTime }}秒</span>
-      </div>
+      <template v-if="isHost">
+        <div class="config-grid">
+          <div class="config-item">
+            <label>发言时间</label>
+            <el-input-number v-model="editableConfig.speakTime" :min="15" :max="600" :step="15" size="small" @change="emitConfigChange" />
+          </div>
+          <div class="config-item">
+            <label>行动时间</label>
+            <el-input-number v-model="editableConfig.actionTime" :min="15" :max="600" :step="15" size="small" @change="emitConfigChange" />
+          </div>
+          <div class="config-item">
+            <label>夜晚时间</label>
+            <el-input-number v-model="editableConfig.nightTime" :min="15" :max="600" :step="15" size="small" @change="emitConfigChange" />
+          </div>
+          <div class="config-item">
+            <label>遗言轮数</label>
+            <el-input-number v-model="editableConfig.lastWordRound" :min="0" :max="10" size="small" @change="emitConfigChange" />
+          </div>
+        </div>
+
+        <el-divider>角色数量</el-divider>
+        <div class="config-grid">
+          <div class="config-item">
+            <label>杀手</label>
+            <el-input-number v-model="editableConfig.killerCount" :min="1" :max="maxPlayers" size="small" @change="emitConfigChange" />
+          </div>
+          <div class="config-item">
+            <label>警察</label>
+            <el-input-number v-model="editableConfig.copCount" :min="0" :max="maxPlayers" size="small" @change="emitConfigChange" />
+          </div>
+          <div class="config-item">
+            <label>医生</label>
+            <el-input-number v-model="editableConfig.doctorCount" :min="0" :max="maxPlayers" size="small" @change="emitConfigChange" />
+          </div>
+          <div class="config-item">
+            <label>狙击手</label>
+            <el-input-number v-model="editableConfig.sniperCount" :min="0" :max="maxPlayers" size="small" @change="emitConfigChange" />
+          </div>
+        </div>
+        <div class="config-tip" :class="{ invalid: roleConfigInvalid }">
+          当前 {{ players.length }} 人：杀手 {{ currentRoleConfig.killers }}、警察 {{ currentRoleConfig.cops }}、医生 {{ currentRoleConfig.doctors }}、狙击手 {{ currentRoleConfig.snipers }}、平民 {{ currentRoleConfig.civilians }}。
+          <span v-if="roleConfigInvalid">角色数量不合法，无法开始游戏。</span>
+          <span v-else>平民会自动补足剩余人数。</span>
+        </div>
+      </template>
+      <template v-else>
+        <div class="readonly-config">
+          发言 {{ speakTime }}秒 / 行动 {{ actionTime }}秒 / 夜晚 {{ nightTime }}秒 / 遗言 {{ lastWordRound }}轮
+        </div>
+      </template>
     </div>
 
     <!-- 角色配置说明 -->
     <div v-if="!gameStarted" class="role-config">
-      <el-divider>角色配置</el-divider>
-      <div class="role-distribution">
-        <div v-for="(config, playerCount) in roleConfigs" :key="playerCount">
-          <div v-if="playerCount == players.length" class="current-config">
-            <h5>{{ playerCount }}人局配置:</h5>
-            <div class="roles">
-              <el-tag type="danger" size="small">
-                杀手 {{ config.killers }}人
-              </el-tag>
-              <el-tag type="primary" size="small">
-                警察 {{ config.cops }}人
-              </el-tag>
-              <el-tag type="success" size="small">
-                医生 {{ config.doctors }}人
-              </el-tag>
-              <el-tag type="warning" size="small">
-                狙击手 {{ config.snipers }}人
-              </el-tag>
-              <el-tag type="info" size="small">
-                平民 {{ config.civilians }}人
-              </el-tag>
-            </div>
-          </div>
+      <el-divider>当前角色配置</el-divider>
+      <div class="current-config">
+        <h5>{{ players.length }}人局配置:</h5>
+        <div class="roles">
+          <el-tag type="danger" size="small">杀手 {{ currentRoleConfig.killers }}人</el-tag>
+          <el-tag type="primary" size="small">警察 {{ currentRoleConfig.cops }}人</el-tag>
+          <el-tag type="success" size="small">医生 {{ currentRoleConfig.doctors }}人</el-tag>
+          <el-tag type="warning" size="small">狙击手 {{ currentRoleConfig.snipers }}人</el-tag>
+          <el-tag type="info" size="small">平民 {{ currentRoleConfig.civilians }}人</el-tag>
         </div>
       </div>
     </div>
@@ -171,7 +195,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, reactive, watch } from 'vue'
 import { House, MoreFilled, Select } from '@element-plus/icons-vue'
 import { formatPlayerName } from '../utils/playerName'
 import LocalPlayerMark from './LocalPlayerMark.vue'
@@ -183,8 +207,8 @@ interface Player {
   index: number
   ready: boolean
   alive?: boolean
-  role?: 'KILLER' | 'COP' | 'DOCTOR' | 'SNIPER' | 'CIVILIAN'
-  team?: 'RED' | 'BLUE'
+  role?: 'KILLER' | 'COP' | 'DOCTOR' | 'SNIPER' | 'CIVILIAN' | 'GUEST'
+  team?: 'RED' | 'BLUE' | 'NONE'
 }
 
 interface RoomConfig {
@@ -193,6 +217,11 @@ interface RoomConfig {
   nightTime?: number
   lastWordRound?: number
   maxPlayers?: number
+  killerCount?: number
+  copCount?: number
+  doctorCount?: number
+  sniperCount?: number
+  roleCountsCustomized?: boolean
 }
 
 interface Props {
@@ -201,8 +230,8 @@ interface Props {
   currentUserId: string
   gamePlayersById?: Record<string, Player>
   playerSecret?: {
-    role: 'KILLER' | 'COP' | 'DOCTOR' | 'SNIPER' | 'CIVILIAN'
-    team: 'RED' | 'BLUE'
+    role: 'KILLER' | 'COP' | 'DOCTOR' | 'SNIPER' | 'CIVILIAN' | 'GUEST'
+    team: 'RED' | 'BLUE' | 'NONE'
     teammates?: string[]
     inspectResults?: Array<{
       target: string
@@ -217,15 +246,17 @@ interface Props {
 }
 
 const props = defineProps<Props>()
-defineEmits<{
+const emit = defineEmits<{
   transferHost: [playerId: string]
   kickPlayer: [playerId: string]
+  updateConfig: [config: RoomConfig]
 }>()
 
 // 游戏配置 - 优先使用房间配置
 const speakTime = computed(() => props.roomConfig?.speakTime ?? 60)
 const actionTime = computed(() => props.roomConfig?.actionTime ?? 60)
 const nightTime = computed(() => props.roomConfig?.nightTime ?? 60)
+const lastWordRound = computed(() => props.roomConfig?.lastWordRound ?? 3)
 const maxPlayers = computed(() => props.roomConfig?.maxPlayers ?? 20)
 
 // 角色配置 - 与后端 MAFIA_TEAM_CONFIG 和 doc/mafia.md 一致
@@ -247,6 +278,81 @@ const roleConfigs = {
   20: { killers: 5, cops: 4, doctors: 2, snipers: 1, civilians: 8 }
 }
 
+type RoleDistribution = typeof roleConfigs[6]
+
+const getDefaultRoleConfig = (count: number): RoleDistribution => {
+  const normalized = Math.max(6, Math.min(20, Math.floor(count || 6))) as keyof typeof roleConfigs
+  return roleConfigs[normalized] || roleConfigs[6]
+}
+
+const editableConfig = reactive({
+  speakTime: 60,
+  actionTime: 60,
+  nightTime: 60,
+  lastWordRound: 3,
+  killerCount: 2,
+  copCount: 1,
+  doctorCount: 1,
+  sniperCount: 1
+})
+
+const playersCountForConfig = computed(() => Math.max(6, Math.min(20, props.players.length || maxPlayers.value || 6)))
+
+const currentDefaultRoleConfig = computed(() => getDefaultRoleConfig(playersCountForConfig.value))
+
+watch(
+  () => [props.roomConfig, props.players.length] as const,
+  () => {
+    const defaults = getDefaultRoleConfig(playersCountForConfig.value)
+    editableConfig.speakTime = props.roomConfig?.speakTime ?? 60
+    editableConfig.actionTime = props.roomConfig?.actionTime ?? 60
+    editableConfig.nightTime = props.roomConfig?.nightTime ?? 60
+    editableConfig.lastWordRound = props.roomConfig?.lastWordRound ?? 3
+    editableConfig.killerCount = props.roomConfig?.killerCount ?? defaults.killers
+    editableConfig.copCount = props.roomConfig?.copCount ?? defaults.cops
+    editableConfig.doctorCount = props.roomConfig?.doctorCount ?? defaults.doctors
+    editableConfig.sniperCount = props.roomConfig?.sniperCount ?? defaults.snipers
+  },
+  { immediate: true, deep: true }
+)
+
+const configuredSpecialCount = computed(() =>
+  editableConfig.killerCount + editableConfig.copCount + editableConfig.doctorCount + editableConfig.sniperCount
+)
+
+const currentRoleConfig = computed(() => {
+  const defaults = currentDefaultRoleConfig.value
+  const useConfigured = props.roomConfig?.roleCountsCustomized === true
+
+  if (!useConfigured) return defaults
+
+  return {
+    killers: editableConfig.killerCount,
+    cops: editableConfig.copCount,
+    doctors: editableConfig.doctorCount,
+    snipers: editableConfig.sniperCount,
+    civilians: Math.max(0, props.players.length - configuredSpecialCount.value)
+  }
+})
+
+const roleConfigInvalid = computed(() => {
+  const totalPlayers = props.players.length
+  return totalPlayers > 0 && (editableConfig.killerCount >= totalPlayers || configuredSpecialCount.value > totalPlayers)
+})
+
+const emitConfigChange = () => {
+  emit('updateConfig', {
+    speakTime: editableConfig.speakTime,
+    actionTime: editableConfig.actionTime,
+    nightTime: editableConfig.nightTime,
+    lastWordRound: editableConfig.lastWordRound,
+    killerCount: editableConfig.killerCount,
+    copCount: editableConfig.copCount,
+    doctorCount: editableConfig.doctorCount,
+    sniperCount: editableConfig.sniperCount,
+    roleCountsCustomized: true
+  })
+}
 
 // 计算属性
 const isHost = computed(() => props.hostId === props.currentUserId)
@@ -333,7 +439,8 @@ const getRoleName = (role: string | undefined): string => {
     'COP': '警察',
     'DOCTOR': '医生',
     'SNIPER': '狙击手',
-    'CIVILIAN': '平民'
+    'CIVILIAN': '平民',
+    'GUEST': '旁观者'
   }
   return roleNames[role as keyof typeof roleNames] || role
 }
@@ -345,7 +452,8 @@ const getRoleTagType = (role: string | undefined): string => {
     'COP': 'primary',
     'SNIPER': 'warning',
     'DOCTOR': 'success',
-    'CIVILIAN': 'info'
+    'CIVILIAN': 'info',
+    'GUEST': 'info'
   }
   return roleTypes[role as keyof typeof roleTypes] || 'default'
 }
@@ -472,9 +580,16 @@ const getRoleTagType = (role: string | undefined): string => {
   background: var(--app-panel);
 }
 
+.config-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 10px;
+}
+
 .config-item {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 8px;
   margin-bottom: 8px;
 }
@@ -483,6 +598,19 @@ const getRoleTagType = (role: string | undefined): string => {
   min-width: 70px;
   font-size: 13px;
   color: #606266;
+}
+
+.config-tip,
+.readonly-config {
+  margin-top: 8px;
+  font-size: 12px;
+  color: #606266;
+  line-height: 1.5;
+}
+
+.config-tip.invalid {
+  color: #f56c6c;
+  font-weight: 600;
 }
 
 .role-config {

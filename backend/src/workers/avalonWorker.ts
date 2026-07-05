@@ -2,7 +2,7 @@ import { parentPort, workerData } from 'worker_threads';
 import { BaseGameWorker } from './baseGameWorker';
 import { Room } from '../models/Room';
 import { Player } from '../models/Player';
-import { normalizeChatChannel, normalizeChatText } from '../utils/chat';
+import { normalizeChatText } from '../utils/chat';
 
 if (!parentPort) {
   throw new Error('这个文件只能在Worker线程中运行');
@@ -617,6 +617,7 @@ class AvalonWorker extends BaseGameWorker {
       publicKnownRoles: this.getPublicKnownRoles(),
       ladys: state.ladys,
       timeLeft: this.getTimeLeft(),
+      operateEndTime: this.getOperateEndTimestamp(),
       statusMessage: this.getStatusMessage()
     };
   }
@@ -1098,37 +1099,17 @@ class AvalonWorker extends BaseGameWorker {
     const player = this.room.players.find(p => p.id === playerId);
     if (!player) return;
 
-    const state = this.gameState as AvalonGameState;
     const message = normalizeChatText(data?.message);
     if (!message) return;
 
-    const channel = normalizeChatChannel(data?.channel, ['all', 'evil']);
-    const messagePayload = {
+    this.sendToRoom('chat_broadcast', {
       playerId,
       playerName: player.nickname,
       message,
-      channel,
-      timestamp: Date.now()
-    };
-
-    if (channel === 'evil') {
-      const senderRole = state.topSecret.red[playerId];
-      if (!senderRole || senderRole === Role.OBERON) {
-        this.sendToPlayer(playerId, 'game_error', { message: '你不能使用邪恶方频道' });
-        return;
-      }
-
-      // 邪恶方密聊只发送给红方成员（奥伯伦除外，他看不到其他坏人）
-      const redPlayers = Object.keys(state.topSecret.red).filter(
-        id => state.topSecret.red[id] !== Role.OBERON
-      );
-      redPlayers.forEach(id => {
-        this.sendToPlayer(id, 'chat_broadcast', messagePayload);
-      });
-    } else {
-      // 全员频道广播给所有人
-      this.sendToRoom('chat_broadcast', messagePayload);
-    }
+      channel: 'all',
+      timestamp: Date.now(),
+      type: 'chat'
+    });
   }
 
   private handleHeartbeat(playerId: string): void {
@@ -1202,11 +1183,25 @@ class AvalonWorker extends BaseGameWorker {
     }
   }
 
-  private getTimeLeft(): number {
+  private getOperateEndTimestamp(): number {
     const state = this.gameState as AvalonGameState;
-    const now = Date.now();
-    const endTime = state.operateEndTime.getTime();
-    return Math.max(0, Math.floor((endTime - now) / 1000));
+    const rawEndTime = state.operateEndTime as unknown;
+    if (rawEndTime instanceof Date) {
+      return rawEndTime.getTime();
+    }
+    if (typeof rawEndTime === 'number') {
+      return rawEndTime;
+    }
+    if (typeof rawEndTime === 'string') {
+      const parsed = Date.parse(rawEndTime);
+      return Number.isFinite(parsed) ? parsed : 0;
+    }
+    return 0;
+  }
+
+  private getTimeLeft(): number {
+    const endTime = this.getOperateEndTimestamp();
+    return Math.max(0, Math.ceil((endTime - Date.now()) / 1000));
   }
 
   private getStatusMessage(): string {
@@ -1443,6 +1438,17 @@ class AvalonWorker extends BaseGameWorker {
     }
   }
 
+  private appendGameMessage(message: string): void {
+    this.sendToRoom('game_message', {
+      message,
+      timestamp: Date.now()
+    });
+  }
+
+  private formatPlayerList(playerIds: string[]): string {
+    return playerIds.map(id => this.getPlayerName(id)).filter(Boolean).join('、') || '无';
+  }
+
   private sendGameMessage(message: string): void {
     // 很多流程节点直接修改 state 后只发送消息；同步一次完整公开状态，避免前端停留在旧阶段。
     this.sendToRoom('game_update', this.getGameInfo());
@@ -1561,6 +1567,9 @@ class AvalonWorker extends BaseGameWorker {
     const agreeCount = state.voteResult.true.length;
     const totalPlayers = Object.keys(state.players).length;
     const majorityNeeded = Math.floor(totalPlayers / 2) + 1;
+    const approveNames = this.formatPlayerList(state.voteResult.true);
+    const rejectNames = this.formatPlayerList(state.voteResult.false);
+    this.appendGameMessage(`第${state.mission}轮队伍投票结果：同意 ${agreeCount}/${totalPlayers}（${approveNames}）；反对 ${totalPlayers - agreeCount}/${totalPlayers}（${rejectNames}）`);
 
     if (agreeCount >= majorityNeeded) {
       // 投票通过，进入行动阶段，重置连续否决计数
@@ -1593,6 +1602,8 @@ class AvalonWorker extends BaseGameWorker {
     const requiredFails = state.scoreBoard[state.mission - 1][1];
     const actualFails = state.actionFailed;
     const missionSuccess = actualFails < requiredFails;
+    const teamNames = this.formatPlayerList(state.team);
+    this.appendGameMessage(`第${state.mission}轮任务结果：${missionSuccess ? '成功' : '失败'}，队伍：${teamNames}，破坏票 ${actualFails}/${state.team.length}，失败所需 ${requiredFails}`);
 
     // 更新任务结果
     state.scoreBoard[state.mission - 1][2] = missionSuccess ? 0 : actualFails;

@@ -160,7 +160,7 @@ class TexasHoldemWorker extends BaseGameWorker {
     if (!this.room.gameMetadata) {
       this.room.gameMetadata = {};
     }
-    this.room.gameMetadata.allowSystemDealing = config.allowSystemDealing;
+    this.syncDealingModeMetadata();
     this.room.gameMetadata.participants = [...this.participants];
 
     // 为所有已存在的玩家初始化游戏元数据
@@ -193,7 +193,7 @@ class TexasHoldemWorker extends BaseGameWorker {
     if (!this.room.gameMetadata) {
       this.room.gameMetadata = {};
     }
-    this.room.gameMetadata.allowSystemDealing = config.allowSystemDealing;
+    this.syncDealingModeMetadata();
     this.room.gameMetadata.participants = [...this.participants];
 
     this.sendToRoom('chat_broadcast', { message: '房间配置已更新' });
@@ -352,6 +352,11 @@ class TexasHoldemWorker extends BaseGameWorker {
         case 'toggleRoomLock':
           this.handleToggleRoomLock(playerId);
           break;
+        case 'updateConfig':
+        case 'update_config':
+        case 'setDealingMode':
+          this.handleUpdateConfig(playerId, actionData);
+          break;
         case 'take':
           this.handleTake(playerId, actionData);
           break;
@@ -454,6 +459,29 @@ class TexasHoldemWorker extends BaseGameWorker {
 
   private isManualDealing(): boolean {
     return this.config?.allowSystemDealing === false;
+  }
+
+  private parseAllowSystemDealing(data: any): boolean | undefined {
+    if (typeof data?.allowSystemDealing === 'boolean') {
+      return data.allowSystemDealing;
+    }
+    if (data?.dealingMode === 'online') return true;
+    if (data?.dealingMode === 'offline') return false;
+    if (typeof data?.offlineDealing === 'boolean') return !data.offlineDealing;
+    return undefined;
+  }
+
+  private syncDealingModeMetadata(): void {
+    if (!this.room.gameMetadata) {
+      this.room.gameMetadata = {};
+    }
+    const allowSystemDealing = this.config?.allowSystemDealing !== false;
+    this.room.gameMetadata.allowSystemDealing = allowSystemDealing;
+    this.room.gameMetadata.gameConfig = {
+      ...(this.room.gameMetadata.gameConfig || {}),
+      allowSystemDealing,
+      dealingMode: allowSystemDealing ? 'online' : 'offline'
+    };
   }
 
   private buildPublicGameState() {
@@ -1450,6 +1478,45 @@ class TexasHoldemWorker extends BaseGameWorker {
 
   private handleToggleRoomLock(playerId: string) {
     this.toggleRoomLock(playerId);
+  }
+
+  private handleUpdateConfig(playerId: string, data: any) {
+    const player = this.room.players.find(p => p.id === playerId);
+    if (!player || this.room.hostId !== playerId) {
+      this.sendToPlayer(playerId, 'error', { message: '只有房主可以修改发牌模式' });
+      return;
+    }
+
+    const gs = this.gameState as TexasHoldemGameState;
+    if (gs.stage !== 'idle' || this.participants.length > 0) {
+      this.sendToPlayer(playerId, 'error', { message: '牌局进行中或奖池结算中，不能切换发牌模式' });
+      return;
+    }
+
+    const allowSystemDealing = this.parseAllowSystemDealing(data);
+    if (typeof allowSystemDealing !== 'boolean') {
+      this.sendToPlayer(playerId, 'error', { message: '发牌模式参数无效' });
+      return;
+    }
+
+    this.config = {
+      ...this.config,
+      allowSystemDealing
+    };
+
+    if (!allowSystemDealing) {
+      gs.deck = [];
+      gs.playerHands = {};
+      gs.communityCards = [];
+    }
+
+    this.syncDealingModeMetadata();
+    this.sendToRoom('chat_broadcast', {
+      message: `房主已将发牌模式切换为${allowSystemDealing ? '线上系统发牌' : '线下发牌'}`,
+      type: 'system'
+    });
+    this.sendToRoom('room_update', this.room);
+    this.sendToRoom('game_state', this.buildPublicGameState());
   }
 
   private handleTake(playerId: string, data: any) {

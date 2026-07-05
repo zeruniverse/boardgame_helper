@@ -7,14 +7,11 @@
       </div>
     </el-card>
     <div class="chat-input">
-      <div class="input-info" v-if="canUseKillerChat">
-        <span class="channel-indicator">杀手频道</span>
-      </div>
       <div class="input-row">
         <el-input
           v-model="input"
           @keyup.enter="send"
-          :placeholder="canUseKillerChat ? '输入杀手频道消息' : '输入消息'"
+          placeholder="输入公聊消息"
           style="flex:1; margin-right:8px;"
         />
         <el-button type="primary" @click="send" :disabled="!canSend">发送</el-button>
@@ -25,7 +22,6 @@
 
 <script lang="ts" setup>
 import { ref, nextTick, watch, computed } from 'vue';
-import type { Socket } from 'socket.io-client';
 import { safeHtml } from '../utils/html';
 import { formatPlayerNameById } from '../utils/playerName';
 import { useMafiaGameStore } from '../store/mafia';
@@ -35,8 +31,8 @@ interface Props {
   roomId?: string
   nickname?: string
   currentUserId?: string
-  playerRole?: 'KILLER' | 'COP' | 'DOCTOR' | 'SNIPER' | 'CIVILIAN'
-  playerTeam?: 'RED' | 'BLUE'
+  playerRole?: 'KILLER' | 'COP' | 'DOCTOR' | 'SNIPER' | 'CIVILIAN' | 'GUEST'
+  playerTeam?: 'RED' | 'BLUE' | 'NONE'
   gameState?: any
 }
 
@@ -45,7 +41,6 @@ const props = withDefaults(defineProps<Props>(), {
   roomId: '',
   nickname: '',
   currentUserId: '',
-  socket: null,
   playerRole: undefined,
   playerTeam: undefined,
   gameState: null
@@ -67,19 +62,10 @@ const isPlayerAlive = computed(() => {
   return player ? player.alive !== false : true
 })
 
-// 检查是否在夜晚阶段
-const isNightPhase = computed(() => {
-  return props.gameState?.status === 'NIGHT'
-})
-
-const canUseKillerChat = computed(() => {
-  return props.playerRole === 'KILLER' && isNightPhase.value && isPlayerAlive.value
-})
-
 // 检查是否可以发送消息 - 使用 store.socket 替代 props.socket
 // 因为父组件未传递 socket prop
 const canSend = computed(() => {
-  return !!(store.socket?.connected && props.roomId && props.nickname && input.value.trim() && (canUseKillerChat.value || !isMuted.value))
+  return !!(store.socket?.connected && props.roomId && props.nickname && input.value.trim() && !isMuted.value)
 })
 
 // 滚动到底部
@@ -107,11 +93,6 @@ const getMessageClass = (msg: any) => {
     classes.push('death-message');
   }
   
-  // 夜晚阶段的杀手队伍消息
-  if (msg.type === 'killer' && props.playerRole === 'KILLER') {
-    classes.push('killer-message');
-  }
-  
   return classes.join(' ');
 };
 
@@ -134,10 +115,9 @@ const formatSenderName = (msg: any): string => {
 const formatChatMessage = (msg: any): string => {
   if (!msg || typeof msg !== 'object') return String(msg ?? '');
   const baseMessage = msg.message || msg.content || '';
-  const channelPrefix = msg.channel === 'killer' || msg.type === 'killer' ? '[杀手频道] ' : '';
   const senderName = formatSenderName(msg);
   const senderPrefix = senderName ? `${senderName}: ` : '';
-  return `${channelPrefix}${senderPrefix}${baseMessage}`;
+  return `${senderPrefix}${baseMessage}`;
 };
 
 // 格式化消息内容
@@ -176,7 +156,7 @@ function send() {
     }
     
     // 使用store的统一消息发送方法
-    store.sendMessage(input.value.trim(), canUseKillerChat.value ? 'killer' : 'all');
+    store.sendMessage(input.value.trim(), 'all');
     
     input.value = '';
   }
@@ -212,15 +192,6 @@ function send() {
   display: flex;
 }
 
-.input-info {
-  font-size: 12px;
-}
-
-.channel-indicator {
-  color: #dc2626;
-  font-weight: bold;
-}
-
 /* 消息样式 */
 .chat-messages :deep(.el-card__body) {
   padding: 8px 12px;
@@ -249,12 +220,6 @@ function send() {
 .death-message {
   color: #909399 !important;
   font-style: italic;
-}
-
-.killer-message {
-  background-color: rgba(220, 38, 38, 0.1);
-  border-left: 3px solid #dc2626;
-  padding-left: 8px;
 }
 
 /* 角色高亮样式 */

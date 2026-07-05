@@ -133,6 +133,7 @@
               :room-config="room?.config"
               @transfer-host="handleTransferHost"
               @kick-player="handleKickPlayer"
+              @update-config="handleUpdateConfig"
             />
           </div>
 
@@ -165,6 +166,7 @@
             :room-config="room?.config"
             @transfer-host="handleTransferHost"
             @kick-player="handleKickPlayer"
+            @update-config="handleUpdateConfig"
           />
         </div>
 
@@ -339,7 +341,8 @@ const getRoleName = (role: string): string => {
     'COP': '警察',
     'DOCTOR': '医生',
     'SNIPER': '狙击手',
-    'CIVILIAN': '平民'
+    'CIVILIAN': '平民',
+    'GUEST': '旁观者'
   }
   return roleNames[role as keyof typeof roleNames] || role
 }
@@ -347,7 +350,8 @@ const getRoleName = (role: string): string => {
 const getTeamName = (team: string): string => {
   const teamNames = {
     'RED': '杀手阵营',
-    'BLUE': '好人阵营'
+    'BLUE': '好人阵营',
+    'NONE': '旁观者'
   }
   return teamNames[team as keyof typeof teamNames] || team
 }
@@ -374,6 +378,10 @@ const handleTransferHost = (newHostId: string) => {
 
 const handleKickPlayer = (playerId: string) => {
   store.kickPlayer(playerId)
+}
+
+const handleUpdateConfig = (config: any) => {
+  store.sendGameAction('update_config', config)
 }
 
 const scrollToSelector = (selector: string) => {

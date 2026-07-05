@@ -117,7 +117,8 @@ const getRoleName = (role: string): string => {
     mordred: '莫德雷德',
     oberon: '奥伯伦',
     bad: '爪牙',
-    minion: '爪牙'
+    minion: '爪牙',
+    guest: '旁观者'
   }
   return roleNames[role] || role
 }
@@ -154,7 +155,8 @@ const shouldRenderIdentityControl = (playerId: string): boolean => {
 const getTeamName = (team: string): string => {
   const teamNames: Record<string, string> = {
     'blue': '亚瑟方',
-    'red': '莫德雷德方'
+    'red': '莫德雷德方',
+    'guest': '旁观者'
   }
   return teamNames[team] || team
 }

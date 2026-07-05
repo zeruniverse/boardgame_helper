@@ -3694,7 +3694,11 @@ export class BOTCWorker extends BaseGameWorker {
     const message = normalizeChatText(data?.message);
     if (!player || !message) return;
 
-    const channel = normalizeChatChannel(data?.channel, ['all', 'storyteller', 'dead']);
+    if (data?.channel === 'dead') {
+      this.sendToPlayer(playerId, 'actionError', { message: '该频道不可用，请使用公共聊天、私聊或说书人频道' });
+      return;
+    }
+    const channel = normalizeChatChannel(data?.channel, ['all', 'storyteller']);
     const payload = {
       playerId,
       playerName: this.getPlayerName(player.id),
@@ -3707,28 +3711,6 @@ export class BOTCWorker extends BaseGameWorker {
       // 说书人频道只回显给发送者并发送给说书人，避免泄露到公开频道。
       this.sendToPlayer(playerId, 'chatMessage', payload);
       if (playerId !== this.gameConfig.storytellerId) {
-        this.sendToPlayer(this.gameConfig.storytellerId, 'chatMessage', payload);
-      }
-      return;
-    }
-
-    if (channel === 'dead') {
-      const senderGamePlayer = this.gamePlayers.get(playerId);
-      const isStoryteller = playerId === this.gameConfig.storytellerId;
-      if (!isStoryteller && !senderGamePlayer?.isDead) {
-        this.sendToPlayer(playerId, 'actionError', { message: '只有死亡玩家或说书人可以使用死者频道' });
-        return;
-      }
-
-      // 死者频道只发送给死亡玩家和说书人。
-      const delivered = new Set<string>();
-      for (const gamePlayer of this.gamePlayers.values()) {
-        if (gamePlayer.isDead) {
-          this.sendToPlayer(gamePlayer.playerId, 'chatMessage', payload);
-          delivered.add(gamePlayer.playerId);
-        }
-      }
-      if (!delivered.has(this.gameConfig.storytellerId)) {
         this.sendToPlayer(this.gameConfig.storytellerId, 'chatMessage', payload);
       }
       return;

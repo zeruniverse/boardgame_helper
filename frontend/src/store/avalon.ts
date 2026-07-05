@@ -28,6 +28,7 @@ interface AvalonGameState {
     false: string[];
   };
   timeLeft?: number;
+  operateEndTime?: number | string;
   statusMessage?: string;
   winner?: 'blue' | 'red';
   publicKnownRoles?: Record<string, string>;
@@ -68,6 +69,7 @@ export const useAvalonStore = defineStore('avalon', {
     messages: [] as any[],
     errorMessage: '',
     timeLeft: 0,
+    timerDeadline: 0,
     timerInterval: null as ReturnType<typeof setInterval> | null,
     socketListeners: [] as Array<[string, (...args: any[]) => void]>,
   }),
@@ -169,6 +171,7 @@ export const useAvalonStore = defineStore('avalon', {
       on('game_start', (data: { game: AvalonGameState; secret: AvalonSecret }) => {
         this.gameState = data.game;
         this.playerSecret = data.secret;
+        this.updateTimer();
         if (this.room) {
           this.room.gameStarted = true;
         }
@@ -186,6 +189,7 @@ export const useAvalonStore = defineStore('avalon', {
       on('game_over', (data: { winner: 'blue' | 'red'; reason?: string; gameInfo?: AvalonGameState }) => {
         if (data.gameInfo) {
           this.gameState = data.gameInfo;
+          this.updateTimer();
         }
         if (this.gameState) {
           this.gameState.winner = data.winner;
@@ -241,7 +245,8 @@ export const useAvalonStore = defineStore('avalon', {
 
       // 时间同步
       on('time_update', (data: { timeLeft: number }) => {
-        this.timeLeft = data.timeLeft;
+        this.timeLeft = Math.max(0, data.timeLeft);
+        this.timerDeadline = data.timeLeft > 0 ? Date.now() + data.timeLeft * 1000 : 0;
       });
 
       // 游戏状态同步（用于重连）
@@ -256,6 +261,7 @@ export const useAvalonStore = defineStore('avalon', {
         this.playerSecret = data.secret;
         this.currentUserId = data.currentUserId;
         this.currentRoomId = data.room.id;
+        this.updateTimer();
       });
     },
 
@@ -316,6 +322,7 @@ export const useAvalonStore = defineStore('avalon', {
       this.playerSecret = null;
       this.messages = [];
       this.timeLeft = 0;
+      this.timerDeadline = 0;
       this.currentRoomId = '';
     },
 
@@ -395,10 +402,29 @@ export const useAvalonStore = defineStore('avalon', {
       this.messages = appendLimitedMessage(this.messages, createSystemMessage(message));
     },
 
-    updateTimer() {
-      if (this.gameState?.timeLeft) {
-        this.timeLeft = this.gameState.timeLeft;
+    syncTimerDeadline() {
+      const rawDeadline = this.gameState?.operateEndTime;
+      let deadline = 0;
+      if (typeof rawDeadline === 'number') {
+        deadline = rawDeadline;
+      } else if (typeof rawDeadline === 'string') {
+        const parsed = Date.parse(rawDeadline);
+        deadline = Number.isFinite(parsed) ? parsed : 0;
       }
+      this.timerDeadline = deadline > 0 ? deadline : 0;
+    },
+
+    updateTimer() {
+      this.syncTimerDeadline();
+      if (this.timerDeadline > 0) {
+        this.timeLeft = Math.max(0, Math.ceil((this.timerDeadline - Date.now()) / 1000));
+        return;
+      }
+      if (typeof this.gameState?.timeLeft === 'number') {
+        this.timeLeft = Math.max(0, this.gameState.timeLeft);
+        return;
+      }
+      this.timeLeft = 0;
     },
 
     startTimer() {

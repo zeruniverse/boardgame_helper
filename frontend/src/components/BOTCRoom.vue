@@ -11,6 +11,9 @@
       </div>
       <div class="header-right">
         <span class="room-id">房间ID: {{ roomId }}</span>
+        <el-button v-if="isHost" size="small" @click="toggleRoomLock" :type="room?.locked ? 'danger' : 'success'">
+          {{ room?.locked ? '解锁房间' : '锁定房间' }}
+        </el-button>
         <span class="edition-info" v-if="gameConfig?.edition">
           剧本: {{ getEditionName(gameConfig.edition) }}
         </span>
@@ -202,6 +205,7 @@ const store = useBOTCGameStore()
 const roomId = route.params.id as string
 const room = computed(() => store.room)
 const gameConfig = computed(() => store.gameConfig)
+const isHost = computed(() => Boolean(store.currentUserId && room.value?.hostId === store.currentUserId))
 
 // 游戏状态
 const editionInfo = ref<any>(null)
@@ -510,6 +514,10 @@ const handleStartPrivateChat = (targetId: string) => {
 // 处理私聊消息
 const handlePrivateMessage = (data: any) => {
   store.sendPrivateMessage(data.targetId, data.message)
+}
+
+const toggleRoomLock = () => {
+  store.sendGameAction('toggleRoomLock', {})
 }
 
 // 处理开始游戏

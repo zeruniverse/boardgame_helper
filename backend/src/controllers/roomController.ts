@@ -37,6 +37,12 @@ function ensurePlayerSessionToken(roomId: string, playerId: string): string {
   return generatedToken;
 }
 
+function rotatePlayerSessionToken(roomId: string, playerId: string): string {
+  const rotatedToken = uuidv4() as string;
+  playerSessionTokens.set(playerSessionKey(roomId, playerId), rotatedToken);
+  return rotatedToken;
+}
+
 function isValidPlayerSessionToken(roomId: string, playerId: string, token: unknown): boolean {
   const expected = playerSessionTokens.get(playerSessionKey(roomId, playerId));
   return typeof token === 'string' && expected === token;
@@ -120,8 +126,8 @@ function toClientRoom(room: Room): any {
   };
 }
 
-function buildRoomJoinedPayload(room: Room, player: Player): any {
-  const sessionToken = ensurePlayerSessionToken(room.id, player.id);
+function buildRoomJoinedPayload(room: Room, player: Player, issuedSessionToken?: string): any {
+  const sessionToken = issuedSessionToken || ensurePlayerSessionToken(room.id, player.id);
   return {
     room: toClientRoom(room),
     player: toClientPlayer(player),
@@ -249,13 +255,17 @@ function nicknameKey(nickname: unknown): string {
   return typeof nickname === 'string' ? nickname.trim() : '';
 }
 
-function hasDuplicateNickname(room: Room, nickname: string, excludePlayerId?: string): boolean {
+function findPlayerByNickname(room: Room, nickname: string, excludePlayerId?: string): Player | undefined {
   const requestedName = nicknameKey(nickname);
-  if (!requestedName) return false;
-  return (room.players || []).some(player =>
+  if (!requestedName) return undefined;
+  return (room.players || []).find(player =>
     player.id !== excludePlayerId &&
     nicknameKey(player.nickname || player.name) === requestedName
   );
+}
+
+function hasDuplicateNickname(room: Room, nickname: string, excludePlayerId?: string): boolean {
+  return Boolean(findPlayerByNickname(room, nickname, excludePlayerId));
 }
 
 function rejectDuplicateNickname(socket: Socket, ack?: (response: any) => void): void {
@@ -519,6 +529,61 @@ export function roomController(io: Server) {
     return latestRoom;
   }
 
+
+  async function takeOverPlayerByNickname(
+    room: Room,
+    existingPlayer: Player,
+    nickname: string,
+    socket: Socket,
+    ack?: (response: any) => void
+  ): Promise<void> {
+    const previousSocketId = existingPlayer.socketId;
+    const previousSocket = previousSocketId ? io.sockets.sockets.get(previousSocketId) : undefined;
+
+    if (previousSocket && previousSocket.id !== socket.id) {
+      previousSocket.emit('kicked_out', { message: '同昵称玩家重新进入，当前连接已移出房间' });
+      previousSocket.emit('room_left', { roomId: room.id });
+      await previousSocket.leave(room.id);
+    }
+
+    markPlayerOnlineForController(room, existingPlayer, socket.id, nickname);
+    room.lastActiveTime = Date.now();
+
+    if (room.cleanupTimer) {
+      clearTimeout(room.cleanupTimer);
+      room.cleanupTimer = undefined;
+    }
+
+    await socket.join(room.id);
+    const gameConfig = getRoomGameConfig(room);
+    await threadManager.ensureRoomThreadRunning(room, gameConfig);
+
+    rooms.set(room.id, room);
+    threadManager.updateRoomData(room.id, room);
+    await sendTaskToRoom(room.id, 'update_room_data', { room });
+    await sendTaskToRoom(room.id, 'player_online', { playerId: existingPlayer.id });
+
+    const latestRoom = rooms.get(room.id) || room;
+    const latestPlayer = latestRoom.players.find(p => p.id === existingPlayer.id) || existingPlayer;
+    const sessionToken = rotatePlayerSessionToken(latestRoom.id, latestPlayer.id);
+    const payload = buildRoomJoinedPayload(latestRoom, latestPlayer, sessionToken);
+
+    socket.emit('room_joined', payload);
+    socket.emit('room_update', toClientRoom(latestRoom));
+    ack?.({ success: true, ...payload });
+
+    io.to(latestRoom.id).emit('room_update', toClientRoom(latestRoom));
+    io.to(latestRoom.id).emit('chat_broadcast', {
+      message: `${latestPlayer.nickname} 已重新进入，原同昵称连接已移出房间`,
+      type: 'system'
+    });
+
+    if (!latestRoom.private) {
+      broadcastLobbyUpdate();
+    }
+
+    console.log(`玩家 ${latestPlayer.nickname} 以同昵称方式重新进入了房间 ${latestRoom.name}`);
+  }
 
   async function transferHostInRoom(room: Room, actor: Player, newHostId: string): Promise<any> {
     if (!newHostId) return { success: false, error: '缺少新房主ID' };
@@ -840,7 +905,14 @@ export function roomController(io: Server) {
           return;
         }
 
-        // 检查房间是否已满
+        const nickname = normalizeNickname(data.nickname, `玩家${socket.id.substring(0, 6)}`);
+        const existingSameNamePlayer = findPlayerByNickname(room, nickname);
+        if (existingSameNamePlayer) {
+          await takeOverPlayerByNickname(room, existingSameNamePlayer, nickname, socket, ack);
+          return;
+        }
+
+        // 检查房间是否已满。同昵称接管已在上方完成，因此满房也能恢复原座位。
         if (room.players.length >= room.maxPlayers) {
           socket.emit('error', { message: '房间已满' });
           ack?.({ success: false, error: '房间已满' });
@@ -855,12 +927,6 @@ export function roomController(io: Server) {
         }
 
         // 创建玩家
-        const nickname = normalizeNickname(data.nickname, `玩家${socket.id.substring(0, 6)}`);
-        if (hasDuplicateNickname(room, nickname)) {
-          rejectDuplicateNickname(socket, ack);
-          return;
-        }
-
         player = {
           id: requestedPlayerId || uuidv4(),
           nickname,
@@ -981,7 +1047,14 @@ export function roomController(io: Server) {
           return;
         }
 
-        // 检查房间是否已满
+        const nickname = normalizeNickname(data.nickname, `玩家${socket.id.substring(0, 6)}`);
+        const existingSameNamePlayer = findPlayerByNickname(room, nickname);
+        if (existingSameNamePlayer) {
+          await takeOverPlayerByNickname(room, existingSameNamePlayer, nickname, socket, ack);
+          return;
+        }
+
+        // 检查房间是否已满。同昵称接管已在上方完成，因此满房也能恢复原座位。
         if (room.players.length >= room.maxPlayers) {
           socket.emit('error', { message: '房间已满' });
           ack?.({ success: false, error: '房间已满' });
@@ -996,12 +1069,6 @@ export function roomController(io: Server) {
         }
 
         // 创建玩家
-        const nickname = normalizeNickname(data.nickname, `玩家${socket.id.substring(0, 6)}`);
-        if (hasDuplicateNickname(room, nickname)) {
-          rejectDuplicateNickname(socket, ack);
-          return;
-        }
-
         player = {
           id: requestedPlayerId || uuidv4(),
           nickname,

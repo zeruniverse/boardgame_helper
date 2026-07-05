@@ -18,6 +18,18 @@
         <el-icon><House /></el-icon>
         返回大厅
       </el-button>
+      <el-button v-if="isHost" size="small" @click="toggleRoomLock"
+                 :type="store.roomLocked ? 'danger' : 'success'"
+                 :class="{ 'colored-border': true }">
+        {{ store.roomLocked ? '解锁房间' : '锁定房间' }}
+      </el-button>
+      <div v-if="isHost" class="dealing-mode-control">
+        <span>发牌模式</span>
+        <el-radio-group v-model="dealingMode" size="small" :disabled="!canChangeDealingMode">
+          <el-radio-button label="online">线上发牌</el-radio-button>
+          <el-radio-button label="offline">线下发牌</el-radio-button>
+        </el-radio-group>
+      </div>
       <!-- 只有在未开始游戏且已在房间的玩家显示开始/CashIn/CashOut -->
       <template v-if="store.stage === 'idle' && isInRoom">
         <el-button type="success" @click="onStartGame"
@@ -116,11 +128,6 @@
                        :class="{ 'colored-border': true }">
               {{ store.autoStart ? '关闭自动开始' : '开启自动开始' }}
             </el-button>
-            <el-button size="small" @click="toggleRoomLock"
-                       :type="store.roomLocked ? 'danger' : 'success'"
-                       :class="{ 'colored-border': true }">
-              {{ store.roomLocked ? '解锁房间' : '锁定房间' }}
-            </el-button>
           </div>
         </div>
         <div class="chat-container">
@@ -172,11 +179,6 @@
                        :type="store.autoStart ? 'warning' : 'info'"
                        :class="{ 'colored-border': true }">
               {{ store.autoStart ? '关闭自动开始' : '开启自动开始' }}
-            </el-button>
-            <el-button size="small" @click="toggleRoomLock"
-                       :type="store.roomLocked ? 'danger' : 'success'"
-                       :class="{ 'colored-border': true }">
-              {{ store.roomLocked ? '解锁房间' : '锁定房间' }}
             </el-button>
           </div>
         </div>
@@ -522,6 +524,20 @@ function onTakeAll() {
 
 // online根据系统发牌配置动态判断（非系统发牌=线下模式）
 const online = computed(() => store.allowSystemDealing);
+const canChangeDealingMode = computed(() => isHost.value && store.stage === 'idle' && store.participants.length === 0);
+const dealingMode = computed({
+  get: () => (store.allowSystemDealing ? 'online' : 'offline'),
+  set: (mode: string) => {
+    const normalized = mode === 'offline' ? 'offline' : 'online';
+    const nextAllowSystemDealing = normalized === 'online';
+    if (store.allowSystemDealing === nextAllowSystemDealing) return;
+    if (!canChangeDealingMode.value) return;
+    sendTexasAction('updateConfig', {
+      allowSystemDealing: nextAllowSystemDealing,
+      dealingMode: normalized
+    });
+  }
+});
 
 // HTML转义函数，防止XSS
 function escapeHtml(text: string): string {
@@ -558,6 +574,19 @@ function formatCards(cards: string[]): string {
   border: 2px solid #c0c4cc !important;
 }
 
+
+.dealing-mode-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: var(--app-panel-muted, #f5f7fa);
+  border: 1px solid var(--app-border, #dcdfe6);
+  color: var(--app-text, #303133);
+  font-size: 13px;
+}
 
 .room-code-pill {
   display: inline-flex;

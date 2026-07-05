@@ -1,18 +1,15 @@
 <template>
   <div class="botc-chat-wrapper">
-    <!-- 聊天频道选择 -->
     <div class="chat-tabs">
       <el-radio-group v-model="currentChannel" size="small">
-        <el-radio-button label="all">全员</el-radio-button>
-        <el-radio-button label="storyteller">说书人</el-radio-button>
-        <el-radio-button label="dead" v-if="canUseDeadChat">死者</el-radio-button>
+        <el-radio-button label="all">公共聊天</el-radio-button>
+        <el-radio-button label="storyteller">说书人频道</el-radio-button>
         <el-radio-button label="private" v-if="privateTarget">
-          私聊: {{ getPlayerName(privateTarget) }}
+          私聊：{{ getPlayerName(privateTarget) }}
         </el-radio-button>
       </el-radio-group>
     </div>
 
-    <!-- 私聊目标选择 -->
     <div class="private-chat-selector" v-if="showPrivateSelector">
       <el-select v-model="privateTarget" placeholder="选择私聊对象" size="small" @change="onPrivateTargetChange">
         <el-option
@@ -25,19 +22,16 @@
       <el-button size="small" @click="closePrivateSelector">取消</el-button>
     </div>
 
-    <!-- 聊天消息区域 -->
     <el-card ref="chatContainer" class="chat-messages">
       <div v-for="(msg, idx) in filteredMessages" :key="idx"
            :class="getMessageClass(msg)"
            :style="{ color: getMessageColor(msg.type || msg.channel) }">
         <span class="message-sender" v-if="msg.from || msg.playerName">{{ getMessageSenderName(msg) }}: </span>
-        <!-- 使用文本渲染而非v-html防止XSS -->
         <span class="message-content">{{ msg.message || msg }}</span>
         <span class="message-time">{{ formatTime(msg.timestamp) }}</span>
       </div>
     </el-card>
     
-    <!-- 聊天输入区域 -->
     <div class="chat-input">
       <div class="input-info" v-if="currentChannel !== 'all'">
         <span class="channel-indicator">{{ getChannelName() }}</span>
@@ -100,30 +94,19 @@ const emit = defineEmits<Emits>()
 
 const input = ref('');
 const chatContainer = ref<HTMLElement>();
-const currentChannel = ref('all'); // 'all' | 'storyteller' | 'dead' | 'private'
+const currentChannel = ref<'all' | 'storyteller' | 'private'>('all');
 const privateTarget = ref<string>('');
 const showPrivateSelector = ref(false);
 
-// 判断是否可以使用死者聊天：死亡玩家和说书人可见
-const canUseDeadChat = computed(() => {
-  if (props.isStoryteller) return true
-  if (!props.gameState?.players) return false
-  const myPlayer = props.gameState.players.find((p: any) => p.id === props.nickname)
-  return Boolean(myPlayer?.isDead)
-});
-
-// 可用的私聊目标
 const availablePrivateTargets = computed(() => {
   return props.players.filter(player => player.id !== props.nickname)
 });
 
-// 检查是否可以发送消息
 const canSend = computed(() => {
   if (!input.value.trim()) {
     return false
   }
   
-  // 私聊需要选择目标
   if (currentChannel.value === 'private' && !privateTarget.value) {
     return false
   }
@@ -131,26 +114,30 @@ const canSend = computed(() => {
   return true
 });
 
-// 过滤消息 - 根据当前频道显示消息
+const isMessageForCurrentUser = (msg: any) => {
+  return msg.from === props.nickname || msg.to === props.nickname || msg.playerId === props.nickname
+}
+
 const filteredMessages = computed(() => {
   return props.messages.filter(msg => {
-    // 处理简单字符串消息
     if (typeof msg === 'string') {
       return currentChannel.value === 'all'
     }
     
+    if (msg.type === 'system' || msg.type === 'game') {
+      return true
+    }
+
     if (currentChannel.value === 'all') {
-      // 全员频道显示公开消息和接收到的私聊消息
       return !msg.channel || msg.channel === 'all' || 
-             (msg.channel === 'private' && (msg.from === props.nickname || msg.to === props.nickname))
-    } else if (currentChannel.value === 'storyteller') {
-      // 说书人频道显示说书人消息
+             (msg.channel === 'private' && isMessageForCurrentUser(msg))
+    }
+
+    if (currentChannel.value === 'storyteller') {
       return msg.channel === 'storyteller' || msg.type === 'storyteller'
-    } else if (currentChannel.value === 'dead') {
-      // 死者频道显示死者消息
-      return msg.channel === 'dead'
-    } else if (currentChannel.value === 'private') {
-      // 私聊频道显示与当前目标的私聊消息
+    }
+
+    if (currentChannel.value === 'private') {
       return msg.channel === 'private' && 
              ((msg.from === props.nickname && msg.to === privateTarget.value) ||
               (msg.from === privateTarget.value && msg.to === props.nickname))
@@ -160,35 +147,28 @@ const filteredMessages = computed(() => {
   });
 });
 
-// 获取频道名称
 const getChannelName = () => {
   switch (currentChannel.value) {
     case 'storyteller':
-      return '说书人频道'
-    case 'dead':
-      return '死者频道'
+      return '发给说书人'
     case 'private':
       return `与 ${getPlayerName(privateTarget.value)} 私聊`
     default:
-      return '全员频道'
+      return '公共聊天'
   }
 }
 
-// 获取输入提示文本
 const getInputPlaceholder = () => {
   switch (currentChannel.value) {
     case 'storyteller':
-      return '发送说书人消息...'
-    case 'dead':
-      return '发送死者消息...'
+      return '向说书人发送消息...'
     case 'private':
       return `发送私聊消息给 ${getPlayerName(privateTarget.value)}...`
     default:
-      return '输入消息...'
+      return '输入公共聊天消息...'
   }
 };
 
-// 滚动到底部
 const scrollToBottom = () => {
   nextTick(() => {
     if (chatContainer.value) {
@@ -201,7 +181,6 @@ const scrollToBottom = () => {
   });
 };
 
-// 获取消息样式类
 const getMessageClass = (msg: any) => {
   const classes = ['chat-message'];
   
@@ -213,8 +192,6 @@ const getMessageClass = (msg: any) => {
     classes.push('private-message');
   } else if (channel === 'storyteller') {
     classes.push('storyteller-message');
-  } else if (channel === 'dead') {
-    classes.push('dead-message');
   }
   
   if (type === 'system') {
@@ -228,15 +205,12 @@ const getMessageClass = (msg: any) => {
   return classes.join(' ');
 };
 
-// 获取消息颜色
 const getMessageColor = (type: string) => {
   switch (type) {
     case 'private':
       return '#7c3aed'
     case 'storyteller':
       return '#dc2626'
-    case 'dead':
-      return '#6b7280'
     case 'system':
       return '#909399'
     case 'game':
@@ -250,7 +224,6 @@ const getMessageColor = (type: string) => {
   }
 };
 
-// 获取玩家名称
 const getPlayerName = (playerId: string, preferredName?: string) => {
   if (!playerId) return ''
   const player = props.players.find(p => p.id === playerId)
@@ -268,7 +241,6 @@ const getMessageSenderName = (msg: any) => {
   return senderId ? getPlayerName(senderId, rawName) : rawName
 }
 
-// 格式化时间
 const formatTime = (timestamp?: number) => {
   if (!timestamp) return ''
   const date = new Date(timestamp)
@@ -278,7 +250,6 @@ const formatTime = (timestamp?: number) => {
   })
 }
 
-// 发送消息
 const send = () => {
   if (!canSend.value) return;
   
@@ -286,7 +257,6 @@ const send = () => {
   if (!message) return;
 
   if (currentChannel.value === 'private') {
-    // 发送私聊消息
     emit('private-message', {
       targetId: privateTarget.value,
       message: message
@@ -298,17 +268,14 @@ const send = () => {
   input.value = '';
 };
 
-// 切换私聊选择器
 const togglePrivateSelector = () => {
   showPrivateSelector.value = !showPrivateSelector.value;
 }
 
-// 关闭私聊选择器
 const closePrivateSelector = () => {
   showPrivateSelector.value = false;
 }
 
-// 私聊目标改变
 const onPrivateTargetChange = (targetId: string) => {
   if (targetId) {
     currentChannel.value = 'private';
@@ -316,14 +283,12 @@ const onPrivateTargetChange = (targetId: string) => {
   }
 }
 
-// 开始私聊（从外部调用）
 const startPrivateChat = (targetId: string) => {
   privateTarget.value = targetId;
   currentChannel.value = 'private';
   showPrivateSelector.value = false;
 }
 
-// 监听 messages 变化，保持滚动到底部
 watch(
   () => props.messages.length,
   () => {
@@ -331,7 +296,6 @@ watch(
   }
 );
 
-// 暴露方法给父组件
 defineExpose({
   startPrivateChat
 });
@@ -394,12 +358,6 @@ defineExpose({
 .storyteller-message {
   background: #ffebee;
   border-left: 3px solid #dc2626;
-}
-
-.dead-message {
-  background: #f5f5f5;
-  border-left: 3px solid #6b7280;
-  opacity: 0.8;
 }
 
 .system-message {

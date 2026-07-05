@@ -13,8 +13,8 @@ interface MafiaPlayer {
   ready: boolean;
   online?: boolean;
   alive?: boolean;
-  role?: 'KILLER' | 'COP' | 'DOCTOR' | 'SNIPER' | 'CIVILIAN';
-  team?: 'RED' | 'BLUE';
+  role?: 'KILLER' | 'COP' | 'DOCTOR' | 'SNIPER' | 'CIVILIAN' | 'GUEST';
+  team?: 'RED' | 'BLUE' | 'NONE';
 }
 
 interface MafiaGameState {
@@ -43,6 +43,7 @@ interface MafiaGameState {
   copCount?: number;
   doctorCount?: number;
   sniperCount?: number;
+  config?: MafiaRoomState['config'];
   nightActions?: {
     killSubmitted?: number;
     killRequired?: number;
@@ -58,8 +59,8 @@ interface MafiaGameState {
 
 interface MafiaSecret {
   playerId: string;
-  role: 'KILLER' | 'COP' | 'DOCTOR' | 'SNIPER' | 'CIVILIAN';
-  team: 'RED' | 'BLUE';
+  role: 'KILLER' | 'COP' | 'DOCTOR' | 'SNIPER' | 'CIVILIAN' | 'GUEST';
+  team: 'RED' | 'BLUE' | 'NONE';
   teammates?: string[];
   actionLock?: boolean;
   inspectResults?: Array<{
@@ -82,6 +83,11 @@ interface MafiaRoomState {
     nightTime: number;
     lastWordRound: number;
     maxPlayers: number;
+    killerCount?: number;
+    copCount?: number;
+    doctorCount?: number;
+    sniperCount?: number;
+    roleCountsCustomized?: boolean;
   };
 }
 
@@ -230,6 +236,21 @@ export const useMafiaStore = defineStore('mafia', {
 
       on('room_update', (room: any) => {
         this.room = normalizeRoom(room);
+      });
+
+      on('config_changed', (data: { config?: MafiaRoomState['config'] }) => {
+        if (this.room && data.config) {
+          this.room = { ...this.room, config: { ...(this.room.config || {}), ...data.config } };
+        }
+      });
+
+      on('game_prepared', (data: { config?: MafiaRoomState['config']; gameInfo?: MafiaGameState }) => {
+        if (this.room && data.config) {
+          this.room = { ...this.room, config: { ...(this.room.config || {}), ...data.config } };
+        }
+        if (data.gameInfo) {
+          this.gameState = data.gameInfo;
+        }
       });
 
       // 游戏事件
