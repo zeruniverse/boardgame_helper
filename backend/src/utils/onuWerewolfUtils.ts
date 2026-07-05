@@ -328,11 +328,12 @@ export function onuIsPlayerWinner(
   }
 
   // 爪牙特殊规则：若最终没有真正的狼人，爪牙需要让“非爪牙”的任意玩家死亡才获胜；
-  // 这可以与皮匠死亡同时成立。若只有爪牙自己死亡，则爪牙不胜。
+  // 但皮匠死亡会让皮匠阵营单独获胜，爪牙不能把“皮匠死亡”当作自己的获胜条件。
   if (player.actualRole === OnuWerewolfRole.Minion && allPlayers.length > 0) {
     const hasRealWerewolf = allPlayers.some(p => onuIsWerewolf(p.actualRole));
     if (!hasRealWerewolf) {
-      return executedPlayers.some(p => p.actualRole !== OnuWerewolfRole.Minion);
+      const anyTannerDied = executedPlayers.some(executed => onuIsTannerTeam(executed.actualRole));
+      return !anyTannerDied && executedPlayers.some(executed => executed.actualRole !== OnuWerewolfRole.Minion);
     }
   }
 
