@@ -100,7 +100,8 @@ export class BOTCWorker extends BaseGameWorker {
   private getKnownIdentitiesForPlayer(viewer: GamePlayer): any[] {
     const knownByPlayerId = new Map<string, any>();
 
-    if (isEvilPlayer(viewer)) {
+    // 标准血染钟楼中，恶魔/爪牙只有在 7 人及以上游戏首夜互认；5-6 人局不应提前暴露邪恶队友。
+    if (this.gamePlayers.size >= 7 && isEvilPlayer(viewer)) {
       for (const player of this.gamePlayers.values()) {
         if (player.playerId === viewer.playerId || !isEvilPlayer(player)) continue;
         const roleTeam = player.role?.team;

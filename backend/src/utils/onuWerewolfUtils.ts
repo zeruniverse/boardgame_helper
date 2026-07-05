@@ -257,7 +257,8 @@ export function onuCalculateVoteResult(votes: Record<string, string>, players: R
   const playerMaxVotes = Math.max(...Object.values(voteCounts), 0);
   const maxVotes = Math.max(playerMaxVotes, centerVotes);
 
-  if (centerVotes >= playerMaxVotes) {
+  // 一夜狼人投票必须至少有玩家获得 2 票才会有人被处决；三人循环一票互投等最高票仅 1 票场景无人死亡。
+  if (playerMaxVotes <= 1 || centerVotes >= playerMaxVotes) {
     return { voteCounts, centerVotes, lynched: [], maxVotes };
   }
 
