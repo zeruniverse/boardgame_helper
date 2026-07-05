@@ -54,6 +54,13 @@
           </div>
         </div>
 
+        <LocalPlayerMark
+          v-if="player.id !== currentUserId"
+          game-key="werewolf"
+          :player-id="player.id"
+          :current-user-id="currentUserId"
+        />
+
         <!-- 玩家操作按钮 -->
         <div v-if="canManagePlayer(player)" class="player-actions">
           <el-dropdown trigger="click">
@@ -144,6 +151,7 @@
 import { ref, computed } from 'vue'
 import { More } from '@element-plus/icons-vue'
 import { formatPlayerName } from '../utils/playerName'
+import LocalPlayerMark from './LocalPlayerMark.vue'
 
 interface Player {
   id: string

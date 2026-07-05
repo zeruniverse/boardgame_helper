@@ -77,6 +77,13 @@
           </div>
         </div>
 
+        <LocalPlayerMark
+          v-if="player.id !== currentUserId"
+          game-key="blood-on-the-clocktower"
+          :player-id="player.id"
+          :current-user-id="currentUserId"
+        />
+
         <!-- 操作按钮 -->
         <div class="player-actions">
           <!-- 私聊按钮 -->
@@ -191,6 +198,7 @@ import { ref, computed, watch } from 'vue'
 import { ElMessageBox, ElMessage } from 'element-plus'
 import { ChatDotRound, Close, MoreFilled } from '@element-plus/icons-vue'
 import { formatPlayerName } from '../utils/playerName'
+import LocalPlayerMark from './LocalPlayerMark.vue'
 
 interface Props {
   players: any[]
@@ -440,6 +448,8 @@ const handleStorytellerAction = (command: any) => {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
   padding: 8px 0;
   border-bottom: 1px solid #f0f0f0;
 }

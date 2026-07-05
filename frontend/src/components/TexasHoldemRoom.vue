@@ -12,6 +12,7 @@
 
     <!-- 快捷操作按钮 - 顶部吸附但保留在文档流中，避免遮挡下方交互区 -->
     <div v-else class="floating-header">
+      <span class="room-code-pill">房间号 {{ displayRoomName }}</span>
       <!-- 返回大厅按钮 - 始终显示 -->
       <el-button type="info" @click="goToLobby" :class="{ 'colored-border': true }">
         <el-icon><House /></el-icon>
@@ -50,10 +51,10 @@
       </template>
       <!-- 线下分池阶段显示Take/TakeAll -->
       <template v-if="store.stage === 'distribution' && isInGame && !online">
-        <el-input v-model.number="takeAmount" type="number" placeholder="Take 数量" style="width: 80px; margin-right:8px;" />
+        <el-input v-model.number="takeAmount" type="number" placeholder="Take 数量" class="quick-take-input" />
         <el-button type="primary" @click="onTake"
-                   :disabled="takeAmount < 0"
-                   :class="{ 'colored-border': takeAmount >= 0, 'disabled-border': takeAmount < 0 }">
+                   :disabled="takeAmount <= 0"
+                   :class="{ 'colored-border': takeAmount > 0, 'disabled-border': takeAmount <= 0 }">
           Take
         </el-button>
         <el-button type="warning" @click="onTakeAll"
@@ -67,7 +68,8 @@
     <el-main class="game-main">
       <!-- 游戏信息展示 -->
       <el-card class="game-info">
-        <div>房间号: <strong>{{ displayRoomName }}</strong></div>
+        <div>模式: <strong>{{ online ? '线上系统发牌' : '线下发牌' }}</strong></div>
+        <div v-if="!online" class="offline-notice">线下发牌：请线下看牌；系统不显示手牌/公共牌，结算时由赢家 Take 底池。</div>
         <div>我的底牌: <span v-if="store.stage === 'playing' && !isInGame">未参与游戏</span>
           <span v-else-if="online">
             <span v-if="store.hand.length > 0" v-html="formatCards(store.hand)"></span>
@@ -75,7 +77,7 @@
           </span>
           <span v-else>线下发牌</span>
         </div>
-        <div>公共牌: <span v-html="formatCards(store.communityCards)"></span></div>
+        <div>公共牌: <span v-if="online" v-html="formatCards(store.communityCards)"></span><span v-else>线下发牌</span></div>
         <div>底池: {{ store.pot }}</div>
         <div>当前行动: {{ currentTurnDisplay }}</div>
         <div>阶段: {{ roundText }}</div>
@@ -91,8 +93,8 @@
             <div class="take-controls">
               <el-input v-model.number="takeAmount" type="number" placeholder="Take 数量" class="take-input" />
               <el-button type="primary" @click="onTake"
-                         :disabled="takeAmount < 0"
-                         :class="{ 'colored-border': takeAmount >= 0, 'disabled-border': takeAmount < 0 }"
+                         :disabled="takeAmount <= 0"
+                         :class="{ 'colored-border': takeAmount > 0, 'disabled-border': takeAmount <= 0 }"
                          class="take-btn">
                 Take
               </el-button>
@@ -122,7 +124,7 @@
           </div>
         </div>
         <div class="chat-container">
-          <TexasHoldemChat 
+          <TexasHoldemChat
             class="chat-component"
             :messages="store.messages"
             :room-id="store.currentRoom || undefined"
@@ -133,18 +135,20 @@
         </div>
       </div>
 
-      <!-- 小屏幕：平级布局 -->
+        <!-- 小屏幕：按 快捷操作 / 游戏信息 / 玩家列表 / 完整操作 / 聊天 顺序排列 -->
       <div class="mobile-layout">
-        <!-- 玩家列表和操作按钮 -->
-        <div class="mobile-section">
+        <div class="mobile-section mobile-player-section">
           <TexasHoldemPlayerList />
+        </div>
+
+        <div class="mobile-section mobile-action-section">
           <!-- 分池阶段 -->
           <template v-if="store.stage === 'distribution' && isInGame && !online">
             <div class="take-controls-mobile">
               <el-input v-model.number="takeAmount" type="number" placeholder="Take 数量" class="take-input-mobile" />
               <el-button type="primary" @click="onTake"
-                         :disabled="takeAmount < 0"
-                         :class="{ 'colored-border': takeAmount >= 0, 'disabled-border': takeAmount < 0 }"
+                         :disabled="takeAmount <= 0"
+                         :class="{ 'colored-border': takeAmount > 0, 'disabled-border': takeAmount <= 0 }"
                          class="take-btn-mobile">
                 Take
               </el-button>
@@ -160,6 +164,9 @@
           <template v-else-if="store.stage === 'playing' && isInGame">
             <TexasHoldemActionBar />
           </template>
+          <div v-else class="waiting-action-hint">
+            {{ store.stage === 'idle' ? '等待开始新一局' : '等待当前行动玩家操作' }}
+          </div>
           <div v-if="isHost" class="control-buttons-mobile">
             <el-button size="small" @click="toggleAutoStart"
                        :type="store.autoStart ? 'warning' : 'info'"
@@ -175,8 +182,8 @@
         </div>
 
         <!-- 聊天窗口 -->
-        <div class="mobile-section">
-          <TexasHoldemChat 
+        <div class="mobile-section mobile-chat-section">
+          <TexasHoldemChat
             class="mobile-chat"
             :messages="store.messages"
             :room-id="store.currentRoom || undefined"
@@ -255,8 +262,8 @@ onMounted(() => {
   if (store.playerId && store.currentRoom === roomId && !isNewJoin) {
     console.log(`尝试重连房间 ${roomId}，玩家ID ${store.playerId}`);
     const session = ensureGameSession('texas-holdem', undefined, roomId);
-    socket.emit('reconnect_room', { 
-      roomId: store.currentRoom, 
+    socket.emit('reconnect_room', {
+      roomId: store.currentRoom,
       playerId: store.playerId,
       sessionToken: session.sessionToken
     });
@@ -346,10 +353,10 @@ function onCashIn() {
 function onCashOut() {
   if (confirm('确定要 Cash Out 并退出房间吗？')) {
     sendTexasAction('cashout');
-    
+
     // 清理所有状态
     store.resetGameState();
-    
+
     // 清理当前房间记忆，保留昵称与玩家ID便于下次加入
     localStorage.removeItem(GAME_STORAGE_KEYS['texas-holdem'].room || 'texas_currentRoom');
     store.currentRoom = null;
@@ -415,7 +422,7 @@ function extendTime() {
 // 第二个快捷按钮的文本
 const secondQuickButtonText = computed(() => {
   if (!isMyTurn.value || !isInGame.value) return '';
-  
+
   if (canCheck.value) {
     // 玩家可以check的情况，显示 Bet/Raise X（不低于后端最小加注）
     const betAmount = quickBetAmount.value;
@@ -438,7 +445,7 @@ const secondQuickButtonText = computed(() => {
 // 第三个快捷按钮的文本
 const thirdQuickButtonText = computed(() => {
   if (!isMyTurn.value || !isInGame.value) return '';
-  
+
   if (canCheck.value) {
     return 'Check';
   } else {
@@ -449,7 +456,7 @@ const thirdQuickButtonText = computed(() => {
 // 处理第二个快捷按钮点击
 function handleSecondQuickButton() {
   if (!store.socket || !store.currentRoom || !isMyTurn.value || !isInGame.value) return;
-  
+
   if (canCheck.value) {
     // 玩家可以check的情况，执行 Bet/Raise X 或 All-in
     const betAmount = quickBetAmount.value;
@@ -480,7 +487,7 @@ function handleSecondQuickButton() {
 // 处理第三个快捷按钮点击
 function handleThirdQuickButton() {
   if (!store.socket || !store.currentRoom || !isMyTurn.value || !isInGame.value) return;
-  
+
   if (canCheck.value) {
     // Check
     sendTexasAction('playerAction', { action: 'check' });
@@ -529,7 +536,7 @@ function formatCards(cards: string[]): string {
     // 使用正则表达式匹配扑克牌
     const match = card.match(/(10|[2-9JQKA])(♠|♥|♣|♦)/);
     if (!match) return escapeHtml(card); // 如果不匹配，返回转义后的原始字符串
-    
+
     const [, value, suit] = match;
     let color = '';
     if (suit === '♠' || suit === '♣') {
@@ -549,6 +556,34 @@ function formatCards(cards: string[]): string {
 
 .disabled-border {
   border: 2px solid #c0c4cc !important;
+}
+
+
+.room-code-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 36px;
+  padding: 0 12px;
+  border-radius: 999px;
+  background: var(--app-panel-muted, #f5f7fa);
+  border: 1px solid var(--app-border, #dcdfe6);
+  font-weight: 700;
+  color: var(--app-text, #303133);
+}
+
+.quick-take-input {
+  width: 120px;
+  margin-right: 8px;
+}
+
+.offline-notice,
+.waiting-action-hint {
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #fff7e6;
+  border: 1px solid #ffd591;
+  color: #8a5a00;
+  line-height: 1.45;
 }
 
 /* 顶部快捷操作按钮 */
@@ -707,10 +742,23 @@ function formatCards(cards: string[]): string {
     width: 100%;
     min-height: 400px;
   }
-  
+
   /* 移动端调整主内容区域的padding-top */
   .game-main {
     padding-top: 16px;
+  }
+
+  .game-info :deep(.el-card__body) {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 8px;
+    font-size: 14px;
+  }
+
+  .mobile-action-section,
+  .mobile-player-section,
+  .mobile-chat-section {
+    overflow: hidden;
   }
 
   /* 移动端快捷按钮优化 */
@@ -721,7 +769,7 @@ function formatCards(cards: string[]): string {
     align-items: center;
     min-height: 50px;
   }
-  
+
   .floating-header .el-button {
     font-size: 12px !important;
     padding: 4px 8px !important;
@@ -730,18 +778,33 @@ function formatCards(cards: string[]): string {
     flex: 0 0 auto;
     white-space: nowrap;
   }
-  
+
   /* 确保按钮不会太宽 */
+  .room-code-pill {
+    min-height: 34px;
+    font-size: 12px;
+    padding: 0 10px;
+    flex: 1 1 100%;
+    justify-content: center;
+  }
+
+  .floating-header .el-button {
+    flex: 1 1 calc(33.333% - 4px);
+    justify-content: center;
+  }
+
   .floating-header .el-button:not(.el-input-number) {
-    max-width: calc(25% - 4px);
+    max-width: none;
     overflow: hidden;
     text-overflow: ellipsis;
   }
-  
+
   /* 输入框特殊处理 */
-  .floating-header .el-input {
-    width: 80px !important;
-    flex: 0 0 80px;
+  .floating-header .el-input,
+  .quick-take-input {
+    width: 100% !important;
+    flex: 1 1 100%;
+    margin-right: 0;
   }
 }
 

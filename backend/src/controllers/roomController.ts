@@ -282,6 +282,19 @@ function buildGameConfig(gameType: string, incomingConfig: any): any {
     gameConfig.nightTime = gameConfig.nightTime ?? gameConfig.actionTime ?? 300;
   }
 
+  if (gameType === 'texas-holdem') {
+    const requestedOfflineMode = gameConfig.dealingMode === 'offline' || gameConfig.offlineDealing === true;
+    gameConfig.allowSystemDealing = requestedOfflineMode ? false : gameConfig.allowSystemDealing !== false;
+    gameConfig.defaultStack = Math.max(1, Math.floor(Number(gameConfig.defaultStack) || 1000));
+    const smallBlind = Math.max(1, Math.floor(Number(gameConfig.blinds?.smallBlind) || 5));
+    const bigBlind = Math.max(smallBlind, Math.floor(Number(gameConfig.blinds?.bigBlind) || 10));
+    gameConfig.blinds = {
+      ...(gameConfig.blinds || {}),
+      smallBlind,
+      bigBlind
+    };
+  }
+
   if (gameType === 'avalon') {
     // 前端字段是 enableLady，worker 字段是 lakeLady。
     gameConfig.lakeLady = gameConfig.lakeLady ?? gameConfig.enableLady ?? false;

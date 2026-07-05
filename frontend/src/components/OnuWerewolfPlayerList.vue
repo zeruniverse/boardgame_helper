@@ -62,6 +62,13 @@
           </div>
         </div>
 
+        <LocalPlayerMark
+          v-if="player.id !== currentUserId"
+          game-key="one-night-werewolf"
+          :player-id="player.id"
+          :current-user-id="currentUserId"
+        />
+
         <div class="player-actions" v-if="canManagePlayer(player)">
           <el-dropdown @command="handlePlayerAction">
             <el-button text type="primary" size="small">
@@ -125,6 +132,7 @@ import { computed } from 'vue';
 import { User, Star, More, Plus } from '@element-plus/icons-vue';
 import { OnuWerewolfGameStatus, OnuWerewolfRole, ONU_WEREWOLF_ROLE_NAMES } from '../store/onuWerewolf';
 import { formatPlayerName } from '../utils/playerName';
+import LocalPlayerMark from './LocalPlayerMark.vue';
 
 interface Player {
   id: string;
@@ -323,6 +331,8 @@ const handlePlayerAction = (command: { action: string; playerId: string }) => {
 .player-item {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
   padding: 12px 15px;
   margin-bottom: 8px;
   background: var(--app-card, var(--app-panel, #ffffff));

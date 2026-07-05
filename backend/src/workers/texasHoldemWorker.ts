@@ -297,20 +297,8 @@ class TexasHoldemWorker extends BaseGameWorker {
             }
             this.sendToRoom('chat_broadcast', { message: `${player.nickname} 离线自动弃牌`, type: 'system' });
             // 检查是否只剩一个活跃玩家
-            const activeIds = this.participants.filter((id: string) => !gs.folded.includes(id));
-            if (activeIds.length === 1) {
-              const winner = this.room.players.find(p => p.id === activeIds[0]);
-              if (winner) {
-                const won = this.awardCurrentPotToPlayer(winner);
-                this.sendToRoom('chat_broadcast', { message: `${winner.nickname} 赢得底池 ${won}` });
-                this.sendToRoom('room_update', this.room);
-                this.handleGameOver();
-              }
-              return;
-            }
-            if (activeIds.length === 0) {
-              this.sendToRoom('chat_broadcast', { message: '所有玩家都已弃牌，游戏结束' });
-              this.handleGameOver();
+            const activeIds = this.getActiveParticipantIds();
+            if (this.settleSingleActiveOrEmptyPot(activeIds)) {
               return;
             }
             // 如果离线玩家是当前回合之后的下一个应该行动的玩家，
@@ -464,10 +452,14 @@ class TexasHoldemWorker extends BaseGameWorker {
       : '';
   }
 
+  private isManualDealing(): boolean {
+    return this.config?.allowSystemDealing === false;
+  }
+
   private buildPublicGameState() {
     const gs = this.gameState as TexasHoldemGameState;
     return {
-      communityCards: gs.communityCards,
+      communityCards: this.isManualDealing() ? [] : gs.communityCards,
       pot: gs.pot,
       bets: gs.bets,
       currentTurn: this.getCurrentTurnPlayerId(),
@@ -476,7 +468,8 @@ class TexasHoldemWorker extends BaseGameWorker {
       currentBet: gs.currentBet,
       lastRaiseAmount: gs.lastRaiseAmount,
       minRaiseTo: gs.currentBet + gs.lastRaiseAmount,
-      stage: gs.stage
+      stage: gs.stage,
+      allowSystemDealing: !this.isManualDealing()
     };
   }
 
@@ -489,6 +482,82 @@ class TexasHoldemWorker extends BaseGameWorker {
     winner.gameMetadata.chips = (winner.gameMetadata.chips || 0) + amount;
     gs.pot = 0;
     return amount;
+  }
+
+  private getActiveParticipantIds(): string[] {
+    const gs = this.gameState as TexasHoldemGameState;
+    return this.participants.filter((id: string) => !gs.folded.includes(id));
+  }
+
+  private enterManualDistribution(eligibleIds?: string[], reason?: string): void {
+    const gs = this.gameState as TexasHoldemGameState;
+    if (!this.isManualDealing()) {
+      return;
+    }
+
+    this.clearActionTimer();
+    const roomPlayerIds = new Set(this.room.players.map(p => p.id));
+    const fallbackEligible = this.participants.filter((id: string) => roomPlayerIds.has(id));
+    const normalizedEligible: string[] = Array.from(new Set<string>((eligibleIds && eligibleIds.length > 0 ? eligibleIds : fallbackEligible)
+      .filter((id: string) => roomPlayerIds.has(id))));
+
+    gs.stage = 'distribution';
+    gs.currentTurn = -1;
+    gs.acted = [];
+    gs.bets = {};
+    gs.currentBet = 0;
+    gs.lastFullBet = 0;
+    gs.raiseLocked = [];
+    gs.winners = normalizedEligible;
+
+    if (!this.room.gameMetadata) {
+      this.room.gameMetadata = {};
+    }
+    this.room.gameMetadata.participants = [...this.participants];
+    this.room.gameMetadata.allowSystemDealing = false;
+
+    if (reason) {
+      this.sendToRoom('chat_broadcast', { message: reason, type: 'system' });
+    }
+    this.sendToRoom('chat_broadcast', {
+      message: `线下发牌模式：奖池 ${gs.pot}。请线下确认赢家，由赢家点击 Take 或 Take ALL 领取底池。`,
+      type: 'system'
+    });
+    this.sendToRoom('room_update', this.room);
+    this.sendToRoom('game_state', this.buildPublicGameState());
+    this.sendToRoom('distribution_start', {});
+  }
+
+  private settleSingleActiveOrEmptyPot(activeIds: string[], emptyMessage = '所有玩家都已弃牌，游戏结束'): boolean {
+    const gs = this.gameState as TexasHoldemGameState;
+    if (activeIds.length === 1) {
+      const winner = this.room.players.find(p => p.id === activeIds[0]);
+      if (!winner) {
+        return false;
+      }
+      if (this.isManualDealing()) {
+        this.enterManualDistribution(activeIds, `${winner.nickname} 是最后未弃牌玩家。线下发牌模式不自动派彩，请确认后手动 Take。`);
+        return true;
+      }
+
+      const won = this.awardCurrentPotToPlayer(winner);
+      this.sendToRoom('chat_broadcast', { message: `${winner.nickname} 赢得底池 ${won}` });
+      this.sendToRoom('room_update', this.room);
+      this.handleGameOver();
+      return true;
+    }
+
+    if (activeIds.length === 0) {
+      if (this.isManualDealing() && gs.pot > 0) {
+        this.enterManualDistribution(this.participants, `${emptyMessage}；线下发牌模式保留底池，需手动分配。`);
+        return true;
+      }
+      this.sendToRoom('chat_broadcast', { message: emptyMessage });
+      this.handleGameOver();
+      return true;
+    }
+
+    return false;
   }
 
   private syncGameStateToPlayer(socketId: string, playerId: string) {
@@ -639,15 +708,9 @@ class TexasHoldemWorker extends BaseGameWorker {
         // 不是当前回合，直接fold并检查是否只剩一个玩家
         gs.folded.push(playerId);
         this.sendToRoom('chat_broadcast', { message: `${player.nickname} cash out 并自动弃牌`, type: 'system' });
-        const activeIds = this.participants.filter((id: string) => !gs.folded.includes(id));
-        if (activeIds.length === 1) {
-          const winner = this.room.players.find(p => p.id === activeIds[0]);
-          if (winner) {
-            const won = this.awardCurrentPotToPlayer(winner);
-            this.sendToRoom('chat_broadcast', { message: `${winner.nickname} 赢得底池 ${won}` });
-            this.sendToRoom('room_update', this.room);
-            this.handleGameOver();
-          }
+        const activeIds = this.getActiveParticipantIds();
+        if (this.settleSingleActiveOrEmptyPot(activeIds)) {
+          // 牌局已结算或进入线下分奖池；仍继续执行 Cash Out，将该玩家移出房间。
         }
       }
     }
@@ -719,6 +782,13 @@ class TexasHoldemWorker extends BaseGameWorker {
         const card2 = gs.deck.pop()!;
         gs.playerHands[p.id] = [card1, card2];
         this.sendToPlayer(p.id, 'deal_hand', { hand: gs.playerHands[p.id] });
+      });
+    } else {
+      gs.deck = [];
+      gs.playerHands = {};
+      this.sendToRoom('chat_broadcast', {
+        message: '线下发牌模式：系统不发真实手牌/公共牌，只管理盲注、行动顺序、下注与底池。请玩家线下看牌。',
+        type: 'system'
       });
     }
 
@@ -1394,8 +1464,9 @@ class TexasHoldemWorker extends BaseGameWorker {
       return;
     }
 
-    const takeAmt = Math.floor(amount);
-    if (isNaN(takeAmt) || takeAmt < 0) {
+    const takeAmt = Math.floor(Number(amount));
+    if (!Number.isFinite(takeAmt) || takeAmt <= 0) {
+      this.sendToPlayer(playerId, 'error', { message: 'Take 数量必须是正整数' });
       return;
     }
 
@@ -1415,7 +1486,8 @@ class TexasHoldemWorker extends BaseGameWorker {
       return;
     }
 
-    player.gameMetadata.chips += takeAmt;
+    player.gameMetadata = player.gameMetadata || {};
+    player.gameMetadata.chips = (Number(player.gameMetadata.chips) || 0) + takeAmt;
     gs.pot -= takeAmt;
 
     this.sendToRoom('chat_broadcast', { message: `[玩家${player.nickname} take ${takeAmt}]` });
@@ -1454,7 +1526,8 @@ class TexasHoldemWorker extends BaseGameWorker {
     }
 
     const takeAmt = gs.pot;
-    player.gameMetadata.chips += takeAmt;
+    player.gameMetadata = player.gameMetadata || {};
+    player.gameMetadata.chips = (Number(player.gameMetadata.chips) || 0) + takeAmt;
     gs.pot = 0;
 
     this.sendToRoom('chat_broadcast', { message: `[玩家${player.nickname} take all ${takeAmt}]` });
@@ -1498,21 +1571,8 @@ class TexasHoldemWorker extends BaseGameWorker {
     this.sendToRoom('chat_broadcast', { message: `${player.nickname} 弃牌` });
 
     // 检查是否只剩一个玩家
-    const activeIds = this.participants.filter((id: string) => !gs.folded.includes(id));
-    if (activeIds.length === 1) {
-      const winner = this.room.players.find(p => p.id === activeIds[0]);
-      if (winner) {
-        const won = this.awardCurrentPotToPlayer(winner);
-        this.sendToRoom('chat_broadcast', { message: `${winner.nickname} 赢得底池 ${won}` });
-        this.sendToRoom('room_update', this.room);
-        this.handleGameOver();
-      }
-      return;
-    }
-
-    if (activeIds.length === 0) {
-      this.sendToRoom('chat_broadcast', { message: '所有玩家都已弃牌，游戏结束' });
-      this.handleGameOver();
+    const activeIds = this.getActiveParticipantIds();
+    if (this.settleSingleActiveOrEmptyPot(activeIds)) {
       return;
     }
 
@@ -1727,19 +1787,13 @@ class TexasHoldemWorker extends BaseGameWorker {
     gs.raiseLocked = [];
     gs.round++;
 
-    const activeIds = this.participants.filter((id: string) => !gs.folded.includes(id));
+    const activeIds = this.getActiveParticipantIds();
     const activePlayers = activeIds.map((id: string) => this.room.players.find((p: Player) => p.id === id)).filter(Boolean) as Player[];
 
     if (activePlayers.length <= 1) {
-      // 游戏结束
-      if (activePlayers.length === 1) {
-        const winner = activePlayers[0];
-        const won = this.awardCurrentPotToPlayer(winner);
-        this.sendToRoom('chat_broadcast', { message: `${winner.nickname} 赢得底池 ${won}` });
+      if (this.settleSingleActiveOrEmptyPot(activeIds)) {
+        return;
       }
-      this.sendToRoom('room_update', this.room);
-      this.handleGameOver();
-      return;
     }
 
     // 检查是否所有玩家都全下
@@ -2020,50 +2074,18 @@ class TexasHoldemWorker extends BaseGameWorker {
       }
       gs.pot = 0; // 奖池已分配完毕
     } else {
-      // 非系统发牌模式，评估手牌确定赢家以验证take操作
-      if (gs.playerHands) {
-        const evaluatedPlayers = activePlayers.filter((p: Player) => gs.playerHands[p.id] && gs.playerHands[p.id].length > 0);
-        if (evaluatedPlayers.length > 0) {
-          let bestHand: number | null = null;
-          const handWinners: Player[] = [];
-          evaluatedPlayers.forEach((player: Player) => {
-            const hand = [...gs.playerHands[player.id], ...gs.communityCards];
-            const hv = evaluateHand(hand);
-            if (bestHand === null || hv > bestHand) {
-              bestHand = hv;
-              handWinners.length = 0;
-              handWinners.push(player);
-            } else if (hv === bestHand) {
-              handWinners.push(player);
-            }
-          });
-          gs.winners = handWinners.map(w => w.id);
-        } else {
-          // 无手牌数据时，所有活跃玩家都视为有资格
-          gs.winners = activePlayers.map((p: Player) => p.id);
-        }
-      } else {
-        gs.winners = activePlayers.map((p: Player) => p.id);
-      }
-      this.sendToRoom('chat_broadcast', { message: `奖池共计 ${gs.pot}，请各位玩家根据牌型大小自行分配奖金`, type: 'system' });
-      this.sendToRoom('chat_broadcast', { message: '可使用 take 命令取奖金，或 take_all 取全部奖金', type: 'system' });
-
-      // 设置为分池阶段
-      gs.stage = 'distribution';
-      // 发送分池阶段开始事件，让前端显示take按钮
-      this.sendToRoom('distribution_start', {});
+      this.enterManualDistribution(
+        activePlayers.map((p: Player) => p.id),
+        `奖池共计 ${gs.pot}，请各位玩家根据线下牌型大小自行分配奖金`
+      );
+      this.sendToRoom('chat_broadcast', { message: '===============', type: 'system' });
+      this.sendToRoom('chat_broadcast', { message: '游戏进入分奖池阶段，奖池分配完毕后可开始新一局', type: 'system' });
+      return;
     }
 
     this.sendToRoom('chat_broadcast', { message: '===============', type: 'system' });
     this.sendToRoom('room_update', this.room);
-
-    // 非系统发牌模式多人摊牌时不立即结束游戏，等待玩家自行分配奖池
-    if (this.config.allowSystemDealing || activePlayers.length === 1) {
-      this.handleGameOver();
-    } else {
-      // 非系统发牌模式多人摊牌，不结束游戏，等待玩家take
-      this.sendToRoom('chat_broadcast', { message: '游戏进入分奖池阶段，奖池分配完毕后请手动开始新一局', type: 'system' });
-    }
+    this.handleGameOver();
   }
 
 

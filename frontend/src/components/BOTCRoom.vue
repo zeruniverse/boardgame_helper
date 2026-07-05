@@ -22,6 +22,12 @@
       <!-- 左侧游戏面板 -->
       <el-main class="game-main">
         <div class="game-content">
+          <div class="mobile-quick-actions">
+            <span class="mobile-quick-title">快捷操作</span>
+            <el-button size="large" type="primary" @click="scrollToActionArea">操作区</el-button>
+            <el-button size="large" plain @click="scrollToChat">聊天</el-button>
+          </div>
+
           <!-- 游戏状态显示 -->
           <div class="game-status" v-if="store.gameState">
             <h3 class="status-title">{{ getStatusMessage() }}</h3>
@@ -52,7 +58,7 @@
                 <div class="role-ability">{{ store.playerRole.ability }}</div>
               </div>
             </div>
-            
+
             <!-- 夜晚信息 -->
             <div class="night-info" v-if="store.nightInfo">
               <h5>夜晚信息:</h5>
@@ -63,8 +69,8 @@
             <div class="reminders" v-if="playerReminders?.length > 0">
               <h5>提醒:</h5>
               <div class="reminder-tags">
-                <el-tag 
-                  v-for="reminder in playerReminders" 
+                <el-tag
+                  v-for="reminder in playerReminders"
                   :key="reminder"
                   type="warning"
                   size="small"
@@ -88,8 +94,8 @@
                   <span class="vote-against">反对: {{ currentNomination.votesAgainst || 0 }}</span>
                 </div>
                 <div class="vote-progress">
-                  <el-progress 
-                    :percentage="getVoteProgress()" 
+                  <el-progress
+                    :percentage="getVoteProgress()"
                     :color="getVoteProgressColor()"
                     :show-text="false"
                   />
@@ -101,44 +107,65 @@
             </div>
           </div>
 
+          <div class="mobile-player-list-slot">
+            <BOTCPlayerList
+              :players="store.room?.players || []"
+              :host-id="store.room?.hostId"
+              :current-user-id="store.currentUserId"
+              :game-players="store.gameState?.players || []"
+              :is-storyteller="store.isStoryteller"
+              :storyteller-id="store.gameConfig?.storytellerId"
+              :game-config="store.gameConfig"
+              @transfer-host="handleTransferHost"
+              @kick-player="handleKickPlayer"
+              @start-private-chat="handleStartPrivateChat"
+              @start-game="handleStartGame"
+              @storyteller-action="handleStorytellerCommand"
+            />
+          </div>
+
           <!-- 游戏操作区域 -->
-          <BOTCActionPanel 
-            v-if="store.gameState"
-            :game-state="store.gameState"
-            :player-role="store.playerRole"
-            :night-info="store.nightInfo"
-            :room-id="roomId"
-            :is-storyteller="store.isStoryteller"
-            :current-user-id="store.currentUserId"
-            :is-ai-storyteller="store.gameConfig?.isAIStoryteller || false"
-            :storyteller-question="store.storytellerQuestion"
-            :ai-storyteller-messages="store.aiStorytellerMessages"
-            @game-action="handleGameAction"
-            @storyteller-response="handleStorytellerResponse"
-          />
+          <div class="full-action-area">
+            <BOTCActionPanel
+              v-if="store.gameState"
+              :game-state="store.gameState"
+              :player-role="store.playerRole"
+              :night-info="store.nightInfo"
+              :room-id="roomId"
+              :is-storyteller="store.isStoryteller"
+              :current-user-id="store.currentUserId"
+              :is-ai-storyteller="store.gameConfig?.isAIStoryteller || false"
+              :storyteller-question="store.storytellerQuestion"
+              :ai-storyteller-messages="store.aiStorytellerMessages"
+              @game-action="handleGameAction"
+              @storyteller-response="handleStorytellerResponse"
+            />
+          </div>
         </div>
       </el-main>
 
       <!-- 右侧边栏 -->
       <el-aside width="300px" class="game-sidebar">
         <!-- 玩家列表 -->
-        <BOTCPlayerList 
-          :players="store.room?.players || []" 
-          :host-id="store.room?.hostId"
-          :current-user-id="store.currentUserId"
-          :game-players="store.gameState?.players || []"
-          :is-storyteller="store.isStoryteller"
-          :storyteller-id="store.gameConfig?.storytellerId"
-          :game-config="store.gameConfig"
-          @transfer-host="handleTransferHost"
-          @kick-player="handleKickPlayer"
-          @start-private-chat="handleStartPrivateChat"
-          @start-game="handleStartGame"
-          @storyteller-action="handleStorytellerCommand"
-        />
+        <div class="desktop-player-list-slot">
+          <BOTCPlayerList
+            :players="store.room?.players || []"
+            :host-id="store.room?.hostId"
+            :current-user-id="store.currentUserId"
+            :game-players="store.gameState?.players || []"
+            :is-storyteller="store.isStoryteller"
+            :storyteller-id="store.gameConfig?.storytellerId"
+            :game-config="store.gameConfig"
+            @transfer-host="handleTransferHost"
+            @kick-player="handleKickPlayer"
+            @start-private-chat="handleStartPrivateChat"
+            @start-game="handleStartGame"
+            @storyteller-action="handleStorytellerCommand"
+          />
+        </div>
 
         <!-- 聊天区域 -->
-        <BOTCChat 
+        <BOTCChat
           ref="chatComponentRef"
           :messages="store.chatMessages"
           :room-id="roomId"
@@ -203,10 +230,10 @@ onMounted(() => {
     router.push('/')
     return
   }
-  
+
   // 连接到房间
   store.connectToRoom(roomId, 'blood-on-the-clocktower')
-  
+
   // 启动计时器同步
   startTimer()
 })
@@ -225,7 +252,7 @@ const startTimer = () => {
     clearInterval(timerInterval)
     timerInterval = null
   }
-  
+
   timerInterval = setInterval(() => {
     // 从store同步timeLeft
     timeLeft.value = store.timeLeft || 0
@@ -235,7 +262,7 @@ const startTimer = () => {
 // 获取状态信息
 const getStatusMessage = () => {
   if (!store.gameState) return ''
-  
+
   switch (store.gameState.phase) {
     case 'setup':
       return '等待游戏开始'
@@ -297,11 +324,11 @@ const getPlayerName = (playerId: string, preferredName?: string) => {
 // 格式化夜晚信息
 const formatNightInfo = (info: any) => {
   if (!info) return ''
-  
+
   if (typeof info === 'string') return info
-  
+
   if (info.message) return info.message
-  
+
   if (info.information) {
     const data = info.information
     if (data.playerId) {
@@ -492,6 +519,13 @@ const handleStartGame = (config: any) => {
   // 后端使用 'ready' 动作来开始游戏
   store.sendGameAction('ready', config || {})
 }
+
+const scrollToSelector = (selector: string) => {
+  document.querySelector(selector)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+}
+
+const scrollToActionArea = () => scrollToSelector('.full-action-area')
+const scrollToChat = () => scrollToSelector('.game-sidebar')
 </script>
 
 <style scoped>
@@ -826,6 +860,15 @@ const handleStartGame = (config: any) => {
   color: var(--app-text-secondary) !important;
 }
 
+.mobile-quick-actions,
+.mobile-player-list-slot {
+  display: none;
+}
+
+.full-action-area {
+  margin-bottom: var(--app-space-5);
+}
+
 @media (max-width: 768px) {
   .room-header,
   .header-left,
@@ -835,8 +878,63 @@ const handleStartGame = (config: any) => {
     gap: var(--app-space-3);
   }
 
-  .game-main {
+  .game-container {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .game-content {
+    display: flex;
+    flex-direction: column;
+    gap: var(--app-space-4);
+  }
+
+  .game-main,
+  .game-sidebar {
+    width: 100% !important;
+    flex: none;
     padding: var(--app-space-4);
+  }
+
+  .game-sidebar {
+    border-left: 0;
+    border-top: 1px solid var(--app-border);
+  }
+
+  .mobile-quick-actions {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    display: flex;
+    align-items: center;
+    gap: var(--app-space-2);
+    padding: var(--app-space-3);
+    background: var(--app-panel);
+    border: 1px solid var(--app-border);
+    border-radius: var(--app-radius);
+    box-shadow: var(--app-shadow-sm);
+  }
+
+  .mobile-quick-title {
+    flex: 1;
+    font-weight: 700;
+    color: var(--app-text);
+  }
+
+  .mobile-player-list-slot {
+    display: block;
+  }
+
+  .desktop-player-list-slot {
+    display: none;
+  }
+
+  .game-status,
+  .edition-info-card,
+  .role-info,
+  .nomination-area,
+  .full-action-area {
+    margin-bottom: 0;
   }
 }
 

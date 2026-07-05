@@ -1,5 +1,5 @@
 <template>
-  <div style="padding: 16px;">
+  <div class="texas-action-bar">
     <el-button @click="extendTime"
                :disabled="!store.gameActive || !isInGame"
                :class="{ 'colored-border': store.gameActive && isInGame, 'disabled-border': !store.gameActive || !isInGame }">
@@ -15,15 +15,16 @@
                :class="{ 'colored-border': store.gameActive && canCall && isInGame, 'disabled-border': !store.gameActive || !canCall || !isInGame }">
       Call {{ toCall }}
     </el-button>
-    <el-input v-model.number="raiseAmount" type="number" placeholder="额外加注"
-              :disabled="!store.gameActive || !isMyTurn || !isInGame"
-              style="width: 100px; margin: 0 8px;" />
-    <el-button type="warning"
-               :disabled="!store.gameActive || !canRaise"
-               @click="raise"
-               :class="{ 'colored-border': store.gameActive && canRaise, 'disabled-border': !store.gameActive || !canRaise }">
-      Raise
-    </el-button>
+    <div class="raise-row">
+      <el-input v-model.number="raiseAmount" type="number" placeholder="额外加注"
+                :disabled="!store.gameActive || !isMyTurn || !isInGame" />
+      <el-button type="warning"
+                 :disabled="!store.gameActive || !canRaise"
+                 @click="raise"
+                 :class="{ 'colored-border': store.gameActive && canRaise, 'disabled-border': !store.gameActive || !canRaise }">
+        Raise
+      </el-button>
+    </div>
     <el-button type="primary"
                :disabled="!store.gameActive || !isMyTurn || !isInGame"
                @click="action('allin')"
@@ -47,7 +48,7 @@ import { emitGameAction } from '../utils/gameSocket';
 const store = useTexasHoldemStore();
 const raiseAmount = ref(0);
 // 使用playerId而不是nickname来查找下注额
-const toCall = computed(() => store.currentBet - (store.bets[store.playerId] || 0));
+const toCall = computed(() => Math.max(store.currentBet - (store.bets[store.playerId] || 0), 0));
 // 使用playerId查找自己的玩家信息，从gameMetadata中获取筹码
 const ownPlayer = computed(() => store.players.find((p: any) => p.id === store.playerId));
 const isInGame = computed(() => store.participants.includes(store.playerId));
@@ -68,8 +69,8 @@ function action(type: string) {
 // Raise操作使用game_action统一格式
 function raise() {
   if (!store.socket || !store.currentRoom || !store.gameActive || !isInGame.value) return;
-  const val = Math.floor(raiseAmount.value);
-  if (isNaN(val) || val <= 0) {
+  const val = Math.floor(Number(raiseAmount.value));
+  if (!Number.isFinite(val) || val <= 0) {
     alert('请输入合法的正整数加注金额');
     return;
   }
@@ -96,11 +97,54 @@ function extendTime() {
 </script>
 
 <style scoped>
+.texas-action-bar {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  width: 100%;
+}
+
+.texas-action-bar .el-button {
+  min-height: 44px;
+  margin-left: 0;
+  font-weight: 700;
+}
+
+.raise-row {
+  display: flex;
+  grid-column: span 2;
+  gap: 8px;
+}
+
+.raise-row .el-input {
+  flex: 1;
+}
+
+.raise-row .el-button {
+  flex: 0 0 92px;
+}
+
 .colored-border {
   border: 2px solid #409eff !important;
 }
 
 .disabled-border {
   border: 2px solid #c0c4cc !important;
+}
+
+@media (max-width: 768px) {
+  .texas-action-bar {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .raise-row {
+    grid-column: span 2;
+  }
+
+  .texas-action-bar .el-button {
+    min-height: 48px;
+    font-size: 15px;
+  }
 }
 </style>

@@ -115,6 +115,7 @@
             <h4>🃏 德州扑克 (Texas Hold'em)</h4>
             <p><strong>人数：</strong>2-10人</p>
             <p><strong>游戏目标：</strong>通过组合手牌和公共牌形成最佳牌型，赢得彩池。</p>
+            <p><strong>发牌模式：</strong>可选择线上系统发牌，或线下发牌模式（系统仅管理流程/筹码，赢家手动 Take 底池）。</p>
             <p><strong>游戏流程：</strong></p>
             <ol>
               <li><strong>发牌：</strong>每位玩家获得2张底牌</li>
@@ -579,6 +580,15 @@
                   <el-option label="10人" :value="10" />
                 </el-select>
               </el-form-item>
+              <el-form-item label="发牌模式">
+                <el-radio-group v-model="createRoomForm.allowSystemDealing" class="dealing-mode-group">
+                  <el-radio-button :value="true">线上系统发牌</el-radio-button>
+                  <el-radio-button :value="false">线下发牌</el-radio-button>
+                </el-radio-group>
+                <div class="form-tip">
+                  线下发牌模式只管理流程、下注与底池；系统不显示手牌/公共牌，结算时由赢家 Take 筹码。
+                </div>
+              </el-form-item>
             </template>
 
             <!-- 阿瓦隆特有设置 -->
@@ -819,6 +829,7 @@ const joinRoomForm = ref({
 const createRoomDialogVisible = ref(false);
 const createRoomForm = ref({
   maxPlayers: 8,
+  allowSystemDealing: true,
   enableLady: false,
   nickname: '',
   gameType: '',
@@ -941,6 +952,7 @@ function showJoinRoomDialog() {
 // 显示创建房间对话框
 function showCreateRoomDialog() {
   createRoomForm.value.maxPlayers = 8;
+  createRoomForm.value.allowSystemDealing = true;
   createRoomForm.value.enableLady = false;
   createRoomForm.value.nickname = '';
   createRoomForm.value.gameType = '';
@@ -1021,7 +1033,11 @@ async function confirmCreateRoom() {
     // 房间名称由系统自动分配，无需手动设置
 
     // 添加游戏特定配置
-    if (createRoomForm.value.gameType === 'avalon') {
+    if (createRoomForm.value.gameType === 'texas-holdem') {
+      gameConfig.allowSystemDealing = createRoomForm.value.allowSystemDealing;
+      gameConfig.dealingMode = createRoomForm.value.allowSystemDealing ? 'online' : 'offline';
+      gameConfig.playerCount = createRoomForm.value.maxPlayers;
+    } else if (createRoomForm.value.gameType === 'avalon') {
       gameConfig.enableLady = createRoomForm.value.enableLady;
       gameConfig.playerCount = createRoomForm.value.maxPlayers;
     } else if (createRoomForm.value.gameType === 'blood-on-the-clocktower') {
@@ -1278,6 +1294,19 @@ function nextStep() {
 
 .room-config {
   padding: 20px;
+}
+
+.dealing-mode-group {
+  display: flex;
+  flex-wrap: wrap;
+}
+
+.form-tip {
+  width: 100%;
+  margin-top: 8px;
+  color: var(--app-text-secondary);
+  font-size: 13px;
+  line-height: 1.45;
 }
 
 .script-details {

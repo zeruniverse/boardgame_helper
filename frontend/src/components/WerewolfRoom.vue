@@ -33,6 +33,12 @@
       <!-- 左侧游戏面板 -->
       <el-main class="game-main">
         <div class="game-content">
+          <div class="mobile-quick-actions">
+            <span class="mobile-quick-title">快捷操作</span>
+            <el-button size="large" type="primary" @click="scrollToActionArea">操作区</el-button>
+            <el-button size="large" plain @click="scrollToChat">聊天</el-button>
+          </div>
+
           <!-- 游戏状态显示 -->
           <div class="game-status" v-if="gameState">
             <h3 class="status-title">{{ getStatusMessage() }}</h3>
@@ -81,17 +87,33 @@
             </div>
           </div>
 
+          <div class="mobile-player-list-slot">
+            <WerewolfPlayerList
+              :players="room?.players || []"
+              :host-id="room?.hostId"
+              :current-user-id="currentUserId"
+              :game-players-by-id="gameState?.players"
+              :game-started="room?.gameStarted"
+              :game-state="gameState"
+              @transfer-host="handleTransferHost"
+              @kick-player="handleKickPlayer"
+              @update-config="handleUpdateConfig"
+            />
+          </div>
+
           <!-- 游戏操作区域 -->
-          <WerewolfActionPanel
-            v-if="gameState"
-            :game-state="gameState"
-            :player-secret="playerSecret"
-            :room-id="roomId"
-            :is-ready="isReady"
-            :is-host="isHost"
-            :time-left="timeLeft"
-            @game-action="handleGameAction"
-          />
+          <div class="full-action-area">
+            <WerewolfActionPanel
+              v-if="gameState"
+              :game-state="gameState"
+              :player-secret="playerSecret"
+              :room-id="roomId"
+              :is-ready="isReady"
+              :is-host="isHost"
+              :time-left="timeLeft"
+              @game-action="handleGameAction"
+            />
+          </div>
 
           <!-- 游戏历史记录 -->
           <div class="game-history" v-if="gameHistory.length > 0">
@@ -109,17 +131,19 @@
       <!-- 右侧边栏 -->
       <el-aside width="320px" class="game-sidebar">
         <!-- 玩家列表 -->
-        <WerewolfPlayerList
-          :players="room?.players || []"
-          :host-id="room?.hostId"
-          :current-user-id="currentUserId"
-          :game-players-by-id="gameState?.players"
-          :game-started="room?.gameStarted"
-          :game-state="gameState"
-          @transfer-host="handleTransferHost"
-          @kick-player="handleKickPlayer"
-          @update-config="handleUpdateConfig"
-        />
+        <div class="desktop-player-list-slot">
+          <WerewolfPlayerList
+            :players="room?.players || []"
+            :host-id="room?.hostId"
+            :current-user-id="currentUserId"
+            :game-players-by-id="gameState?.players"
+            :game-started="room?.gameStarted"
+            :game-state="gameState"
+            @transfer-host="handleTransferHost"
+            @kick-player="handleKickPlayer"
+            @update-config="handleUpdateConfig"
+          />
+        </div>
 
         <!-- 聊天区域 -->
         <WerewolfChat
@@ -274,6 +298,13 @@ const toggleRoomLock = () => {
   store.sendGameAction('toggleRoomLock', {})
   roomLocked.value = !roomLocked.value
 }
+
+const scrollToSelector = (selector: string) => {
+  document.querySelector(selector)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+}
+
+const scrollToActionArea = () => scrollToSelector('.full-action-area')
+const scrollToChat = () => scrollToSelector('.game-sidebar')
 
 // 检查房间状态
 const checkRoomStatus = () => {
@@ -710,6 +741,15 @@ onUnmounted(() => {
   color: var(--app-text-secondary);
 }
 
+.mobile-quick-actions,
+.mobile-player-list-slot {
+  display: none;
+}
+
+.full-action-area {
+  margin-bottom: var(--app-space-5);
+}
+
 @media (max-width: 768px) {
   .room-header,
   .header-left,
@@ -719,8 +759,62 @@ onUnmounted(() => {
     gap: var(--app-space-3);
   }
 
-  .game-main {
+  .game-container {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .game-content {
+    display: flex;
+    flex-direction: column;
+    gap: var(--app-space-4);
+  }
+
+  .game-main,
+  .game-sidebar {
+    width: 100% !important;
+    flex: none;
     padding: var(--app-space-4);
+  }
+
+  .game-sidebar {
+    border-left: 0;
+    border-top: 1px solid var(--app-border);
+  }
+
+  .mobile-quick-actions {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    display: flex;
+    align-items: center;
+    gap: var(--app-space-2);
+    padding: var(--app-space-3);
+    background: var(--app-panel);
+    border: 1px solid var(--app-border);
+    border-radius: var(--app-radius);
+    box-shadow: var(--app-shadow-sm);
+  }
+
+  .mobile-quick-title {
+    flex: 1;
+    font-weight: 700;
+    color: var(--app-text);
+  }
+
+  .mobile-player-list-slot {
+    display: block;
+  }
+
+  .desktop-player-list-slot {
+    display: none;
+  }
+
+  .game-status,
+  .role-info,
+  .game-history,
+  .full-action-area {
+    margin-bottom: 0;
   }
 }
 

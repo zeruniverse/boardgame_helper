@@ -30,6 +30,13 @@
               已准备
             </el-tag>
           </div>
+
+          <LocalPlayerMark
+            v-if="player.id !== currentUserId"
+            game-key="mafia"
+            :player-id="player.id"
+            :current-user-id="currentUserId"
+          />
           
           <div v-if="canManagePlayer(player)" class="player-actions">
             <el-dropdown trigger="click">
@@ -97,6 +104,13 @@
               </div>
             </div>
           </div>
+
+          <LocalPlayerMark
+            v-if="player.id !== currentUserId"
+            game-key="mafia"
+            :player-id="player.id"
+            :current-user-id="currentUserId"
+          />
 
           <!-- 角色信息（仅对自己和队友可见） -->
           <div v-if="shouldShowRole(player.id) && player.role" class="role-info">
@@ -168,6 +182,7 @@
 import { computed } from 'vue'
 import { House, MoreFilled, Select } from '@element-plus/icons-vue'
 import { formatPlayerName } from '../utils/playerName'
+import LocalPlayerMark from './LocalPlayerMark.vue'
 
 interface Player {
   id: string
@@ -346,6 +361,8 @@ const getRoleTagType = (role: string | undefined): string => {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
   padding: 12px 16px;
   border-bottom: 1px solid #f0f0f0;
   transition: background-color 0.2s;

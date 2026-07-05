@@ -32,6 +32,12 @@
       <!-- 左侧游戏面板 -->
       <el-main class="game-main">
         <div class="game-content">
+          <div class="mobile-quick-actions">
+            <span class="mobile-quick-title">快捷操作</span>
+            <el-button size="large" type="primary" @click="scrollToActionArea">操作区</el-button>
+            <el-button size="large" plain @click="scrollToChat">聊天</el-button>
+          </div>
+
           <!-- 游戏状态显示 -->
           <div class="game-status" v-if="gameState">
             <h3 class="status-title">{{ getStatusMessage() }}</h3>
@@ -45,8 +51,8 @@
           <div class="death-info" v-if="gameState?.deathQueue && gameState.deathQueue.length > 0">
             <h4>死亡玩家</h4>
             <div class="death-list">
-              <div 
-                v-for="death in gameState.deathQueue" 
+              <div
+                v-for="death in gameState.deathQueue"
                 :key="death.playerId"
                 class="death-item"
               >
@@ -64,13 +70,13 @@
               <div class="role-name">{{ getRoleName(playerSecret.role) }}</div>
               <div class="team-name">{{ getTeamName(playerSecret.team) }}</div>
             </div>
-            
+
             <!-- 队友信息 -->
             <div class="teammates" v-if="playerSecret.teammates && playerSecret.teammates.length > 0">
               <h5>队友:</h5>
               <div class="teammate-list">
-                <span 
-                  v-for="teammateId in playerSecret.teammates" 
+                <span
+                  v-for="teammateId in playerSecret.teammates"
                   :key="teammateId"
                   class="teammate"
                 >
@@ -83,8 +89,8 @@
             <div class="inspect-results" v-if="playerSecret.inspectResults && playerSecret.inspectResults.length > 0">
               <h5>查人结果:</h5>
               <div class="result-list">
-                <div 
-                  v-for="result in playerSecret.inspectResults" 
+                <div
+                  v-for="result in playerSecret.inspectResults"
                   :key="result.target + result.day"
                   class="inspect-result"
                 >
@@ -102,8 +108,8 @@
           <div class="vote-result" v-if="gameState?.voteResult">
             <h4>投票结果</h4>
             <div class="vote-list">
-              <div 
-                v-for="(target, voter) in gameState.voteResult" 
+              <div
+                v-for="(target, voter) in gameState.voteResult"
                 :key="voter"
                 class="vote-item"
               >
@@ -114,36 +120,56 @@
             </div>
           </div>
 
+          <div class="mobile-player-list-slot">
+            <MafiaPlayerList
+              :players="room?.players || []"
+              :host-id="room?.hostId || ''"
+              :current-user-id="currentUserId"
+              :game-players-by-id="gameState?.players"
+              :player-secret="playerSecret || undefined"
+              :game-state="gameState"
+              :operators="gameState?.operators"
+              :vote-result="gameState?.voteResult"
+              :room-config="room?.config"
+              @transfer-host="handleTransferHost"
+              @kick-player="handleKickPlayer"
+            />
+          </div>
+
           <!-- 游戏操作区域 -->
-          <MafiaActionPanel 
-            v-if="gameState"
-            :game-state="gameState"
-            :player-secret="playerSecret"
-            :room-id="roomId"
-            @game-action="handleGameAction"
-          />
+          <div class="full-action-area">
+            <MafiaActionPanel
+              v-if="gameState"
+              :game-state="gameState"
+              :player-secret="playerSecret"
+              :room-id="roomId"
+              @game-action="handleGameAction"
+            />
+          </div>
         </div>
       </el-main>
 
       <!-- 右侧边栏 -->
       <el-aside width="300px" class="game-sidebar">
         <!-- 玩家列表 -->
-        <MafiaPlayerList 
-          :players="room?.players || []" 
-          :host-id="room?.hostId || ''"
-          :current-user-id="currentUserId"
-          :game-players-by-id="gameState?.players"
-          :player-secret="playerSecret || undefined"
-          :game-state="gameState"
-          :operators="gameState?.operators"
-          :vote-result="gameState?.voteResult"
-          :room-config="room?.config"
-          @transfer-host="handleTransferHost"
-          @kick-player="handleKickPlayer"
-        />
+        <div class="desktop-player-list-slot">
+          <MafiaPlayerList
+            :players="room?.players || []"
+            :host-id="room?.hostId || ''"
+            :current-user-id="currentUserId"
+            :game-players-by-id="gameState?.players"
+            :player-secret="playerSecret || undefined"
+            :game-state="gameState"
+            :operators="gameState?.operators"
+            :vote-result="gameState?.voteResult"
+            :room-config="room?.config"
+            @transfer-host="handleTransferHost"
+            @kick-player="handleKickPlayer"
+          />
+        </div>
 
         <!-- 聊天区域 -->
-        <MafiaChat 
+        <MafiaChat
           :room-id="roomId"
           :messages="store.messages"
           :nickname="getMyNickname()"
@@ -292,7 +318,7 @@ onUnmounted(() => {
 
 const getStatusMessage = (): string => {
   if (!gameState.value) return '等待开始'
-  
+
   const statusMessages: Record<string, string> = {
     'WAITING': '等待开始',
     'NIGHT': '夜晚 - 杀手行动',
@@ -303,7 +329,7 @@ const getStatusMessage = (): string => {
     'LAST_WORD_DAYTIME': '白天遗言阶段',
     'OVER': '游戏结束'
   }
-  
+
   return statusMessages[gameState.value.status] || gameState.value.statusMessage || '游戏进行中'
 }
 
@@ -349,6 +375,13 @@ const handleTransferHost = (newHostId: string) => {
 const handleKickPlayer = (playerId: string) => {
   store.kickPlayer(playerId)
 }
+
+const scrollToSelector = (selector: string) => {
+  document.querySelector(selector)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+}
+
+const scrollToActionArea = () => scrollToSelector('.full-action-area')
+const scrollToChat = () => scrollToSelector('.game-sidebar')
 </script>
 
 <style scoped>
@@ -717,6 +750,15 @@ const handleKickPlayer = (playerId: string) => {
   color: var(--app-text-secondary);
 }
 
+.mobile-quick-actions,
+.mobile-player-list-slot {
+  display: none;
+}
+
+.full-action-area {
+  margin-bottom: var(--app-space-5);
+}
+
 @media (max-width: 768px) {
   .room-header,
   .header-left,
@@ -726,9 +768,64 @@ const handleKickPlayer = (playerId: string) => {
     gap: var(--app-space-3);
   }
 
-  .game-main {
+  .game-container {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .game-content {
+    display: flex;
+    flex-direction: column;
+    gap: var(--app-space-4);
+  }
+
+  .game-main,
+  .game-sidebar {
+    width: 100% !important;
+    flex: none;
     padding: var(--app-space-4);
+  }
+
+  .game-sidebar {
+    border-left: 0;
+    border-top: 1px solid var(--app-border);
+  }
+
+  .mobile-quick-actions {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    display: flex;
+    align-items: center;
+    gap: var(--app-space-2);
+    padding: var(--app-space-3);
+    background: var(--app-panel);
+    border: 1px solid var(--app-border);
+    border-radius: var(--app-radius);
+    box-shadow: var(--app-shadow-sm);
+  }
+
+  .mobile-quick-title {
+    flex: 1;
+    font-weight: 700;
+    color: var(--app-text);
+  }
+
+  .mobile-player-list-slot {
+    display: block;
+  }
+
+  .desktop-player-list-slot {
+    display: none;
+  }
+
+  .game-status,
+  .death-info,
+  .role-info,
+  .vote-result,
+  .full-action-area {
+    margin-bottom: 0;
   }
 }
 
-</style> 
+</style>

@@ -34,6 +34,12 @@
       <!-- 左侧游戏面板 -->
       <el-main class="game-main">
         <div class="game-content">
+          <div class="mobile-quick-actions">
+            <span class="mobile-quick-title">快捷操作</span>
+            <el-button size="large" type="primary" @click="scrollToActionArea">操作区</el-button>
+            <el-button size="large" plain @click="scrollToChat">聊天</el-button>
+          </div>
+
           <!-- 游戏状态显示 -->
           <div class="game-status" v-if="gameState">
             <h3 class="status-title">{{ getStatusMessage() }}</h3>
@@ -47,8 +53,8 @@
           <div class="mission-board" v-if="gameState?.scoreBoard">
             <h4>任务进度</h4>
             <div class="missions">
-              <div 
-                v-for="(mission, index) in gameState.scoreBoard" 
+              <div
+                v-for="(mission, index) in gameState.scoreBoard"
                 :key="index"
                 class="mission"
                 :class="getMissionClass(mission[2])"
@@ -71,13 +77,13 @@
               <div class="role-name">{{ getRoleName(playerSecret.role) }}</div>
               <div class="team-name">{{ getTeamName(playerSecret.team) }}</div>
             </div>
-            
+
             <!-- 特殊视野 -->
             <div class="visions" v-if="(playerSecret.visions?.length || 0) > 0">
               <h5>你可以看到:</h5>
               <div class="vision-players">
-                <span 
-                  v-for="playerId in playerSecret.visions" 
+                <span
+                  v-for="playerId in playerSecret.visions"
                   :key="playerId"
                   class="vision-player"
                 >
@@ -101,28 +107,43 @@
             </div>
           </div>
 
+          <div class="mobile-player-list-slot">
+            <AvalonPlayerList
+              :players="room?.players || []"
+              :host-id="room?.hostId"
+              :current-user-id="currentUserId"
+              :game-players-by-id="gameState?.players"
+              @transfer-host="handleTransferHost"
+              @kick-player="handleKickPlayer"
+            />
+          </div>
+
           <!-- 游戏操作区域 -->
-          <AvalonActionPanel 
-            v-if="gameState"
-            :game-state="gameState"
-            :player-secret="playerSecret"
-            :room-id="roomId"
-            @game-action="handleGameAction"
-          />
+          <div class="full-action-area">
+            <AvalonActionPanel
+              v-if="gameState"
+              :game-state="gameState"
+              :player-secret="playerSecret"
+              :room-id="roomId"
+              @game-action="handleGameAction"
+            />
+          </div>
         </div>
       </el-main>
 
       <!-- 右侧边栏 -->
       <el-aside width="300px" class="game-sidebar">
         <!-- 玩家列表 -->
-        <AvalonPlayerList 
-          :players="room?.players || []" 
-          :host-id="room?.hostId"
-          :current-user-id="currentUserId"
-          :game-players-by-id="gameState?.players"
-          @transfer-host="handleTransferHost"
-          @kick-player="handleKickPlayer"
-        />
+        <div class="desktop-player-list-slot">
+          <AvalonPlayerList
+            :players="room?.players || []"
+            :host-id="room?.hostId"
+            :current-user-id="currentUserId"
+            :game-players-by-id="gameState?.players"
+            @transfer-host="handleTransferHost"
+            @kick-player="handleKickPlayer"
+          />
+        </div>
 
         <!-- 聊天区域 -->
         <AvalonChat
@@ -305,6 +326,13 @@ const handleKickPlayer = (playerId: string) => {
 const handleSendMessage = (message: string, channel: string) => {
   store.sendMessage(message, channel)
 }
+
+const scrollToSelector = (selector: string) => {
+  document.querySelector(selector)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+}
+
+const scrollToActionArea = () => scrollToSelector('.full-action-area')
+const scrollToChat = () => scrollToSelector('.game-sidebar')
 </script>
 
 <style scoped>
@@ -617,6 +645,15 @@ const handleSendMessage = (message: string, channel: string) => {
   border-color: #f44336;
 }
 
+.mobile-quick-actions,
+.mobile-player-list-slot {
+  display: none;
+}
+
+.full-action-area {
+  margin-bottom: var(--app-space-5);
+}
+
 @media (max-width: 768px) {
   .room-header,
   .header-left,
@@ -626,9 +663,63 @@ const handleSendMessage = (message: string, channel: string) => {
     gap: var(--app-space-3);
   }
 
-  .game-main {
+  .game-container {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .game-content {
+    display: flex;
+    flex-direction: column;
+    gap: var(--app-space-4);
+  }
+
+  .game-main,
+  .game-sidebar {
+    width: 100% !important;
+    flex: none;
     padding: var(--app-space-4);
+  }
+
+  .game-sidebar {
+    border-left: 0;
+    border-top: 1px solid var(--app-border);
+  }
+
+  .mobile-quick-actions {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    display: flex;
+    align-items: center;
+    gap: var(--app-space-2);
+    padding: var(--app-space-3);
+    background: var(--app-panel);
+    border: 1px solid var(--app-border);
+    border-radius: var(--app-radius);
+    box-shadow: var(--app-shadow-sm);
+  }
+
+  .mobile-quick-title {
+    flex: 1;
+    font-weight: 700;
+    color: var(--app-text);
+  }
+
+  .mobile-player-list-slot {
+    display: block;
+  }
+
+  .desktop-player-list-slot {
+    display: none;
+  }
+
+  .game-status,
+  .mission-board,
+  .role-info,
+  .full-action-area {
+    margin-bottom: 0;
   }
 }
 
-</style> 
+</style>

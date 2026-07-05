@@ -94,6 +94,10 @@ export const useTexasHoldemStore = defineStore('texas_holdem', {
 
       // 接收手牌
       on('deal_hand', (data: { hand: string[] }) => {
+        if (!this.allowSystemDealing) {
+          this.hand = [];
+          return;
+        }
         this.hand = data.hand;
         // 游戏开始
         this.gameActive = true;
@@ -111,9 +115,15 @@ export const useTexasHoldemStore = defineStore('texas_holdem', {
         lastRaiseAmount?: number;
         minRaiseTo?: number;
         currentTurn: number | string; 
-        stage?: 'idle' | 'playing' | 'distribution' 
+        stage?: 'idle' | 'playing' | 'distribution';
+        allowSystemDealing?: boolean;
       }) => {
-        this.communityCards = data.communityCards;
+        const allowSystemDealing = data.allowSystemDealing ?? this.allowSystemDealing;
+        this.allowSystemDealing = allowSystemDealing;
+        this.communityCards = allowSystemDealing ? (data.communityCards || []) : [];
+        if (!allowSystemDealing) {
+          this.hand = [];
+        }
         this.pot = data.pot;
         this.bets = data.bets;
         this.round = data.round;
@@ -127,7 +137,7 @@ export const useTexasHoldemStore = defineStore('texas_holdem', {
         // 修复：currentTurn可能是number(索引)或string(playerId)
         // 如果是number类型（来自后端worker的内部索引），需要忽略，等待action_request获取正确的playerId
         // 如果是string类型（playerId），直接使用
-        if (typeof data.currentTurn === 'string' && data.currentTurn) {
+        if (typeof data.currentTurn === 'string') {
           this.currentTurn = data.currentTurn;
         }
         // 如果currentTurn为空字符串，说明游戏处于过渡状态或已结束
@@ -145,6 +155,7 @@ export const useTexasHoldemStore = defineStore('texas_holdem', {
       on('game_started', () => {
         // 新一局开始，重置公共牌和投注信息，手牌由deal_hand事件设置
         this.communityCards = [];
+        this.hand = [];
         this.bets = {};
         this.currentTurn = '';
         this.round = 0;
@@ -165,6 +176,7 @@ export const useTexasHoldemStore = defineStore('texas_holdem', {
         }
         this.distributionActive = true;
         this.stage = 'distribution';
+        this.currentTurn = '';
       });
 
       // 游戏结束
@@ -177,7 +189,11 @@ export const useTexasHoldemStore = defineStore('texas_holdem', {
         }
         this.distributionActive = false;
         this.stage = 'idle';
-        // 为了方便复盘，保留手牌和公共牌显示，不在这里清空
+        if (!this.allowSystemDealing) {
+          this.hand = [];
+          this.communityCards = [];
+        }
+        // 为了方便复盘，系统发牌模式保留手牌和公共牌显示
         // 手牌和公共牌将在下一局游戏开始时清空
         // 同时添加系统提示消息
         this.addMessage({ message: '[系统] 游戏结束，请点击开始游戏开始新局' });
@@ -210,6 +226,10 @@ export const useTexasHoldemStore = defineStore('texas_holdem', {
         // 同步系统发牌模式配置
         if (data.gameMetadata?.allowSystemDealing !== undefined) {
           this.allowSystemDealing = data.gameMetadata.allowSystemDealing;
+          if (!this.allowSystemDealing) {
+            this.hand = [];
+            this.communityCards = [];
+          }
         }
         if (data.hostId !== undefined) {
           this.hostId = data.hostId;
@@ -257,6 +277,13 @@ export const useTexasHoldemStore = defineStore('texas_holdem', {
         }
         if (data.room?.locked !== undefined) {
           this.roomLocked = data.room.locked === true;
+        }
+        if (data.room?.gameMetadata?.allowSystemDealing !== undefined) {
+          this.allowSystemDealing = data.room.gameMetadata.allowSystemDealing;
+          if (!this.allowSystemDealing) {
+            this.hand = [];
+            this.communityCards = [];
+          }
         }
       });
     },

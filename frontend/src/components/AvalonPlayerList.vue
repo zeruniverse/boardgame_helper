@@ -22,6 +22,13 @@
              {{ getTeamName(gamePlayer(player.id)?.team || '') }}
            </span>
         </div>
+
+        <LocalPlayerMark
+          v-if="player.id !== currentUserId"
+          game-key="avalon"
+          :player-id="player.id"
+          :current-user-id="currentUserId"
+        />
         
         <div v-if="showHostActions && currentUserId === hostId && player.id !== hostId" class="player-actions">
           <el-button 
@@ -46,6 +53,7 @@
 
 <script setup lang="ts">
 import { formatPlayerName } from '../utils/playerName'
+import LocalPlayerMark from './LocalPlayerMark.vue'
 
 interface Player {
   id: string
@@ -119,6 +127,8 @@ const getTeamName = (team: string): string => {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
   padding: 8px 12px;
   background: rgba(0, 0, 0, 0.03);
   border-radius: 6px;

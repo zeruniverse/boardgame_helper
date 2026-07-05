@@ -20,8 +20,21 @@
       </div>
     </div>
 
+    <div class="mobile-quick-actions">
+      <span class="mobile-quick-title">快捷操作</span>
+      <el-button size="large" type="primary" @click="scrollToActionArea">操作区</el-button>
+      <el-button size="large" plain @click="scrollToChat">聊天</el-button>
+    </div>
+
     <!-- 游戏主区域 -->
     <div class="game-layout">
+      <div class="mobile-game-info-slot">
+        <h3>游戏信息</h3>
+        <div class="mobile-info-row"><span>阶段</span><strong>{{ gameState?.status || gameState?.currentPhase || '等待开始' }}</strong></div>
+        <div class="mobile-info-row"><span>我的身份</span><strong>{{ myRoleName }}</strong></div>
+        <div class="mobile-info-row"><span>在线玩家</span><strong>{{ activeRoomPlayerCount }}/{{ room?.players?.length || '?' }}</strong></div>
+        <div v-if="timeLeft > 0" class="mobile-info-row"><span>剩余时间</span><strong>{{ timeLeft }}s</strong></div>
+      </div>
       <!-- 左侧：玩家列表 -->
       <div class="left-panel">
         <OnuWerewolfPlayerList
@@ -37,7 +50,7 @@
       </div>
 
       <!-- 中间：操作面板 -->
-      <div class="center-panel">
+      <div class="center-panel full-action-area">
         <OnuWerewolfActionPanel
           :gameState="gameState"
           :playerSecret="playerSecret"
@@ -59,7 +72,7 @@
       </div>
 
       <!-- 右侧：聊天区域 -->
-      <div class="right-panel">
+      <div class="right-panel chat-anchor">
         <OnuWerewolfChat
           :messages="messages"
           :roomId="roomId"
@@ -77,7 +90,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { useOnuWerewolfStore } from '../store/onuWerewolf';
+import { useOnuWerewolfStore, ONU_WEREWOLF_ROLE_NAMES } from '../store/onuWerewolf';
 import { Back } from '@element-plus/icons-vue';
 import OnuWerewolfActionPanel from './OnuWerewolfActionPanel.vue';
 import OnuWerewolfPlayerList from './OnuWerewolfPlayerList.vue';
@@ -105,6 +118,10 @@ const canStartGame = computed(() => store.canStartGame);
 const canUseSkill = computed(() => store.canUseSkill);
 const canVote = computed(() => store.canVote);
 const myRole = computed(() => store.myRole);
+const myRoleName = computed(() => {
+  if (!myRole.value) return '未分配';
+  return (ONU_WEREWOLF_ROLE_NAMES as Record<string, string>)[myRole.value] || myRole.value;
+});
 const mySeat = computed(() => store.mySeat);
 const socket = computed(() => store.socket);
 const activeRoomPlayerCount = computed(() => {
@@ -143,6 +160,13 @@ const handleTransferHost = (playerId: string) => {
 const handleKickPlayer = (playerId: string) => {
   store.kickPlayer(playerId);
 };
+
+const scrollToSelector = (selector: string) => {
+  document.querySelector(selector)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+};
+
+const scrollToActionArea = () => scrollToSelector('.full-action-area');
+const scrollToChat = () => scrollToSelector('.chat-anchor');
 
 // 生命周期
 onMounted(() => {
@@ -311,6 +335,11 @@ onUnmounted(() => {
   padding: var(--app-space-4);
 }
 
+.mobile-quick-actions,
+.mobile-game-info-slot {
+  display: none;
+}
+
 @media (max-width: 992px) {
   .room-header,
   .room-info,
@@ -319,8 +348,66 @@ onUnmounted(() => {
     gap: var(--app-space-3);
   }
 
+  .mobile-quick-actions {
+    display: flex;
+    align-items: center;
+    gap: var(--app-space-2);
+    margin: var(--app-space-4) var(--app-space-4) 0;
+    padding: var(--app-space-3);
+    background: var(--app-panel);
+    border: 1px solid var(--app-border);
+    border-radius: var(--app-radius);
+    box-shadow: var(--app-shadow-sm);
+  }
+
+  .mobile-quick-title {
+    flex: 1;
+    font-weight: 700;
+    color: var(--app-text);
+  }
+
   .game-layout {
     padding: var(--app-space-4);
+  }
+
+  .mobile-game-info-slot {
+    display: block;
+    order: 1;
+    background: var(--app-panel);
+    border: 1px solid var(--app-border);
+    border-radius: var(--app-radius);
+    box-shadow: var(--app-shadow-sm);
+    padding: var(--app-space-4);
+  }
+
+  .mobile-game-info-slot h3 {
+    margin: 0 0 var(--app-space-3);
+    font-size: 18px;
+    color: var(--app-text);
+  }
+
+  .mobile-info-row {
+    display: flex;
+    justify-content: space-between;
+    gap: var(--app-space-3);
+    padding: var(--app-space-2) 0;
+    color: var(--app-text-secondary);
+  }
+
+  .mobile-info-row strong {
+    color: var(--app-text);
+  }
+
+  .left-panel {
+    order: 2;
+  }
+
+  .center-panel {
+    order: 3;
+  }
+
+  .right-panel {
+    order: 4;
   }
 }
 
