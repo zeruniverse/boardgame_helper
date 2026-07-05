@@ -22,11 +22,13 @@
 import { ref, nextTick, watch, computed } from 'vue';
 import { safeHtml } from '../utils/html';
 import { emitChatAction } from '../utils/gameSocket';
+import { formatPlayerNameById } from '../utils/playerName';
 
 interface Props {
   messages: any[]
   roomId?: string
   nickname?: string
+  playerId?: string
   socket?: any
 }
 
@@ -34,6 +36,7 @@ const props = withDefaults(defineProps<Props>(), {
   messages: () => [],
   roomId: '',
   nickname: '',
+  playerId: '',
   socket: null
 })
 
@@ -76,8 +79,13 @@ const getDisplayMessage = (msg: any): string => {
   if (typeof msg === 'string') return msg;
   if (!msg) return '';
 
-  if (msg.type === 'chat' && msg.sender && msg.message) {
-    return `${msg.sender}: ${msg.message}`;
+  if (msg.type === 'chat' && (msg.sender || msg.playerName) && msg.message) {
+    const senderId = msg.playerId || msg.senderId || msg.from;
+    const rawName = msg.sender || msg.playerName;
+    const senderName = senderId
+      ? formatPlayerNameById(senderId, rawName, props.playerId, rawName || '玩家')
+      : (rawName === props.nickname ? `${rawName}（我）` : rawName);
+    return `${senderName}: ${msg.message}`;
   }
 
   return msg.message || '';

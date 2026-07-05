@@ -15,7 +15,7 @@
         }"
       >
         <div class="player-info">
-          <span class="player-name">{{ player.name }}</span>
+          <span class="player-name">{{ displayPlayerName(player) }}</span>
           <span v-if="player.id === hostId" class="host-badge">房主</span>
           <span v-if="gamePlayer(player.id)?.ready" class="ready-badge">已准备</span>
                      <span v-if="gamePlayer(player.id)?.team" class="team-badge">
@@ -45,9 +45,12 @@
 </template>
 
 <script setup lang="ts">
+import { formatPlayerName } from '../utils/playerName'
+
 interface Player {
   id: string
   name: string
+  nickname?: string
 }
 
 interface GamePlayer {
@@ -72,6 +75,8 @@ defineEmits<{
   'transfer-host': [playerId: string]
   'kick-player': [playerId: string]
 }>()
+
+const displayPlayerName = (player: Player) => formatPlayerName(player, props.currentUserId)
 
 const gamePlayer = (playerId: string): GamePlayer | undefined => {
   return props.gamePlayersById?.[playerId]

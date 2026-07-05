@@ -66,6 +66,7 @@
           :nickname="nickname"
           :socket="store.socket as any"
           :gameState="gameState"
+          :currentUserId="currentUserId"
           @send-message="handleSendMessage"
         />
       </div>

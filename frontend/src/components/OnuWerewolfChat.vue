@@ -22,7 +22,7 @@
       >
         <div class="message-content">
           <span v-if="message.type === 'chat'" class="player-name">
-            {{ message.playerName }}:
+            {{ getMessageSenderName(message) }}:
           </span>
           <span class="message-text">{{ message.message }}</span>
           <span class="message-time">{{ formatTime(message.timestamp) }}</span>
@@ -63,6 +63,7 @@
 <script setup lang="ts">
 import { ref, computed, nextTick, watch } from 'vue';
 import type { Socket } from 'socket.io-client';
+import { formatPlayerNameById } from '../utils/playerName';
 import { OnuWerewolfGameStatus } from '../store/onuWerewolf';
 
 interface Message {
@@ -83,6 +84,7 @@ const props = defineProps<{
   messages: Message[];
   roomId: string;
   nickname: string;
+  currentUserId?: string;
   socket?: Socket | null;
   gameState?: GameState | null;
 }>();
@@ -93,6 +95,13 @@ const emit = defineEmits<{
 
 const inputMessage = ref('');
 const messagesContainer = ref<HTMLElement>();
+
+const getMessageSenderName = (message: Message): string => {
+  const rawName = message.playerName || '玩家';
+  if (message.playerId) return formatPlayerNameById(message.playerId, rawName, props.currentUserId, rawName);
+  if (rawName === props.nickname) return rawName.endsWith('（我）') ? rawName : `${rawName}（我）`;
+  return rawName;
+};
 
 // 计算属性
 const canChat = computed(() => {
@@ -118,7 +127,7 @@ const getMessageClass = (message: Message) => {
   return {
     'system-message': message.type === 'system',
     'chat-message': message.type === 'chat',
-    'my-message': message.type === 'chat' && message.playerName === props.nickname
+    'my-message': message.type === 'chat' && ((message.playerId && message.playerId === props.currentUserId) || (!message.playerId && message.playerName === props.nickname))
   };
 };
 

@@ -240,6 +240,28 @@ function sendErrorResponse(socket: Socket, message: string, ack?: (response: any
   ack?.({ success: false, error: message });
 }
 
+function normalizeNickname(nickname: unknown, fallback: string): string {
+  const text = typeof nickname === 'string' ? nickname.trim() : '';
+  return text || fallback;
+}
+
+function nicknameKey(nickname: unknown): string {
+  return typeof nickname === 'string' ? nickname.trim() : '';
+}
+
+function hasDuplicateNickname(room: Room, nickname: string, excludePlayerId?: string): boolean {
+  const requestedName = nicknameKey(nickname);
+  if (!requestedName) return false;
+  return (room.players || []).some(player =>
+    player.id !== excludePlayerId &&
+    nicknameKey(player.nickname || player.name) === requestedName
+  );
+}
+
+function rejectDuplicateNickname(socket: Socket, ack?: (response: any) => void): void {
+  sendErrorResponse(socket, '昵称已被占用，请更换昵称后再加入房间', ack);
+}
+
 function buildGameConfig(gameType: string, incomingConfig: any): any {
   const baseConfig = config.games[gameType]?.gameSpecificConfig || {};
   const gameConfig = { ...baseConfig, ...(incomingConfig || {}) };
@@ -597,7 +619,7 @@ export function roomController(io: Server) {
 
         // 创建玩家
         const requestedPlayerId = data.gameConfig?.playerId || data.gameConfig?.userId;
-        const nickname = data.gameConfig?.nickname || `玩家${socket.id.substring(0, 6)}`;
+        const nickname = normalizeNickname(data.gameConfig?.nickname, `玩家${socket.id.substring(0, 6)}`);
         const player: Player = {
           id: requestedPlayerId || uuidv4(),
           nickname,
@@ -763,7 +785,13 @@ export function roomController(io: Server) {
             return;
           }
 
-          markPlayerOnlineForController(room, player, socket.id, data.nickname || player.nickname);
+          const nextNickname = normalizeNickname(data.nickname, player.nickname);
+          if (hasDuplicateNickname(room, nextNickname, player.id)) {
+            rejectDuplicateNickname(socket, ack);
+            return;
+          }
+
+          markPlayerOnlineForController(room, player, socket.id, nextNickname);
           room.lastActiveTime = Date.now();
 
           if (room.cleanupTimer) {
@@ -814,7 +842,12 @@ export function roomController(io: Server) {
         }
 
         // 创建玩家
-        const nickname = data.nickname || `玩家${socket.id.substring(0, 6)}`;
+        const nickname = normalizeNickname(data.nickname, `玩家${socket.id.substring(0, 6)}`);
+        if (hasDuplicateNickname(room, nickname)) {
+          rejectDuplicateNickname(socket, ack);
+          return;
+        }
+
         player = {
           id: requestedPlayerId || uuidv4(),
           nickname,
@@ -893,7 +926,13 @@ export function roomController(io: Server) {
             return;
           }
 
-          markPlayerOnlineForController(room, player, socket.id, data.nickname || player.nickname);
+          const nextNickname = normalizeNickname(data.nickname, player.nickname);
+          if (hasDuplicateNickname(room, nextNickname, player.id)) {
+            rejectDuplicateNickname(socket, ack);
+            return;
+          }
+
+          markPlayerOnlineForController(room, player, socket.id, nextNickname);
           room.lastActiveTime = Date.now();
 
           if (room.cleanupTimer) {
@@ -944,7 +983,12 @@ export function roomController(io: Server) {
         }
 
         // 创建玩家
-        const nickname = data.nickname || `玩家${socket.id.substring(0, 6)}`;
+        const nickname = normalizeNickname(data.nickname, `玩家${socket.id.substring(0, 6)}`);
+        if (hasDuplicateNickname(room, nickname)) {
+          rejectDuplicateNickname(socket, ack);
+          return;
+        }
+
         player = {
           id: requestedPlayerId || uuidv4(),
           nickname,

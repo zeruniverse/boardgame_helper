@@ -82,7 +82,7 @@ export const ONU_WEREWOLF_PRESETS: Record<string, OnuWerewolfPreset> = {
   // 6人游戏
   'classic_6': {
     name: '经典6人局',
-    description: '经典6人配置：2狼人、预言家、强盗、捣蛋鬼、酒鬼、失眠者、石匠x2 + 3张中心卡',
+    description: '经典6人配置：2狼人、预言家、强盗、捣蛋鬼、酒鬼、失眠者、石匠、猎人 + 3张中心卡',
     playerCount: 6,
     roles: [
       OnuWerewolfRole.Werewolf,
@@ -93,7 +93,7 @@ export const ONU_WEREWOLF_PRESETS: Record<string, OnuWerewolfPreset> = {
       OnuWerewolfRole.Drunk,
       OnuWerewolfRole.Insomniac,
       OnuWerewolfRole.Mason,
-      OnuWerewolfRole.Mason
+      OnuWerewolfRole.Hunter
     ],
     config: {
       nightTime: 300,
@@ -105,7 +105,7 @@ export const ONU_WEREWOLF_PRESETS: Record<string, OnuWerewolfPreset> = {
   // 7人游戏（含爪牙）
   'minion_7': {
     name: '爪牙7人局',
-    description: '包含爪牙的7人配置：2狼人、爪牙、预言家、强盗、捣蛋鬼、酒鬼、失眠者、石匠x2 + 3张中心卡',
+    description: '包含爪牙的7人配置：2狼人、爪牙、预言家、强盗、捣蛋鬼、酒鬼、失眠者、石匠、猎人 + 3张中心卡',
     playerCount: 7,
     roles: [
       OnuWerewolfRole.Werewolf,
@@ -117,7 +117,7 @@ export const ONU_WEREWOLF_PRESETS: Record<string, OnuWerewolfPreset> = {
       OnuWerewolfRole.Drunk,
       OnuWerewolfRole.Insomniac,
       OnuWerewolfRole.Mason,
-      OnuWerewolfRole.Mason
+      OnuWerewolfRole.Hunter
     ],
     config: {
       nightTime: 360,
@@ -163,7 +163,7 @@ export const ONU_WEREWOLF_PRESETS: Record<string, OnuWerewolfPreset> = {
       OnuWerewolfRole.Robber,
       OnuWerewolfRole.Troublemaker,
       OnuWerewolfRole.Mason,
-      OnuWerewolfRole.Mason,
+      OnuWerewolfRole.Hunter,
       OnuWerewolfRole.Drunk,
       OnuWerewolfRole.Insomniac
     ],
@@ -187,7 +187,7 @@ export const ONU_WEREWOLF_PRESETS: Record<string, OnuWerewolfPreset> = {
       OnuWerewolfRole.Witch,
       OnuWerewolfRole.VillageIdiot,
       OnuWerewolfRole.Mason,
-      OnuWerewolfRole.Mason,
+      OnuWerewolfRole.AuraSeer,
       OnuWerewolfRole.Revealer,
       OnuWerewolfRole.Insomniac
     ],
@@ -313,13 +313,10 @@ export function validatePreset(preset: OnuWerewolfPreset): { valid: boolean; err
     }
   }
 
-  // 石匠最多2个，且必须成对出现（0个或2个）
+  // 项目配置约束：石匠最多只能出现1个。
   const masonCount = preset.roles.filter(r => r === OnuWerewolfRole.Mason).length;
-  if (masonCount > 2) {
-    return { valid: false, error: '石匠角色最多2个' };
-  }
-  if (masonCount === 1) {
-    return { valid: false, error: '石匠角色必须有0个或2个' };
+  if (masonCount > 1) {
+    return { valid: false, error: '石匠角色最多只能有一个' };
   }
 
   // 守夜人/哨兵最多2个，且必须成对出现（0个或2个）
@@ -396,7 +393,7 @@ export function getRecommendedRoles(playerCount: number): OnuWerewolfRole[] {
         OnuWerewolfRole.Hunter
       ];
     case 6:
-      // 2狼 + 预言家 + 强盗 + 捣蛋鬼 + 酒鬼 + 失眠者 + 石匠x2 + 3中心 = 9
+      // 2狼 + 预言家 + 强盗 + 捣蛋鬼 + 酒鬼 + 失眠者 + 石匠 + 猎人 + 3中心 = 9
       return [
         OnuWerewolfRole.Werewolf,
         OnuWerewolfRole.Werewolf,
@@ -406,10 +403,10 @@ export function getRecommendedRoles(playerCount: number): OnuWerewolfRole[] {
         OnuWerewolfRole.Drunk,
         OnuWerewolfRole.Insomniac,
         OnuWerewolfRole.Mason,
-        OnuWerewolfRole.Mason
+        OnuWerewolfRole.Hunter
       ];
     case 7:
-      // 2狼 + 爪牙 + 预言家 + 强盗 + 捣蛋鬼 + 酒鬼 + 失眠者 + 石匠x2 + 3中心 = 10
+      // 2狼 + 爪牙 + 预言家 + 强盗 + 捣蛋鬼 + 酒鬼 + 失眠者 + 石匠 + 猎人 + 3中心 = 10
       return [
         OnuWerewolfRole.Werewolf,
         OnuWerewolfRole.Werewolf,
@@ -420,7 +417,7 @@ export function getRecommendedRoles(playerCount: number): OnuWerewolfRole[] {
         OnuWerewolfRole.Drunk,
         OnuWerewolfRole.Insomniac,
         OnuWerewolfRole.Mason,
-        OnuWerewolfRole.Mason
+        OnuWerewolfRole.Hunter
       ];
     case 8:
       // 2狼 + 爪牙 + 预言家 + 强盗 + 捣蛋鬼 + 酒鬼 + 失眠者 + 猎人 + 皮匠 + 3中心 = 11
@@ -438,7 +435,7 @@ export function getRecommendedRoles(playerCount: number): OnuWerewolfRole[] {
         OnuWerewolfRole.Werewolf
       ];
     case 9:
-      // 2狼 + 爪牙 + 预言家 + 强盗 + 捣蛋鬼 + 酒鬼 + 失眠者 + 猎人 + 皮匠 + 石匠x2 + 3中心 = 12
+      // 2狼 + 爪牙 + 预言家 + 强盗 + 捣蛋鬼 + 酒鬼 + 失眠者 + 猎人 + 皮匠 + 石匠 + 皮匠学徒 + 3中心 = 12
       return [
         OnuWerewolfRole.Werewolf,
         OnuWerewolfRole.Werewolf,
@@ -451,7 +448,7 @@ export function getRecommendedRoles(playerCount: number): OnuWerewolfRole[] {
         OnuWerewolfRole.Hunter,
         OnuWerewolfRole.Tanner,
         OnuWerewolfRole.Mason,
-        OnuWerewolfRole.Mason
+        OnuWerewolfRole.ApprenticeTanner
       ];
     case 10:
       // 2狼 + 爪牙 + 预言家 + 强盗 + 捣蛋鬼 + 酒鬼 + 失眠者 + 猎人 + 皮匠 + 守夜人x2 + 3中心 = 13

@@ -21,7 +21,7 @@
             <el-icon v-if="player.id === hostId" class="host-icon">
               <House />
             </el-icon>
-            <span class="player-name">{{ player.name }}</span>
+            <span class="player-name">{{ displayPlayerName(player) }}</span>
             <el-tag 
               v-if="player.ready" 
               type="success" 
@@ -58,7 +58,7 @@
           :key="player.id"
           class="player-item game-player"
           :class="{ 
-            'is-dead': !player.alive,
+            'is-dead': !isPlayerAlive(player),
             'is-speaking': isSpeaking(player.id),
             'is-me': player.id === currentUserId,
             'red-team': isRedTeamPlayer(player.id),
@@ -71,10 +71,10 @@
             </div>
             
             <div class="player-details">
-              <div class="player-name">{{ player.name }}</div>
+              <div class="player-name">{{ displayPlayerName(player) }}</div>
               <div class="player-status">
                 <el-tag 
-                  v-if="!player.alive" 
+                  v-if="!isPlayerAlive(player)" 
                   type="danger" 
                   size="small"
                 >
@@ -167,10 +167,12 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { House, MoreFilled, Select } from '@element-plus/icons-vue'
+import { formatPlayerName } from '../utils/playerName'
 
 interface Player {
   id: string
   name: string
+  nickname?: string
   index: number
   ready: boolean
   alive?: boolean
@@ -242,6 +244,13 @@ const gamePlayersList = computed(() => {
   if (!props.gamePlayersById) return []
   return Object.values(props.gamePlayersById).sort((a, b) => a.index - b.index)
 })
+
+const displayPlayerName = (player: Player) => formatPlayerName(player, props.currentUserId)
+
+const isPlayerAlive = (player: Player): boolean => {
+  if (!gameStarted.value || props.gameState?.status === 'WAITING') return true
+  return player.alive !== false
+}
 
 // 方法
 const canManagePlayer = (player: Player): boolean => {

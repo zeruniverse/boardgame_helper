@@ -43,7 +43,7 @@
             :disabled="!canOperate"
             size="small"
           >
-            {{ player.name }}
+            {{ displayPlayerName(player) }}
           </el-button>
         </div>
       </div>
@@ -59,7 +59,7 @@
             :disabled="!canOperate"
             size="small"
           >
-            {{ player.name }}
+            {{ displayPlayerName(player) }}
           </el-button>
         </div>
       </div>
@@ -75,7 +75,7 @@
             :disabled="!canOperate"
             size="small"
           >
-            {{ player.name }}
+            {{ displayPlayerName(player) }}
           </el-button>
         </div>
       </div>
@@ -91,7 +91,7 @@
             :disabled="!canOperate || playerSecret?.sniperShot"
             size="small"
           >
-            {{ player.name }}
+            {{ displayPlayerName(player) }}
           </el-button>
         </div>
       </div>
@@ -107,7 +107,7 @@
       <div class="action-header">
         <h4>{{ gameState.status === 'PK' ? 'PK发言阶段' : '发言阶段' }}</h4>
         <p v-if="getCurrentSpeaker()">
-          当前发言: {{ getCurrentSpeaker()?.name }}
+          当前发言: {{ displayPlayerName(getCurrentSpeaker()) }}
         </p>
       </div>
 
@@ -144,7 +144,7 @@
           size="small"
           :type="getVoteButtonType(player.id)"
         >
-          {{ player.name }}
+          {{ displayPlayerName(player) }}
           <span v-if="gameState.voteCounts?.[player.id]">
             ({{ gameState.voteCounts[player.id] }})
           </span>
@@ -215,10 +215,12 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useMafiaGameStore } from '../store/mafia'
+import { formatPlayerName } from '../utils/playerName'
 
 interface Player {
   id: string
   name: string
+  nickname?: string
   alive?: boolean
   team?: 'RED' | 'BLUE'
   role?: 'KILLER' | 'COP' | 'DOCTOR' | 'SNIPER' | 'CIVILIAN'
@@ -278,6 +280,10 @@ const canConfess = computed(() => {
          isAlive.value && 
          ['SPEAK', 'VOTE', 'PK'].includes(props.gameState.status)
 })
+
+const displayPlayerName = (player?: Partial<Player> | null): string => {
+  return formatPlayerName({ id: player?.id, name: player?.name, nickname: player?.nickname }, store.currentUserId)
+}
 
 // 方法
 const getCurrentSpeaker = () => {
@@ -349,7 +355,8 @@ const isTeammate = (playerId: string): boolean => {
 }
 
 const getPlayerName = (playerId: string): string => {
-  return props.gameState.players[playerId]?.name || playerId
+  const player = props.gameState.players[playerId]
+  return formatPlayerName({ id: playerId, name: player?.name, nickname: player?.nickname }, store.currentUserId, playerId)
 }
 
 const getVoteButtonType = (playerId: string): string => {

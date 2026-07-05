@@ -230,7 +230,7 @@
               <li><strong>捣蛋鬼：</strong>可以交换其他两名玩家的角色卡</li>
               <li><strong>酒鬼：</strong>必须与一张中心卡牌交换角色</li>
               <li><strong>失眠者：</strong>在夜晚结束时查看自己的最终角色</li>
-              <li><strong>石匠：</strong>互相认识的村民</li>
+              <li><strong>石匠：</strong>查看是否有其他石匠（本项目最多配置1个）</li>
               <li><strong>猎人：</strong>如果被投票出局，可以带走一名玩家</li>
               <li><strong>皮匠：</strong>只有被投票出局才能获胜</li>
               <li><strong>爪牙：</strong>知道狼人身份，与狼人同一阵营</li>
@@ -972,15 +972,26 @@ function confirmJoinRoom() {
   const session = room ? ensureLocalSession(room.type, nickname, room.id) : undefined;
   const playerId = session?.playerId;
 
-  // Bug L4: 参数名使用roomId与后端期望一致（用户输入的是房间号）
-  store.socket?.emit('join_room', {
+  if (!store.socket) {
+    ElMessage.error('连接未建立，请稍后重试');
+    return;
+  }
+
+  // Bug L4: 参数名使用roomId与后端期望一致（用户输入的是房间号）。
+  // 等待后端确认后再关闭对话框，昵称重复等拒绝原因能直接展示给用户。
+  store.socket.emit('join_room', {
     roomId,
     nickname,
     playerId,
     userId: playerId,
     sessionToken: session?.sessionToken
+  }, (response: any) => {
+    if (!response?.success) {
+      ElMessage.error(response?.error || '加入房间失败');
+      return;
+    }
+    joinRoomDialogVisible.value = false;
   });
-  joinRoomDialogVisible.value = false;
 }
 
 // 确认创建房间

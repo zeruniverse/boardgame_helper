@@ -32,7 +32,7 @@
           
           <div class="player-details">
             <div class="player-name">
-              {{ player.name }}
+              {{ displayPlayerName(player) }}
               <el-tag v-if="player.id === hostId" type="warning" size="small">房主</el-tag>
               <el-tag v-if="isStoryteller && player.id === storytellerId" type="info" size="small">说书人</el-tag>
             </div>
@@ -52,7 +52,7 @@
             </div>
             
             <!-- 存活状态 -->
-            <div class="player-game-status" v-else-if="getGamePlayer(player.id)">
+            <div class="player-game-status" v-else-if="gameStarted && getGamePlayer(player.id)">
               <el-tag 
                 :type="!getGamePlayer(player.id).isDead ? 'success' : 'danger'" 
                 size="small"
@@ -190,6 +190,7 @@
 import { ref, computed, watch } from 'vue'
 import { ElMessageBox, ElMessage } from 'element-plus'
 import { ChatDotRound, Close, MoreFilled } from '@element-plus/icons-vue'
+import { formatPlayerName } from '../utils/playerName'
 
 interface Props {
   players: any[]
@@ -216,6 +217,8 @@ const props = withDefaults(defineProps<Props>(), {
 })
 
 const emit = defineEmits<Emits>()
+
+const displayPlayerName = (player: any) => formatPlayerName(player, props.currentUserId)
 
 // 房间配置
 const selectedEdition = ref('tb')
@@ -254,7 +257,7 @@ const storytellerOptions = computed(() => [
   ...computerStorytellers,
   ...props.players.map(player => ({
     id: player.id,
-    name: player.name || player.nickname || player.id
+    name: displayPlayerName(player)
   }))
 ])
 
@@ -287,7 +290,7 @@ const getPlayerClass = (player: any) => {
   }
   
   const gamePlayer = getGamePlayer(player.id)
-  if (gamePlayer && gamePlayer.isDead) {
+  if (gameStarted.value && gamePlayer && gamePlayer.isDead) {
     classes.push('dead')
   }
   
@@ -302,7 +305,7 @@ const getStatusClass = (player: any) => {
     return 'status-waiting'
   }
   
-  if (gamePlayer.isDead) {
+  if (gameStarted.value && gamePlayer.isDead) {
     return 'status-dead'
   }
   

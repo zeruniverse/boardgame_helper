@@ -124,13 +124,10 @@ export function onuValidateGameConfig(roles: OnuWerewolfRole[]): {
     }
   }
 
-  // 石匠最多2个，且必须成对出现（0个或2个）
+  // 项目配置约束：石匠最多只能出现1个。
   const masonCount = roles.filter(r => r === OnuWerewolfRole.Mason).length;
-  if (masonCount > 2) {
-    return { valid: false, error: '石匠角色最多2个' };
-  }
-  if (masonCount === 1) {
-    return { valid: false, error: '石匠角色必须有0个或2个' };
+  if (masonCount > 1) {
+    return { valid: false, error: '石匠角色最多只能有一个' };
   }
 
   // 守夜人/哨兵最多2个，且必须成对出现（0个或2个）

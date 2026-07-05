@@ -165,6 +165,7 @@ import { Back, Loading } from '@element-plus/icons-vue'
 import MafiaActionPanel from './MafiaActionPanel.vue'
 import MafiaPlayerList from './MafiaPlayerList.vue'
 import MafiaChat from './MafiaChat.vue'
+import { formatPlayerNameById } from '../utils/playerName'
 
 const route = useRoute()
 const router = useRouter()
@@ -328,7 +329,7 @@ const getTeamName = (team: string): string => {
 const getPlayerName = (playerId: string): string => {
   if (!gameState.value) return playerId
   const player = gameState.value.players[playerId]
-  return player?.name || playerId
+  return formatPlayerNameById(playerId, player?.name, currentUserId.value, playerId)
 }
 
 const getMyNickname = (): string => {

@@ -54,7 +54,7 @@
             @click="selectedTarget = player.id"
           >
             <span class="player-number">{{ player.index }}号</span>
-            <span class="player-name">{{ player.name }}</span>
+            <span class="player-name">{{ displayPlayerName(player) }}</span>
           </div>
         </div>
         <div class="action-buttons">
@@ -88,7 +88,7 @@
             @click="selectedTarget = player.id"
           >
             <span class="player-number">{{ player.index }}号</span>
-            <span class="player-name">{{ player.name }}</span>
+            <span class="player-name">{{ displayPlayerName(player) }}</span>
           </div>
         </div>
         <div class="action-buttons">
@@ -150,7 +150,7 @@
                 @click="selectedTarget = player.id"
               >
                 <span class="player-number">{{ player.index }}号</span>
-                <span class="player-name">{{ player.name }}</span>
+                <span class="player-name">{{ displayPlayerName(player) }}</span>
               </div>
             </div>
             <el-button
@@ -187,7 +187,7 @@
             @click="selectedTarget = player.id"
           >
             <span class="player-number">{{ player.index }}号</span>
-            <span class="player-name">{{ player.name }}</span>
+            <span class="player-name">{{ displayPlayerName(player) }}</span>
           </div>
         </div>
         <div class="action-buttons">
@@ -266,7 +266,7 @@
             @click="selectedTarget = player.id"
           >
             <span class="player-number">{{ player.index }}号</span>
-            <span class="player-name">{{ player.name }}</span>
+            <span class="player-name">{{ displayPlayerName(player) }}</span>
             <span v-if="gameState.votes && Object.values(gameState.votes).includes(player.id)" class="vote-count">
               ({{ Object.entries(gameState.votes).filter(([_, v]) => v === player.id).length }}票)
             </span>
@@ -302,7 +302,7 @@
             @click="selectedTarget = player.id"
           >
             <span class="player-number">{{ player.index }}号</span>
-            <span class="player-name">{{ player.name }}</span>
+            <span class="player-name">{{ displayPlayerName(player) }}</span>
           </div>
         </div>
         <div class="action-buttons">
@@ -335,7 +335,7 @@
             @click="selectedTarget = player.id"
           >
             <span class="player-number">{{ player.index }}号</span>
-            <span class="player-name">{{ player.name }}</span>
+            <span class="player-name">{{ displayPlayerName(player) }}</span>
           </div>
         </div>
         <div class="action-buttons">
@@ -409,10 +409,12 @@
 
 <script setup lang="ts">
 import { ref, computed } from 'vue'
+import { formatPlayerName } from '../utils/playerName'
 
 interface GamePlayer {
   id: string
   name: string
+  nickname?: string
   index: number
   alive: boolean
   ready?: boolean
@@ -494,6 +496,13 @@ const canStartGame = computed(() => {
   return readyCount >= needingCount && readyCount >= Math.min(players.length, 6)
 })
 
+const displayPlayerName = (player?: Partial<GamePlayer> | null): string => {
+  return formatPlayerName(
+    { id: player?.id, name: player?.name, nickname: player?.nickname },
+    props.playerSecret?.playerId
+  )
+}
+
 // 获取存活的玩家列表
 const getAlivePlayers = (): any[] => {
   if (!props.gameState.players) return []
@@ -519,7 +528,7 @@ const getAliveOtherPlayers = (): any[] => {
 const getPlayerDisplayName = (playerId: string) => {
   const player = props.gameState.players[playerId]
   if (player) {
-    return `${player.index}号 ${player.name}`
+    return `${player.index}号 ${displayPlayerName(player)}`
   }
   return `玩家${playerId}`
 }

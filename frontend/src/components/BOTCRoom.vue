@@ -164,6 +164,7 @@ import { Back } from '@element-plus/icons-vue'
 import BOTCActionPanel from './BOTCActionPanel.vue'
 import BOTCPlayerList from './BOTCPlayerList.vue'
 import BOTCChat from './BOTCChat.vue'
+import { formatPlayerName } from '../utils/playerName'
 
 const route = useRoute()
 const router = useRouter()
@@ -284,9 +285,13 @@ const getRoleAvatar = (roleId: string) => {
 }
 
 // 获取玩家名称
-const getPlayerName = (playerId: string) => {
+const getPlayerName = (playerId: string, preferredName?: string) => {
   const player = store.room?.players?.find((p: any) => p.id === playerId)
-  return player?.name || playerId
+  return formatPlayerName(
+    { id: playerId, name: preferredName || player?.name, nickname: player?.nickname },
+    store.currentUserId,
+    playerId
+  )
 }
 
 // 格式化夜晚信息
@@ -300,7 +305,7 @@ const formatNightInfo = (info: any) => {
   if (info.information) {
     const data = info.information
     if (data.playerId) {
-      return `${data.playerName || getPlayerName(data.playerId)} 的角色是: ${data.roleName || data.roleId || '未知'}`
+      return `${getPlayerName(data.playerId, data.playerName)} 的角色是: ${data.roleName || data.roleId || '未知'}`
     }
     if (data.roleId) {
       return `角色: ${data.roleName || data.roleId}, 玩家: ${data.players?.map((p: string) => getPlayerName(p)).join(', ') || '未知'}`
@@ -353,10 +358,10 @@ const formatNightInfo = (info: any) => {
   }
   if (Array.isArray(info.roles)) {
     const roleNames = info.roles.map((role: any) => role.roleName || role.roleId).join(' / ')
-    return `${info.playerName || getPlayerName(info.playerId)} 可能是: ${roleNames}`
+    return `${getPlayerName(info.playerId, info.playerName)} 可能是: ${roleNames}`
   }
   if (info.playerId) {
-    return `${info.playerName || getPlayerName(info.playerId)} 的角色是: ${info.roleName || info.roleId || '未知'}`
+    return `${getPlayerName(info.playerId, info.playerName)} 的角色是: ${info.roleName || info.roleId || '未知'}`
   }
   if (info.roleId) {
     return `角色: ${info.roleName || info.roleId}, 玩家: ${(info.players || []).map((p: string) => getPlayerName(p)).join('、') || '未知'}`

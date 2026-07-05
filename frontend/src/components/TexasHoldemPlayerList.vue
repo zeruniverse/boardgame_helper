@@ -11,6 +11,7 @@
 <script lang="ts" setup>
 import { computed } from 'vue';
 import { useTexasHoldemStore } from '../store';
+import { formatPlayerName } from '../utils/playerName';
 
 interface PlayerInfo {
   id: string;
@@ -40,7 +41,7 @@ const getPlayerStatus = (player: any, room: any) => {
 const mappedPlayers = computed<PlayerInfo[]>(() => {
   return store.players.map((p: any) => ({
     id: p.id,
-    nickname: p.nickname,
+    nickname: formatPlayerName({ id: p.id, name: p.nickname || p.name }, store.playerId),
     chips: p.gameMetadata?.chips || 0,
     bet: store.bets[p.id] || 0,
     cashinCount: p.gameMetadata?.cashinCount || 0,

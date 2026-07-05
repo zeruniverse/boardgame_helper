@@ -26,11 +26,10 @@
 
         <div class="player-info">
           <div class="player-name">
-            {{ player.name }}
+            {{ displayPlayerName(player) }}
                          <el-icon v-if="player.id === hostId" class="host-icon" size="14">
                <Star />
              </el-icon>
-            <span v-if="player.id === currentUserId" class="you-tag">(你)</span>
           </div>
           
           <div class="player-status">
@@ -125,10 +124,12 @@
 import { computed } from 'vue';
 import { User, Star, More, Plus } from '@element-plus/icons-vue';
 import { OnuWerewolfGameStatus, OnuWerewolfRole, ONU_WEREWOLF_ROLE_NAMES } from '../store/onuWerewolf';
+import { formatPlayerName } from '../utils/playerName';
 
 interface Player {
   id: string;
   name: string;
+  nickname?: string;
   seat?: number;
   ready: boolean;
   voted: boolean;
@@ -180,6 +181,8 @@ const emit = defineEmits<{
 
 const minPlayers = 3;
 const maxPlayers = 10;
+
+const displayPlayerName = (player: Player) => formatPlayerName(player, props.currentUserId);
 
 // 计算属性
 const sortedPlayers = computed(() => {

@@ -156,7 +156,7 @@
                 <el-option
                   v-for="p in otherPlayers"
                   :key="p.seat"
-                  :label="`座位${p.seat} - ${p.name}`"
+                  :label="`座位${p.seat} - ${displayPlayerName(p)}`"
                   :value="p.seat"
                 />
               </el-select>
@@ -195,7 +195,7 @@
               <el-option
                 v-for="p in otherPlayers"
                 :key="p.seat"
-                :label="`座位${p.seat} - ${p.name}`"
+                :label="`座位${p.seat} - ${displayPlayerName(p)}`"
                 :value="p.seat"
               />
             </el-select>
@@ -208,7 +208,7 @@
               <el-option
                 v-for="p in otherPlayers"
                 :key="p.seat"
-                :label="`座位${p.seat} - ${p.name}`"
+                :label="`座位${p.seat} - ${displayPlayerName(p)}`"
                 :value="p.seat"
               />
             </el-select>
@@ -216,7 +216,7 @@
               <el-option
                 v-for="p in otherPlayers.filter(op => op.seat !== selectedPlayer1)"
                 :key="p.seat"
-                :label="`座位${p.seat} - ${p.name}`"
+                :label="`座位${p.seat} - ${displayPlayerName(p)}`"
                 :value="p.seat"
               />
             </el-select>
@@ -242,7 +242,7 @@
               <el-option
                 v-for="p in otherPlayers"
                 :key="p.seat"
-                :label="`座位${p.seat} - ${p.name}`"
+                :label="`座位${p.seat} - ${displayPlayerName(p)}`"
                 :value="p.seat"
               />
             </el-select>
@@ -267,7 +267,7 @@
                 <el-option
                   v-for="p in allPlayersList"
                   :key="p.seat"
-                  :label="`座位${p.seat} - ${p.name}`"
+                  :label="`座位${p.seat} - ${displayPlayerName(p)}`"
                   :value="p.seat"
                 />
               </el-select>
@@ -283,7 +283,7 @@
                 :key="p.seat"
                 :value="p.seat"
               >
-                座位{{ p.seat }} - {{ p.name }}
+                座位{{ p.seat }} - {{ displayPlayerName(p) }}
               </el-checkbox-button>
             </el-checkbox-group>
           </div>
@@ -304,7 +304,7 @@
               <el-option
                 v-for="p in otherPlayers"
                 :key="p.seat"
-                :label="`座位${p.seat} - ${p.name}`"
+                :label="`座位${p.seat} - ${displayPlayerName(p)}`"
                 :value="p.seat"
               />
             </el-select>
@@ -317,7 +317,7 @@
               <el-option
                 v-for="p in otherPlayers"
                 :key="p.seat"
-                :label="`座位${p.seat} - ${p.name}`"
+                :label="`座位${p.seat} - ${displayPlayerName(p)}`"
                 :value="p.seat"
               />
             </el-select>
@@ -330,7 +330,7 @@
               <el-option
                 v-for="p in otherPlayers"
                 :key="p.seat"
-                :label="`座位${p.seat} - ${p.name}`"
+                :label="`座位${p.seat} - ${displayPlayerName(p)}`"
                 :value="p.seat"
               />
             </el-select>
@@ -343,7 +343,7 @@
               <el-option
                 v-for="p in otherPlayers"
                 :key="p.seat"
-                :label="`座位${p.seat} - ${p.name}`"
+                :label="`座位${p.seat} - ${displayPlayerName(p)}`"
                 :value="p.seat"
               />
             </el-select>
@@ -356,7 +356,7 @@
               <el-option
                 v-for="p in otherPlayers"
                 :key="p.seat"
-                :label="`座位${p.seat} - ${p.name}`"
+                :label="`座位${p.seat} - ${displayPlayerName(p)}`"
                 :value="p.seat"
               />
             </el-select>
@@ -454,7 +454,7 @@
             type="primary"
             size="large"
           >
-            投票给 {{ player.name }} (座位{{ player.seat }})
+            投票给 {{ displayPlayerName(player) }} (座位{{ player.seat }})
           </el-button>
           <el-alert
             title="规则提示：必须投票给另一名玩家；若每名玩家最多获得1票，则无人被处决。"
@@ -492,7 +492,7 @@
               :class="{ won: player.won }"
             >
               <div class="player-info">
-                <strong>{{ player.name }}</strong> (座位{{ player.seat }})
+                <strong>{{ displayResultPlayerName(player) }}</strong> (座位{{ player.seat }})
               </div>
               <div class="role-info">
                 初始: {{ getRoleName(player.initialRole) }} 
@@ -517,8 +517,10 @@ import {
   ONU_WEREWOLF_ROLE_NAMES
 } from '../store/onuWerewolf';
 import { Loading } from '@element-plus/icons-vue';
+import { ElMessage } from 'element-plus';
+import { formatPlayerName } from '../utils/playerName';
 
-// 角色定义（一夜狼人没有村民角色，守夜人/哨兵必须有0个或2个）
+// 角色定义（一夜狼人没有村民角色；项目配置约束：石匠最多1个，守夜人/哨兵必须有0个或2个）
 const availableRoles = [
   { value: OnuWerewolfRole.Werewolf, label: '狼人', description: '与其他狼人互相认识，目标是不被投票出局' },
   { value: OnuWerewolfRole.Seer, label: '预言家', description: '可以查看一名玩家或两张中心卡牌的角色' },
@@ -526,7 +528,7 @@ const availableRoles = [
   { value: OnuWerewolfRole.Troublemaker, label: '捣蛋鬼', description: '可以交换其他两名玩家的角色卡' },
   { value: OnuWerewolfRole.Drunk, label: '酒鬼', description: '必须与一张中心卡牌交换角色' },
   { value: OnuWerewolfRole.Insomniac, label: '失眠者', description: '在夜晚结束时查看自己的最终角色' },
-  { value: OnuWerewolfRole.Mason, label: '石匠', description: '必须成对加入；石匠互相认识' },
+  { value: OnuWerewolfRole.Mason, label: '石匠', description: '最多只能加入1个；可查看是否有其他石匠' },
   { value: OnuWerewolfRole.Minion, label: '爪牙', description: '看见狼人；爪牙属于狼人阵营但不是狼人' },
   { value: OnuWerewolfRole.Hunter, label: '猎人', description: '如果被投票出局，可以带走一名玩家' },
   { value: OnuWerewolfRole.Tanner, label: '皮匠', description: '只有被投票出局才能获胜' },
@@ -550,6 +552,7 @@ const requiredRoles = [OnuWerewolfRole.Werewolf];
 interface GamePlayer {
   id: string;
   name: string;
+  nickname?: string;
   seat: number;
   ready?: boolean;
 }
@@ -577,6 +580,7 @@ interface PlayerSecret {
   myVote?: number;
   vision?: {
     players?: Array<{ seat: number; role: OnuWerewolfRole }>;
+    cards?: Array<{ position: number; role: OnuWerewolfRole }>;
   };
   gameResult?: {
     winner: OnuWerewolfTeam;
@@ -613,6 +617,16 @@ const emit = defineEmits<{
   'game-action': [actionType: string, actionData?: any];
 }>();
 
+const sanitizeMasonRoles = (roles: OnuWerewolfRole[]): OnuWerewolfRole[] => {
+  let hasMason = false;
+  return roles.filter(role => {
+    if (role !== OnuWerewolfRole.Mason) return true;
+    if (hasMason) return false;
+    hasMason = true;
+    return true;
+  });
+};
+
 // 响应式数据
 const selectedRoles = ref<OnuWerewolfRole[]>([...requiredRoles]);
 const allowRoleReveal = ref(true);
@@ -634,9 +648,8 @@ const canUpdateConfig = computed(() => {
   if (selectedRoles.value.length !== props.playerCount + 3) {
     return false;
   }
-  // 石匠必须成对出现（0个或2个）
   const masonCount = selectedRoles.value.filter(r => r === OnuWerewolfRole.Mason).length;
-  if (masonCount === 1) {
+  if (masonCount > 1) {
     return false;
   }
   // 守夜人/哨兵必须成对出现（0个或2个）
@@ -652,8 +665,8 @@ const configError = computed(() => {
     return `需要选择 ${props.playerCount + 3} 个角色（${props.playerCount} 玩家 + 3 中心卡），当前已选 ${selectedRoles.value.length} 个`;
   }
   const masonCount = selectedRoles.value.filter(r => r === OnuWerewolfRole.Mason).length;
-  if (masonCount === 1) {
-    return '石匠角色必须有0个或2个，不能只有1个';
+  if (masonCount > 1) {
+    return '石匠角色最多只能有一个';
   }
   const sentinelCount = selectedRoles.value.filter(r => r === OnuWerewolfRole.Sentinel).length;
   if (sentinelCount === 1) {
@@ -669,6 +682,15 @@ const gameResult = computed(() => {
 const allPlayersList = computed(() => {
   return props.allPlayers || [];
 });
+
+const displayPlayerName = (player: Partial<GamePlayer> & { playerId?: string }) => {
+  return formatPlayerName({ id: player.id || player.playerId, name: player.name, nickname: player.nickname }, props.currentUserId);
+};
+
+const displayResultPlayerName = (player: { seat: number; name: string }) => {
+  const roomPlayer = props.allPlayers?.find(p => p.seat === player.seat);
+  return formatPlayerName({ id: roomPlayer?.id, name: player.name }, props.currentUserId);
+};
 
 const centerCardOptions = computed(() => {
   const roles = props.gameState?.config?.roles || selectedRoles.value;
@@ -817,13 +839,14 @@ const removeRole = (role: OnuWerewolfRole) => {
 };
 
 const toggleRole = (role: OnuWerewolfRole) => {
-  // 后端校验要求石匠只能 0 个或 2 个；前端也按一组石匠来增删，避免房主选出不可提交配置。
+  // 项目配置约束：石匠最多1个；若旧配置中已有多个，点击会一次性清除多余状态。
   if (role === OnuWerewolfRole.Mason) {
     if (roleCount(role) > 0) {
       removeRole(role);
     } else {
-      selectedRoles.value.push(role, role);
+      selectedRoles.value.push(role);
     }
+    selectedRoles.value = sanitizeMasonRoles(selectedRoles.value);
     return;
   }
 
@@ -848,9 +871,16 @@ const toggleRole = (role: OnuWerewolfRole) => {
 };
 
 const updateConfig = () => {
+  const sanitizedRoles = sanitizeMasonRoles(selectedRoles.value);
+  if (sanitizedRoles.length !== selectedRoles.value.length) {
+    selectedRoles.value = sanitizedRoles;
+    ElMessage.warning('石匠最多只能有一个，已移除多余石匠，请补足角色后再提交');
+    return;
+  }
+
   // C3 fix: 不再嵌套config层
   emit('game-action', 'change_config', {
-    roles: selectedRoles.value,
+    roles: sanitizedRoles,
     nightTime: 300,
     discussTime: 180,
     votingTime: 300,
@@ -907,7 +937,7 @@ const getAutoSkillText = (role: OnuWerewolfRole | null | undefined) => {
   switch (role) {
     case OnuWerewolfRole.Werewolf: return '你将自动查看其他狼人同伴（如果没有同伴则查看一张中心卡）';
     case OnuWerewolfRole.Minion: return '你将自动查看狼人的位置';
-    case OnuWerewolfRole.Mason: return '你将自动查看其他石匠';
+    case OnuWerewolfRole.Mason: return '你将自动查看是否有其他石匠';
     case OnuWerewolfRole.ApprenticeTanner: return '你将自动查看本局是否有其他皮匠';
     case OnuWerewolfRole.Insomniac: return '你将自动查看自己的最终角色';
     case OnuWerewolfRole.AuraSeer: return '你将自动看到哪些玩家的角色被变动过';
@@ -940,7 +970,8 @@ const getTeamName = (team: OnuWerewolfTeam) => {
 // 监听游戏配置变化
 const watchConfig = watch(() => props.gameState?.config, (newConfig) => {
   if (newConfig) {
-    selectedRoles.value = [...newConfig.roles];
+    const sanitizedRoles = sanitizeMasonRoles([...newConfig.roles]);
+    selectedRoles.value = sanitizedRoles;
   }
 }, { immediate: true });
 

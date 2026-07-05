@@ -27,6 +27,7 @@
 import { ref, nextTick, watch, computed } from 'vue';
 import type { Socket } from 'socket.io-client';
 import { safeHtml } from '../utils/html';
+import { formatPlayerNameById } from '../utils/playerName';
 import { useMafiaGameStore } from '../store/mafia';
 
 interface Props {
@@ -122,11 +123,20 @@ const escapeHtml = (text: string): string => {
   return div.innerHTML;
 };
 
+const formatSenderName = (msg: any): string => {
+  const senderId = msg.playerId || msg.senderId || msg.from
+  const rawName = msg.playerName || msg.sender || ''
+  if (senderId) return formatPlayerNameById(senderId, rawName, props.currentUserId, rawName || '玩家')
+  if (rawName && rawName === props.nickname) return rawName.endsWith('（我）') ? rawName : `${rawName}（我）`
+  return rawName
+}
+
 const formatChatMessage = (msg: any): string => {
   if (!msg || typeof msg !== 'object') return String(msg ?? '');
   const baseMessage = msg.message || msg.content || '';
   const channelPrefix = msg.channel === 'killer' || msg.type === 'killer' ? '[杀手频道] ' : '';
-  const senderPrefix = msg.playerName ? `${msg.playerName}: ` : '';
+  const senderName = formatSenderName(msg);
+  const senderPrefix = senderName ? `${senderName}: ` : '';
   return `${channelPrefix}${senderPrefix}${baseMessage}`;
 };
 

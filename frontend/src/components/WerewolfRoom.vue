@@ -131,6 +131,7 @@
           :player-team="playerSecret?.team"
           :game-state="gameState"
           :is-alive="isAlive"
+          :current-user-id="currentUserId"
           @send-message="handleSendMessage"
         />
       </el-aside>
@@ -146,6 +147,7 @@ import { Back, Loading } from '@element-plus/icons-vue'
 import WerewolfActionPanel from './WerewolfActionPanel.vue'
 import WerewolfPlayerList from './WerewolfPlayerList.vue'
 import WerewolfChat from './WerewolfChat.vue'
+import { formatPlayerName, formatPlayerNameById } from '../utils/playerName'
 
 const route = useRoute()
 const router = useRouter()
@@ -234,10 +236,10 @@ const getTeamName = (team: string) => {
 const getPlayerDisplayName = (playerId: string) => {
   const player = gameState.value?.players[playerId]
   if (player) {
-    return `${player.index}号${player.name}`
+    return `${player.index}号${formatPlayerName({ id: playerId, name: player.name, nickname: player.nickname }, currentUserId.value)}`
   }
   const roomPlayer = room.value?.players.find((p: any) => p.id === playerId)
-  return roomPlayer?.name || roomPlayer?.nickname || `玩家${playerId}`
+  return formatPlayerNameById(playerId, roomPlayer?.name || roomPlayer?.nickname, currentUserId.value, `玩家${playerId}`)
 }
 
 // 事件处理

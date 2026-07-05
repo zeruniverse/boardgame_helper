@@ -127,6 +127,7 @@
             :messages="store.messages"
             :room-id="store.currentRoom || undefined"
             :nickname="store.nickname"
+            :player-id="store.playerId"
             :socket="store.socket"
           />
         </div>
@@ -180,6 +181,7 @@
             :messages="store.messages"
             :room-id="store.currentRoom || undefined"
             :nickname="store.nickname"
+            :player-id="store.playerId"
             :socket="store.socket"
           />
         </div>
@@ -200,6 +202,7 @@ import TexasHoldemActionBar from './TexasHoldemActionBar.vue';
 import { emitGameAction } from '../utils/gameSocket';
 import { GAME_STORAGE_KEYS } from '../utils/gameMeta';
 import { ensureGameSession, rememberGameSession } from '../utils/gameSession';
+import { formatPlayerName } from '../utils/playerName';
 
 const store = useTexasHoldemStore();
 // 使用playerId而不是nickname来判断是否在房间
@@ -395,10 +398,13 @@ const isInGame = computed(() => {
 // 当前行动玩家显示名称
 const currentTurnDisplay = computed(() => {
   if (!store.currentTurn) return '-';
-  if (store.currentTurn === store.playerId) return '我';
   // 查找玩家昵称
   const player = store.players.find((p: any) => p.id === store.currentTurn);
-  return player?.nickname || store.currentTurn;
+  return formatPlayerName(
+    { id: store.currentTurn, name: player?.name, nickname: player?.nickname },
+    store.playerId,
+    store.currentTurn
+  );
 });
 
 function extendTime() {

@@ -36,11 +36,13 @@
 <script lang="ts" setup>
 import { ref, nextTick, watch, computed } from 'vue';
 import { safeHtml } from '../utils/html';
+import { formatPlayerNameById } from '../utils/playerName';
 
 interface Props {
   messages: any[]
   roomId?: string
   nickname?: string
+  currentUserId?: string
   socket?: any
   playerRole?: string  // 玩家角色
   playerTeam?: string  // 玩家阵营 'blue' | 'red'
@@ -55,6 +57,7 @@ const props = withDefaults(defineProps<Props>(), {
   messages: () => [],
   roomId: '',
   nickname: '',
+  currentUserId: '',
   socket: null,
   playerRole: '',
   playerTeam: '',
@@ -145,11 +148,20 @@ const getMessageColor = (type: string) => {
   }
 };
 
+const formatSenderName = (msg: any): string => {
+  const senderId = msg.playerId || msg.senderId || msg.from
+  const rawName = msg.playerName || msg.sender || ''
+  if (senderId) return formatPlayerNameById(senderId, rawName, props.currentUserId, rawName || '玩家')
+  if (rawName && rawName === props.nickname) return rawName.endsWith('（我）') ? rawName : `${rawName}（我）`
+  return rawName
+}
+
 const formatChatMessage = (msg: any): string => {
   if (!msg || typeof msg !== 'object') return String(msg ?? '');
   const baseMessage = msg.message || msg.content || '';
   const channelPrefix = msg.channel === 'evil' ? '[邪恶方] ' : '';
-  const senderPrefix = msg.playerName ? `${msg.playerName}: ` : '';
+  const senderName = formatSenderName(msg);
+  const senderPrefix = senderName ? `${senderName}: ` : '';
   return `${channelPrefix}${senderPrefix}${baseMessage}`;
 };
 

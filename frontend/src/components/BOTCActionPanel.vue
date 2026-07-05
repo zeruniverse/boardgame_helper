@@ -14,7 +14,7 @@
           :disabled="deathAbilityCompleted"
           size="small"
         >
-          {{ target.playerName }}
+          {{ displayPlayerNameById(target.playerId, target.playerName) }}
         </el-button>
       </div>
       <p v-if="deathAbilityCompleted" class="completed-status">死亡能力已提交</p>
@@ -61,7 +61,7 @@
             :type="selectedDayTarget === target.id ? 'primary' : 'default'"
             size="small"
           >
-            {{ target.name }}
+            {{ displayPlayer(target) }}
           </el-button>
         </div>
 
@@ -101,7 +101,7 @@
               size="small"
               :type="player.isDead ? 'info' : 'default'"
             >
-              {{ player.name }}
+              {{ displayPlayer(player) }}
               <el-tag v-if="player.isDead" size="small" type="danger">已死亡</el-tag>
             </el-button>
           </div>
@@ -141,7 +141,7 @@
                   type="warning"
                   size="small"
                 >
-                  {{ player.name }}
+                  {{ displayPlayer(player) }}
                 </el-tag>
                 <span v-if="getUnvotedPlayers().length === 0" class="all-voted">全部已投票</span>
               </div>
@@ -195,7 +195,7 @@
                 type="warning"
                 size="small"
               >
-                {{ player.name }}
+                {{ displayPlayer(player) }}
               </el-tag>
               <span v-if="getEndDayUnvotedPlayers().length === 0" class="all-voted">全部已投票</span>
             </div>
@@ -228,7 +228,7 @@
           <div v-for="(player, index) in gameState.players" :key="player.id || player.playerId" class="grimoire-player">
             <span class="seat-number">{{ index + 1 }}号</span>
             <span :class="['team-badge', 'team-' + (player.role?.team)]">{{ player.role?.name || '?' }}</span>
-            <span class="player-name">{{ player.name || player.playerName || player.id || player.playerId }}</span>
+            <span class="player-name">{{ displayPlayer(player) }}</span>
             <el-tag v-if="player.isDead" type="danger" size="small">已死亡</el-tag>
             <el-tag v-else type="success" size="small">存活</el-tag>
             <span v-for="r in (player.reminders || [])" :key="r" class="reminder-tag">{{ r }}</span>
@@ -309,7 +309,7 @@
                 :type="isNightTargetSelected(target.id) ? 'primary' : 'default'"
                 size="small"
               >
-                {{ target.name }}
+                {{ displayPlayer(target) }}
                 <el-tag v-if="target.isDead" size="small" type="danger">已死亡</el-tag>
               </el-button>
             </div>
@@ -360,7 +360,7 @@
               >
                 <span class="order-number">{{ index + 1 }}</span>
                 <span class="role-name">{{ action.roleName }}</span>
-                <span class="action-name">{{ action.playerName }}</span>
+                <span class="action-name">{{ displayPlayerNameById(action.playerId, action.playerName) }}</span>
               </div>
             </div>
           </div>
@@ -380,7 +380,7 @@
           <div v-for="(player, index) in gameState.players" :key="player.id || player.playerId" class="grimoire-player">
             <span class="seat-number">{{ index + 1 }}号</span>
             <span :class="['team-badge', 'team-' + (player.role?.team)]">{{ player.role?.name || '?' }}</span>
-            <span class="player-name">{{ player.name || player.playerName || player.id || player.playerId }}</span>
+            <span class="player-name">{{ displayPlayer(player) }}</span>
             <el-tag v-if="player.isDead" type="danger" size="small">已死亡</el-tag>
             <el-tag v-else type="success" size="small">存活</el-tag>
             <span v-for="r in (player.reminders || [])" :key="r" class="reminder-tag">{{ r }}</span>
@@ -443,7 +443,7 @@
                 :key="player.id"
                 class="role-reveal"
               >
-                <span class="player-name">{{ player.name }}</span>
+                <span class="player-name">{{ displayPlayer(player) }}</span>
                 <span class="player-role" :class="getTeamClass(player.role?.team)">
                   {{ player.role?.name || '未知' }}
                 </span>
@@ -461,6 +461,7 @@
 
 <script setup lang="ts">
 import { computed, ref, watch, onUnmounted } from 'vue'
+import { formatPlayerName } from '../utils/playerName'
 
 interface Props {
   gameState: any
@@ -552,6 +553,35 @@ onUnmounted(() => {
   watchEndDayProposal()
   stopEndDayTimer()
 })
+
+const findGamePlayer = (playerId?: string) => {
+  if (!playerId) return null
+  return props.gameState?.players?.find((p: any) => p.id === playerId || p.playerId === playerId) || null
+}
+
+const displayPlayer = (player: any): string => {
+  return formatPlayerName(
+    {
+      id: player?.id || player?.playerId,
+      name: player?.name || player?.playerName,
+      nickname: player?.nickname
+    },
+    props.currentUserId
+  )
+}
+
+const displayPlayerNameById = (playerId?: string, name?: string): string => {
+  const player = findGamePlayer(playerId)
+  return formatPlayerName(
+    {
+      id: player?.id || player?.playerId || playerId,
+      name: name || player?.name || player?.playerName,
+      nickname: player?.nickname
+    },
+    props.currentUserId,
+    playerId || '未知玩家'
+  )
+}
 
 // 计算属性
 const deathAbilityPrompt = computed(() => {
@@ -733,7 +763,7 @@ const nightOrderActions = computed(() => {
       const player = props.gameState?.players?.find((p: any) => p.id === item)
       return {
         playerId: item,
-        playerName: player?.name || item,
+        playerName: displayPlayerNameById(item, player?.name || player?.playerName),
         roleName: props.gameState?.players?.find((p: any) => p.id === item)?.role?.name || '未知',
         isActive: false,
         isCompleted: false
@@ -741,7 +771,7 @@ const nightOrderActions = computed(() => {
     }
     return {
       playerId: item.playerId || '',
-      playerName: item.playerName || item.playerId || '未知',
+      playerName: displayPlayerNameById(item.playerId, item.playerName),
       roleName: item.roleName || '未知',
       isActive: index === 0,
       isCompleted: false
@@ -769,7 +799,7 @@ const endDayProposalProposerName = computed(() => {
   const proposerId = props.gameState?.endDayProposal?.proposerId
   if (!proposerId) return ''
   const player = props.gameState?.players?.find((p: any) => p.id === proposerId)
-  return player?.name || proposerId
+  return displayPlayerNameById(proposerId, player?.name || player?.playerName)
 })
 
 const hasVotedEndDay = computed(() => {
@@ -963,13 +993,13 @@ const endGame = () => {
 const getNominatorName = () => {
   if (!currentNomination.value) return ''
   const player = props.gameState?.players?.find((p: any) => p.id === currentNomination.value.nominator)
-  return player?.name || currentNomination.value.nominator
+  return displayPlayerNameById(currentNomination.value.nominator, player?.name || player?.playerName)
 }
 
 const getNomineeName = () => {
   if (!currentNomination.value) return ''
   const player = props.gameState?.players?.find((p: any) => p.id === currentNomination.value.nominee)
-  return player?.name || currentNomination.value.nominee
+  return displayPlayerNameById(currentNomination.value.nominee, player?.name || player?.playerName)
 }
 
 const getWinnerTeam = () => {
@@ -1037,8 +1067,8 @@ const getRoleActionDescription = () => {
 }
 
 const getGamePlayerName = (playerId: string) => {
-  const player = props.gameState?.players?.find((p: any) => p.id === playerId)
-  return player?.name || playerId
+  const player = findGamePlayer(playerId)
+  return displayPlayerNameById(playerId, player?.name || player?.playerName)
 }
 
 const formatNightInfo = (info: any) => {
@@ -1064,7 +1094,7 @@ const formatNightInfo = (info: any) => {
       return data.message || '今晚没有可执行的击杀'
     }
     if (data.playerId) {
-      return `${data.playerName || getGamePlayerName(data.playerId)} 的角色是: ${data.roleName || data.roleId || '未知'}`
+      return `${displayPlayerNameById(data.playerId, data.playerName)} 的角色是: ${data.roleName || data.roleId || '未知'}`
     }
     if (data.roleId) {
       return `角色: ${data.roleName || data.roleId}, 玩家: ${(data.players || []).join(', ')}`
@@ -1076,7 +1106,7 @@ const formatNightInfo = (info: any) => {
       return `邪恶邻居数: ${data.evilCount}`
     }
     if (data.grandchild) {
-      return `孙子: ${data.grandchild}, 角色: ${data.grandchildRole?.name || '未知'}`
+      return `孙子: ${getGamePlayerName(data.grandchild)}, 角色: ${data.grandchildRole?.name || '未知'}`
     }
     if (data.distance !== undefined) {
       return `恶魔最近距离: ${data.distance}`
@@ -1107,7 +1137,7 @@ const formatNightInfo = (info: any) => {
     }
     if (Array.isArray(data.roles)) {
       const roleNames = data.roles.map((role: any) => role.roleName || role.roleId).join(' / ')
-      return `${data.playerName || getGamePlayerName(data.playerId)} 可能是: ${roleNames}`
+      return `${displayPlayerNameById(data.playerId, data.playerName)} 可能是: ${roleNames}`
     }
     return JSON.stringify(data)
   }
@@ -1135,10 +1165,10 @@ const formatNightInfo = (info: any) => {
   }
   if (Array.isArray(info.roles)) {
     const roleNames = info.roles.map((role: any) => role.roleName || role.roleId).join(' / ')
-    return `${info.playerName || getGamePlayerName(info.playerId)} 可能是: ${roleNames}`
+    return `${displayPlayerNameById(info.playerId, info.playerName)} 可能是: ${roleNames}`
   }
   if (info.playerId) {
-    return `${info.playerName || getGamePlayerName(info.playerId)} 的角色是: ${info.roleName || info.roleId || '未知'}`
+    return `${displayPlayerNameById(info.playerId, info.playerName)} 的角色是: ${info.roleName || info.roleId || '未知'}`
   }
   if (info.roleId) {
     return `角色: ${info.roleName || info.roleId}, 玩家: ${(info.players || []).map((p: string) => getGamePlayerName(p)).join('、') || '未知'}`
@@ -1150,7 +1180,7 @@ const formatNightInfo = (info: any) => {
     return `邪恶邻居数: ${info.evilCount}`
   }
   if (info.grandchild) {
-    return `孙子: ${info.grandchild}, 角色: ${info.grandchildRole?.name || '未知'}`
+    return `孙子: ${getGamePlayerName(info.grandchild)}, 角色: ${info.grandchildRole?.name || '未知'}`
   }
   if (info.distance !== undefined) {
     return `恶魔最近距离: ${info.distance}`

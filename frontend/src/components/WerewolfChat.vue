@@ -38,11 +38,13 @@
 import { ref, nextTick, watch, computed } from 'vue';
 import type { Socket } from 'socket.io-client';
 import { safeHtml } from '../utils/html';
+import { formatPlayerNameById } from '../utils/playerName';
 
 interface Props {
   messages: any[]
   roomId?: string
   nickname?: string
+  currentUserId?: string
   socket?: Socket | null
   playerRole?: string    // 玩家角色
   playerTeam?: string    // 玩家阵营 'werewolf' | 'villager'
@@ -54,6 +56,7 @@ const props = withDefaults(defineProps<Props>(), {
   messages: () => [],
   roomId: '',
   nickname: '',
+  currentUserId: '',
   socket: null,
   playerRole: '',
   playerTeam: '',
@@ -219,9 +222,14 @@ const formatMessage = (msg: any): string => {
   let result = '';
 
   // 如果有发送者信息，显示发送者
-  if (msg.sender) {
+  if (msg.sender || msg.playerName) {
     const senderColor = msg.channel === 'werewolf' ? '#8b0000' : '#409eff';
-    result += `<span style="color: ${senderColor}; font-weight: bold;">${escapeHtml(msg.sender)}</span>: `;
+    const senderId = msg.senderId || msg.playerId || msg.from;
+    const rawName = msg.sender || msg.playerName;
+    const senderName = senderId
+      ? formatPlayerNameById(senderId, rawName, props.currentUserId, rawName || '玩家')
+      : (rawName === props.nickname ? `${rawName}（我）` : rawName);
+    result += `<span style="color: ${senderColor}; font-weight: bold;">${escapeHtml(senderName)}</span>: `;
   }
 
   // 如果有时间戳，显示时间

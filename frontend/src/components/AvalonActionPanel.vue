@@ -81,7 +81,7 @@
             @click="togglePlayerSelection(playerId)"
           >
             <span class="player-number">{{ String(player.index) }}</span>
-            <span class="player-name">{{ player.name }}</span>
+            <span class="player-name">{{ displayPlayerName(playerId, player.name) }}</span>
           </div>
         </div>
         <div class="team-actions">
@@ -172,7 +172,7 @@
             @click="selectedTarget = String(playerId)"
           >
             <span class="player-number">{{ String(player.index) }}</span>
-            <span class="player-name">{{ player.name }}</span>
+            <span class="player-name">{{ displayPlayerName(playerId, player.name) }}</span>
           </div>
         </div>
         <div class="lady-actions">
@@ -198,10 +198,10 @@
             :key="playerId"
             class="target-option"
             :class="{ selected: selectedTarget === playerId }"
-            @click="selectedTarget = playerId"
+            @click="selectedTarget = String(playerId)"
           >
             <span class="player-number">{{ String(player.index) }}</span>
-            <span class="player-name">{{ player.name }}</span>
+            <span class="player-name">{{ displayPlayerName(playerId, player.name) }}</span>
           </div>
         </div>
         <div class="assassinate-actions">
@@ -264,6 +264,7 @@
 
 <script setup lang="ts">
 import { ref, computed } from 'vue'
+import { formatPlayerNameById } from '../utils/playerName'
 
 const props = defineProps<{
   gameState: any
@@ -397,8 +398,13 @@ const getTeamSize = (): number => {
   return props.gameState.scoreBoard?.[mission]?.[0] || 0
 }
 
+const displayPlayerName = (playerId: string | number, name?: string): string => {
+  return formatPlayerNameById(String(playerId), name, props.playerSecret?.playerId, '未知玩家')
+}
+
 const getPlayerName = (playerId: string): string => {
-  return props.gameState.players?.[playerId]?.name || '未知玩家'
+  const player = props.gameState.players?.[playerId]
+  return displayPlayerName(playerId, player?.name)
 }
 
 // 获取同意组队的玩家名称列表

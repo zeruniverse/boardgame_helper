@@ -103,19 +103,7 @@ class WerewolfWorker extends BaseGameWorker {
       };
       // 确保游戏状态中有对应的玩家记录，游戏未开始时默认isAlive为true
       if (!this.gameState.players[player.id]) {
-        this.gameState.players[player.id] = {
-          id: player.id,
-          index: index + 1,
-          name: player.nickname,
-          character: 'UNKNOWN' as WerewolfCharacter,
-          isAlive: true,
-          isSheriff: false,
-          isDying: false,
-          canBeVoted: false,
-          hasVotedAt: [],
-          sheriffVotes: [],
-          characterStatus: {}
-        };
+        this.gameState.players[player.id] = this.createWaitingPlayerState(player, index + 1);
       }
     });
 
@@ -130,6 +118,22 @@ class WerewolfWorker extends BaseGameWorker {
       config: this.config,
       gameInfo: this.getGameInfo()
     });
+  }
+
+  private createWaitingPlayerState(player: Player, index: number): WerewolfPlayerState {
+    return {
+      id: player.id,
+      index,
+      name: player.nickname,
+      character: 'UNKNOWN' as WerewolfCharacter,
+      isAlive: true,
+      isSheriff: false,
+      isDying: false,
+      canBeVoted: false,
+      hasVotedAt: [],
+      sheriffVotes: [],
+      characterStatus: {}
+    };
   }
 
   async changeConfig(config: Partial<WerewolfConfig>): Promise<void> {
@@ -161,6 +165,10 @@ class WerewolfWorker extends BaseGameWorker {
       ready: false,
       muted: false
     };
+
+    if (this.gameState.status === GameStatus.WAITING && !this.gameState.players[roomPlayer.id]) {
+      this.gameState.players[roomPlayer.id] = this.createWaitingPlayerState(roomPlayer, this.room.players.length);
+    }
 
     const message = `${roomPlayer.nickname}加入了房间`;
     this.sendToRoom('player_joined', {
@@ -434,8 +442,8 @@ class WerewolfWorker extends BaseGameWorker {
         id: player.id,
         nickname: player.nickname,
         index: gamePlayer?.index || 0,
-        // 未入局/旁观者不应被当作存活玩家。
-        isAlive: inGame ? gamePlayer!.isAlive : false,
+        // 等待/准备阶段没有真实死亡状态；未开局玩家应显示为正常存活。
+        isAlive: inGame ? gamePlayer!.isAlive : this.gameState.status === GameStatus.WAITING,
         isSheriff: gamePlayer?.isSheriff || false,
         isDying: gamePlayer?.isDying || false,
         canBeVoted: gamePlayer?.canBeVoted || false,
@@ -755,8 +763,11 @@ class WerewolfWorker extends BaseGameWorker {
     // 重新初始化游戏状态
     this.initializeGameState();
 
-    // 重新设置needingCharacters
+    // 重新设置needingCharacters，并恢复等待阶段玩家为默认存活显示。
     this.gameState.needingCharacters = this.config.characters;
+    this.room.players.forEach((player, index) => {
+      this.gameState.players[player.id] = this.createWaitingPlayerState(player, index + 1);
+    });
 
     this.sendToRoom('game_restarted', {
       message: '游戏已重新开始，请所有玩家重新准备',

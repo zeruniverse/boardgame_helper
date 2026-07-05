@@ -28,11 +28,11 @@
         <!-- 玩家信息 -->
         <div class="player-info">
           <div class="player-name" :class="{ 'current-user': player.id === currentUserId }">
-            {{ player.name || player.nickname }}
+            {{ displayPlayerName(player) }}
           </div>
 
           <div class="player-status">
-            <span v-if="!player.alive && !player.isAlive" class="status-dead">已死亡</span>
+            <span v-if="!isPlayerAlive(player)" class="status-dead">已死亡</span>
             <span v-else-if="player.ready && !gameStarted" class="status-ready">已准备</span>
             <span v-else-if="!player.ready && !gameStarted" class="status-waiting">未准备</span>
             <span v-else class="status-alive">存活</span>
@@ -143,6 +143,7 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import { More } from '@element-plus/icons-vue'
+import { formatPlayerName } from '../utils/playerName'
 
 interface Player {
   id: string
@@ -214,6 +215,15 @@ const sortedPlayers = computed(() => {
 })
 
 // 方法
+const displayPlayerName = (player: Player) => formatPlayerName(player, props.currentUserId)
+
+const isPlayerAlive = (player: Player) => {
+  if (!props.gameStarted || props.gameState?.status === 'preparing' || props.gameState?.status === 'WAITING') {
+    return true
+  }
+  return (player.alive ?? player.isAlive ?? true) !== false
+}
+
 const isHost = (playerId: string) => {
   return props.hostId === playerId
 }
@@ -234,7 +244,7 @@ const shouldShowRole = (player: Player) => {
   // 显示角色的条件：1. 是自己 2. 游戏结束 3. 玩家已死亡且不在准备中
   const isSelf = player.id === props.currentUserId
   const isFinished = props.gameState?.status === 'finished'
-  const isDead = !(player.alive ?? player.isAlive ?? true)
+  const isDead = !isPlayerAlive(player)
   const notPreparing = props.gameState?.status !== 'preparing'
 
   return isSelf || isFinished || (isDead && notPreparing)
@@ -243,7 +253,7 @@ const shouldShowRole = (player: Player) => {
 const getPlayerClass = (player: Player) => {
   const classes: string[] = []
 
-  const isDead = !(player.alive ?? player.isAlive ?? true)
+  const isDead = !isPlayerAlive(player)
   if (isDead) {
     classes.push('player-dead')
   } else {
@@ -265,7 +275,7 @@ const getPlayerClass = (player: Player) => {
 const getAvatarClass = (player: Player) => {
   const classes: string[] = []
 
-  const isDead = !(player.alive ?? player.isAlive ?? true)
+  const isDead = !isPlayerAlive(player)
   if (isDead) {
     classes.push('avatar-dead')
   } else if (player.ready && !props.gameStarted) {
@@ -308,7 +318,7 @@ const formatRole = (role: string) => {
 
 const getPlayerName = (playerId: string) => {
   const player = props.players.find(p => p.id === playerId)
-  return player?.name || player?.nickname || `玩家${playerId}`
+  return player ? displayPlayerName(player) : `玩家${playerId}`
 }
 
 // 事件处理

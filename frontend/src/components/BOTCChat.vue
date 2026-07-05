@@ -18,7 +18,7 @@
         <el-option
           v-for="player in availablePrivateTargets"
           :key="player.id"
-          :label="player.name"
+          :label="getPlayerName(player.id, player.name)"
           :value="player.id"
         />
       </el-select>
@@ -30,7 +30,7 @@
       <div v-for="(msg, idx) in filteredMessages" :key="idx"
            :class="getMessageClass(msg)"
            :style="{ color: getMessageColor(msg.type || msg.channel) }">
-        <span class="message-sender" v-if="msg.from || msg.playerName">{{ msg.playerName || getPlayerName(msg.from) }}: </span>
+        <span class="message-sender" v-if="msg.from || msg.playerName">{{ getMessageSenderName(msg) }}: </span>
         <!-- 使用文本渲染而非v-html防止XSS -->
         <span class="message-content">{{ msg.message || msg }}</span>
         <span class="message-time">{{ formatTime(msg.timestamp) }}</span>
@@ -66,6 +66,7 @@
 <script lang="ts" setup>
 import { ref, nextTick, watch, computed } from 'vue';
 import { emitChatAction } from '../utils/gameSocket';
+import { formatPlayerName } from '../utils/playerName';
 
 interface Props {
   messages: any[]
@@ -250,10 +251,21 @@ const getMessageColor = (type: string) => {
 };
 
 // 获取玩家名称
-const getPlayerName = (playerId: string) => {
+const getPlayerName = (playerId: string, preferredName?: string) => {
   if (!playerId) return ''
   const player = props.players.find(p => p.id === playerId)
-  return player?.name || playerId
+  return formatPlayerName(
+    { id: playerId, name: preferredName || player?.name, nickname: player?.nickname },
+    props.nickname,
+    playerId
+  )
+}
+
+const getMessageSenderName = (msg: any) => {
+  if (!msg || typeof msg === 'string') return ''
+  const senderId = msg.playerId || msg.from || msg.senderId
+  const rawName = msg.playerName || msg.sender || ''
+  return senderId ? getPlayerName(senderId, rawName) : rawName
 }
 
 // 格式化时间

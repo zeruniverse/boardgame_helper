@@ -133,6 +133,7 @@
           :player-role="playerSecret?.role"
           :player-team="playerSecret?.team"
           :game-state="gameState"
+          :current-user-id="currentUserId"
           @send-message="handleSendMessage"
         />
       </el-aside>
@@ -149,6 +150,7 @@ import { Back, Loading } from '@element-plus/icons-vue'
 import AvalonActionPanel from './AvalonActionPanel.vue'
 import AvalonPlayerList from './AvalonPlayerList.vue'
 import AvalonChat from './AvalonChat.vue'
+import { formatPlayerNameById } from '../utils/playerName'
 
 const route = useRoute()
 const router = useRouter()
@@ -284,7 +286,8 @@ const getTeamName = (team: string): string => {
 
 const getPlayerName = (playerId: string): string => {
   if (!gameState.value?.players) return '未知玩家'
-  return gameState.value.players[playerId]?.name || '未知玩家'
+  const player = gameState.value.players[playerId]
+  return formatPlayerNameById(playerId, player?.name, currentUserId.value, '未知玩家')
 }
 
 const handleGameAction = (actionType: string, actionData: any) => {
