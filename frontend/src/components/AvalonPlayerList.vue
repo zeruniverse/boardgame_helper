@@ -24,10 +24,12 @@
         </div>
 
         <LocalPlayerMark
-          v-if="player.id !== currentUserId"
+          v-if="shouldRenderIdentityControl(player.id)"
           game-key="avalon"
           :player-id="player.id"
           :current-user-id="currentUserId"
+          :known="Boolean(getKnownIdentity(player.id))"
+          :known-label="getKnownIdentity(player.id)?.label"
         />
         
         <div v-if="showHostActions && currentUserId === hostId && player.id !== hostId" class="player-actions">
@@ -66,11 +68,25 @@ interface GamePlayer {
   team?: string
 }
 
+interface AvalonSecret {
+  role?: string
+  team?: 'blue' | 'red' | string
+  visions?: string[]
+  ladyVision?: Array<[string, string]>
+}
+
+interface KnownIdentity {
+  label: string
+  role?: string
+}
+
 interface Props {
   players: Player[]
   hostId?: string
   currentUserId?: string
   gamePlayersById?: Record<string, GamePlayer>
+  gameState?: any
+  playerSecret?: AvalonSecret | null
   showHostActions?: boolean
 }
 
@@ -88,6 +104,51 @@ const displayPlayerName = (player: Player) => formatPlayerName(player, props.cur
 
 const gamePlayer = (playerId: string): GamePlayer | undefined => {
   return props.gamePlayersById?.[playerId]
+}
+
+const getRoleName = (role: string): string => {
+  const roleNames: Record<string, string> = {
+    merlin: '梅林',
+    percival: '派西维尔',
+    good: '忠臣',
+    loyal: '忠臣',
+    assassin: '刺客',
+    morgana: '莫甘娜',
+    mordred: '莫德雷德',
+    oberon: '奥伯伦',
+    bad: '爪牙',
+    minion: '爪牙'
+  }
+  return roleNames[role] || role
+}
+
+const getKnownIdentity = (playerId: string): KnownIdentity | null => {
+  const publicRole = props.gameState?.publicKnownRoles?.[playerId]
+  if (publicRole) {
+    return { label: getRoleName(publicRole), role: publicRole }
+  }
+
+  if (playerId === props.currentUserId && props.playerSecret?.role) {
+    return { label: getRoleName(props.playerSecret.role), role: props.playerSecret.role }
+  }
+
+  const ladyVision = props.playerSecret?.ladyVision?.find(([targetId]) => targetId === playerId)
+  if (ladyVision) {
+    return { label: getTeamName(ladyVision[1]) }
+  }
+
+  if (props.playerSecret?.visions?.includes(playerId)) {
+    if (props.playerSecret.team === 'red' || props.playerSecret.role === 'merlin') {
+      return { label: getTeamName('red') }
+    }
+    // 派西维尔只知道“梅林/莫甘娜候选”，不能确定具体身份。
+  }
+
+  return null
+}
+
+const shouldRenderIdentityControl = (playerId: string): boolean => {
+  return Boolean(getKnownIdentity(playerId)) || playerId !== props.currentUserId
 }
 
 const getTeamName = (team: string): string => {

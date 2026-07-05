@@ -159,7 +159,11 @@ export const useBOTCGameStore = defineStore('botc', () => {
         // 监听角色分配 - 后端使用roleAssigned (camelCase)
         on('roleAssigned', (data) => {
           const previousRoleId = playerRole.value?.id
-          playerRole.value = data.role ? { ...data.role, abilityState: data.abilityState || {} } : null
+          playerRole.value = data.role ? {
+            ...data.role,
+            abilityState: data.abilityState || {},
+            knownIdentities: data.knownIdentities || []
+          } : null
           if (Object.prototype.hasOwnProperty.call(data, 'nightInfo')) {
             nightInfo.value = data.nightInfo
           }
@@ -305,6 +309,12 @@ export const useBOTCGameStore = defineStore('botc', () => {
             gameState.value.phase = 'ended'
             gameState.value.winner = data.winner
             gameState.value.finalPlayers = data.players
+            if (Array.isArray(data.players)) {
+              gameState.value.players = data.players.map((player: any) => ({
+                ...player,
+                isAlive: !player.isDead
+              }))
+            }
           }
           const winnerText = data.winner === 'good' ? '善良阵营获胜！' : '邪恶阵营获胜！'
           ElMessage.success(`${winnerText} 原因: ${data.reason}`)

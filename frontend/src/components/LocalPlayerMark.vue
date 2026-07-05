@@ -1,7 +1,18 @@
 <template>
-  <button class="local-player-mark" type="button" @click.stop="editMark">
+  <span v-if="isKnown" class="known-player-identity" title="已确定身份">
+    <span class="known-prefix">已知</span>
+    <span class="known-text">{{ knownText }}</span>
+  </span>
+  <button
+    v-else
+    class="local-player-mark"
+    type="button"
+    :title="mark ? '点击修改本地身份标注' : '点击添加本地身份标注'"
+    @click.stop="editMark"
+  >
     <span v-if="mark">我认为：{{ mark }}</span>
-    <span v-else>标注身份</span>
+    <span v-else>本地标注</span>
+    <span class="edit-icon" aria-hidden="true">✎</span>
   </button>
 </template>
 
@@ -12,10 +23,14 @@ const props = defineProps<{
   gameKey: string;
   playerId: string;
   currentUserId?: string;
+  known?: boolean;
+  knownLabel?: string;
 }>();
 
 const mark = ref('');
 const storageKey = computed(() => `boardgame_helper:local-player-mark:${props.gameKey}:${props.currentUserId || 'anonymous'}:${props.playerId}`);
+const knownText = computed(() => (props.knownLabel || '').trim());
+const isKnown = computed(() => Boolean(props.known && knownText.value));
 
 function loadMark() {
   try {
@@ -26,6 +41,7 @@ function loadMark() {
 }
 
 function editMark() {
+  if (isKnown.value) return;
   const next = window.prompt('仅本机可见，不会发送给后端。输入你认为他的身份；留空可清除：', mark.value);
   if (next === null) return;
   const trimmed = next.trim();
@@ -46,19 +62,25 @@ watch(storageKey, loadMark);
 </script>
 
 <style scoped>
-.local-player-mark {
+.local-player-mark,
+.known-player-identity {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   min-height: 28px;
   max-width: 100%;
   padding: 3px 8px;
-  border: 1px dashed var(--app-border, #c0c4cc);
   border-radius: 999px;
-  background: var(--app-panel-muted, #f5f7fa);
-  color: var(--app-text-secondary, #606266);
   font-size: 12px;
   line-height: 1.2;
+  white-space: nowrap;
+}
+
+.local-player-mark {
+  gap: 4px;
+  border: 1px dashed var(--app-border, #c0c4cc);
+  background: var(--app-panel-muted, #f5f7fa);
+  color: var(--app-text-secondary, #606266);
   cursor: pointer;
 }
 
@@ -67,5 +89,28 @@ watch(storageKey, loadMark);
   border-style: solid;
   color: var(--app-primary, #409eff);
   outline: none;
+}
+
+.edit-icon {
+  font-size: 12px;
+  opacity: 0.8;
+}
+
+.known-player-identity {
+  gap: 5px;
+  border: 1px solid rgba(103, 194, 58, 0.45);
+  background: rgba(103, 194, 58, 0.12);
+  color: var(--app-success, #2f855a);
+  font-weight: 600;
+}
+
+.known-prefix {
+  opacity: 0.72;
+  font-weight: 500;
+}
+
+.known-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 </style>

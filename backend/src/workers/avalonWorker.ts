@@ -614,10 +614,25 @@ class AvalonWorker extends BaseGameWorker {
       consecutiveRejections: state.consecutiveRejections,
       winner: state.winner,
       roles: state.roles,
+      publicKnownRoles: this.getPublicKnownRoles(),
       ladys: state.ladys,
       timeLeft: this.getTimeLeft(),
       statusMessage: this.getStatusMessage()
     };
+  }
+
+  private getPublicKnownRoles(): Record<string, string> {
+    const state = this.gameState as AvalonGameState;
+    if (state.status !== GameStatus.OVER) return {};
+
+    const roles: Record<string, string> = {};
+    for (const [id, role] of Object.entries(state.topSecret.blue || {})) {
+      roles[id] = role as string;
+    }
+    for (const [id, role] of Object.entries(state.topSecret.red || {})) {
+      roles[id] = role as string;
+    }
+    return roles;
   }
 
   // 获取玩家的秘密信息
@@ -1064,8 +1079,11 @@ class AvalonWorker extends BaseGameWorker {
     const team = isBlue ? '亚瑟方' : '莫德雷德方';
     this.sendToPlayer(playerId, 'lady_result', {
       target: this.getPlayerName(targetId),
-      team
+      targetId,
+      team: isBlue ? 'blue' : 'red',
+      teamName: team
     });
+    this.sendToPlayer(playerId, 'secret_update', this.getSecretForPlayer(playerId));
 
     const inspectMessage = `湖上夫人${this.getPlayerName(playerId)}查看了${this.getPlayerName(targetId)}的身份`;
 
@@ -1713,7 +1731,8 @@ class AvalonWorker extends BaseGameWorker {
       reason: state.endReason || (state.winner === Team.BLUE ? '亚瑟方胜利！' : '莫德雷德方胜利！'),
       blueTeam,
       redTeam,
-      scoreBoard: state.scoreBoard
+      scoreBoard: state.scoreBoard,
+      gameInfo: this.getGameInfo()
     });
   }
 

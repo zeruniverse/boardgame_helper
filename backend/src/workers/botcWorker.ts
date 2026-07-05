@@ -78,12 +78,13 @@ export class BOTCWorker extends BaseGameWorker {
     return player.displayRole || player.role;
   }
 
-  private buildRoleAssignedPayload(player: GamePlayer, includeNightInfo: boolean = true): { role: Role | null; seat: number; isEvil: boolean; nightInfo?: any; abilityState: any } {
+  private buildRoleAssignedPayload(player: GamePlayer, includeNightInfo: boolean = true): { role: Role | null; seat: number; isEvil: boolean; nightInfo?: any; abilityState: any; knownIdentities?: any[] } {
     const effectiveRole = this.getEffectiveRole(player);
-    const payload: { role: Role | null; seat: number; isEvil: boolean; nightInfo?: any; abilityState: any } = {
+    const payload: { role: Role | null; seat: number; isEvil: boolean; nightInfo?: any; abilityState: any; knownIdentities?: any[] } = {
       role: effectiveRole,
       seat: player.seat,
       isEvil: isEvilPlayer(player),
+      knownIdentities: this.getKnownIdentitiesForPlayer(player),
       abilityState: {
         poCharged: effectiveRole?.id === 'po' &&
           player.reminders.includes('Po Charged') &&
@@ -94,6 +95,38 @@ export class BOTCWorker extends BaseGameWorker {
       payload.nightInfo = player.nightInfo || null;
     }
     return payload;
+  }
+
+  private getKnownIdentitiesForPlayer(viewer: GamePlayer): any[] {
+    const knownByPlayerId = new Map<string, any>();
+
+    if (isEvilPlayer(viewer)) {
+      for (const player of this.gamePlayers.values()) {
+        if (player.playerId === viewer.playerId || !isEvilPlayer(player)) continue;
+        const roleTeam = player.role?.team;
+        const label = roleTeam === Team.DEMON
+          ? '恶魔阵营'
+          : roleTeam === Team.MINION
+            ? '爪牙阵营'
+            : '邪恶阵营';
+        knownByPlayerId.set(player.playerId, {
+          playerId: player.playerId,
+          label,
+          team: roleTeam || 'evil'
+        });
+      }
+    }
+
+    const twinInfo = viewer.nightInfo?.information;
+    if (twinInfo?.twinId && twinInfo?.twinRoleName) {
+      knownByPlayerId.set(twinInfo.twinId, {
+        playerId: twinInfo.twinId,
+        label: twinInfo.twinRoleName,
+        roleId: twinInfo.twinRoleId
+      });
+    }
+
+    return Array.from(knownByPlayerId.values());
   }
 
   private sendRoleStateToPlayer(playerId: string, includeNightInfo: boolean = true): void {

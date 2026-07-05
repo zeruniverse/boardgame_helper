@@ -30,6 +30,7 @@ interface AvalonGameState {
   timeLeft?: number;
   statusMessage?: string;
   winner?: 'blue' | 'red';
+  publicKnownRoles?: Record<string, string>;
   ladys?: string[];
   consecutiveRejections?: number;
 }
@@ -182,7 +183,10 @@ export const useAvalonStore = defineStore('avalon', {
         this.playerSecret = secret;
       });
 
-      on('game_over', (data: { winner: 'blue' | 'red'; reason?: string }) => {
+      on('game_over', (data: { winner: 'blue' | 'red'; reason?: string; gameInfo?: AvalonGameState }) => {
+        if (data.gameInfo) {
+          this.gameState = data.gameInfo;
+        }
         if (this.gameState) {
           this.gameState.winner = data.winner;
           this.gameState.status = 999;
@@ -212,8 +216,15 @@ export const useAvalonStore = defineStore('avalon', {
       });
 
       // 湖上夫人验人结果
-      on('lady_result', (data: { target: string; team: string }) => {
-        this.addSystemMessage(`湖上夫人验人结果：${data.target} 属于 ${data.team}`);
+      on('lady_result', (data: { target: string; targetId?: string; team: string; teamName?: string }) => {
+        this.addSystemMessage(`湖上夫人验人结果：${data.target} 属于 ${data.teamName || data.team}`);
+        if (data.targetId && this.playerSecret) {
+          const ladyVision = [...(this.playerSecret.ladyVision || [])];
+          if (!ladyVision.some(([targetId]) => targetId === data.targetId)) {
+            ladyVision.push([data.targetId, data.team]);
+            this.playerSecret = { ...this.playerSecret, ladyVision };
+          }
+        }
       });
 
       // 刺杀投票开始

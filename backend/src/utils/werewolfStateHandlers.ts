@@ -324,7 +324,8 @@ function checkAndHandleGameEnd(gameState: WerewolfGameState, context: any): bool
     clearScheduledStateTasks(gameState);
     context.sendToRoom('game_end', {
       winner: winner === 'WEREWOLF' ? 'werewolf' : 'villager',
-      reason: winner === 'WEREWOLF' ? '狼人数量大于或等于好人数量' : '所有狼人已死亡'
+      reason: winner === 'WEREWOLF' ? '狼人数量大于或等于好人数量' : '所有狼人已死亡',
+      gameInfo: typeof context.getGameInfo === 'function' ? context.getGameInfo() : undefined
     });
     return true;
   }

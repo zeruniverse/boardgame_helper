@@ -38,13 +38,6 @@
             <span v-else class="status-alive">存活</span>
           </div>
 
-          <!-- 角色信息（仅对自己或游戏结束时显示） -->
-          <div v-if="shouldShowRole(player)" class="player-role">
-            <span class="role-name" :class="getRoleClass(player.role || player.character)">
-              {{ formatRole(player.role || player.character || 'VILLAGER') }}
-            </span>
-          </div>
-
           <!-- 投票信息 -->
           <div v-if="gameState?.status === 'EXILE_VOTE' && gameState.votes" class="vote-info">
             <span v-if="gameState.votes[player.id]" class="voted-for">
@@ -55,10 +48,12 @@
         </div>
 
         <LocalPlayerMark
-          v-if="player.id !== currentUserId"
+          v-if="shouldRenderIdentityControl(player)"
           game-key="werewolf"
           :player-id="player.id"
           :current-user-id="currentUserId"
+          :known="Boolean(getKnownIdentity(player))"
+          :known-label="getKnownIdentity(player)?.label"
         />
 
         <!-- 玩家操作按钮 -->
@@ -166,6 +161,29 @@ interface Player {
   isSheriff?: boolean
 }
 
+interface SeerCheck {
+  index?: number
+  targetId?: string
+  targetName?: string
+  isWerewolf: boolean
+}
+
+interface WerewolfSecret {
+  playerId?: string
+  role?: string
+  team?: 'werewolf' | 'villager' | string
+  companions?: string[]
+  checks?: SeerCheck[]
+  characterStatus?: {
+    checks?: SeerCheck[]
+  }
+}
+
+interface KnownIdentity {
+  label: string
+  role?: string
+}
+
 interface Props {
   players: Player[]
   hostId?: string
@@ -173,6 +191,7 @@ interface Props {
   gamePlayersById?: Record<string, any>
   gameStarted?: boolean
   gameState?: any
+  playerSecret?: WerewolfSecret | null
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -181,7 +200,8 @@ const props = withDefaults(defineProps<Props>(), {
   currentUserId: '',
   gamePlayersById: () => ({}),
   gameStarted: false,
-  gameState: null
+  gameState: null,
+  playerSecret: null
 })
 
 const emit = defineEmits<{
@@ -248,14 +268,46 @@ const canKickPlayer = (player: Player) => {
   return !props.gameStarted
 }
 
-const shouldShowRole = (player: Player) => {
-  // 显示角色的条件：1. 是自己 2. 游戏结束 3. 玩家已死亡且不在准备中
-  const isSelf = player.id === props.currentUserId
-  const isFinished = props.gameState?.status === 'finished'
-  const isDead = !isPlayerAlive(player)
-  const notPreparing = props.gameState?.status !== 'preparing'
+const getPlayerIndex = (player: Player): number => {
+  return props.gamePlayersById?.[player.id]?.index || player.index || 0
+}
 
-  return isSelf || isFinished || (isDead && notPreparing)
+const getSeerChecks = (): SeerCheck[] => {
+  return props.playerSecret?.checks || props.playerSecret?.characterStatus?.checks || []
+}
+
+const findSeerCheckForPlayer = (player: Player): SeerCheck | undefined => {
+  const playerIndex = getPlayerIndex(player)
+  return getSeerChecks().find(check => {
+    if (check.targetId && check.targetId === player.id) return true
+    return Boolean(check.index && playerIndex && check.index === playerIndex)
+  })
+}
+
+const getKnownIdentity = (player: Player): KnownIdentity | null => {
+  const publicRole = props.gameState?.publicKnownRoles?.[player.id]
+  if (publicRole) {
+    return { label: formatRole(publicRole), role: publicRole }
+  }
+
+  if (player.id === props.currentUserId && props.playerSecret?.role) {
+    return { label: formatRole(props.playerSecret.role), role: props.playerSecret.role }
+  }
+
+  if (props.playerSecret?.companions?.includes(player.id)) {
+    return { label: formatRole('WEREWOLF'), role: 'WEREWOLF' }
+  }
+
+  const seerCheck = findSeerCheckForPlayer(player)
+  if (seerCheck) {
+    return { label: seerCheck.isWerewolf ? '狼人' : '好人', role: seerCheck.isWerewolf ? 'WEREWOLF' : undefined }
+  }
+
+  return null
+}
+
+const shouldRenderIdentityControl = (player: Player): boolean => {
+  return Boolean(getKnownIdentity(player)) || player.id !== props.currentUserId
 }
 
 const getPlayerClass = (player: Player) => {

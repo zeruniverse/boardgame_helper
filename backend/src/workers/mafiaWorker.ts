@@ -486,6 +486,25 @@ class MafiaWorker extends BaseGameWorker {
     );
   }
 
+  private getPublicKnownRoles(): Record<string, string> {
+    const gameState = this.gameState as MafiaGameState;
+    if (gameState.status !== GameStatus.OVER) return {};
+
+    const roles: Record<string, string> = {};
+    const setRole = (ids: string[] | undefined, role: string) => {
+      (ids || []).forEach(id => {
+        roles[id] = role;
+      });
+    };
+
+    setRole(gameState.topSecret.killer, 'KILLER');
+    setRole(gameState.topSecret.cop, 'COP');
+    setRole(gameState.topSecret.doctor, 'DOCTOR');
+    setRole(gameState.topSecret.sniper, 'SNIPER');
+    setRole(gameState.topSecret.civilian, 'CIVILIAN');
+    return roles;
+  }
+
   private getGameInfo(): any {
     const gameState = this.gameState as MafiaGameState;
     const timeLeft = this.getTimeLeft();
@@ -511,6 +530,7 @@ class MafiaWorker extends BaseGameWorker {
     return {
       status: this.statusToClientStatus(gameState.status),
       players: this.getClientPlayers(),
+      publicKnownRoles: this.getPublicKnownRoles(),
       day: gameState.day,
       operators: gameState.operators,
       step: gameState.step,
@@ -882,7 +902,13 @@ class MafiaWorker extends BaseGameWorker {
     gameState.topSecret.copVersion.push([suspectId, result, gameState.day]);
 
     const message = `经查证${this.getPlayerName(suspectId)}是${result ? '<span class="red text">坏人!</span>' : '<span class="blue text">好人!</span>'}`;
-    this.sendToPlayer(playerId, 'inspect_result', { message });
+    this.sendToPlayer(playerId, 'inspect_result', {
+      message,
+      target: suspectId,
+      result: result ? 'RED' : 'BLUE',
+      day: gameState.day
+    });
+    this.sendToPlayer(playerId, 'secret_update', this.getSecretForPlayer(playerId));
 
     // 检查是否所有在线警察都完成了查验
     const aliveOnlineCops = this.getAliveOnlineCops();

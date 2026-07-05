@@ -78,10 +78,12 @@
         </div>
 
         <LocalPlayerMark
-          v-if="player.id !== currentUserId"
+          v-if="shouldRenderIdentityControl(player)"
           game-key="blood-on-the-clocktower"
           :player-id="player.id"
           :current-user-id="currentUserId"
+          :known="Boolean(getKnownIdentity(player))"
+          :known-label="getKnownIdentity(player)?.label"
         />
 
         <!-- 操作按钮 -->
@@ -208,6 +210,7 @@ interface Props {
   isStoryteller?: boolean
   storytellerId?: string
   gameConfig?: any
+  playerRole?: any
 }
 
 interface Emits {
@@ -283,6 +286,30 @@ watch(
 // 获取玩家在游戏中的信息 - 使用playerId匹配
 const getGamePlayer = (playerId: string) => {
   return props.gamePlayers?.find(p => p.id === playerId || p.playerId === playerId) || null
+}
+
+const getKnownIdentity = (player: any): { label: string; team?: string } | null => {
+  const gamePlayer = getGamePlayer(player.id)
+
+  if (gamePlayer?.role?.name) {
+    return { label: gamePlayer.role.name, team: gamePlayer.role.team }
+  }
+
+  if (player.id === props.currentUserId && props.playerRole?.name) {
+    return { label: props.playerRole.name, team: props.playerRole.team }
+  }
+
+  const known = props.playerRole?.knownIdentities?.find((identity: any) => identity.playerId === player.id)
+  if (known?.label) {
+    return { label: known.label, team: known.team }
+  }
+
+  return null
+}
+
+const shouldRenderIdentityControl = (player: any): boolean => {
+  if (props.isStoryteller) return false
+  return Boolean(getKnownIdentity(player)) || player.id !== props.currentUserId
 }
 
 // 获取玩家样式类

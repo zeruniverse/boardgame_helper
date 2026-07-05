@@ -106,21 +106,13 @@
           </div>
 
           <LocalPlayerMark
-            v-if="player.id !== currentUserId"
+            v-if="shouldRenderIdentityControl(player.id)"
             game-key="mafia"
             :player-id="player.id"
             :current-user-id="currentUserId"
+            :known="Boolean(getKnownIdentity(player.id))"
+            :known-label="getKnownIdentity(player.id)?.label"
           />
-
-          <!-- 角色信息（仅对自己和队友可见） -->
-          <div v-if="shouldShowRole(player.id) && player.role" class="role-info">
-            <el-tag 
-              :type="getRoleTagType(player.role)" 
-              size="small"
-            >
-              {{ getRoleName(player.role) }}
-            </el-tag>
-          </div>
 
           <!-- 投票指示器 -->
           <div v-if="hasVotedFor(player.id)" class="vote-indicator">
@@ -212,6 +204,11 @@ interface Props {
     role: 'KILLER' | 'COP' | 'DOCTOR' | 'SNIPER' | 'CIVILIAN'
     team: 'RED' | 'BLUE'
     teammates?: string[]
+    inspectResults?: Array<{
+      target: string
+      result: 'RED' | 'BLUE'
+      day: number
+    }>
   }
   gameState?: any
   operators?: string[]
@@ -281,12 +278,34 @@ const isSpeaking = (playerId: string): boolean => {
   return false
 }
 
+const getKnownIdentity = (playerId: string): { label: string; role?: string } | null => {
+  const publicRole = props.gameState?.publicKnownRoles?.[playerId]
+  if (publicRole) {
+    return { label: getRoleName(publicRole), role: publicRole }
+  }
+
+  if (playerId === props.currentUserId && props.playerSecret?.role) {
+    return { label: getRoleName(props.playerSecret.role), role: props.playerSecret.role }
+  }
+
+  if (props.playerSecret?.teammates?.includes(playerId)) {
+    return { label: getRoleName(props.playerSecret.role), role: props.playerSecret.role }
+  }
+
+  const inspect = props.playerSecret?.inspectResults?.find(result => result.target === playerId)
+  if (inspect) {
+    return { label: inspect.result === 'RED' ? '杀手' : '好人', role: inspect.result === 'RED' ? 'KILLER' : undefined }
+  }
+
+  return null
+}
+
+const shouldRenderIdentityControl = (playerId: string): boolean => {
+  return Boolean(getKnownIdentity(playerId)) || playerId !== props.currentUserId
+}
+
 const shouldShowRole = (playerId: string): boolean => {
-  if (playerId === props.currentUserId) return true
-  if (!props.playerSecret) return false
-  
-  // 队友之间可以看到角色
-  return props.playerSecret.teammates?.includes(playerId) ?? false
+  return Boolean(getKnownIdentity(playerId))
 }
 
 const isRedTeamPlayer = (playerId: string): boolean => {

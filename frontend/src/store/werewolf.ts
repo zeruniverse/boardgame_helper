@@ -28,6 +28,7 @@ interface WerewolfGameState {
   winner?: 'werewolf' | 'villager';
   nightActions?: Record<string, any>;
   votes?: Record<string, string>;
+  publicKnownRoles?: Record<string, string>;
   currentSpeaker?: string;
   sheriff?: string;
   needingCharacters?: string[];
@@ -48,6 +49,12 @@ interface WerewolfSecret {
     poison: boolean;
     antidote: boolean;
   };
+  checks?: Array<{
+    index?: number;
+    targetId?: string;
+    targetName?: string;
+    isWerewolf: boolean;
+  }>;
   characterStatus?: any;
 }
 
@@ -280,9 +287,12 @@ export const useWerewolfStore = defineStore('werewolf', {
         }
       });
 
-      // 游戏结束 - 后端发送 {winner, reason}
-      on('game_end', (data: { winner: 'werewolf' | 'villager'; reason: string }) => {
+      // 游戏结束 - 后端发送 {winner, reason, gameInfo}
+      on('game_end', (data: { winner: 'werewolf' | 'villager'; reason: string; gameInfo?: any }) => {
         console.log('游戏结束:', data);
+        if (data.gameInfo) {
+          this.updateGameStateFromGameInfo(data.gameInfo);
+        }
         if (this.gameState) {
           this.gameState.winner = data.winner;
           this.gameState.status = 'finished';
@@ -314,8 +324,31 @@ export const useWerewolfStore = defineStore('werewolf', {
       });
 
       // 预言家验人结果 - 私发
-      on('seer_result', (data: { target: number; isWerewolf: boolean; resultText: string }) => {
+      on('seer_result', (data: { target: number; targetId?: string; targetName?: string; isWerewolf: boolean; resultText: string }) => {
         this.addSystemMessage(`验人结果：${data.target}号是${data.resultText}`);
+        if (this.playerSecret?.role === 'SEER') {
+          const checks = [...(this.playerSecret.checks || this.playerSecret.characterStatus?.checks || [])];
+          const exists = checks.some(check =>
+            (data.targetId && check.targetId === data.targetId) ||
+            (check.index !== undefined && check.index === data.target)
+          );
+          if (!exists) {
+            checks.push({
+              index: data.target,
+              targetId: data.targetId,
+              targetName: data.targetName,
+              isWerewolf: data.isWerewolf
+            });
+          }
+          this.playerSecret = {
+            ...this.playerSecret,
+            checks,
+            characterStatus: {
+              ...(this.playerSecret.characterStatus || {}),
+              checks
+            }
+          };
+        }
       });
 
       // 错误事件
@@ -360,6 +393,7 @@ export const useWerewolfStore = defineStore('werewolf', {
           players: normalizePlayersRecord(gameInfo),
           operators: gameInfo.operators || [],
           votes: gameInfo.votes || {},
+          publicKnownRoles: gameInfo.publicKnownRoles || {},
           currentSpeaker: gameInfo.currentSpeaker,
           config: gameInfo.config,
           needingCharacters: gameInfo.needingCharacters,
@@ -372,6 +406,7 @@ export const useWerewolfStore = defineStore('werewolf', {
         if (gameInfo.players || gameInfo.playersById) this.gameState.players = normalizePlayersRecord(gameInfo);
         if (gameInfo.operators) this.gameState.operators = gameInfo.operators;
         if (gameInfo.votes) this.gameState.votes = gameInfo.votes;
+        if (gameInfo.publicKnownRoles) this.gameState.publicKnownRoles = gameInfo.publicKnownRoles;
         if (gameInfo.currentSpeaker !== undefined) this.gameState.currentSpeaker = gameInfo.currentSpeaker;
         if (gameInfo.config) this.gameState.config = gameInfo.config;
         if (gameInfo.needingCharacters) this.gameState.needingCharacters = gameInfo.needingCharacters;

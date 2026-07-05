@@ -388,6 +388,8 @@ class WerewolfWorker extends BaseGameWorker {
       playersRecord[p.id] = p;
     });
 
+    const publicKnownRoles = this.getPublicKnownRoles();
+
     // 转换votes格式
     const votesRecord: Record<string, string> = {};
     if (this.gameState.votes) {
@@ -420,6 +422,7 @@ class WerewolfWorker extends BaseGameWorker {
       votes: votesRecord,
       currentSpeaker,
       speakOrder: this.gameState.speakOrder,
+      publicKnownRoles,
       config: {
         dayDiscussTime: this.config?.dayTime ?? 120,
         voteTime: this.config?.voteTime ?? 60,
@@ -451,6 +454,29 @@ class WerewolfWorker extends BaseGameWorker {
         online: player.online
       };
     });
+  }
+
+  private getPublicKnownRoles(): Record<string, string> {
+    const knownRoles: Record<string, string> = {};
+    const revealAll = this.gameState.status === GameStatus.OVER || this.gameState.isFinished;
+
+    (Object.values(this.gameState.players) as WerewolfPlayerState[]).forEach(player => {
+      if (!player?.character) return;
+
+      if (revealAll) {
+        knownRoles[player.id] = player.character;
+        return;
+      }
+
+      const hunterShot = player.character === 'HUNTER' &&
+        player.characterStatus?.shootAt?.day !== undefined &&
+        player.characterStatus.shootAt.day >= 0;
+      if (hunterShot) {
+        knownRoles[player.id] = 'HUNTER';
+      }
+    });
+
+    return knownRoles;
   }
 
   private syncGameStateToPlayer(socketId: string, playerId: string): void {
@@ -492,6 +518,19 @@ class WerewolfWorker extends BaseGameWorker {
         poison: !witchStatus.POISON || witchStatus.POISON.usedDay < 0,
         antidote: !witchStatus.MEDICINE || witchStatus.MEDICINE.usedDay < 0
       };
+    }
+
+    if (gamePlayer.character === 'SEER') {
+      secret.checks = (gamePlayer.characterStatus?.checks || []).map((check: any) => {
+        const target = (Object.values(this.gameState.players) as WerewolfPlayerState[])
+          .find(p => p.index === check.index);
+        return {
+          index: check.index,
+          targetId: target?.id,
+          targetName: target?.name,
+          isWerewolf: Boolean(check.isWerewolf)
+        };
+      });
     }
 
     return secret;
@@ -1046,7 +1085,7 @@ class WerewolfWorker extends BaseGameWorker {
     if (!gamePlayer.characterStatus.checks) {
       gamePlayer.characterStatus.checks = [];
     }
-    gamePlayer.characterStatus.checks.push({ index: targetIndex, isWerewolf });
+    gamePlayer.characterStatus.checks.push({ index: targetIndex, targetId: target.id, targetName: target.name, isWerewolf });
 
     // 记录夜间行动
     if (!this.gameState.nightActions) this.gameState.nightActions = {};
@@ -1056,6 +1095,7 @@ class WerewolfWorker extends BaseGameWorker {
     // 私发验人结果
     this.sendToPlayer(playerId, 'seer_result', {
       target: targetIndex,
+      targetId: target.id,
       targetName: target.name,
       isWerewolf,
       resultText: isWerewolf ? '狼人' : '好人'
@@ -1064,6 +1104,8 @@ class WerewolfWorker extends BaseGameWorker {
     this.sendToPlayer(playerId, 'system_message', {
       message: `你查验了 ${targetIndex}号 ${target.name}，结果是：${isWerewolf ? '狼人' : '好人'}`
     });
+
+    this.sendToPlayer(playerId, 'secret_update', this.getSecretForPlayer(playerId));
 
     // 结束预言家阶段
     this.saveTimeout(() => {
@@ -1332,6 +1374,8 @@ class WerewolfWorker extends BaseGameWorker {
       day: this.gameState.currentDay,
       player: targetIndex
     };
+
+    this.sendToRoom('game_info', { gameInfo: this.getGameInfo() });
 
     if (targetIndex > 0) {
       this.sendToPlayer(playerId, 'system_message', {
@@ -1720,7 +1764,8 @@ class WerewolfWorker extends BaseGameWorker {
 
       this.sendToRoom('game_end', {
         winner: winner === 'WEREWOLF' ? 'werewolf' : 'villager',
-        reason: winner === 'WEREWOLF' ? '狼人数量大于或等于好人数量' : '所有狼人已死亡'
+        reason: winner === 'WEREWOLF' ? '狼人数量大于或等于好人数量' : '所有狼人已死亡',
+        gameInfo: this.getGameInfo()
       });
     }
   }

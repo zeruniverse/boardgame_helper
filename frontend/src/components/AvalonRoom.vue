@@ -113,6 +113,8 @@
               :host-id="room?.hostId"
               :current-user-id="currentUserId"
               :game-players-by-id="gameState?.players"
+              :game-state="gameState"
+              :player-secret="playerSecret"
               @transfer-host="handleTransferHost"
               @kick-player="handleKickPlayer"
             />
@@ -140,6 +142,8 @@
             :host-id="room?.hostId"
             :current-user-id="currentUserId"
             :game-players-by-id="gameState?.players"
+            :game-state="gameState"
+            :player-secret="playerSecret"
             @transfer-host="handleTransferHost"
             @kick-player="handleKickPlayer"
           />

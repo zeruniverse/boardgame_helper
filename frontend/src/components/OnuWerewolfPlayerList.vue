@@ -63,10 +63,12 @@
         </div>
 
         <LocalPlayerMark
-          v-if="player.id !== currentUserId"
+          v-if="shouldRenderIdentityControl(player)"
           game-key="one-night-werewolf"
           :player-id="player.id"
           :current-user-id="currentUserId"
+          :known="getKnownRole(player) !== OnuWerewolfRole.Unknown"
+          :known-label="getKnownRoleLabel(player)"
         />
 
         <div class="player-actions" v-if="canManagePlayer(player)">
@@ -158,6 +160,9 @@ interface GameState {
 }
 
 interface PlayerSecret {
+  myRole?: OnuWerewolfRole;
+  mySeat?: number;
+  finalRole?: OnuWerewolfRole;
   vision?: {
     players?: Array<{
       seat: number;
@@ -246,6 +251,38 @@ const getRoleName = (role: OnuWerewolfRole) => {
 const getPlayerVisibleRole = (player?: Player) => {
   if (!player?.revealedRole) return OnuWerewolfRole.Unknown;
   return player.revealedRole;
+};
+
+const getKnownRole = (player: Player): OnuWerewolfRole => {
+  if (props.gameState?.status === OnuWerewolfGameStatus.COMPLETED && player.seat) {
+    const resultPlayer = props.playerSecret?.gameResult?.players?.find(p => p.seat === player.seat);
+    if (resultPlayer?.finalRole !== undefined) return resultPlayer.finalRole;
+  }
+
+  const visibleRole = getPlayerVisibleRole(player);
+  if (visibleRole !== OnuWerewolfRole.Unknown) return visibleRole;
+
+  if (player.id === props.currentUserId && props.playerSecret?.myRole !== undefined) {
+    return props.playerSecret.finalRole ?? props.playerSecret.myRole;
+  }
+
+  if (player.seat && props.playerSecret?.vision?.players) {
+    const visionPlayer = props.playerSecret.vision.players.find(p => p.seat === player.seat);
+    if (visionPlayer?.role !== undefined && visionPlayer.role !== OnuWerewolfRole.Unknown) {
+      return visionPlayer.role;
+    }
+  }
+
+  return OnuWerewolfRole.Unknown;
+};
+
+const getKnownRoleLabel = (player: Player): string => {
+  const role = getKnownRole(player);
+  return role === OnuWerewolfRole.Unknown ? '' : getRoleName(role);
+};
+
+const shouldRenderIdentityControl = (player: Player): boolean => {
+  return getKnownRole(player) !== OnuWerewolfRole.Unknown || player.id !== props.currentUserId;
 };
 
 const getPlayerInitialRole = (seat?: number) => {

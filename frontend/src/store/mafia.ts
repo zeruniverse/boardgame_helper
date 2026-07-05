@@ -21,6 +21,7 @@ interface MafiaGameState {
   status: 'WAITING' | 'NIGHT' | 'SPEAK' | 'VOTE' | 'PK' | 'LAST_WORD' | 'LAST_WORD_DAYTIME' | 'OVER';
   day: number;
   players: Record<string, MafiaPlayer>;
+  publicKnownRoles?: Record<string, MafiaPlayer['role']>;
   operators: string[];
   alivePlayersOrder: string[];
   deathQueue: Array<{
@@ -313,8 +314,15 @@ export const useMafiaStore = defineStore('mafia', {
       });
 
       // 动作结果事件
-      on('inspect_result', (data: { message?: string }) => {
+      on('inspect_result', (data: { message?: string; target?: string; result?: 'RED' | 'BLUE'; day?: number }) => {
         if (data.message) this.addSystemMessage(data.message);
+        if (this.playerSecret?.role === 'COP' && data.target && data.result) {
+          const inspectResults = [...(this.playerSecret.inspectResults || [])];
+          if (!inspectResults.some(result => result.target === data.target && result.day === data.day)) {
+            inspectResults.push({ target: data.target, result: data.result, day: data.day || this.gameState?.day || 0 });
+          }
+          this.playerSecret = { ...this.playerSecret, inspectResults };
+        }
       });
 
       on('kill_result', (data: { message?: string }) => {
