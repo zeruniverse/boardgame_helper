@@ -3689,7 +3689,7 @@ export class BOTCWorker extends BaseGameWorker {
   /**
    * 处理聊天
    */
-  private async handleChat(playerId: string, data: { message: string; channel?: string }): Promise<void> {
+  private async handleChat(playerId: string, data: { message: string; channel?: string; targetId?: string }): Promise<void> {
     const player = this.room.players.find(p => p.id === playerId);
     const message = normalizeChatText(data?.message);
     if (!player || !message) return;
@@ -3698,7 +3698,23 @@ export class BOTCWorker extends BaseGameWorker {
       this.sendToPlayer(playerId, 'actionError', { message: '该频道不可用，请使用公共聊天、私聊或说书人频道' });
       return;
     }
-    const channel = normalizeChatChannel(data?.channel, ['all', 'storyteller']);
+
+    if (data?.channel === 'private') {
+      if (!data.targetId) {
+        this.sendToPlayer(playerId, 'actionError', { message: '请选择私聊对象' });
+        return;
+      }
+      await this.handlePrivateChat(playerId, { targetId: data.targetId, message });
+      return;
+    }
+
+    const requestedChannel = typeof data?.channel === 'string' && data.channel.trim() ? data.channel : 'all';
+    const channel = normalizeChatChannel(requestedChannel, ['all', 'storyteller']);
+    if (channel !== requestedChannel) {
+      this.sendToPlayer(playerId, 'actionError', { message: '未知聊天频道，请使用公共聊天、私聊或说书人频道' });
+      return;
+    }
+
     const payload = {
       playerId,
       playerName: this.getPlayerName(player.id),

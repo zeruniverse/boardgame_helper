@@ -8,7 +8,6 @@ import { setResetServerFunction } from '../services/resetService';
 import { WerewolfCharacter } from '../utils/werewolfTypes';
 import { OnuWerewolfRole } from '../utils/onuWerewolfTypes';
 import { getRecommendedRoles } from '../utils/onuWerewolfPresets';
-import { normalizeChatChannel } from '../utils/chat';
 
 const rooms: Map<string, Room> = new Map();
 let threadManager: RoomThreadManager;
@@ -191,10 +190,40 @@ function mergePlayerFromWorker(existing: Player | undefined, worker: Player): Pl
   };
 }
 
+function isStaleWorkerSnapshot(existingRoom: Room, workerRoom: Room): boolean {
+  const workerUpdatedAt = Number(workerRoom.lastActiveTime || 0);
+  const controllerUpdatedAt = Number(existingRoom.lastActiveTime || 0);
+  return workerUpdatedAt > 0 && controllerUpdatedAt > 0 && workerUpdatedAt < controllerUpdatedAt;
+}
+
+function shouldPreserveControllerOnlyPlayer(existingRoom: Room, workerRoom: Room, player: Player, incomingPlayerIds: Set<string>): boolean {
+  if (incomingPlayerIds.has(player.id) || !isStaleWorkerSnapshot(existingRoom, workerRoom)) {
+    return false;
+  }
+
+  const workerUpdatedAt = Number(workerRoom.lastActiveTime || 0);
+  // Worker 定时器可能在处理 update_room_data 之前发出旧 room_update。
+  // 对这类旧快照，只保留控制线程中新近上线/加入的玩家，避免新玩家被旧成员列表覆盖掉；
+  // 不能仅按 online 保留，否则可能阻止 worker 合法移除早已在线的玩家。
+  return Number(player.lastHeartbeat || 0) > workerUpdatedAt;
+}
+
 function mergeRoomUpdateFromWorker(existingRoom: Room | undefined, workerRoom: Room): Room {
   if (!existingRoom) return workerRoom;
 
   const existingPlayers = new Map((existingRoom.players || []).map(player => [player.id, player]));
+  const workerPlayers = workerRoom.players || [];
+  const incomingPlayerIds = new Set(workerPlayers.map(player => player.id));
+  const mergedPlayers = workerPlayers.map(player => mergePlayerFromWorker(existingPlayers.get(player.id), player));
+  const controllerOnlyPlayers = (existingRoom.players || []).filter(player =>
+    shouldPreserveControllerOnlyPlayer(existingRoom, workerRoom, player, incomingPlayerIds)
+  );
+
+  if (controllerOnlyPlayers.length > 0) {
+    console.warn(
+      `房间 ${workerRoom.id} 收到较旧的worker成员快照，保留控制线程中的新近玩家: ${controllerOnlyPlayers.map(player => player.nickname).join(', ')}`
+    );
+  }
 
   return {
     ...existingRoom,
@@ -206,7 +235,7 @@ function mergeRoomUpdateFromWorker(existingRoom: Room | undefined, workerRoom: R
       ...(workerRoom.gameMetadata || {})
     },
     lastActiveTime: Math.max(existingRoom.lastActiveTime || 0, workerRoom.lastActiveTime || 0),
-    players: (workerRoom.players || []).map(player => mergePlayerFromWorker(existingPlayers.get(player.id), player))
+    players: [...mergedPlayers, ...controllerOnlyPlayers]
   };
 }
 
@@ -322,6 +351,23 @@ function buildGameConfig(gameType: string, incomingConfig: any): any {
 function getRoomGameConfig(room: Room): any {
   return room.gameMetadata?.gameConfig || config.games[room.type]?.gameSpecificConfig || {};
 }
+
+function getAllowedChatChannels(room: Room): string[] {
+  if (room.type === 'blood-on-the-clocktower') {
+    return ['all', 'storyteller', 'private'];
+  }
+  return ['all'];
+}
+
+function describeAllowedChatChannels(channels: string[]): string {
+  const names: Record<string, string> = {
+    all: '公共聊天',
+    storyteller: '说书人频道',
+    private: '玩家私聊'
+  };
+  return channels.map(channel => names[channel] || channel).join('、');
+}
+
 
 export function roomController(io: Server) {
   // 初始化线程管理器
@@ -1384,7 +1430,7 @@ export function roomController(io: Server) {
 
 
     // 兼容旧前端直发聊天事件
-    socket.on('chat_message', async (data: { roomId: string; message: string; channel?: string }, ack?: (response: any) => void) => {
+    socket.on('chat_message', async (data: { roomId: string; message: string; channel?: string; targetId?: string }, ack?: (response: any) => void) => {
       try {
         if (!data || !isValidRoomId(data.roomId)) {
           sendErrorResponse(socket, '无效的房间ID', ack);
@@ -1398,17 +1444,19 @@ export function roomController(io: Server) {
         if (!room) { sendErrorResponse(socket, '房间不存在', ack); return; }
         const player = room.players.find(p => p.socketId === socket.id);
         if (!player) { sendErrorResponse(socket, '您不在此房间中', ack); return; }
-        const normalizedChannel = normalizeChatChannel(data.channel, [
-          'all',
-          'team',
-          'werewolf',
-          'killer',
-          'villager',
-          'evil',
-          'storyteller',
-          'dead'
-        ]);
-        await sendTaskToRoom(room.id, 'game_action', { actionType: 'chat_message', actionData: { message: data.message, channel: normalizedChannel } }, socket.id, player.id);
+
+        const channel = typeof data.channel === 'string' && data.channel.trim() ? data.channel.trim() : 'all';
+        const allowedChannels = getAllowedChatChannels(room);
+        if (!allowedChannels.includes(channel)) {
+          sendErrorResponse(socket, `该游戏仅支持${describeAllowedChatChannels(allowedChannels)}`, ack);
+          return;
+        }
+        if (channel === 'private' && !data.targetId) {
+          sendErrorResponse(socket, '请选择私聊对象', ack);
+          return;
+        }
+
+        await sendTaskToRoom(room.id, 'game_action', { actionType: 'chat_message', actionData: { message: data.message, channel, targetId: data.targetId } }, socket.id, player.id);
         ack?.({ success: true });
       } catch (error) {
         console.error('处理聊天消息失败:', error);
