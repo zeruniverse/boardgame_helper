@@ -1270,7 +1270,7 @@ class OnuWerewolfWorker extends BaseGameWorker {
     this.gameState.status = OnuWerewolfGameStatus.REVEALING;
     this.gameState.currentPhase = '揭示结果';
 
-    // 计算投票结果与胜负：以当前身份为准；皮匠只有自己唯一最高票时获胜。
+    // 计算投票结果与胜负：以当前身份为准，支持平票处决与皮匠/狼人同时死亡结算。
     const voteResult = onuCalculateVoteResult(this.gameState.votes, this.gameState.players);
     this.gameState.lynchResults = voteResult.lynched;
 

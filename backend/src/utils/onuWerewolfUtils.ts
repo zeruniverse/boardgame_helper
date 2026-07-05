@@ -268,8 +268,8 @@ export function onuCalculateVoteResult(votes: Record<string, string>, players: R
 
 /**
  * 计算游戏胜利者。
- * 所有判断都基于夜晚行动结束后的当前身份。皮匠只有在“自己是唯一得票最多的玩家”
- * 因而唯一被处决时获胜；平票含皮匠不再判为皮匠胜。
+ * 所有判断都基于夜晚行动结束后的当前身份。任意狼人被处决时村民阵营达成胜利；
+ * 如果没有狼人死亡而皮匠被处决，则皮匠获胜；无狼人且无人死亡时村民获胜。
  */
 export function onuCalculateWinner(
   players: Record<string, OnuWerewolfPlayer>,
@@ -277,32 +277,31 @@ export function onuCalculateWinner(
 ): OnuWerewolfTeam {
   const allPlayers = Object.values(players);
   const currentWerewolves = allPlayers.filter(p => onuIsWerewolf(p.actualRole));
+  const executedPlayers = lynched
+    .map(playerId => players[playerId])
+    .filter((player): player is OnuWerewolfPlayer => Boolean(player));
 
-  if (lynched.length === 0) {
-    return currentWerewolves.length > 0 ? OnuWerewolfTeam.Werewolf : OnuWerewolfTeam.Villager;
+  const werewolfDied = executedPlayers.some(player => onuIsWerewolf(player.actualRole));
+  if (werewolfDied) {
+    return OnuWerewolfTeam.Villager;
   }
 
-  if (lynched.length === 1) {
-    const executed = players[lynched[0]];
-    if (executed?.actualRole === OnuWerewolfRole.Tanner) {
-      return OnuWerewolfTeam.Tanner;
-    }
-    return executed && onuIsWerewolf(executed.actualRole)
-      ? OnuWerewolfTeam.Villager
-      : OnuWerewolfTeam.Werewolf;
+  const tannerDied = executedPlayers.some(player => player.actualRole === OnuWerewolfRole.Tanner);
+  if (tannerDied) {
+    return OnuWerewolfTeam.Tanner;
   }
 
-  const allExecutedAreWerewolves = lynched.every(playerId => {
-    const player = players[playerId];
-    return Boolean(player && onuIsWerewolf(player.actualRole));
-  });
+  if (lynched.length === 0 && currentWerewolves.length === 0) {
+    return OnuWerewolfTeam.Villager;
+  }
 
-  return allExecutedAreWerewolves ? OnuWerewolfTeam.Villager : OnuWerewolfTeam.Werewolf;
+  return OnuWerewolfTeam.Werewolf;
 }
 
 /**
  * 检查玩家是否胜利。
  * 参考实现只有村民/狼人/皮匠三个胜利阵营；玩家以最终身份所属阵营结算。
+ * 皮匠与狼人同时死亡时，村民阵营胜利且皮匠个人也达成自己的胜利条件。
  */
 export function onuIsPlayerWinner(
   player: OnuWerewolfPlayer,
@@ -310,8 +309,13 @@ export function onuIsPlayerWinner(
   lynched: string[],
   players?: Record<string, OnuWerewolfPlayer>
 ): boolean {
+  const tannerDied = player.actualRole === OnuWerewolfRole.Tanner && lynched.includes(player.id);
+  if (tannerDied) {
+    return true;
+  }
+
   if (winner === OnuWerewolfTeam.Tanner) {
-    return player.actualRole === OnuWerewolfRole.Tanner && lynched.length === 1 && lynched[0] === player.id;
+    return false;
   }
 
   return onuGetRoleTeam(player.actualRole) === winner;
