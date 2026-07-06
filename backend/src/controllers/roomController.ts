@@ -385,6 +385,55 @@ function describeAllowedChatChannels(channels: string[]): string {
   return channels.map(channel => names[channel] || channel).join('、');
 }
 
+type NormalizedChatAction = {
+  message: string;
+  channel: string;
+  targetId?: string;
+};
+
+function isGameActionChatType(actionType: string): boolean {
+  return actionType === 'chat' || actionType === 'chat_message' || actionType === 'chatMessage';
+}
+
+function normalizeChatActionPayload(
+  room: Room,
+  actionData: any,
+  socket: Socket,
+  ack?: (response: any) => void
+): NormalizedChatAction | null {
+  const rawMessage = typeof actionData === 'string' ? actionData : actionData?.message;
+  if (typeof rawMessage !== 'string' || !rawMessage.trim()) {
+    sendErrorResponse(socket, '无效的消息内容', ack);
+    return null;
+  }
+
+  const message = rawMessage.trim();
+  const channel = typeof actionData?.channel === 'string' && actionData.channel.trim()
+    ? actionData.channel.trim()
+    : 'all';
+  const allowedChannels = getAllowedChatChannels(room);
+  if (!allowedChannels.includes(channel)) {
+    sendErrorResponse(socket, `该游戏仅支持${describeAllowedChatChannels(allowedChannels)}`, ack);
+    return null;
+  }
+
+  if (channel !== 'private') {
+    return { message, channel };
+  }
+
+  const targetId = typeof actionData?.targetId === 'string' ? actionData.targetId.trim() : '';
+  if (!isValidPlayerId(targetId)) {
+    sendErrorResponse(socket, '请选择私聊对象', ack);
+    return null;
+  }
+  if (!room.players.some(player => player.id === targetId)) {
+    sendErrorResponse(socket, '私聊对象不存在', ack);
+    return null;
+  }
+
+  return { message, channel, targetId };
+}
+
 
 export function roomController(io: Server) {
   // 初始化线程管理器
@@ -1405,6 +1454,13 @@ export function roomController(io: Server) {
           return;
         }
 
+        let actionData = data.actionData;
+        if (isGameActionChatType(data.actionType)) {
+          const normalizedChat = normalizeChatActionPayload(room, actionData, socket, ack);
+          if (!normalizedChat) return;
+          actionData = normalizedChat;
+        }
+
         // 更新玩家心跳和房间活跃时间
         player.lastHeartbeat = Date.now();
         room.lastActiveTime = Date.now();
@@ -1415,7 +1471,7 @@ export function roomController(io: Server) {
           'game_action',
           {
             actionType: data.actionType,
-            actionData: data.actionData
+            actionData
           },
           socket.id,
           player.id
@@ -1474,27 +1530,15 @@ export function roomController(io: Server) {
           sendErrorResponse(socket, '无效的房间ID', ack);
           return;
         }
-        if (!data.message || typeof data.message !== 'string') {
-          sendErrorResponse(socket, '无效的消息内容', ack);
-          return;
-        }
         const room = rooms.get(data.roomId);
         if (!room) { sendErrorResponse(socket, '房间不存在', ack); return; }
         const player = room.players.find(p => p.socketId === socket.id);
         if (!player) { sendErrorResponse(socket, '您不在此房间中', ack); return; }
 
-        const channel = typeof data.channel === 'string' && data.channel.trim() ? data.channel.trim() : 'all';
-        const allowedChannels = getAllowedChatChannels(room);
-        if (!allowedChannels.includes(channel)) {
-          sendErrorResponse(socket, `该游戏仅支持${describeAllowedChatChannels(allowedChannels)}`, ack);
-          return;
-        }
-        if (channel === 'private' && !data.targetId) {
-          sendErrorResponse(socket, '请选择私聊对象', ack);
-          return;
-        }
+        const actionData = normalizeChatActionPayload(room, data, socket, ack);
+        if (!actionData) return;
 
-        await sendTaskToRoom(room.id, 'game_action', { actionType: 'chat_message', actionData: { message: data.message, channel, targetId: data.targetId } }, socket.id, player.id);
+        await sendTaskToRoom(room.id, 'game_action', { actionType: 'chat_message', actionData }, socket.id, player.id);
         ack?.({ success: true });
       } catch (error) {
         console.error('处理聊天消息失败:', error);

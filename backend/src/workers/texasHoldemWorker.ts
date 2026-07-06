@@ -1488,7 +1488,7 @@ class TexasHoldemWorker extends BaseGameWorker {
     }
 
     const gs = this.gameState as TexasHoldemGameState;
-    if (gs.stage !== 'idle' || this.participants.length > 0) {
+    if (gs.stage !== 'idle') {
       this.sendToPlayer(playerId, 'error', { message: '牌局进行中或奖池结算中，不能切换发牌模式' });
       return;
     }

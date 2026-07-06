@@ -803,7 +803,7 @@ import { useRouter } from 'vue-router';
 import { ElMessage } from 'element-plus';
 import { SOCKET_URL } from '../config';
 import { GAME_ROUTES } from '../utils/gameMeta';
-import { ensureGameSession, rememberGameSession } from '../utils/gameSession';
+import { ensureGameSession, getStoredSessionToken, rememberGameSession } from '../utils/gameSession';
 
 const store = useMainStore();
 const texasStore = useTexasHoldemStore();
@@ -908,7 +908,10 @@ function enter(roomId: string) {
 
   const room = rooms.value.find(r => r.id === roomId);
   if (!room) return;
-  if (room.locked) {
+
+  // 锁房只应阻止“新成员”加入；已有有效会话的原玩家需要能从大厅入口重连。
+  // 真正的身份校验仍由后端 sessionToken 完成，避免前端误把同昵称新用户当成重连。
+  if (room.locked && !getStoredSessionToken(room.type)) {
     ElMessage.warning('房间已锁定，不允许新成员加入');
     return;
   }

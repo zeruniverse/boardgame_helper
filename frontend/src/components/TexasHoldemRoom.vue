@@ -524,7 +524,7 @@ function onTakeAll() {
 
 // online根据系统发牌配置动态判断（非系统发牌=线下模式）
 const online = computed(() => store.allowSystemDealing);
-const canChangeDealingMode = computed(() => isHost.value && store.stage === 'idle' && store.participants.length === 0);
+const canChangeDealingMode = computed(() => isHost.value && store.stage === 'idle');
 const dealingMode = computed({
   get: () => (store.allowSystemDealing ? 'online' : 'offline'),
   set: (mode: string) => {
