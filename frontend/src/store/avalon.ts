@@ -1,9 +1,10 @@
 import { defineStore } from 'pinia';
 import { io, Socket } from 'socket.io-client';
 import { SOCKET_URL } from '../config';
-import { ensureGameSession, rememberGameSession } from '../utils/gameSession';
+import { clearGameSession, ensureGameSession, rememberGameSession } from '../utils/gameSession';
 import { emitChatAction, emitGameAction } from '../utils/gameSocket';
 import { appendLimitedMessage, createSystemMessage, normalizeErrorMessage, normalizeIncomingMessage, normalizeSystemMessage } from '../utils/messages';
+import { getForcedExitMessage, redirectToLobbyAfterForcedExit, shouldClearSessionOnForcedExit } from '../utils/forcedExit';
 
 interface AvalonPlayer {
   id: string;
@@ -136,6 +137,15 @@ export const useAvalonStore = defineStore('avalon', {
       on('disconnect', () => {
         console.log('Avalon socket disconnected');
         this.connected = false;
+      });
+
+      on('kicked_out', (data: { message?: string; clearSession?: boolean }) => {
+        const message = getForcedExitMessage(data);
+        if (shouldClearSessionOnForcedExit(data)) {
+          clearGameSession('avalon');
+        }
+        this.cleanup();
+        redirectToLobbyAfterForcedExit(message);
       });
 
       // 房间事件

@@ -3,9 +3,10 @@ import { ref } from 'vue'
 import { io, Socket } from 'socket.io-client'
 import { ElMessage } from 'element-plus'
 import { SOCKET_URL } from '../config'
-import { ensureGameSession, rememberGameSession } from '../utils/gameSession'
+import { clearGameSession, ensureGameSession, rememberGameSession } from '../utils/gameSession'
 import { emitChatAction, emitGameAction } from '../utils/gameSocket'
 import { appendLimitedMessage, normalizeErrorMessage, normalizeIncomingMessage } from '../utils/messages'
+import { getForcedExitMessage, redirectToLobbyAfterForcedExit, shouldClearSessionOnForcedExit } from '../utils/forcedExit'
 
 export const useBOTCGameStore = defineStore('botc', () => {
   // 状态
@@ -120,6 +121,15 @@ export const useBOTCGameStore = defineStore('botc', () => {
           currentRoomId.value = ''
           gameState.value = null
           playerRole.value = null
+        })
+
+        on('kicked_out', (data: { message?: string; clearSession?: boolean }) => {
+          const message = getForcedExitMessage(data)
+          if (shouldClearSessionOnForcedExit(data)) {
+            clearGameSession('blood-on-the-clocktower')
+          }
+          disconnect()
+          redirectToLobbyAfterForcedExit(message)
         })
 
         on('room_update', (data) => {

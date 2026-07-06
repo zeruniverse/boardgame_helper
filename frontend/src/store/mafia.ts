@@ -1,9 +1,10 @@
 import { defineStore } from 'pinia';
 import { io, Socket } from 'socket.io-client';
 import { SOCKET_URL } from '../config';
-import { ensureGameSession, rememberGameSession } from '../utils/gameSession';
+import { clearGameSession, ensureGameSession, rememberGameSession } from '../utils/gameSession';
 import { emitChatAction, emitGameAction } from '../utils/gameSocket';
 import { appendLimitedMessage, createSystemMessage, normalizeErrorMessage, normalizeIncomingMessage, normalizeSystemMessage } from '../utils/messages';
+import { getForcedExitMessage, redirectToLobbyAfterForcedExit, shouldClearSessionOnForcedExit } from '../utils/forcedExit';
 
 interface MafiaPlayer {
   id: string;
@@ -214,6 +215,15 @@ export const useMafiaStore = defineStore('mafia', {
       on('disconnect', () => {
         console.log('Mafia socket disconnected');
         this.connected = false;
+      });
+
+      on('kicked_out', (data: { message?: string; clearSession?: boolean }) => {
+        const message = getForcedExitMessage(data);
+        if (shouldClearSessionOnForcedExit(data)) {
+          clearGameSession('mafia');
+        }
+        this.cleanup();
+        redirectToLobbyAfterForcedExit(message);
       });
 
       // 辅助：将后端 room 格式（含 gameMetadata.gameConfig）转换为前端 MafiaRoomState（含 config）

@@ -1,9 +1,10 @@
 import { defineStore } from 'pinia';
 import { io, Socket } from 'socket.io-client';
 import { SOCKET_URL } from '../config';
-import { ensureGameSession, rememberGameSession } from '../utils/gameSession';
+import { clearGameSession, ensureGameSession, rememberGameSession } from '../utils/gameSession';
 import { emitChatAction, emitGameAction } from '../utils/gameSocket';
 import { appendLimitedMessage, createSystemMessage, normalizeErrorMessage, normalizeIncomingMessage, normalizeSystemMessage } from '../utils/messages';
+import { getForcedExitMessage, redirectToLobbyAfterForcedExit, shouldClearSessionOnForcedExit } from '../utils/forcedExit';
 
 // 角色枚举
 export enum OnuWerewolfRole {
@@ -338,6 +339,15 @@ export const useOnuWerewolfStore = defineStore('onuWerewolf', {
       on('disconnect', () => {
         console.log('OnuWerewolf socket disconnected');
         this.connected = false;
+      });
+
+      on('kicked_out', (data: { message?: string; clearSession?: boolean }) => {
+        const message = getForcedExitMessage(data);
+        if (shouldClearSessionOnForcedExit(data)) {
+          clearGameSession('one-night-werewolf');
+        }
+        this.cleanup();
+        redirectToLobbyAfterForcedExit(message);
       });
 
       // 房间事件

@@ -4,6 +4,7 @@ import { emitGameAction } from '../utils/gameSocket';
 import { appendLimitedMessage, normalizeIncomingMessage } from '../utils/messages';
 import { GAME_STORAGE_KEYS } from '../utils/gameMeta';
 import { clearGameSession, ensureGameSession, rememberGameSession } from '../utils/gameSession';
+import { getForcedExitMessage, redirectToLobbyAfterForcedExit, shouldClearSessionOnForcedExit } from '../utils/forcedExit';
 
 const TEXAS_STORAGE = GAME_STORAGE_KEYS['texas-holdem'];
 const TEXAS_ROOM_KEY = TEXAS_STORAGE.room || 'texas_currentRoom';
@@ -246,15 +247,15 @@ export const useTexasHoldemStore = defineStore('texas_holdem', {
       });
 
       // 监听被踢出事件
-      on('kicked_out', (data: { message: string }) => {
-        alert(data.message);
-        clearGameSession('texas-holdem');
+      on('kicked_out', (data: { message?: string; clearSession?: boolean }) => {
+        const message = getForcedExitMessage(data);
+        if (shouldClearSessionOnForcedExit(data)) {
+          clearGameSession('texas-holdem');
+        }
         // 清理store状态
         this.resetGameState();
         // 跳转到房间列表
-        setTimeout(() => {
-          window.location.href = '/';
-        }, 100);
+        redirectToLobbyAfterForcedExit(message);
       });
 
       // 监听房间准备完成事件

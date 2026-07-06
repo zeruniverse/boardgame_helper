@@ -404,7 +404,7 @@ export function roomController(io: Server) {
       // 3. 强制断开所有客户端连接
       const sockets = await io.fetchSockets();
       for (const socket of sockets) {
-        socket.emit('kicked_out', { message: '服务器重置，请刷新页面重新连接' });
+        socket.emit('kicked_out', { message: '服务器重置，请刷新页面重新连接', clearSession: true });
         socket.disconnect(true);
       }
       
@@ -570,7 +570,7 @@ export function roomController(io: Server) {
 
     latestRoom.lastActiveTime = Date.now();
 
-    io.to(targetPlayer.socketId).emit('kicked_out', { message });
+    io.to(targetPlayer.socketId).emit('kicked_out', { message, clearSession: true });
     const kickedSocket = io.sockets.sockets.get(targetPlayer.socketId);
     if (kickedSocket) {
       await kickedSocket.leave(latestRoom.id);
@@ -604,7 +604,7 @@ export function roomController(io: Server) {
     const previousSocket = previousSocketId ? io.sockets.sockets.get(previousSocketId) : undefined;
 
     if (previousSocket && previousSocket.id !== socket.id) {
-      previousSocket.emit('kicked_out', { message: '同昵称玩家重新进入，当前连接已移出房间' });
+      previousSocket.emit('kicked_out', { message: '同昵称玩家重新进入，当前连接已移出房间', clearSession: false });
       previousSocket.emit('room_left', { roomId: room.id });
       await previousSocket.leave(room.id);
     }
