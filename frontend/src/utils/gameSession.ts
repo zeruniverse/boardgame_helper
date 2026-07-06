@@ -19,6 +19,20 @@ function getSessionTokenKey(gameType: string): string | null {
   return `${meta.storage.id}_sessionToken`;
 }
 
+function isLegacyGuestNickname(nickname: string): boolean {
+  const normalized = nickname.trim();
+  return /^guest(?:[\s_-]*[a-z0-9]{0,16})?$/i.test(normalized);
+}
+
+function normalizeUserVisibleNickname(nickname: string | undefined, fallback: string): string {
+  const fallbackNickname = fallback.trim() || '玩家';
+  const normalized = (nickname || '').trim();
+  if (!normalized || isLegacyGuestNickname(normalized)) {
+    return fallbackNickname;
+  }
+  return normalized;
+}
+
 export function getStoredSessionToken(gameType: string): string | undefined {
   const key = getSessionTokenKey(gameType);
   if (!key) return undefined;
@@ -43,8 +57,12 @@ export function hasStoredRoomSession(gameType: string, roomId?: string): boolean
 export function ensureGameSession(gameType: string, nickname?: string, roomId?: string): GameSession {
   const meta = getGameMeta(gameType);
   if (!meta) {
-    const fallbackNickname = (nickname || '').trim() || `玩家${Math.floor(Math.random() * 1000)}`;
-    return { playerId: createPlayerId('player'), nickname: fallbackNickname, roomId };
+    const fallbackNickname = `玩家${Math.floor(Math.random() * 1000)}`;
+    return {
+      playerId: createPlayerId('player'),
+      nickname: normalizeUserVisibleNickname(nickname, fallbackNickname),
+      roomId
+    };
   }
 
   let playerId = localStorage.getItem(meta.storage.id);
@@ -54,7 +72,8 @@ export function ensureGameSession(gameType: string, nickname?: string, roomId?: 
   }
 
   const storedNickname = localStorage.getItem(meta.storage.nickname) || '';
-  const finalNickname = (nickname || storedNickname || `玩家${Math.floor(Math.random() * 1000)}`).trim();
+  const fallbackNickname = `玩家${Math.floor(Math.random() * 1000)}`;
+  const finalNickname = normalizeUserVisibleNickname(nickname || storedNickname, fallbackNickname);
   localStorage.setItem(meta.storage.nickname, finalNickname);
 
   if (meta.storage.room && roomId) {
@@ -74,7 +93,8 @@ export function rememberGameSession(room: any, player: any, sessionToken?: strin
   if (!meta || !player) return;
 
   const playerId = player.id || player.playerId || player.userId;
-  const nickname = player.nickname || player.name;
+  const rawNickname = player.nickname || player.name;
+  const nickname = rawNickname ? normalizeUserVisibleNickname(rawNickname, '玩家') : '';
   if (playerId) localStorage.setItem(meta.storage.id, playerId);
   if (nickname) localStorage.setItem(meta.storage.nickname, nickname);
   if (meta.storage.room && room?.id) localStorage.setItem(meta.storage.room, room.id);
