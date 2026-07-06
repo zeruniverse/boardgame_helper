@@ -4,30 +4,35 @@ export interface SidePot {
 }
 
 /**
- * 根据每个玩家本手牌累计投入计算主池和侧池。
- *
- * 注意：fold 的玩家已经失去赢取资格，但他们已投入的筹码仍然计入对应奖池；
- * eligibleIds 只包含未弃牌且对该层奖池有投入的玩家。
+ * Calculate main pot and side pots from each player's total contribution.
+ * Folded players cannot win, but their committed chips must stay in a
+ * claimable pot. If an abnormal offline/forced-flow leaves a layer with
+ * only folded contributors, keep that layer with the last valid eligible
+ * pot instead of dropping it; otherwise the caller may award leftover chips
+ * to the first showdown winner.
  */
 export function splitPotSidePots(
   totalBets: Record<string, number>,
   activeIds: string[]
 ): SidePot[] {
-  if (!activeIds || activeIds.length === 0) {
-    const totalPot = Object.values(totalBets).reduce((sum, amt) => sum + Math.max(0, Number(amt) || 0), 0);
-    const allPids = Object.keys(totalBets).filter(pid => (totalBets[pid] || 0) > 0);
-    if (totalPot > 0 && allPids.length > 0) {
-      return [{ amount: totalPot, eligibleIds: allPids }];
-    }
-    return [];
-  }
-
-  const activeIdSet = new Set(activeIds);
-  const entries = Object.entries(totalBets)
+  const entries = Object.entries(totalBets || {})
     .map(([pid, rawAmt]) => ({ pid, amt: Math.max(0, Number(rawAmt) || 0) }))
     .filter(entry => entry.amt > 0);
+  const totalPot = entries.reduce((sum, entry) => sum + entry.amt, 0);
 
-  if (entries.length === 0) return [];
+  if (totalPot <= 0) return [];
+
+  if (!activeIds || activeIds.length === 0) {
+    return [{ amount: totalPot, eligibleIds: entries.map(entry => entry.pid) }];
+  }
+
+  const uniqueActiveIds = Array.from(new Set(activeIds.filter(Boolean)));
+  const activeIdSet = new Set(uniqueActiveIds);
+  const activeContributors = entries.filter(entry => activeIdSet.has(entry.pid));
+
+  if (activeContributors.length === 0) {
+    return uniqueActiveIds.length > 0 ? [{ amount: totalPot, eligibleIds: uniqueActiveIds }] : [];
+  }
 
   const uniqueAmounts = Array.from(new Set(entries.map(entry => entry.amt))).sort((a, b) => a - b);
   const sidePots: SidePot[] = [];
@@ -40,8 +45,14 @@ export function splitPotSidePots(
       .map(entry => entry.pid)
       .filter(pid => activeIdSet.has(pid));
 
-    if (potAmount > 0 && eligibleIds.length > 0) {
-      sidePots.push({ amount: potAmount, eligibleIds });
+    if (potAmount > 0) {
+      if (eligibleIds.length > 0) {
+        sidePots.push({ amount: potAmount, eligibleIds });
+      } else if (sidePots.length > 0) {
+        sidePots[sidePots.length - 1].amount += potAmount;
+      } else {
+        sidePots.push({ amount: potAmount, eligibleIds: activeContributors.map(entry => entry.pid) });
+      }
     }
 
     prevAmount = amount;
