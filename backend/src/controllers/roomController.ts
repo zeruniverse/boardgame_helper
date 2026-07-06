@@ -518,7 +518,8 @@ export function roomController(io: Server) {
     }
 
     const existingRoom = rooms.get(payload.id);
-    const oldPrivate = existingRoom?.private;
+    const oldPrivate = existingRoom?.private === true;
+    const oldLocked = existingRoom?.locked === true;
 
     await detachSocketsRemovedByWorker(existingRoom, payload as Room);
 
@@ -526,8 +527,11 @@ export function roomController(io: Server) {
     rooms.set(payload.id, mergedRoom);
     threadManager.updateRoomData(payload.id, mergedRoom);
 
-    // 如果房间的private状态发生变化，广播大厅更新
-    if (oldPrivate !== undefined && mergedRoom.private !== oldPrivate) {
+    // 房间是否公开、是否锁定都会影响大厅中的可进入状态；
+    // worker 内切换锁房只会回传 room_update，需要在主线程同步刷新大厅。
+    const roomVisibilityChanged = Boolean(existingRoom) && (mergedRoom.private === true) !== oldPrivate;
+    const roomLockChanged = Boolean(existingRoom) && (mergedRoom.locked === true) !== oldLocked;
+    if (roomVisibilityChanged || roomLockChanged) {
       broadcastLobbyUpdate();
     }
 
