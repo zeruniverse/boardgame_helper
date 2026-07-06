@@ -129,19 +129,19 @@
         <div class="config-grid">
           <div class="config-item">
             <label>发言时间</label>
-            <el-input-number v-model="editableConfig.speakTime" :min="15" :max="600" :step="15" size="small" @change="emitConfigChange" />
+            <el-input-number v-model="editableConfig.speakTime" :min="15" :max="600" :step="15" size="small" @change="emitTimingConfigChange" />
           </div>
           <div class="config-item">
             <label>行动时间</label>
-            <el-input-number v-model="editableConfig.actionTime" :min="15" :max="600" :step="15" size="small" @change="emitConfigChange" />
+            <el-input-number v-model="editableConfig.actionTime" :min="15" :max="600" :step="15" size="small" @change="emitTimingConfigChange" />
           </div>
           <div class="config-item">
             <label>夜晚时间</label>
-            <el-input-number v-model="editableConfig.nightTime" :min="15" :max="600" :step="15" size="small" @change="emitConfigChange" />
+            <el-input-number v-model="editableConfig.nightTime" :min="15" :max="600" :step="15" size="small" @change="emitTimingConfigChange" />
           </div>
           <div class="config-item">
             <label>遗言轮数</label>
-            <el-input-number v-model="editableConfig.lastWordRound" :min="0" :max="10" size="small" @change="emitConfigChange" />
+            <el-input-number v-model="editableConfig.lastWordRound" :min="0" :max="10" size="small" @change="emitTimingConfigChange" />
           </div>
         </div>
 
@@ -149,20 +149,26 @@
         <div class="config-grid">
           <div class="config-item">
             <label>杀手</label>
-            <el-input-number v-model="editableConfig.killerCount" :min="1" :max="maxPlayers" size="small" @change="emitConfigChange" />
+            <el-input-number v-model="editableConfig.killerCount" :min="1" :max="maxPlayers" size="small" @change="emitRoleConfigChange" />
           </div>
           <div class="config-item">
             <label>警察</label>
-            <el-input-number v-model="editableConfig.copCount" :min="0" :max="maxPlayers" size="small" @change="emitConfigChange" />
+            <el-input-number v-model="editableConfig.copCount" :min="0" :max="maxPlayers" size="small" @change="emitRoleConfigChange" />
           </div>
           <div class="config-item">
             <label>医生</label>
-            <el-input-number v-model="editableConfig.doctorCount" :min="0" :max="maxPlayers" size="small" @change="emitConfigChange" />
+            <el-input-number v-model="editableConfig.doctorCount" :min="0" :max="maxPlayers" size="small" @change="emitRoleConfigChange" />
           </div>
           <div class="config-item">
             <label>狙击手</label>
-            <el-input-number v-model="editableConfig.sniperCount" :min="0" :max="maxPlayers" size="small" @change="emitConfigChange" />
+            <el-input-number v-model="editableConfig.sniperCount" :min="0" :max="maxPlayers" size="small" @change="emitRoleConfigChange" />
           </div>
+        </div>
+        <div class="config-actions">
+          <el-button size="small" plain @click="resetRoleConfigToDefault">
+            恢复推荐配置
+          </el-button>
+          <span class="config-mode">{{ roleConfigModeLabel }}</span>
         </div>
         <div class="config-tip" :class="{ invalid: roleConfigInvalid }">
           当前 {{ players.length }} 人：杀手 {{ currentRoleConfig.killers }}、警察 {{ currentRoleConfig.cops }}、医生 {{ currentRoleConfig.doctors }}、狙击手 {{ currentRoleConfig.snipers }}、平民 {{ currentRoleConfig.civilians }}。
@@ -340,17 +346,46 @@ const roleConfigInvalid = computed(() => {
   return totalPlayers > 0 && (editableConfig.killerCount >= totalPlayers || configuredSpecialCount.value > totalPlayers)
 })
 
-const emitConfigChange = () => {
+const roleConfigModeLabel = computed(() => props.roomConfig?.roleCountsCustomized === true
+  ? '当前为自定义角色数量'
+  : '当前跟随人数使用推荐配置'
+)
+
+const buildTimingConfigPayload = (): RoomConfig => ({
+  speakTime: editableConfig.speakTime,
+  actionTime: editableConfig.actionTime,
+  nightTime: editableConfig.nightTime,
+  lastWordRound: editableConfig.lastWordRound
+})
+
+const emitTimingConfigChange = () => {
   emit('updateConfig', {
-    speakTime: editableConfig.speakTime,
-    actionTime: editableConfig.actionTime,
-    nightTime: editableConfig.nightTime,
-    lastWordRound: editableConfig.lastWordRound,
+    ...buildTimingConfigPayload(),
+    roleCountsCustomized: props.roomConfig?.roleCountsCustomized === true
+  })
+}
+
+const emitRoleConfigChange = () => {
+  emit('updateConfig', {
+    ...buildTimingConfigPayload(),
     killerCount: editableConfig.killerCount,
     copCount: editableConfig.copCount,
     doctorCount: editableConfig.doctorCount,
     sniperCount: editableConfig.sniperCount,
     roleCountsCustomized: true
+  })
+}
+
+const resetRoleConfigToDefault = () => {
+  const defaults = currentDefaultRoleConfig.value
+  editableConfig.killerCount = defaults.killers
+  editableConfig.copCount = defaults.cops
+  editableConfig.doctorCount = defaults.doctors
+  editableConfig.sniperCount = defaults.snipers
+
+  emit('updateConfig', {
+    ...buildTimingConfigPayload(),
+    roleCountsCustomized: false
   })
 }
 
@@ -598,6 +633,19 @@ const getRoleTagType = (role: string | undefined): string => {
   min-width: 70px;
   font-size: 13px;
   color: #606266;
+}
+
+.config-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.config-mode {
+  font-size: 12px;
+  color: #909399;
 }
 
 .config-tip,

@@ -210,6 +210,45 @@ class MafiaWorker extends BaseGameWorker {
     );
   }
 
+  private shouldUseCustomRoleCounts(config: Partial<MafiaConfig> = {}, fallbackCustomized = false): boolean {
+    if (Object.prototype.hasOwnProperty.call(config, 'roleCountsCustomized')) {
+      return config.roleCountsCustomized === true;
+    }
+
+    return fallbackCustomized || this.hasRoleCountFields(config);
+  }
+
+  private getDefaultRoleCountsForCurrentRoom(): [number, number, number, number] {
+    const onlinePlayerCount = this.room?.players?.filter(p => p.online !== false).length || 0;
+    const countForDefaults = onlinePlayerCount || this.room?.players?.length || this.room?.maxPlayers || MIN_PLAYER_COUNT;
+    const [defaultKillers, defaultCops, defaultDoctors, defaultSnipers] = this.getDefaultRoleConfig(countForDefaults);
+    return [defaultKillers, defaultCops, defaultDoctors, defaultSnipers];
+  }
+
+  private buildEffectiveConfig(
+    config: Partial<MafiaConfig> = this.config || {},
+    roleCountsCustomized = Boolean(config.roleCountsCustomized)
+  ): MafiaConfig {
+    const displayConfig = this.buildDisplayConfig(config);
+
+    if (roleCountsCustomized) {
+      return {
+        ...displayConfig,
+        roleCountsCustomized: true
+      };
+    }
+
+    const [defaultKillers, defaultCops, defaultDoctors, defaultSnipers] = this.getDefaultRoleCountsForCurrentRoom();
+    return {
+      ...displayConfig,
+      killerCount: defaultKillers,
+      copCount: defaultCops,
+      doctorCount: defaultDoctors,
+      sniperCount: defaultSnipers,
+      roleCountsCustomized: false
+    };
+  }
+
   private buildDisplayConfig(config: Partial<MafiaConfig> = this.config || {}): MafiaConfig {
     const fallbackPlayerCount = this.room?.maxPlayers || this.room?.players?.length || MIN_PLAYER_COUNT;
     const [defaultKillers, defaultCops, defaultDoctors, defaultSnipers] = this.getDefaultRoleConfig(fallbackPlayerCount);
@@ -281,10 +320,8 @@ class MafiaWorker extends BaseGameWorker {
   async prepareRoom(room: Room, config: MafiaConfig): Promise<void> {
     this.room = room;
     const incomingConfig = config || {};
-    this.config = {
-      ...this.buildDisplayConfig(incomingConfig),
-      roleCountsCustomized: Boolean(incomingConfig.roleCountsCustomized) || this.hasRoleCountFields(incomingConfig)
-    };
+    const roleCountsCustomized = this.shouldUseCustomRoleCounts(incomingConfig);
+    this.config = this.buildEffectiveConfig(incomingConfig, roleCountsCustomized);
     this.syncConfigToRoom();
 
     this.gameState.lastWordCount = this.config.lastWordRound;
@@ -305,14 +342,11 @@ class MafiaWorker extends BaseGameWorker {
 
   async changeConfig(config: Partial<MafiaConfig>): Promise<void> {
     const incomingConfig = config || {};
-    const roleCountsCustomized = Boolean(this.config?.roleCountsCustomized) || this.hasRoleCountFields(incomingConfig);
-    this.config = {
-      ...this.buildDisplayConfig({
-        ...this.config,
-        ...incomingConfig
-      }),
-      roleCountsCustomized
-    };
+    const roleCountsCustomized = this.shouldUseCustomRoleCounts(incomingConfig, Boolean(this.config?.roleCountsCustomized));
+    this.config = this.buildEffectiveConfig({
+      ...this.config,
+      ...incomingConfig
+    }, roleCountsCustomized);
     this.syncConfigToRoom();
     if ((this.gameState as MafiaGameState).status === GameStatus.WAITING) {
       this.gameState.lastWordCount = this.config.lastWordRound;
@@ -1556,7 +1590,7 @@ class MafiaWorker extends BaseGameWorker {
 
   private getPlayerName(playerId: string): string {
     const gameState = this.gameState as MafiaGameState;
-    return gameState.players[playerId]?.name || 'Unknown';
+    return gameState.players[playerId]?.name || '未知玩家';
   }
 
   private getAlivePlayers(): string[] {
