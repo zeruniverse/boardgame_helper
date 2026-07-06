@@ -4,8 +4,8 @@
       <el-radio-group v-model="currentChannel" size="small">
         <el-radio-button label="all">公共聊天</el-radio-button>
         <el-radio-button label="storyteller">说书人频道</el-radio-button>
-        <el-radio-button label="private" v-if="privateTarget">
-          私聊：{{ getPlayerName(privateTarget) }}
+        <el-radio-button label="private">
+          {{ privateTarget ? `私聊：${getPlayerName(privateTarget)}` : '私聊' }}
         </el-radio-button>
       </el-radio-group>
     </div>
@@ -45,12 +45,11 @@
         />
         <el-button type="primary" @click="send" :disabled="!canSend">发送</el-button>
         <el-button 
-          v-if="currentChannel !== 'private'" 
           type="info" 
           plain
           @click="togglePrivateSelector"
         >
-          私聊
+          {{ currentChannel === 'private' ? '选择对象' : '私聊' }}
         </el-button>
       </div>
     </div>
@@ -113,8 +112,7 @@ const canSend = computed(() => {
   
   return true
 });
-
-const isMessageForCurrentUser = (msg: any) => {
+const isPrivateMessageForCurrentUser = (msg: any) => {
   return msg.from === props.nickname || msg.to === props.nickname || msg.playerId === props.nickname
 }
 
@@ -129,8 +127,7 @@ const filteredMessages = computed(() => {
     }
 
     if (currentChannel.value === 'all') {
-      return !msg.channel || msg.channel === 'all' || 
-             (msg.channel === 'private' && isMessageForCurrentUser(msg))
+      return !msg.channel || msg.channel === 'all'
     }
 
     if (currentChannel.value === 'storyteller') {
@@ -138,6 +135,9 @@ const filteredMessages = computed(() => {
     }
 
     if (currentChannel.value === 'private') {
+      if (!privateTarget.value) {
+        return msg.channel === 'private' && isPrivateMessageForCurrentUser(msg)
+      }
       return msg.channel === 'private' && 
              ((msg.from === props.nickname && msg.to === privateTarget.value) ||
               (msg.from === privateTarget.value && msg.to === props.nickname))
@@ -152,7 +152,7 @@ const getChannelName = () => {
     case 'storyteller':
       return '发给说书人'
     case 'private':
-      return `与 ${getPlayerName(privateTarget.value)} 私聊`
+      return privateTarget.value ? `与 ${getPlayerName(privateTarget.value)} 私聊` : '私聊（请选择对象）'
     default:
       return '公共聊天'
   }
@@ -163,7 +163,7 @@ const getInputPlaceholder = () => {
     case 'storyteller':
       return '向说书人发送消息...'
     case 'private':
-      return `发送私聊消息给 ${getPlayerName(privateTarget.value)}...`
+      return privateTarget.value ? `发送私聊消息给 ${getPlayerName(privateTarget.value)}...` : '请选择私聊对象后发送消息...'
     default:
       return '输入公共聊天消息...'
   }

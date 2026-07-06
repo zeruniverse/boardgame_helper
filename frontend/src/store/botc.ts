@@ -335,6 +335,11 @@ export const useBOTCGameStore = defineStore('botc', () => {
           addChatMessage(data)
         })
 
+        // 监听房间级系统广播（锁房、房主变更、同昵称接管等）
+        on('chat_broadcast', (data) => {
+          addChatMessage(data)
+        })
+
         // 监听私聊消息
         on('privateMessage', (data) => {
           addChatMessage({
