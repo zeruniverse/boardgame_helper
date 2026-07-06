@@ -411,4 +411,111 @@ onUnmounted(() => {
   }
 }
 
+
+
+/* 统一桌面与移动端的房间内竖向布局：快捷操作 → 游戏信息 → 玩家列表 → 完整操作区 → 聊天 */
+.room-header {
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  min-height: 64px;
+  padding: 0 var(--app-space-6);
+  background: var(--app-panel);
+  border-bottom: 1px solid var(--app-border);
+  box-shadow: var(--app-shadow-sm);
+  color: var(--app-text);
+}
+
+.room-info,
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--app-space-3);
+  flex-wrap: wrap;
+}
+
+.room-info h2 {
+  font-size: 18px;
+}
+
+.mobile-quick-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--app-space-2);
+  margin: var(--app-space-4) var(--app-space-6) 0;
+  padding: var(--app-space-3);
+  background: var(--app-panel);
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius);
+  box-shadow: var(--app-shadow-sm);
+}
+
+.mobile-quick-title {
+  flex: 1;
+  font-weight: 700;
+  color: var(--app-text);
+}
+
+.game-layout {
+  display: flex;
+  flex-direction: column;
+  gap: var(--app-space-4);
+  padding: var(--app-space-6);
+  overflow: visible;
+}
+
+.mobile-game-info-slot {
+  display: block;
+  order: 1;
+  background: var(--app-panel);
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius);
+  box-shadow: var(--app-shadow-sm);
+  padding: var(--app-space-4);
+}
+
+.mobile-game-info-slot h3 {
+  margin: 0 0 var(--app-space-3);
+  font-size: 18px;
+  color: var(--app-text);
+}
+
+.left-panel,
+.center-panel,
+.right-panel {
+  width: 100%;
+  height: auto;
+  max-height: none;
+  overflow: visible;
+}
+
+.left-panel {
+  order: 2;
+}
+
+.center-panel {
+  order: 3;
+}
+
+.right-panel {
+  order: 4;
+}
+
+@media (max-width: 768px) {
+  .room-header {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: var(--app-space-3);
+    padding: var(--app-space-3);
+  }
+
+  .mobile-quick-actions {
+    margin: var(--app-space-4) var(--app-space-4) 0;
+  }
+
+  .game-layout {
+    padding: var(--app-space-4);
+  }
+}
+
 </style>

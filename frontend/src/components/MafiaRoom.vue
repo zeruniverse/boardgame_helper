@@ -836,4 +836,79 @@ const scrollToChat = () => scrollToSelector('.game-sidebar')
   }
 }
 
+
+
+/* 统一桌面与移动端的房间内竖向布局：快捷操作 → 游戏信息 → 玩家列表 → 完整操作区 → 聊天 */
+.game-container {
+  display: flex;
+  flex-direction: column;
+  gap: var(--app-space-4);
+  min-height: calc(100vh - 72px);
+  height: auto;
+  padding: var(--app-space-6);
+  background: transparent;
+}
+
+.game-main,
+.game-sidebar {
+  width: 100% !important;
+  flex: none;
+}
+
+.game-main {
+  padding: 0;
+  background: transparent;
+}
+
+.game-content {
+  max-width: none;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: var(--app-space-4);
+}
+
+.mobile-quick-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--app-space-2);
+  padding: var(--app-space-3);
+  background: var(--app-panel);
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius);
+  box-shadow: var(--app-shadow-sm);
+}
+
+.mobile-quick-title {
+  flex: 1;
+  font-weight: 700;
+  color: var(--app-text);
+}
+
+.mobile-player-list-slot {
+  display: block;
+}
+
+.desktop-player-list-slot {
+  display: none;
+}
+
+.game-sidebar {
+  padding: var(--app-space-4);
+  background: var(--app-panel);
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius);
+  box-shadow: var(--app-shadow-sm);
+}
+
+.full-action-area {
+  margin-bottom: 0;
+}
+
+@media (max-width: 768px) {
+  .game-container {
+    padding: var(--app-space-4);
+  }
+}
+
 </style>

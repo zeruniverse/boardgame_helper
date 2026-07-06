@@ -642,6 +642,27 @@ export function roomController(io: Server) {
   }
 
 
+  async function detachPreviousSeatSocket(
+    room: Room,
+    player: Player,
+    nextSocket: Socket,
+    message = '该座位已在其他连接重新进入房间'
+  ): Promise<void> {
+    const previousSocketId = player.socketId;
+    if (!previousSocketId || previousSocketId === nextSocket.id) {
+      return;
+    }
+
+    const previousSocket = io.sockets.sockets.get(previousSocketId);
+    if (!previousSocket) {
+      return;
+    }
+
+    previousSocket.emit('kicked_out', { message, clearSession: false });
+    previousSocket.emit('room_left', { roomId: room.id });
+    await previousSocket.leave(room.id);
+  }
+
   async function takeOverPlayerByNickname(
     room: Room,
     existingPlayer: Player,
@@ -649,14 +670,7 @@ export function roomController(io: Server) {
     socket: Socket,
     ack?: (response: any) => void
   ): Promise<void> {
-    const previousSocketId = existingPlayer.socketId;
-    const previousSocket = previousSocketId ? io.sockets.sockets.get(previousSocketId) : undefined;
-
-    if (previousSocket && previousSocket.id !== socket.id) {
-      previousSocket.emit('kicked_out', { message: '同昵称玩家重新进入，当前连接已移出房间', clearSession: false });
-      previousSocket.emit('room_left', { roomId: room.id });
-      await previousSocket.leave(room.id);
-    }
+    await detachPreviousSeatSocket(room, existingPlayer, socket, '同昵称玩家重新进入，当前连接已移出房间');
 
     markPlayerOnlineForController(room, existingPlayer, socket.id, nickname);
     room.lastActiveTime = Date.now();
@@ -900,7 +914,8 @@ export function roomController(io: Server) {
 
           console.log(`玩家 ${player.nickname} (${playerId}) 正在重连到房间 ${roomId}`);
           
-          // 更新玩家的 socketId 和在线状态
+          // 更新玩家的 socketId 和在线状态，并移除同一座位的旧连接
+          await detachPreviousSeatSocket(room, player, socket);
           markPlayerOnlineForController(room, player, socket.id);
 
           // 让新 socket 加入房间频道
@@ -922,8 +937,9 @@ export function roomController(io: Server) {
           // 通知游戏线程玩家已重新连接
           await sendTaskToRoom(roomId, 'player_online', { playerId });
 
-          // 向重连的玩家发送完整的房间状态
-          const payload = buildRoomJoinedPayload(room, player);
+          // 向重连的玩家发送完整的房间状态，并轮换会话令牌，避免旧连接再次接管同一座位
+          const sessionToken = rotatePlayerSessionToken(room.id, player.id);
+          const payload = buildRoomJoinedPayload(room, player, sessionToken);
           socket.emit('room_joined', payload);
           socket.emit('room_update', toClientRoom(room));
 
@@ -993,6 +1009,7 @@ export function roomController(io: Server) {
             return;
           }
 
+          await detachPreviousSeatSocket(room, player, socket);
           markPlayerOnlineForController(room, player, socket.id, nextNickname);
           room.lastActiveTime = Date.now();
 
@@ -1010,7 +1027,8 @@ export function roomController(io: Server) {
 
           const latestRoom = rooms.get(room.id) || room;
           const latestPlayer = latestRoom.players.find(p => p.id === player!.id) || player;
-          const payload = buildRoomJoinedPayload(latestRoom, latestPlayer!);
+          const sessionToken = rotatePlayerSessionToken(latestRoom.id, latestPlayer!.id);
+          const payload = buildRoomJoinedPayload(latestRoom, latestPlayer!, sessionToken);
           socket.emit('room_joined', payload);
           socket.emit('room_update', toClientRoom(latestRoom));
           ack?.({ success: true, ...payload });
@@ -1145,6 +1163,7 @@ export function roomController(io: Server) {
             return;
           }
 
+          await detachPreviousSeatSocket(room, player, socket);
           markPlayerOnlineForController(room, player, socket.id, nextNickname);
           room.lastActiveTime = Date.now();
 
@@ -1162,7 +1181,8 @@ export function roomController(io: Server) {
 
           const latestRoom = rooms.get(room.id) || room;
           const latestPlayer = latestRoom.players.find(p => p.id === player!.id) || player;
-          const payload = buildRoomJoinedPayload(latestRoom, latestPlayer!);
+          const sessionToken = rotatePlayerSessionToken(latestRoom.id, latestPlayer!.id);
+          const payload = buildRoomJoinedPayload(latestRoom, latestPlayer!, sessionToken);
           socket.emit('room_joined', payload);
           socket.emit('room_update', toClientRoom(latestRoom));
           ack?.({ success: true, ...payload });
