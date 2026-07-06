@@ -94,7 +94,7 @@
             <el-input-number
               v-model="roleConfig[role]"
               :min="role === 'WEREWOLF' ? 1 : 0"
-              :max="6"
+              :max="getRoleMax(role)"
               size="small"
               @change="updateRoleConfig"
             />
@@ -143,7 +143,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { More } from '@element-plus/icons-vue'
 import { formatPlayerName } from '../utils/playerName'
 import LocalPlayerMark from './LocalPlayerMark.vue'
@@ -210,6 +210,9 @@ const emit = defineEmits<{
   updateConfig: [config: any]
 }>()
 
+const ROLE_ORDER = ['WEREWOLF', 'VILLAGER', 'SEER', 'WITCH', 'HUNTER', 'GUARD'] as const
+const SINGLE_ACTION_ROLES = new Set<string>(['SEER', 'WITCH', 'GUARD'])
+
 // 角色配置（动态计算默认值）
 const roleConfig = ref<Record<string, number>>({
   WEREWOLF: 2,
@@ -219,6 +222,27 @@ const roleConfig = ref<Record<string, number>>({
   HUNTER: 0,
   GUARD: 0
 })
+
+const getRoleMax = (role: string) => SINGLE_ACTION_ROLES.has(role) ? 1 : 6
+
+watch(
+  () => props.gameState?.needingCharacters,
+  (characters?: string[]) => {
+    if (!Array.isArray(characters) || characters.length === 0) return
+
+    const nextConfig = Object.fromEntries(ROLE_ORDER.map(role => [role, 0])) as Record<string, number>
+    characters.forEach(role => {
+      if (role in nextConfig) {
+        nextConfig[role] += 1
+      }
+    })
+    SINGLE_ACTION_ROLES.forEach(role => {
+      nextConfig[role] = Math.min(nextConfig[role] || 0, 1)
+    })
+    roleConfig.value = nextConfig
+  },
+  { immediate: true }
+)
 
 // 如果游戏已开始且知道角色配置，更新显示
 const totalRoleCount = computed(() => {
@@ -391,10 +415,12 @@ const handleKickPlayer = (playerId: string) => {
 }
 
 const updateRoleConfig = () => {
-  // 构建角色列表
+  // 构建角色列表。预言家/女巫/守卫当前每晚只支持一个行动结果，前后端都限制为 1 名。
   const characters: string[] = []
   Object.entries(roleConfig.value).forEach(([role, count]) => {
-    for (let i = 0; i < count; i++) {
+    const safeCount = Math.min(Math.max(Number(count) || 0, 0), getRoleMax(role))
+    roleConfig.value[role] = safeCount
+    for (let i = 0; i < safeCount; i++) {
       characters.push(role)
     }
   })

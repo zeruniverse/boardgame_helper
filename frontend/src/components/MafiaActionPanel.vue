@@ -191,7 +191,7 @@
             :type="gameState.winner === 'red' ? 'danger' : 'primary'" 
             size="large"
           >
-            {{ gameState.winner === 'red' ? '狼人阵营' : '好人阵营' }} 获胜！
+            {{ gameState.winner === 'red' ? '杀手阵营' : '好人阵营' }} 获胜！
           </el-tag>
         </div>
       </div>

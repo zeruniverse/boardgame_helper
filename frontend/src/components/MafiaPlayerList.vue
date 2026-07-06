@@ -161,7 +161,7 @@
           </div>
           <div class="config-item">
             <label>狙击手</label>
-            <el-input-number v-model="editableConfig.sniperCount" :min="0" :max="maxPlayers" size="small" @change="emitRoleConfigChange" />
+            <el-input-number v-model="editableConfig.sniperCount" :min="0" :max="MAX_SNIPER_COUNT" size="small" @change="emitRoleConfigChange" />
           </div>
         </div>
         <div class="config-actions">
@@ -286,6 +286,8 @@ const roleConfigs = {
 
 type RoleDistribution = typeof roleConfigs[6]
 
+const MAX_SNIPER_COUNT = 1
+
 const getDefaultRoleConfig = (count: number): RoleDistribution => {
   const normalized = Math.max(6, Math.min(20, Math.floor(count || 6))) as keyof typeof roleConfigs
   return roleConfigs[normalized] || roleConfigs[6]
@@ -317,7 +319,7 @@ watch(
     editableConfig.killerCount = props.roomConfig?.killerCount ?? defaults.killers
     editableConfig.copCount = props.roomConfig?.copCount ?? defaults.cops
     editableConfig.doctorCount = props.roomConfig?.doctorCount ?? defaults.doctors
-    editableConfig.sniperCount = props.roomConfig?.sniperCount ?? defaults.snipers
+    editableConfig.sniperCount = Math.min(props.roomConfig?.sniperCount ?? defaults.snipers, MAX_SNIPER_COUNT)
   },
   { immediate: true, deep: true }
 )
@@ -343,7 +345,11 @@ const currentRoleConfig = computed(() => {
 
 const roleConfigInvalid = computed(() => {
   const totalPlayers = props.players.length
-  return totalPlayers > 0 && (editableConfig.killerCount >= totalPlayers || configuredSpecialCount.value > totalPlayers)
+  return totalPlayers > 0 && (
+    editableConfig.killerCount >= totalPlayers ||
+    editableConfig.sniperCount > MAX_SNIPER_COUNT ||
+    configuredSpecialCount.value > totalPlayers
+  )
 })
 
 const roleConfigModeLabel = computed(() => props.roomConfig?.roleCountsCustomized === true
@@ -371,7 +377,7 @@ const emitRoleConfigChange = () => {
     killerCount: editableConfig.killerCount,
     copCount: editableConfig.copCount,
     doctorCount: editableConfig.doctorCount,
-    sniperCount: editableConfig.sniperCount,
+    sniperCount: Math.min(editableConfig.sniperCount, MAX_SNIPER_COUNT),
     roleCountsCustomized: true
   })
 }
@@ -381,7 +387,7 @@ const resetRoleConfigToDefault = () => {
   editableConfig.killerCount = defaults.killers
   editableConfig.copCount = defaults.cops
   editableConfig.doctorCount = defaults.doctors
-  editableConfig.sniperCount = defaults.snipers
+  editableConfig.sniperCount = Math.min(defaults.snipers, MAX_SNIPER_COUNT)
 
   emit('updateConfig', {
     ...buildTimingConfigPayload(),

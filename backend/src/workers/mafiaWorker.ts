@@ -138,6 +138,9 @@ const MAFIA_TEAM_CONFIG: Record<number, [number, number, number, number, number]
 
 const MAX_PLAYER_COUNT = 20;
 const MIN_PLAYER_COUNT = 6;
+// 当前狙击结算使用单一 sniperShot/sniperTarget 状态，规则表也固定为 1 名狙击手；
+// 统一在配置入口限流，避免自定义配置出多个狙击手后后续狙击手无法行动。
+const MAX_SNIPER_COUNT = 1;
 
 class MafiaWorker extends BaseGameWorker {
   private config!: MafiaConfig;
@@ -260,7 +263,7 @@ class MafiaWorker extends BaseGameWorker {
       killerCount: this.toBoundedInt(config.killerCount, this.config?.killerCount ?? defaultKillers, 1, MAX_PLAYER_COUNT),
       copCount: this.toBoundedInt(config.copCount, this.config?.copCount ?? defaultCops, 0, MAX_PLAYER_COUNT),
       doctorCount: this.toBoundedInt(config.doctorCount, this.config?.doctorCount ?? defaultDoctors, 0, MAX_PLAYER_COUNT),
-      sniperCount: this.toBoundedInt(config.sniperCount, this.config?.sniperCount ?? defaultSnipers, 0, MAX_PLAYER_COUNT),
+      sniperCount: this.toBoundedInt(config.sniperCount, this.config?.sniperCount ?? defaultSnipers, 0, MAX_SNIPER_COUNT),
       roleCountsCustomized: Boolean(config.roleCountsCustomized)
     };
   }
@@ -294,7 +297,7 @@ class MafiaWorker extends BaseGameWorker {
     const killerCount = this.toBoundedInt(displayConfig.killerCount, fallback[0], 1, playerCount);
     const copCount = this.toBoundedInt(displayConfig.copCount, fallback[1], 0, playerCount);
     const doctorCount = this.toBoundedInt(displayConfig.doctorCount, fallback[2], 0, playerCount);
-    const sniperCount = this.toBoundedInt(displayConfig.sniperCount, fallback[3], 0, playerCount);
+    const sniperCount = this.toBoundedInt(displayConfig.sniperCount, fallback[3], 0, Math.min(MAX_SNIPER_COUNT, playerCount));
     const specialCount = killerCount + copCount + doctorCount + sniperCount;
 
     if (killerCount >= playerCount) {

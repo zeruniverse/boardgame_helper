@@ -227,6 +227,11 @@ export function validateCharacterConfig(characters: WerewolfCharacter[]): boolea
   // 必须有狼人
   if (!charMap.WEREWOLF || charMap.WEREWOLF === 0) return false;
 
+  // 当前夜间阶段状态只为这些主动神职保留一套行动结果，若配置多名会导致后行动者被提前跳过。
+  // 因此在配置入口禁止 未支持的多实例，而不是让房间进入不可用流程。
+  const singleInstanceCharacters: WerewolfCharacter[] = ['SEER', 'WITCH', 'GUARD'];
+  if (singleInstanceCharacters.some(char => (charMap[char] || 0) > 1)) return false;
+
   // 狼人不能超过总数的一半
   if (charMap.WEREWOLF > characters.length / 2) return false;
 

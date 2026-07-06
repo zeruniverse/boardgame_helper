@@ -12,8 +12,8 @@
       <div class="header-right">
         <span class="room-id">房间ID: {{ roomId }}</span>
         <span v-if="gameState?.day" class="day-badge">第{{ Math.ceil(gameState.day / 2) }}天</span>
-        <el-button v-if="isHost" size="small" @click="toggleRoomLock" :type="roomLocked ? 'danger' : 'success'">
-          {{ roomLocked ? '解锁房间' : '锁定房间' }}
+        <el-button v-if="isHost" size="small" @click="toggleRoomLock" :type="room?.locked ? 'danger' : 'success'">
+          {{ room?.locked ? '解锁房间' : '锁定房间' }}
         </el-button>
       </div>
     </el-header>
@@ -199,9 +199,6 @@ const currentUserNickname = computed(() => {
 
 const gameHistory = ref<any[]>([])
 
-// 房间锁定状态
-const roomLocked = ref(false)
-
 // 房间准备状态 - 修改为只要连接成功就不显示loading
 const roomPreparing = ref(true)
 let statusCheckInterval: ReturnType<typeof setInterval> | null = null
@@ -298,7 +295,6 @@ const goToLobby = () => {
 // 切换房间锁定
 const toggleRoomLock = () => {
   store.sendGameAction('toggleRoomLock', {})
-  roomLocked.value = !roomLocked.value
 }
 
 const scrollToSelector = (selector: string) => {
