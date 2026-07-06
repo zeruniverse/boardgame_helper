@@ -39,7 +39,7 @@ export const GAME_META: Record<GameType, GameMeta> = {
     minPlayers: 5,
     maxPlayers: 10,
     description: '隐藏身份、组队任务、梅林刺杀。',
-    storage: { id: 'avalon_userId', nickname: 'avalon_nickname' }
+    storage: { id: 'avalon_userId', nickname: 'avalon_nickname', room: 'avalon_currentRoom' }
   },
   mafia: {
     type: 'mafia',
@@ -48,7 +48,7 @@ export const GAME_META: Record<GameType, GameMeta> = {
     minPlayers: 6,
     maxPlayers: 16,
     description: '昼夜轮替、杀手与好人阵营对抗。',
-    storage: { id: 'mafia_userId', nickname: 'mafia_nickname' }
+    storage: { id: 'mafia_userId', nickname: 'mafia_nickname', room: 'mafia_currentRoom' }
   },
   werewolf: {
     type: 'werewolf',
@@ -57,7 +57,7 @@ export const GAME_META: Record<GameType, GameMeta> = {
     minPlayers: 6,
     maxPlayers: 16,
     description: '狼人夜袭、神职行动、白天发言投票。',
-    storage: { id: 'werewolf_userId', nickname: 'werewolf_nickname' }
+    storage: { id: 'werewolf_userId', nickname: 'werewolf_nickname', room: 'werewolf_currentRoom' }
   },
   'one-night-werewolf': {
     type: 'one-night-werewolf',
@@ -66,7 +66,7 @@ export const GAME_META: Record<GameType, GameMeta> = {
     minPlayers: 3,
     maxPlayers: 10,
     description: '单夜技能、身份交换、一次投票结算。',
-    storage: { id: 'onu_werewolf_userId', nickname: 'onu_werewolf_nickname' }
+    storage: { id: 'onu_werewolf_userId', nickname: 'onu_werewolf_nickname', room: 'onu_werewolf_currentRoom' }
   },
   'blood-on-the-clocktower': {
     type: 'blood-on-the-clocktower',
@@ -75,7 +75,7 @@ export const GAME_META: Record<GameType, GameMeta> = {
     minPlayers: 5,
     maxPlayers: 15,
     description: '说书人主持、剧本角色、处决恶魔或邪恶获胜。',
-    storage: { id: 'botc_userId', nickname: 'botc_nickname' }
+    storage: { id: 'botc_userId', nickname: 'botc_nickname', room: 'botc_currentRoom' }
   }
 };
 

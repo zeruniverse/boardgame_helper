@@ -25,6 +25,21 @@ export function getStoredSessionToken(gameType: string): string | undefined {
   return localStorage.getItem(key) || undefined;
 }
 
+export function getStoredRoomId(gameType: string): string | undefined {
+  const meta = getGameMeta(gameType);
+  if (!meta?.storage.room) return undefined;
+  return localStorage.getItem(meta.storage.room) || undefined;
+}
+
+export function hasStoredRoomSession(gameType: string, roomId?: string): boolean {
+  const token = getStoredSessionToken(gameType);
+  if (!token) return false;
+
+  const storedRoomId = getStoredRoomId(gameType);
+  // 兼容旧版本本地数据：若曾经没有记录房间号，只用后端 sessionToken 作最终校验。
+  return !roomId || !storedRoomId || storedRoomId === roomId;
+}
+
 export function ensureGameSession(gameType: string, nickname?: string, roomId?: string): GameSession {
   const meta = getGameMeta(gameType);
   if (!meta) {

@@ -15,8 +15,8 @@
             <h3>{{ room.name }}</h3>
             <p>人数: {{ room.playerCount }} / {{ room.maxPlayers }}{{ room.locked ? ' 🔒' : '' }}</p>
             <p>类型: {{ room.displayName }}</p>
-            <el-button :type="room.locked ? 'info' : 'primary'" :disabled="room.locked" @click="enter(room.id)">
-              {{ room.locked ? '已锁定' : '进入' }}
+            <el-button :type="canEnterRoom(room) ? 'primary' : 'info'" :disabled="!canEnterRoom(room)" @click="enter(room.id)">
+              {{ getRoomActionText(room) }}
             </el-button>
           </el-card>
         </el-col>
@@ -803,7 +803,7 @@ import { useRouter } from 'vue-router';
 import { ElMessage } from 'element-plus';
 import { SOCKET_URL } from '../config';
 import { GAME_ROUTES } from '../utils/gameMeta';
-import { ensureGameSession, getStoredSessionToken, rememberGameSession } from '../utils/gameSession';
+import { ensureGameSession, hasStoredRoomSession, rememberGameSession } from '../utils/gameSession';
 
 const store = useMainStore();
 const texasStore = useTexasHoldemStore();
@@ -853,6 +853,19 @@ function ensureLocalSession(gameType: string, nickname: string, roomId?: string)
 
 function ensureLocalPlayer(gameType: string, nickname: string, roomId?: string) {
   return ensureLocalSession(gameType, nickname, roomId).playerId;
+}
+
+function hasReconnectSession(room: any): boolean {
+  return Boolean(room?.type && hasStoredRoomSession(room.type, room.id));
+}
+
+function canEnterRoom(room: any): boolean {
+  return !room?.locked || hasReconnectSession(room);
+}
+
+function getRoomActionText(room: any): string {
+  if (!room?.locked) return '进入';
+  return hasReconnectSession(room) ? '重连' : '已锁定';
 }
 
 // Bug L1+L2: 使用作用域变量存储处理器引用，便于在onUnmounted中清理
@@ -911,7 +924,7 @@ function enter(roomId: string) {
 
   // 锁房只应阻止“新成员”加入；已有有效会话的原玩家需要能从大厅入口重连。
   // 真正的身份校验仍由后端 sessionToken 完成，避免前端误把同昵称新用户当成重连。
-  if (room.locked && !getStoredSessionToken(room.type)) {
+  if (room.locked && !hasReconnectSession(room)) {
     ElMessage.warning('房间已锁定，不允许新成员加入');
     return;
   }
