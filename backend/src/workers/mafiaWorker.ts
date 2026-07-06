@@ -372,6 +372,10 @@ class MafiaWorker extends BaseGameWorker {
       gameInfo: this.getGameInfo()
     });
     this.sendToRoom('room_update', this.room);
+
+    // 新加入玩家没有经历房间创建时的 game_prepared 广播；主动补发当前局面，
+    // 避免等待阶段操作区缺失，导致无法准备或开始游戏。
+    this.syncGameStateToPlayer(roomPlayer.socketId, roomPlayer.id);
   }
 
   async playerOnline(playerId: string): Promise<void> {

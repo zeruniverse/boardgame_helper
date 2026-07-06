@@ -254,6 +254,21 @@ export const useMafiaStore = defineStore('mafia', {
         }
       });
 
+      const applyWaitingRoomGameInfo = (data: { message?: string; gameInfo?: MafiaGameState }) => {
+        if (data.gameInfo) {
+          this.gameState = data.gameInfo;
+        }
+        if (data.message) {
+          this.addSystemMessage(data.message);
+        }
+      };
+
+      on('player_joined', applyWaitingRoomGameInfo);
+      on('player_ready', applyWaitingRoomGameInfo);
+      on('player_unready', applyWaitingRoomGameInfo);
+      on('player_online', applyWaitingRoomGameInfo);
+      on('player_offline', applyWaitingRoomGameInfo);
+
       on('game_prepared', (data: { config?: MafiaRoomState['config']; gameInfo?: MafiaGameState }) => {
         if (this.room && data.config) {
           this.room = { ...this.room, config: { ...(this.room.config || {}), ...data.config } };

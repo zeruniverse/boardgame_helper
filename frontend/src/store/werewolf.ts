@@ -246,6 +246,21 @@ export const useWerewolfStore = defineStore('werewolf', {
         }
       });
 
+      const applyWaitingRoomGameInfo = (data: { message?: string; gameInfo?: any }) => {
+        if (data.gameInfo) {
+          this.updateGameStateFromGameInfo(data.gameInfo);
+        }
+        if (data.message) {
+          this.addSystemMessage(data.message);
+        }
+      };
+
+      on('player_joined', applyWaitingRoomGameInfo);
+      on('player_ready', applyWaitingRoomGameInfo);
+      on('player_unready', applyWaitingRoomGameInfo);
+      on('player_online', applyWaitingRoomGameInfo);
+      on('player_offline', applyWaitingRoomGameInfo);
+
       // 游戏事件 - 后端发送 {message, gameInfo}
       on('game_started', (data: { message: string; gameInfo: any }) => {
         console.log('游戏开始事件:', data);
