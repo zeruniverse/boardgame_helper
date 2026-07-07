@@ -802,8 +802,8 @@ import { storeToRefs } from 'pinia';
 import { useRouter } from 'vue-router';
 import { ElMessage } from 'element-plus';
 import { SOCKET_URL } from '../config';
-import { GAME_ROUTES } from '../utils/gameMeta';
-import { ensureGameSession, hasStoredRoomSession, rememberGameSession } from '../utils/gameSession';
+import { GAME_META, GAME_ROUTES } from '../utils/gameMeta';
+import { ensureGameSession, getStoredSessionToken, hasStoredRoomSession, rememberGameSession } from '../utils/gameSession';
 
 const store = useMainStore();
 const texasStore = useTexasHoldemStore();
@@ -855,8 +855,35 @@ function ensureLocalPlayer(gameType: string, nickname: string, roomId?: string) 
   return ensureLocalSession(gameType, nickname, roomId).playerId;
 }
 
+interface StoredRoomSession {
+  playerId: string;
+  sessionToken?: string;
+}
+
 function hasReconnectSession(room: any): boolean {
   return Boolean(room?.type && hasStoredRoomSession(room.type, room.id));
+}
+
+function findStoredSessionForHiddenRoom(roomId: string, nickname: string): StoredRoomSession | undefined {
+  const normalizedRoomId = roomId.trim().toUpperCase();
+  if (!normalizedRoomId) return undefined;
+
+  for (const meta of Object.values(GAME_META)) {
+    const storedRoomId = meta.storage.room ? localStorage.getItem(meta.storage.room) : undefined;
+    if (!storedRoomId || storedRoomId.trim().toUpperCase() !== normalizedRoomId) continue;
+
+    const playerId = localStorage.getItem(meta.storage.id);
+    const sessionToken = getStoredSessionToken(meta.type);
+    if (!playerId || !sessionToken) continue;
+
+    const session = ensureLocalSession(meta.type, nickname, storedRoomId);
+    return {
+      playerId: session.playerId,
+      sessionToken: session.sessionToken
+    };
+  }
+
+  return undefined;
 }
 
 function canEnterRoom(room: any): boolean {
@@ -1001,7 +1028,9 @@ function confirmJoinRoom() {
   const roomId = joinRoomForm.value.roomName.trim().toUpperCase();
   const nickname = joinRoomForm.value.nickname.trim();
   const room = rooms.value.find(r => r.id === roomId || r.name === roomId);
-  const session = room ? ensureLocalSession(room.type, nickname, room.id) : undefined;
+  const session = room
+    ? ensureLocalSession(room.type, nickname, room.id)
+    : findStoredSessionForHiddenRoom(roomId, nickname);
   const playerId = session?.playerId;
 
   if (!store.socket) {
