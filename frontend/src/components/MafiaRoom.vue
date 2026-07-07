@@ -221,26 +221,8 @@ const toggleRoomLock = () => {
 let statusCheckInterval: ReturnType<typeof setInterval> | null = null
 let initialCheckTimeout: ReturnType<typeof setTimeout> | null = null
 
-// 本地倒计时定时器
-let localTimerInterval: ReturnType<typeof setInterval> | null = null
-
-// 启动本地倒计时
-const startLocalTimer = () => {
-  stopLocalTimer()
-  localTimerInterval = setInterval(() => {
-    if (store.timeLeft > 0) {
-      store.timeLeft--
-    }
-  }, 1000)
-}
-
-// 停止本地倒计时
-const stopLocalTimer = () => {
-  if (localTimerInterval) {
-    clearInterval(localTimerInterval)
-    localTimerInterval = null
-  }
-}
+// 倒计时由 Pinia store 统一根据服务端截止时间维护，
+// 避免房间组件和 store 双重递减导致前端时间显示过快。
 
 // 检查房间状态的函数
 const checkRoomStatus = () => {
@@ -297,8 +279,6 @@ onMounted(() => {
     statusCheckInterval = setInterval(checkRoomStatus, 3000)
   }
 
-  // 启动本地倒计时
-  startLocalTimer()
 })
 
 onUnmounted(() => {
@@ -313,8 +293,6 @@ onUnmounted(() => {
   }
   // 清理socket事件监听器，防止内存泄漏
   store.socket?.off('room_ready', onRoomReady)
-  // 停止本地倒计时
-  stopLocalTimer()
   store.disconnectFromRoom()
 })
 
