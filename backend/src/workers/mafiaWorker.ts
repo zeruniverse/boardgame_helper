@@ -85,6 +85,11 @@ interface MafiaPlayer {
   alive: boolean;
 }
 
+interface GameEndResult {
+  winner: Team;
+  reason: string;
+}
+
 // 杀人游戏配置接口
 interface MafiaConfig {
   speakTime: number;      // 发言时间（秒）
@@ -2004,7 +2009,7 @@ class MafiaWorker extends BaseGameWorker {
     }
   }
 
-  private checkGameEnd(excludePlayerId?: string | string[]): Team | null {
+  private checkGameEnd(excludePlayerId?: string | string[]): GameEndResult | null {
     const gameState = this.gameState as MafiaGameState;
     const excludedIds = new Set(
       Array.isArray(excludePlayerId)
@@ -2014,30 +2019,43 @@ class MafiaWorker extends BaseGameWorker {
     const nextRoundAlivePlayers = this.getAlivePlayers().filter(id => !excludedIds.has(id));
     
     let killerCount = 0;
-    let goodCount = 0;
+    let copCount = 0;
+    let civilianCampCount = 0;
     
     nextRoundAlivePlayers.forEach(playerId => {
       if (gameState.topSecret.killer.includes(playerId)) {
         killerCount++;
+      } else if (gameState.topSecret.cop.includes(playerId)) {
+        copCount++;
       } else {
-        goodCount++;
+        civilianCampCount++;
       }
     });
-    // Sniper is counted as good (BLUE team)
+
+    const hasCopCamp = gameState.topSecret.cop.length > 0 || gameState.copCount > 0;
+    const hasCivilianCamp = (
+      gameState.topSecret.doctor.length +
+      gameState.topSecret.sniper.length +
+      gameState.topSecret.civilian.length
+    ) > 0;
 
     if (killerCount === 0) {
-      return Team.BLUE; // 好人获胜（杀手全灭）
-    } else if (goodCount === 0) {
-      return Team.RED; // 杀手获胜（好人全灭）
-    } else if (killerCount >= goodCount) {
-      return Team.RED; // 杀手获胜（杀手数量大于等于好人）
+      return { winner: Team.BLUE, reason: '所有杀手出局' };
+    } else if (hasCopCamp && copCount === 0) {
+      return { winner: Team.RED, reason: '警察全部出局' };
+    } else if (hasCivilianCamp && civilianCampCount === 0) {
+      return { winner: Team.RED, reason: '平民阵营全部出局' };
     }
 
     return null; // 游戏继续
   }
 
-  private endGame(winner: Team, excludePlayerId?: string, baseMessage?: string): void {
+  private endGame(result: Team | GameEndResult, excludePlayerId?: string, baseMessage?: string): void {
     const gameState = this.gameState as MafiaGameState;
+    const winner = typeof result === 'string' ? result : result.winner;
+    const reason = typeof result === 'string'
+      ? (winner === Team.BLUE ? '所有杀手出局' : '杀手阵营达成胜利条件')
+      : result.reason;
     
     gameState.status = GameStatus.OVER;
     gameState.winner = winner;
@@ -2056,8 +2074,7 @@ class MafiaWorker extends BaseGameWorker {
       : "游戏结束, 杀手获胜!";
     
     const summary = this.getGameSummary();
-    const message = `${baseMessage || ''}${winnerMessage}\n${summary}`;
-    const reason = winner === Team.BLUE ? '好人阵营消灭所有杀手' : '杀手阵营消灭所有好人';
+    const message = `${baseMessage || ''}${winnerMessage}\n胜利原因：${reason}\n${summary}`;
 
     this.sendToRoom('game_over', { 
       message, 
