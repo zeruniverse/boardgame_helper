@@ -232,8 +232,9 @@ export function validateCharacterConfig(characters: WerewolfCharacter[]): boolea
   const singleInstanceCharacters: WerewolfCharacter[] = ['SEER', 'WITCH', 'GUARD'];
   if (singleInstanceCharacters.some(char => (charMap[char] || 0) > 1)) return false;
 
-  // 狼人不能超过总数的一半
-  if (charMap.WEREWOLF > characters.length / 2) return false;
+  // 胜负条件采用“好人数量 <= 狼人数量”时狼人胜；配置阶段必须保证好人数量严格多于狼人，
+  // 否则会出现可开局但已经满足狼人胜利条件/首轮流程明显失衡的房间。
+  if (charMap.WEREWOLF >= characters.length - charMap.WEREWOLF) return false;
 
   return true;
 }

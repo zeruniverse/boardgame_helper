@@ -101,7 +101,7 @@
           </div>
         </div>
         <div class="config-summary">
-          总人数: {{ totalRoleCount }} (需6-18人)
+          总人数: {{ totalRoleCount }} (需6-18人，且好人数量必须多于狼人)
         </div>
       </div>
 
@@ -223,7 +223,16 @@ const roleConfig = ref<Record<string, number>>({
   GUARD: 0
 })
 
-const getRoleMax = (role: string) => SINGLE_ACTION_ROLES.has(role) ? 1 : 6
+const goodRoleCount = computed(() => totalRoleCount.value - (roleConfig.value.WEREWOLF || 0))
+
+const getRoleMax = (role: string) => {
+  if (role === 'WEREWOLF') {
+    // 后端胜负条件为好人数量 <= 狼人数量时狼人胜；配置入口要避免生成开局即满足胜利条件的角色表。
+    return Math.max(1, Math.min(6, goodRoleCount.value - 1))
+  }
+
+  return SINGLE_ACTION_ROLES.has(role) ? 1 : 6
+}
 
 watch(
   () => props.gameState?.needingCharacters,
