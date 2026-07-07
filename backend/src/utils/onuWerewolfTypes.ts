@@ -67,7 +67,8 @@ export const ONU_WEREWOLF_CENTER_VOTE_TARGET = '__center__';
 export enum OnuWerewolfTeam {
   Villager = 'villager',
   Werewolf = 'werewolf',
-  Tanner = 'tanner'
+  Tanner = 'tanner',
+  None = 'none'
 }
 
 // 文物枚举

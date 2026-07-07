@@ -51,7 +51,8 @@ export enum OnuWerewolfGameStatus {
 export enum OnuWerewolfTeam {
   Villager = 'villager',
   Werewolf = 'werewolf',
-  Tanner = 'tanner'
+  Tanner = 'tanner',
+  None = 'none'
 }
 
 // 角色名称映射

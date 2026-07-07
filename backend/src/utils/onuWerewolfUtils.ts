@@ -270,6 +270,7 @@ export function onuCalculateVoteResult(votes: Record<string, string>, players: R
  * 计算游戏胜利者。
  * 所有判断都基于夜晚行动结束后的当前身份。任意狼人被处决时村民阵营达成胜利；
  * 如果没有狼人死亡而皮匠被处决，则皮匠获胜；无狼人且无人死亡时村民获胜。
+ * 若场上没有真实狼人且误杀了非皮匠/非爪牙特殊目标，规则上没有阵营胜利，不能误判为狼人阵营获胜。
  */
 export function onuCalculateWinner(
   players: Record<string, OnuWerewolfPlayer>,
@@ -301,6 +302,8 @@ export function onuCalculateWinner(
     if (lynched.length === 0) {
       return OnuWerewolfTeam.Villager;
     }
+
+    return OnuWerewolfTeam.None;
   }
 
   return OnuWerewolfTeam.Werewolf;
@@ -337,7 +340,7 @@ export function onuIsPlayerWinner(
     }
   }
 
-  if (winner === OnuWerewolfTeam.Tanner) {
+  if (winner === OnuWerewolfTeam.Tanner || winner === OnuWerewolfTeam.None) {
     return false;
   }
 

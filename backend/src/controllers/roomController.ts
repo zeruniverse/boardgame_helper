@@ -106,9 +106,12 @@ function getPublicRooms() {
 
 function toClientPlayer(player: Player): any {
   const metadata = player.gameMetadata || {};
+  const nickname = normalizeUserVisibleNickname(player.nickname || player.name, '玩家');
+  const name = normalizeUserVisibleNickname(player.name || player.nickname, nickname);
   return {
     ...player,
-    name: player.name || player.nickname,
+    nickname,
+    name,
     gameMetadata: metadata,
     // 统一前端读取的准备状态。旧代码只写入 gameMetadata.ready，多个 UI 读取 player.ready。
     ready: Boolean(metadata.ready)
@@ -152,10 +155,9 @@ function serializeEventData(event: string, data: any): any {
 
 function markPlayerOnlineForController(room: Room, player: Player, socketId: string, nickname?: string): void {
   player.socketId = socketId;
-  if (nickname) {
-    player.nickname = nickname;
-    player.name = nickname;
-  }
+  const nextNickname = normalizeNickname(nickname ?? player.nickname ?? player.name, '玩家');
+  player.nickname = nextNickname;
+  player.name = nextNickname;
   player.online = true;
   player.lastHeartbeat = Date.now();
 
@@ -275,13 +277,24 @@ function sendErrorResponse(socket: Socket, message: string, ack?: (response: any
   ack?.({ success: false, error: message });
 }
 
-function normalizeNickname(nickname: unknown, fallback: string): string {
+function isLegacyGuestNickname(nickname: string): boolean {
+  return /^guest(?:[\s_-]*[a-z0-9]{0,16})?$/i.test(nickname.trim());
+}
+
+function normalizeUserVisibleNickname(nickname: unknown, fallback: string): string {
   const text = typeof nickname === 'string' ? nickname.trim() : '';
-  return text || fallback;
+  const safeFallback = typeof fallback === 'string' ? fallback.trim() : '';
+  if (!text) return safeFallback;
+  if (isLegacyGuestNickname(text)) return safeFallback && !isLegacyGuestNickname(safeFallback) ? safeFallback : '玩家';
+  return text;
+}
+
+function normalizeNickname(nickname: unknown, fallback: string): string {
+  return normalizeUserVisibleNickname(nickname, fallback) || '玩家';
 }
 
 function nicknameKey(nickname: unknown): string {
-  return typeof nickname === 'string' ? nickname.trim() : '';
+  return normalizeUserVisibleNickname(nickname, '');
 }
 
 function findPlayerByNickname(room: Room, nickname: string, excludePlayerId?: string): Player | undefined {

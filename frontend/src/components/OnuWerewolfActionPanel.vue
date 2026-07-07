@@ -962,6 +962,8 @@ const getWinnerText = (winner: OnuWerewolfTeam) => {
       return '狼人阵营获胜！';
     case OnuWerewolfTeam.Tanner:
       return '皮匠获胜！';
+    case OnuWerewolfTeam.None:
+      return '无人获胜';
     default:
       return '游戏结束';
   }
@@ -972,6 +974,7 @@ const getTeamName = (team: OnuWerewolfTeam) => {
     case OnuWerewolfTeam.Villager: return '村民';
     case OnuWerewolfTeam.Werewolf: return '狼人';
     case OnuWerewolfTeam.Tanner: return '皮匠';
+    case OnuWerewolfTeam.None: return '无人获胜';
     default: return '未知';
   }
 };
