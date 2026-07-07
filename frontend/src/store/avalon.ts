@@ -255,8 +255,13 @@ export const useAvalonStore = defineStore('avalon', {
 
       // 时间同步
       on('time_update', (data: { timeLeft: number }) => {
-        this.timeLeft = Math.max(0, data.timeLeft);
-        this.timerDeadline = data.timeLeft > 0 ? Date.now() + data.timeLeft * 1000 : 0;
+        this.timeLeft = Math.max(0, Number(data.timeLeft) || 0);
+        this.timerDeadline = this.timeLeft > 0 ? Date.now() + this.timeLeft * 1000 : 0;
+        if (this.timeLeft > 0) {
+          this.startTimer();
+        } else {
+          this.clearTimer();
+        }
       });
 
       // 游戏状态同步（用于重连）
@@ -428,13 +433,17 @@ export const useAvalonStore = defineStore('avalon', {
       this.syncTimerDeadline();
       if (this.timerDeadline > 0) {
         this.timeLeft = Math.max(0, Math.ceil((this.timerDeadline - Date.now()) / 1000));
-        return;
-      }
-      if (typeof this.gameState?.timeLeft === 'number') {
+      } else if (typeof this.gameState?.timeLeft === 'number') {
         this.timeLeft = Math.max(0, this.gameState.timeLeft);
-        return;
+      } else {
+        this.timeLeft = 0;
       }
-      this.timeLeft = 0;
+
+      if (this.timeLeft > 0 && this.gameState?.status !== 999) {
+        this.startTimer();
+      } else {
+        this.clearTimer();
+      }
     },
 
     startTimer() {
@@ -442,10 +451,18 @@ export const useAvalonStore = defineStore('avalon', {
         clearInterval(this.timerInterval);
       }
 
+      if (this.timeLeft <= 0) {
+        this.timerInterval = null;
+        return;
+      }
+
       this.timerInterval = setInterval(() => {
-        if (this.timeLeft > 0) {
+        if (this.timerDeadline > 0) {
+          this.timeLeft = Math.max(0, Math.ceil((this.timerDeadline - Date.now()) / 1000));
+        } else if (this.timeLeft > 0) {
           this.timeLeft--;
-        } else {
+        }
+        if (this.timeLeft <= 0) {
           this.clearTimer();
         }
       }, 1000);

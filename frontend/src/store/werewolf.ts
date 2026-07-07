@@ -438,12 +438,17 @@ export const useWerewolfStore = defineStore('werewolf', {
         if (gameInfo.statusMessage) this.gameState.statusMessage = gameInfo.statusMessage;
         if (gameInfo.winner) this.gameState.winner = gameInfo.winner;
       }
+
+      if (gameInfo.timeLeft !== undefined) {
+        this.timeLeft = Math.max(0, Number(gameInfo.timeLeft) || 0);
+        this.startTimer();
+      }
     },
 
     // 从gameInfo启动计时器
     startTimerFromGameInfo(gameInfo: any) {
       if (gameInfo?.timeLeft !== undefined) {
-        this.timeLeft = gameInfo.timeLeft;
+        this.timeLeft = Math.max(0, Number(gameInfo.timeLeft) || 0);
         this.startTimer();
       }
     },

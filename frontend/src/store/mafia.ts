@@ -404,12 +404,16 @@ export const useMafiaStore = defineStore('mafia', {
           this.gameState.winner = data.winner;
           this.gameState.status = 'OVER';
         }
+        this.clearTimer();
+        this.timeLeft = 0;
         this.addSystemMessage(data.message || `游戏结束：${data.reason}`);
       });
 
       on('game_reset', (data: { message?: string; gameInfo?: MafiaGameState }) => {
         if (data.gameInfo) this.gameState = data.gameInfo;
         this.playerSecret = null;
+        this.clearTimer();
+        this.timeLeft = 0;
         if (this.room) {
           this.room.gameStarted = false;
         }
@@ -441,7 +445,12 @@ export const useMafiaStore = defineStore('mafia', {
 
       // 时间同步
       on('time_update', (data: { timeLeft: number }) => {
-        this.timeLeft = data.timeLeft;
+        this.timeLeft = Math.max(0, Number(data.timeLeft) || 0);
+        if (this.timeLeft > 0 && this.gameState?.status !== 'OVER') {
+          this.startTimer();
+        } else {
+          this.clearTimer();
+        }
       });
 
       // 游戏状态同步（用于重连）
@@ -454,7 +463,10 @@ export const useMafiaStore = defineStore('mafia', {
         this.playerSecret = data.secret;
         this.currentUserId = data.currentUserId;
         if (data.game?.timeLeft !== undefined) {
-          this.timeLeft = typeof data.game.timeLeft === 'object' ? (data.game.timeLeft as any).left || 0 : data.game.timeLeft;
+          this.updateTimer();
+        } else {
+          this.clearTimer();
+          this.timeLeft = 0;
         }
       });
     },
@@ -593,18 +605,32 @@ export const useMafiaStore = defineStore('mafia', {
       if (this.gameState?.timeLeft !== undefined) {
         const tl = this.gameState.timeLeft;
         if (typeof tl === 'object' && tl !== null) {
-          this.timeLeft = (tl as any).left || 0;
+          this.timeLeft = Math.max(0, Number((tl as any).left) || 0);
         } else if (typeof tl === 'number') {
-          this.timeLeft = tl;
+          this.timeLeft = Math.max(0, tl);
+        } else {
+          this.timeLeft = Math.max(0, Number(tl) || 0);
         }
+      } else {
+        this.timeLeft = 0;
+      }
+
+      if (this.timeLeft > 0 && this.gameState?.status !== 'OVER') {
+        this.startTimer();
+      } else {
+        this.clearTimer();
       }
     },
 
     startTimer() {
       this.clearTimer();
+      if (this.timeLeft <= 0) return;
       this.timerInterval = setInterval(() => {
         if (this.timeLeft > 0) {
           this.timeLeft--;
+        }
+        if (this.timeLeft <= 0) {
+          this.clearTimer();
         }
       }, 1000);
     },

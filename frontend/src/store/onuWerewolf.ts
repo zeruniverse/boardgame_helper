@@ -645,11 +645,17 @@ export const useOnuWerewolfStore = defineStore('onuWerewolf', {
         } else {
           ensureGameConfig(readConfigFromRoom(data.room) || undefined);
         }
+        this.updateTimer();
       });
 
       // 时间更新
       on('time_update', (data: { timeLeft: number }) => {
-        this.timeLeft = data.timeLeft;
+        this.timeLeft = Math.max(0, Number(data.timeLeft) || 0);
+        if (this.timeLeft > 0 && this.gameState?.status !== OnuWerewolfGameStatus.COMPLETED) {
+          this.startTimer();
+        } else {
+          this.clearTimer();
+        }
       });
     },
 
@@ -769,9 +775,11 @@ export const useOnuWerewolfStore = defineStore('onuWerewolf', {
     },
 
     updateTimer() {
-      if (this.gameState?.timeLeft) {
-        this.timeLeft = this.gameState.timeLeft;
+      this.timeLeft = Math.max(0, Number(this.gameState?.timeLeft) || 0);
+      if (this.timeLeft > 0 && this.gameState?.status !== OnuWerewolfGameStatus.COMPLETED) {
         this.startTimer();
+      } else {
+        this.clearTimer();
       }
     },
 
