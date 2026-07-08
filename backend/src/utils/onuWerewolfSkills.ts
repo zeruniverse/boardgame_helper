@@ -603,7 +603,7 @@ export class OnuVillageIdiotSkill extends OnuBaseSkill {
   }
 }
 
-// 揭示者技能 - 公开揭示一名非狼人玩家；普通狼人、头狼、狼先知看后须盖回去
+// 揭示者技能 - 公开揭示一名村民阵营玩家；狼人和皮匠看后须盖回去
 export class OnuRevealerSkill extends OnuBaseSkill {
   canUse(selection?: OnuWerewolfSelection): boolean {
     if (!selection || !selection.players || selection.players.length !== 1) {
@@ -620,7 +620,7 @@ export class OnuRevealerSkill extends OnuBaseSkill {
       return { success: false, error: '目标玩家不存在' };
     }
 
-    const shouldStayRevealed = !onuIsWerewolf(target.actualRole);
+    const shouldStayRevealed = !onuIsWerewolf(target.actualRole) && !onuIsTannerTeam(target.actualRole);
 
     return {
       success: true,
@@ -630,7 +630,7 @@ export class OnuRevealerSkill extends OnuBaseSkill {
         : undefined,
       message: shouldStayRevealed
         ? `你公开揭示了${target.name}的角色卡`
-        : `你查看了${target.name}的角色卡，但该角色是狼人，必须盖回去`
+        : `你查看了${target.name}的角色卡，但该角色是狼人或皮匠，必须盖回去`
     };
   }
 }

@@ -554,7 +554,7 @@ const availableRoles = [
   { value: OnuWerewolfRole.Seer, label: '预言家', description: '可以查看一名其他玩家的角色，或查看两张中心卡牌' },
   { value: OnuWerewolfRole.ApprenticeSeer, label: '学徒预言家', description: '可以查看一张中心卡牌' },
   { value: OnuWerewolfRole.Witch, label: '女巫', description: '查看一张中心卡牌，并将其交给一名玩家' },
-  { value: OnuWerewolfRole.Revealer, label: '揭示者', description: '可以公开揭示一名非狼人玩家的角色卡' },
+  { value: OnuWerewolfRole.Revealer, label: '揭示者', description: '可以公开揭示一名非狼人且非皮匠玩家的角色卡' },
   { value: OnuWerewolfRole.Robber, label: '强盗', description: '可以与另一名玩家交换角色卡，并查看自己的新角色' },
   { value: OnuWerewolfRole.Troublemaker, label: '捣蛋鬼', description: '可以交换其他两名玩家的角色卡' },
   { value: OnuWerewolfRole.Insomniac, label: '失眠者', description: '在夜晚结束时查看自己的最终角色' },

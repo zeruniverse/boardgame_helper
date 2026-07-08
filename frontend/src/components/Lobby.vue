@@ -231,7 +231,7 @@
               <li><strong>预言家：</strong>可以查看一名其他玩家的角色</li>
               <li><strong>学徒预言家：</strong>可以查看一张中心卡牌</li>
               <li><strong>女巫：</strong>查看一张中心卡牌，并将其交给一名玩家</li>
-              <li><strong>揭示者：</strong>可以公开揭示一名非狼人玩家的角色</li>
+              <li><strong>揭示者：</strong>可以公开揭示一名非狼人且非皮匠玩家的角色</li>
               <li><strong>强盗：</strong>可以与另一名玩家交换角色卡</li>
               <li><strong>捣蛋鬼：</strong>可以交换其他两名玩家的角色卡</li>
               <li><strong>酒鬼：</strong>必须与一张中心卡牌交换角色</li>
