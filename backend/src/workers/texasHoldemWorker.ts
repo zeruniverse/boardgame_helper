@@ -752,6 +752,10 @@ class TexasHoldemWorker extends BaseGameWorker {
       this.participants.splice(participantIdx, 1);
     }
 
+    if (this.room.hostId === playerId) {
+      this.reassignHost();
+    }
+
     if (gs.currentTurn > removedIndex) {
       gs.currentTurn--;
     }

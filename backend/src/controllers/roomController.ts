@@ -728,6 +728,38 @@ export function roomController(io: Server) {
     console.log(`玩家 ${latestPlayer.nickname} 以同昵称方式重新进入了房间 ${latestRoom.name}`);
   }
 
+  async function finalizeSelfRemovalByWorker(roomId: string, player: Player, socket: Socket): Promise<void> {
+    const latestRoom = rooms.get(roomId);
+    const stillInRoom = latestRoom?.players?.some(p => p.id === player.id) === true;
+    if (stillInRoom) {
+      return;
+    }
+
+    clearPlayerSessionToken(roomId, player.id);
+    if (socket.rooms.has(roomId)) {
+      await socket.leave(roomId);
+      socket.emit('room_left', { roomId });
+    }
+
+    // 有些游戏动作（当前为德州扑克 Cash Out）会在 worker 中直接移出行动玩家。
+    // 控制层也必须同步清理 Socket.IO 房间订阅，否则该连接会继续收到已退出房间的聊天/游戏广播。
+    if (latestRoom) {
+      if (latestRoom.players.length === 0) {
+        await threadManager.stopRoomThread(roomId);
+        rooms.delete(roomId);
+        hostKickVotes.delete(roomId);
+        clearRoomSessionTokens(roomId);
+        broadcastLobbyUpdate();
+        return;
+      }
+
+      io.to(roomId).emit('room_update', toClientRoom(latestRoom));
+      if (!latestRoom.private) {
+        broadcastLobbyUpdate();
+      }
+    }
+  }
+
   async function transferHostInRoom(room: Room, actor: Player, newHostId: string): Promise<any> {
     if (!newHostId) return { success: false, error: '缺少新房主ID' };
     if (room.hostId !== actor.id) return { success: false, error: '只有房主可以转让房主' };
@@ -1513,6 +1545,11 @@ export function roomController(io: Server) {
           socket.id,
           player.id
         );
+
+        const normalizedActionType = data.actionType.toLowerCase().replace(/[_-]/g, '');
+        if (room.type === 'texas-holdem' && normalizedActionType === 'cashout') {
+          await finalizeSelfRemovalByWorker(room.id, player, socket);
+        }
         ack?.({ success: true });
       } catch (error) {
         console.error('处理游戏行动失败:', error);
