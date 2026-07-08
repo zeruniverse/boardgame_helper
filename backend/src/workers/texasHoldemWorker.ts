@@ -801,6 +801,8 @@ class TexasHoldemWorker extends BaseGameWorker {
       return;
     }
 
+    const dealtHands: Array<{ playerId: string; hand: string[] }> = [];
+
     // 如果允许系统发牌，洗牌并发牌；否则不发牌
     if (this.config.allowSystemDealing) {
       gs.deck = shuffleDeck(createDeck());
@@ -813,7 +815,9 @@ class TexasHoldemWorker extends BaseGameWorker {
         const card1 = gs.deck.pop()!;
         const card2 = gs.deck.pop()!;
         gs.playerHands[p.id] = [card1, card2];
-        this.sendToPlayer(p.id, 'deal_hand', { hand: gs.playerHands[p.id] });
+        // game_started 会让前端重置上一局手牌；手牌必须在 game_started 之后再发送，
+        // 否则客户端会先收到 deal_hand 又被 game_started 清空，线上发牌玩家会看不到底牌。
+        dealtHands.push({ playerId: p.id, hand: gs.playerHands[p.id] });
       });
     } else {
       gs.deck = [];
@@ -868,7 +872,10 @@ class TexasHoldemWorker extends BaseGameWorker {
 
     // 同步状态并请求第一个需要行动的玩家；盲注后已全下的玩家会被立即跳过。
     this.sendToRoom('room_update', this.room);
-    this.sendToRoom('game_started', {});
+    this.sendToRoom('game_started', { allowSystemDealing: this.config.allowSystemDealing });
+    dealtHands.forEach(({ playerId, hand }) => {
+      this.sendToPlayer(playerId, 'deal_hand', { hand });
+    });
     this.requestActionForCurrentTurn();
   }
 
