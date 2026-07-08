@@ -131,6 +131,8 @@ class TexasHoldemWorker extends BaseGameWorker {
         return;
       case 'player_online':
         return await this.playerOnline((task.playerId || task.data.playerId)!);
+      case 'sync_player_state':
+        return this.syncPlayerState((task.playerId || task.data.playerId)!, task.socketId);
       case 'player_offline':
         return await this.playerOffline((task.playerId || task.data.playerId)!);
       case 'game_action':
@@ -250,6 +252,14 @@ class TexasHoldemWorker extends BaseGameWorker {
       // 同步游戏状态
       this.syncGameStateToPlayer(player.socketId, playerId);
     }
+  }
+
+  syncPlayerState(playerId: string, socketId?: string): void {
+    const player = this.room.players.find(p => p.id === playerId);
+    if (!player) {
+      return;
+    }
+    this.syncGameStateToPlayer(socketId || player.socketId, playerId);
   }
 
   async playerOffline(playerId: string): Promise<void> {

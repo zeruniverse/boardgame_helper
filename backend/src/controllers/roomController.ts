@@ -806,6 +806,18 @@ export function roomController(io: Server) {
         const room = rooms.get(data.roomId);
         if (room) {
           socket.emit('room_update', toClientRoom(room));
+
+          // 德州扑克的当前底池、公共牌、手牌和待行动玩家存在于游戏线程中，
+          // 仅发送 room_update 不足以恢复刷新/重连/大厅进入后错过的牌局事件。
+          // 在客户端显式拉取房间状态时，顺带向当前 socket 重新同步一次完整牌局状态，
+          // 避免玩家回到房间后停留在空白/未开局界面并错过自己的行动。
+          if (room.type === 'texas-holdem') {
+            const player = room.players.find(p => p.socketId === socket.id);
+            if (player) {
+              sendTaskToRoom(room.id, 'sync_player_state', { playerId: player.id }, socket.id, player.id)
+                .catch(error => console.warn(`get_room_state: sync texas state failed for room ${room.id}:`, error));
+            }
+          }
         }
       } catch (error) {
         console.error('get_room_state handler error:', error);
