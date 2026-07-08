@@ -170,26 +170,62 @@ export class OnuWerewolfSkill extends OnuBaseSkill {
 // 预言家技能
 export class OnuSeerSkill extends OnuBaseSkill {
   canUse(selection?: OnuWerewolfSelection): boolean {
-    if (!selection || !selection.players || selection.players.length !== 1) {
+    if (!selection) {
       return false;
     }
-    const target = this.getPlayerBySeat(selection.players[0]);
-    return target !== undefined && target.id !== this.owner.id && !target.shielded;
+
+    const hasPlayerSelection = Array.isArray(selection.players) && selection.players.length > 0;
+    const hasCardSelection = Array.isArray(selection.cards) && selection.cards.length > 0;
+
+    if (hasPlayerSelection === hasCardSelection) {
+      return false;
+    }
+
+    if (hasPlayerSelection) {
+      if (!selection.players || selection.players.length !== 1) {
+        return false;
+      }
+      const target = this.getPlayerBySeat(selection.players[0]);
+      return target !== undefined && target.id !== this.owner.id && !target.shielded;
+    }
+
+    if (!selection.cards || selection.cards.length !== 2) {
+      return false;
+    }
+
+    const uniqueCards = new Set(selection.cards);
+    return uniqueCards.size === 2 && selection.cards.every(position => this.getCenterCard(position) !== undefined);
   }
 
   execute(selection: OnuWerewolfSelection): OnuSkillResult {
-    const target = this.getPlayerBySeat(selection.players![0]);
-    if (!target) {
-      return { success: false, error: '目标玩家不存在' };
+    if (selection.players?.length === 1) {
+      const target = this.getPlayerBySeat(selection.players[0]);
+      if (!target) {
+        return { success: false, error: '目标玩家不存在' };
+      }
+      if (target.shielded) {
+        return { success: false, error: '目标玩家被保护，无法查看' };
+      }
+
+      return {
+        success: true,
+        vision: onuCreateVision([{ ...target, revealed: true }]),
+        message: `你查看了${target.name}的角色`
+      };
     }
-    if (target.shielded) {
-      return { success: false, error: '目标玩家被保护，无法查看' };
+
+    const selectedCards = (selection.cards || [])
+      .map(position => this.getCenterCard(position))
+      .filter((card): card is OnuWerewolfCenterCard => Boolean(card));
+
+    if (selectedCards.length !== 2) {
+      return { success: false, error: '请选择两张不同的中心卡' };
     }
 
     return {
       success: true,
-      vision: onuCreateVision([{ ...target, revealed: true }]),
-      message: `你查看了${target.name}的角色`
+      vision: onuCreateVision([], selectedCards),
+      message: `你查看了中心卡${selectedCards.map(card => card.position).join('、')}`
     };
   }
 }

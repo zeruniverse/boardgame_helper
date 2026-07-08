@@ -144,17 +144,37 @@
         
         <!-- 技能目标选择UI (H1 fix) -->
         <div class="skill-selection">
-          <!-- 预言家: 选择1名玩家查看 -->
-          <div v-if="activeRole === OnuWerewolfRole.Seer" class="player-select">
-            <p>选择一名玩家查看:</p>
-            <el-select v-model="selectedPlayer" placeholder="选择玩家">
-              <el-option
-                v-for="p in otherPlayers"
-                :key="p.seat"
-                :label="`座位${p.seat} - ${displayPlayerName(p)}`"
-                :value="p.seat"
-              />
-            </el-select>
+          <!-- 预言家: 查看1名玩家或2张中心卡 -->
+          <div v-if="activeRole === OnuWerewolfRole.Seer" class="seer-select">
+            <p>选择预言家查看方式:</p>
+            <el-radio-group v-model="seerChoice" class="seer-mode">
+              <el-radio-button label="player">查看一名玩家</el-radio-button>
+              <el-radio-button label="center">查看两张中心卡</el-radio-button>
+            </el-radio-group>
+
+            <div v-if="seerChoice === 'player'" class="player-select nested-select">
+              <el-select v-model="selectedPlayer" placeholder="选择玩家">
+                <el-option
+                  v-for="p in otherPlayers"
+                  :key="p.seat"
+                  :label="`座位${p.seat} - ${displayPlayerName(p)}`"
+                  :value="p.seat"
+                />
+              </el-select>
+            </div>
+
+            <div v-else class="card-select nested-select">
+              <p class="select-hint">请选择两张不同的中心卡:</p>
+              <el-checkbox-group v-model="seerCenterCards" :max="2">
+                <el-checkbox
+                  v-for="pos in centerCardOptions"
+                  :key="pos"
+                  :label="pos"
+                >
+                  {{ getCenterCardLabel(pos) }}
+                </el-checkbox>
+              </el-checkbox-group>
+            </div>
           </div>
 
           <!-- 学徒预言家: 选择1张中心卡 -->
@@ -531,7 +551,7 @@ const availableRoles = [
   { value: OnuWerewolfRole.AlphaWolf, label: '头狼', description: '与其他狼人互相认识，并选择一名玩家变成普通狼人' },
   { value: OnuWerewolfRole.MysticWolf, label: '狼先知', description: '与其他狼人互相认识，还可查看一名其他玩家的角色' },
   { value: OnuWerewolfRole.Minion, label: '爪牙', description: '看见初始狼人；属于狼人阵营但不是狼人' },
-  { value: OnuWerewolfRole.Seer, label: '预言家', description: '可以查看一名其他玩家的角色' },
+  { value: OnuWerewolfRole.Seer, label: '预言家', description: '可以查看一名其他玩家的角色，或查看两张中心卡牌' },
   { value: OnuWerewolfRole.ApprenticeSeer, label: '学徒预言家', description: '可以查看一张中心卡牌' },
   { value: OnuWerewolfRole.Witch, label: '女巫', description: '查看一张中心卡牌，并将其交给一名玩家' },
   { value: OnuWerewolfRole.Revealer, label: '揭示者', description: '可以公开揭示一名非狼人玩家的角色卡' },
@@ -648,6 +668,8 @@ const selectedPlayer1 = ref<number | undefined>(undefined);
 const selectedPlayer2 = ref<number | undefined>(undefined);
 const selectedPlayers = ref<number[]>([]);
 const selectedCard = ref<number | undefined>(undefined);
+const seerChoice = ref<'player' | 'center'>('player');
+const seerCenterCards = ref<number[]>([]);
 const villageIdiotDirection = ref<'left' | 'right'>('left');
 const skillResult = ref<string>('');
 
@@ -758,7 +780,9 @@ const canExecuteSkill = computed(() => {
   
   switch (activeRole.value) {
     case OnuWerewolfRole.Seer:
-      return !!selectedPlayer.value;
+      return seerChoice.value === 'center'
+        ? seerCenterCards.value.length === 2
+        : selectedPlayer.value !== undefined;
     case OnuWerewolfRole.ApprenticeSeer:
     case OnuWerewolfRole.Drunk:
       return selectedCard.value !== undefined;
@@ -796,6 +820,9 @@ const buildSkillSelection = (): any => {
   
   switch (activeRole.value) {
     case OnuWerewolfRole.Seer:
+      if (seerChoice.value === 'center') {
+        return { selection: { cards: seerCenterCards.value.slice(0, 2) } };
+      }
       return { selection: { players: [selectedPlayer.value!] } };
     
     case OnuWerewolfRole.ApprenticeSeer:
@@ -993,13 +1020,21 @@ const watchRole = watch(() => activeRole.value, () => {
   selectedPlayer2.value = undefined;
   selectedPlayers.value = [];
   selectedCard.value = undefined;
+  seerChoice.value = 'player';
+  seerCenterCards.value = [];
   villageIdiotDirection.value = 'left';
   skillResult.value = '';
+});
+
+const watchSeerChoice = watch(() => seerChoice.value, () => {
+  selectedPlayer.value = undefined;
+  seerCenterCards.value = [];
 });
 
 onUnmounted(() => {
   watchConfig();
   watchRole();
+  watchSeerChoice();
 });
 </script>
 
@@ -1224,13 +1259,21 @@ onUnmounted(() => {
   gap: 15px;
 }
 
-.player-select, .card-select {
+.seer-select, .player-select, .card-select {
   display: flex;
   flex-direction: column;
   gap: 8px;
 }
 
-.player-select p, .card-select p {
+.seer-mode {
+  align-self: flex-start;
+}
+
+.nested-select {
+  margin-top: 4px;
+}
+
+.seer-select p, .player-select p, .card-select p {
   color: var(--app-text-secondary);
   font-size: 14px;
   margin: 0;
