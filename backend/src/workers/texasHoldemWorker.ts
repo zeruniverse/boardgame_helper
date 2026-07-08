@@ -494,6 +494,15 @@ class TexasHoldemWorker extends BaseGameWorker {
     };
   }
 
+  private getMinimumFullRaiseTo(): number {
+    const gs = this.gameState as TexasHoldemGameState;
+    const lastFullBet = Number.isFinite(Number(gs.lastFullBet))
+      ? Number(gs.lastFullBet)
+      : Number(gs.currentBet || 0);
+    const minRaiseSize = Math.max(1, Number(gs.lastRaiseAmount || gs.blinds?.bb || 1));
+    return Math.max(Number(gs.currentBet || 0) + 1, lastFullBet + minRaiseSize);
+  }
+
   private buildPublicGameState() {
     const gs = this.gameState as TexasHoldemGameState;
     return {
@@ -505,7 +514,7 @@ class TexasHoldemWorker extends BaseGameWorker {
       round: gs.round,
       currentBet: gs.currentBet,
       lastRaiseAmount: gs.lastRaiseAmount,
-      minRaiseTo: gs.currentBet + gs.lastRaiseAmount,
+      minRaiseTo: this.getMinimumFullRaiseTo(),
       stage: gs.stage,
       allowSystemDealing: !this.isManualDealing()
     };
@@ -1718,8 +1727,10 @@ class TexasHoldemWorker extends BaseGameWorker {
 
     const currentBet = gs.bets[playerId] || 0;
     const needToPay = raiseAmount - currentBet;
-    const previousTableBet = gs.currentBet;
-    const minRaiseTo = previousTableBet + gs.lastRaiseAmount;
+    const previousFullBet = Number.isFinite(Number(gs.lastFullBet))
+      ? Number(gs.lastFullBet)
+      : Number(gs.currentBet || 0);
+    const minRaiseTo = this.getMinimumFullRaiseTo();
 
     if (!Number.isFinite(needToPay) || needToPay <= 0) {
       this.sendToPlayer(playerId, 'error', { message: '加注金额无效' });
@@ -1749,7 +1760,7 @@ class TexasHoldemWorker extends BaseGameWorker {
     gs.bets[playerId] = raiseAmount;
     gs.pot += needToPay;
     gs.totalBets[playerId] = (gs.totalBets[playerId] || 0) + needToPay;
-    gs.lastRaiseAmount = raiseAmount - previousTableBet;
+    gs.lastRaiseAmount = raiseAmount - previousFullBet;
     gs.currentBet = raiseAmount;
     gs.lastFullBet = raiseAmount;
     gs.raiseLocked = [];

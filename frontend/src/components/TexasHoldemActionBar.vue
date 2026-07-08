@@ -57,7 +57,12 @@ const isMyTurn = computed(() => store.currentTurn === store.playerId && isInGame
 // canCall: 需要跟注金额 > 0 且有筹码即可call（筹码不足时自动转为all-in call）
 const canCall = computed(() => isMyTurn.value && toCall.value > 0 && (ownPlayer.value?.gameMetadata?.chips || 0) > 0);
 const canCheck = computed(() => isMyTurn.value && toCall.value === 0);
-const minRaiseDelta = computed(() => Math.max(1, store.lastRaiseAmount || 0));
+const minRaiseTo = computed(() => Math.max(store.minRaiseTo || 0, store.currentBet + 1));
+const minRaiseDelta = computed(() => {
+  const currentBet = store.bets[store.playerId] || 0;
+  const callAmount = toCall.value;
+  return Math.max(1, minRaiseTo.value - currentBet - callAmount);
+});
 const canRaise = computed(() => isMyTurn.value && ((ownPlayer.value?.gameMetadata?.chips || 0) > Math.max(toCall.value, 0)));
 
 // 使用game_action统一格式发送玩家操作
