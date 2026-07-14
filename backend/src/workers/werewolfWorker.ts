@@ -427,6 +427,11 @@ class WerewolfWorker extends BaseGameWorker {
       currentSpeaker,
       speakOrder: this.gameState.speakOrder,
       publicKnownRoles,
+      winner: this.gameState.winner === 'WEREWOLF'
+        ? 'werewolf'
+        : this.gameState.winner === 'VILLAGER'
+          ? 'villager'
+          : undefined,
       config: {
         dayDiscussTime: this.config?.dayTime ?? 120,
         voteTime: this.config?.voteTime ?? 60,

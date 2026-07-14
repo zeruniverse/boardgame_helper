@@ -222,6 +222,54 @@
       </div>
     </div>
 
+    <!-- 警长竞选发言阶段 -->
+    <div v-else-if="gameState.status === 'SHERIFF_SPEECH'" class="action-section">
+      <h4>警长竞选发言</h4>
+      <div class="discuss-section">
+        <div v-if="gameState.currentSpeaker" class="current-speaker">
+          <p>
+            当前发言者: {{ getPlayerDisplayName(gameState.currentSpeaker) }}
+            <span v-if="isCurrentSpeaker" class="your-turn">（你）</span>
+          </p>
+        </div>
+        <div v-if="isCurrentSpeaker && canOperate" class="speak-actions">
+          <el-button type="warning" @click="handleEndSpeak">结束发言</el-button>
+        </div>
+        <div v-else class="waiting-section">
+          <p>等待当前候选人发言...</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- 警长投票阶段 -->
+    <div v-else-if="gameState.status === 'SHERIFF_VOTE'" class="action-section">
+      <h4>投票选警长</h4>
+      <div v-if="canOperate && isAlive" class="vote-section">
+        <p>选择一名警长候选人:</p>
+        <div class="player-selection">
+          <div
+            v-for="player in getVotablePlayers()"
+            :key="player.id"
+            class="player-option"
+            :class="{ selected: selectedTarget === player.id }"
+            @click="selectedTarget = player.id"
+          >
+            <span class="player-number">{{ player.index }}号</span>
+            <span class="player-name">{{ displayPlayerName(player) }}</span>
+          </div>
+        </div>
+        <div class="vote-actions">
+          <el-button type="primary" :disabled="!selectedTarget" @click="handleVote">
+            投票
+          </el-button>
+          <el-button @click="handleSkipVote">弃权</el-button>
+        </div>
+      </div>
+      <div v-else class="waiting-section">
+        <p>等待其他玩家完成警长投票...</p>
+      </div>
+    </div>
+
     <!-- 白天讨论阶段 -->
     <div v-else-if="gameState.status === 'DAY_DISCUSS'" class="action-section">
       <h4>白天发言</h4>
@@ -375,7 +423,7 @@
     </div>
 
     <!-- 夜晚结算/过渡阶段 -->
-    <div v-else-if="['WOLF_KILL_CHECK', 'BEFORE_DAY_DISCUSS', 'EXILE_VOTE_CHECK', 'SHERIFF_VOTE_CHECK', 'HUNTER_CHECK', 'SHERIFF_ASSIGN_CHECK', 'SHERIFF_SPEECH'].includes(gameState.status)" class="action-section">
+    <div v-else-if="['WOLF_KILL_CHECK', 'BEFORE_DAY_DISCUSS', 'EXILE_VOTE_CHECK', 'SHERIFF_VOTE_CHECK', 'HUNTER_CHECK', 'SHERIFF_ASSIGN_CHECK'].includes(gameState.status)" class="action-section">
       <h4>{{ getStatusDisplayName() }}</h4>
       <div class="waiting-section">
         <p>等待系统处理...</p>
@@ -542,7 +590,8 @@ const getStatusDisplayName = () => {
     'SHERIFF_VOTE_CHECK': '统计警长投票',
     'HUNTER_CHECK': '确认猎人开枪',
     'SHERIFF_ASSIGN_CHECK': '确认警长传递',
-    'SHERIFF_SPEECH': '警长竞选发言'
+    'SHERIFF_SPEECH': '警长竞选发言',
+    'SHERIFF_VOTE': '投票选警长'
   }
   return names[props.gameState.status] || props.gameState.status
 }
@@ -557,7 +606,11 @@ const getTimePercentage = () => {
       totalTime = props.gameState.config.dayDiscussTime || 120
       break
     case 'EXILE_VOTE':
+    case 'SHERIFF_VOTE':
       totalTime = props.gameState.config.voteTime || 60
+      break
+    case 'SHERIFF_SPEECH':
+      totalTime = props.gameState.config.speakTime || 60
       break
     default:
       totalTime = props.gameState.config.nightActionTime || 60
