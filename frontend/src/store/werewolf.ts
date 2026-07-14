@@ -327,6 +327,24 @@ export const useWerewolfStore = defineStore('werewolf', {
         this.clearTimer();
       });
 
+      on('game_restarted', (data: { message?: string; gameInfo?: any }) => {
+        // 重开必须丢弃上一局的终局字段和私密身份；增量合并会保留 winner 等旧数据，
+        // 使客户端继续停留在 finished 面板，无法重新准备。
+        this.playerSecret = null;
+        this.gameState = null;
+        this.clearAutoActionTimer();
+        this.clearTimer();
+        if (data.gameInfo) {
+          this.updateGameStateFromGameInfo(data.gameInfo);
+        }
+        if (this.room) {
+          this.room.gameStarted = false;
+        }
+        if (data.message) {
+          this.addSystemMessage(data.message);
+        }
+      });
+
       // show_message - 系统消息展示
       on('show_message', (data: any) => {
         const message = typeof data === 'string' ? data : (data.message || '');

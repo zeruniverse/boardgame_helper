@@ -209,6 +209,20 @@ export const useAvalonStore = defineStore('avalon', {
         this.addSystemMessage(`游戏结束：${data.reason || fallbackReason}`);
       });
 
+      on('game_reset', (data: { message?: string; gameInfo?: AvalonGameState }) => {
+        // 重开时完整替换终局状态，避免 room_update 因旧 status=OVER 而跳过等待态同步。
+        this.playerSecret = null;
+        this.gameState = data.gameInfo || null;
+        this.clearTimer();
+        this.timerDeadline = 0;
+        if (this.room) {
+          this.room.gameStarted = false;
+        }
+        if (data.message) {
+          this.addSystemMessage(data.message);
+        }
+      });
+
       // 聊天事件
       on('chat_broadcast', (message: any) => {
         this.messages = appendLimitedMessage(this.messages, normalizeIncomingMessage(message));

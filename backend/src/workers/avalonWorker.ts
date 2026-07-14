@@ -1141,11 +1141,13 @@ class AvalonWorker extends BaseGameWorker {
       }
     });
 
-    // 重新初始化游戏
+    // 重新初始化游戏，并显式下发完整的等待态。
+    // 仅广播 room_update 无法覆盖前端仍停留在 OVER 的游戏状态，会导致所有玩家无法重新准备。
     this.initializeGameState();
-    this.sendToRoom('chat_broadcast', {
-      message: '房主重新开始游戏，请所有玩家重新准备',
-      type: 'system'
+    const message = '房主重新开始游戏，请所有玩家重新准备';
+    this.sendToRoom('game_reset', {
+      message,
+      gameInfo: this.getGameInfo()
     });
     this.sendToRoom('room_update', this.room);
   }
