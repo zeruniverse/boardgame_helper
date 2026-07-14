@@ -1,5 +1,6 @@
 import express, { Request, Response } from 'express';
 import http from 'http';
+import { timingSafeEqual } from 'crypto';
 import cors from 'cors';
 import { Server as SocketIOServer } from 'socket.io';
 import { roomController } from './controllers/roomController';
@@ -26,13 +27,32 @@ app.get('/', (_req: Request, res: Response) => {
   res.send('Boardgame Helper Server running');
 });
 
+function passwordsMatch(provided: unknown, expected: string): boolean {
+  if (typeof provided !== 'string' || provided.length === 0 || expected.length === 0) {
+    return false;
+  }
+
+  const providedBuffer = Buffer.from(provided);
+  const expectedBuffer = Buffer.from(expected);
+  return providedBuffer.length === expectedBuffer.length
+    && timingSafeEqual(providedBuffer, expectedBuffer);
+}
+
 // 重置服务器接口（HTTP POST）
 app.post('/api/reset-server', async (req: Request, res: Response) => {
   try {
-    const { password } = req.body;
-    
-    // 验证密码
-    if (!password || password !== config.server.resetPassword) {
+    const { password } = req.body ?? {};
+
+    if (!config.server.resetPassword) {
+      res.status(503).json({
+        success: false,
+        error: '服务器重置功能未配置'
+      });
+      return;
+    }
+
+    // 使用恒定时间比较，且绝不接受仓库内置的默认密码。
+    if (!passwordsMatch(password, config.server.resetPassword)) {
       res.status(401).json({
         success: false,
         error: '密码错误'

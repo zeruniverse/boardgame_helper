@@ -21,7 +21,13 @@ interface Config {
 }
 
 // 读取配置文件
+function getResetPassword(): string {
+  return process.env.RESET_PASSWORD?.trim() ?? '';
+}
+
 function loadConfig(): Config {
+  const resetPassword = getResetPassword();
+
   try {
     const configPath = path.join(__dirname, '../config.json');
     const configData = fs.readFileSync(configPath, 'utf8');
@@ -30,10 +36,15 @@ function loadConfig(): Config {
       ...config.server,
       roomCleanupTimeout: config.server?.roomCleanupTimeout ?? 60000,
       maxRooms: config.server?.maxRooms ?? 10,
-      resetPassword: config.server?.resetPassword ?? 'admin123'
+      // 重置密码只允许通过环境变量注入，避免把可破坏全部房间的凭据提交到仓库。
+      resetPassword
     };
+    if (!resetPassword) {
+      console.warn('警告: 未配置 RESET_PASSWORD，服务器重置接口已禁用');
+    }
+
     console.log('配置加载成功:', { 
-      server: { ...config.server, resetPassword: '***' }, // 隐藏密码
+      server: { ...config.server, resetPassword: resetPassword ? '***' : '(disabled)' }, // 隐藏密码
       games: Object.keys(config.games).reduce((acc, key) => {
         acc[key] = { ...config.games[key] };
         return acc;
@@ -42,12 +53,14 @@ function loadConfig(): Config {
     return config;
   } catch (error) {
     console.error('配置文件加载失败，使用默认配置:', error);
-    // 返回默认配置
-    console.warn('警告: 使用默认重置密码，请在生产环境中修改');
+    // 返回默认配置；重置接口仍只接受显式环境变量，不提供默认密码。
+    if (!resetPassword) {
+      console.warn('警告: 未配置 RESET_PASSWORD，服务器重置接口已禁用');
+    }
     return {
       server: {
         maxRooms: 10,
-        resetPassword: "admin123",
+        resetPassword,
         roomCleanupTimeout: 60000 // 60秒清理空房间
       },
       games: {

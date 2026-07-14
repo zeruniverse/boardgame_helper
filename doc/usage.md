@@ -122,7 +122,6 @@ npm run dev:frontend
 {
   "server": {
     "maxRooms": 10,
-    "resetPassword": "admin123",
     "roomCleanupTimeout": 60000
   },
   "games": {
@@ -193,7 +192,6 @@ npm run dev:frontend
 | 配置项 | 类型 | 说明 |
 |--------|------|------|
 | `maxRooms` | 整数 | 服务器允许创建的最大房间数量 |
-| `resetPassword` | 字符串 | 服务器重置密码，用于 `/api/reset-server` 接口 |
 | `roomCleanupTimeout` | 整数 | 玩家掉线后房间的清理超时时间（毫秒） |
 
 #### 游戏通用配置
@@ -324,7 +322,13 @@ npm run dev:frontend
 
 ### 服务器重置
 
-管理员可通过 HTTP 接口重置服务器，此操作将：
+管理员可通过 HTTP 接口重置服务器。该功能默认禁用，必须在启动后端前通过 `RESET_PASSWORD` 环境变量设置一个高强度随机密码：
+
+```bash
+RESET_PASSWORD='请替换为高强度随机密码' npm run dev:backend
+```
+
+未配置该环境变量时，接口返回 `503`，不会执行重置。重置操作将：
 
 - 断开所有当前连接
 - 清空所有房间数据
@@ -337,7 +341,7 @@ POST /api/reset-server
 Content-Type: application/json
 
 {
-  "password": "admin123"
+  "password": "<RESET_PASSWORD>"
 }
 ```
 
@@ -345,7 +349,7 @@ Content-Type: application/json
 
 | 参数名 | 类型 | 说明 |
 |--------|------|------|
-| `password` | 字符串 | 服务器重置密码，对应 `config.json` 中的 `server.resetPassword` |
+| `password` | 字符串 | 后端启动时通过 `RESET_PASSWORD` 环境变量配置的密码 |
 
 > **警告**：此操作不可逆，执行前请确保所有玩家已知晓。
 
