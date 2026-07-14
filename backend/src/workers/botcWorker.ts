@@ -1152,31 +1152,32 @@ export class BOTCWorker extends BaseGameWorker {
   }
 
   async joinRoom(player: Player): Promise<void> {
-    const roomPlayer = this.upsertRoomPlayer(player);
-    if (this.gameState.phase !== GamePhase.SETUP) {
-      this.sendToPlayer(roomPlayer.id, 'joinError', { message: '游戏已开始，无法加入' });
-      return;
+    const isGameInProgress = this.gameState.phase !== GamePhase.SETUP;
+    if (isGameInProgress && !this.gameConfig.allowSpectators) {
+      throw new Error('游戏已开始且未开放旁观，无法加入');
     }
 
+    const roomPlayer = this.upsertRoomPlayer(player);
     if (this.room.players.length > this.gameConfig.maxPlayers) {
-      this.sendToPlayer(roomPlayer.id, 'joinError', { message: '房间已满' });
-      return;
+      throw new Error('房间已满');
     }
 
     this.sendToRoom('playerJoined', {
       player: {
         id: roomPlayer.id,
         name: this.getPlayerName(roomPlayer.id),
-        isOnline: true
+        isOnline: true,
+        isSpectator: isGameInProgress
       },
       playerCount: this.room.players.length
     });
     this.sendToRoom('room_update', this.room);
 
-    // 发送当前游戏状态给新玩家
+    // 已开局且允许旁观时，只发送经过 viewer 过滤的公开状态；旁观者不会写入 gamePlayers。
     this.sendToPlayer(roomPlayer.id, 'gameState', {
       gameState: this.getGameStateForViewer(roomPlayer.id),
       isStoryteller: roomPlayer.id === this.gameConfig.storytellerId,
+      isSpectator: isGameInProgress,
       gameConfig: this.gameConfig
     });
   }
