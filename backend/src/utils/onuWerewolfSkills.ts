@@ -755,18 +755,31 @@ export class OnuApprenticeTannerSkill extends OnuBaseSkill {
   }
 }
 
-// 头狼技能 - 将一名玩家变成普通狼人
+// 头狼技能 - 将额外的中心狼人牌与一名非狼玩家的牌交换
 export class OnuAlphaWolfSkill extends OnuBaseSkill {
+  private isValidTarget(target: OnuWerewolfPlayer | undefined): target is OnuWerewolfPlayer {
+    return Boolean(
+      target &&
+      target.id !== this.owner.id &&
+      !target.shielded &&
+      !onuIsWerewolf(target.initialRole)
+    );
+  }
+
   canUse(selection?: OnuWerewolfSelection): boolean {
     if (!selection || !selection.players || selection.players.length !== 1) return false;
-    const target = this.getPlayerBySeat(selection.players[0]);
-    return target !== undefined && !target.shielded;
+    return this.isValidTarget(this.getPlayerBySeat(selection.players[0])) && Boolean(this.getAlphaWolfCenterCard());
   }
 
   execute(selection?: OnuWerewolfSelection): OnuSkillResult {
     const target = selection?.players?.length === 1 ? this.getPlayerBySeat(selection.players[0]) : undefined;
-    if (!target || target.shielded) {
-      return { success: false, error: '头狼必须选择一名未被保护的玩家变成普通狼人' };
+    if (!this.isValidTarget(target)) {
+      return { success: false, error: '头狼必须选择一名未被保护的非狼人玩家，且不能选择自己' };
+    }
+
+    const centerWerewolfCard = this.getAlphaWolfCenterCard();
+    if (!centerWerewolfCard) {
+      return { success: false, error: '缺少头狼所需的额外中心狼人牌' };
     }
 
     const werewolves = this.getOtherPlayers().filter(p => onuIsWerewolf(p.initialRole));
@@ -778,14 +791,18 @@ export class OnuAlphaWolfSkill extends OnuBaseSkill {
     const teammateMessage = werewolves.length > 0
       ? `狼人同伴：${werewolves.map(p => p.name).join(', ')}。`
       : '没有其他初始狼人同伴。';
+    const targetRole = target.actualRole;
 
     return {
       success: true,
       vision: visibleWerewolves.length > 0 ? onuCreateVision(visibleWerewolves) : undefined,
       roleChanges: [
-        { playerId: target.id, newRole: OnuWerewolfRole.Werewolf, type: 'actual' }
+        { playerId: target.id, newRole: centerWerewolfCard.role, type: 'actual' }
       ],
-      message: `${teammateMessage}你将${target.name}变成了普通狼人`
+      cardChanges: [
+        { position: centerWerewolfCard.position, newRole: targetRole }
+      ],
+      message: `${teammateMessage}你将中心狼人牌与${target.name}的角色牌交换了`
     };
   }
 }

@@ -548,13 +548,21 @@ class OnuWerewolfWorker extends BaseGameWorker {
       this.gameState.players[player.id] = gamePlayer;
     });
 
-    // 创建中心卡牌。参考实现固定为3张墓地/中心牌；头狼效果直接把一名玩家变成普通狼人，
-    // 不额外添加第4张中心牌，避免前后端中心卡数量和配置校验不一致。
+    // 基础游戏始终有3张中心牌。使用头狼时，官方规则要求额外放置一张
+    // “中心狼人牌”（第4张中心牌），头狼会把它与一名非狼玩家的牌交换。
     this.gameState.centerCards = centerCards.map((role, index) => ({
       position: index,
       role,
       revealed: false
     }));
+    if (this.config.roles.includes(OnuWerewolfRole.AlphaWolf)) {
+      this.gameState.centerCards.push({
+        position: 3,
+        role: OnuWerewolfRole.Werewolf,
+        revealed: false,
+        flags: [OnuWerewolfRole.AlphaWolf]
+      });
+    }
 
     this.sendToRoom('onu_game_started', {
       message: '游戏开始！角色已分发',
@@ -898,7 +906,7 @@ class OnuWerewolfWorker extends BaseGameWorker {
 
     if (skill.getRole() === OnuWerewolfRole.AlphaWolf) {
       const target = Object.values(this.gameState.players)
-        .filter(p => p.id !== player.id && !p.shielded)
+        .filter(p => p.id !== player.id && !p.shielded && !this.isInitialWolfRole(p.initialRole))
         .sort((a, b) => a.seat - b.seat)[0];
 
       if (!target) {
@@ -1064,7 +1072,7 @@ class OnuWerewolfWorker extends BaseGameWorker {
     }
 
     // 如果夜间总时限耗尽而技能队列仍未完成，剩余技能按超时处理。
-    // 头狼把一名玩家变成普通狼人是强制效果，不能被总时限直接跳过。
+    // 头狼交换额外中心狼人牌是强制效果，不能被总时限直接跳过。
     while (this.currentSkillIndex < this.skillQueue.length) {
       const currentSkillItem = this.skillQueue[this.currentSkillIndex];
       if (currentSkillItem && !currentSkillItem.player.skillUsed) {

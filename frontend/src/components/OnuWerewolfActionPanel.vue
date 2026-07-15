@@ -345,12 +345,12 @@
             </el-select>
           </div>
 
-          <!-- 头狼: 选择1名玩家变成普通狼人 -->
+          <!-- 头狼: 将额外中心狼人牌与1名非狼玩家交换 -->
           <div v-else-if="activeRole === OnuWerewolfRole.AlphaWolf" class="player-select">
-            <p>查看狼人同伴后，选择一名玩家变成普通狼人:</p>
+            <p>查看狼人同伴后，选择一名非狼人玩家，与额外的中心狼人牌交换:</p>
             <el-select v-model="selectedPlayer" placeholder="选择玩家">
               <el-option
-                v-for="p in allPlayersList"
+                v-for="p in alphaWolfTargets"
                 :key="p.seat"
                 :label="`座位${p.seat} - ${displayPlayerName(p)}`"
                 :value="p.seat"
@@ -548,7 +548,7 @@ import { formatPlayerName } from '../utils/playerName';
 // 角色定义：本项目一夜狼人按 one_night_ref/README.md 的参考实现开放角色
 const availableRoles = [
   { value: OnuWerewolfRole.Werewolf, label: '普通狼人', description: '与其他狼人互相认识，目标是不被投票出局' },
-  { value: OnuWerewolfRole.AlphaWolf, label: '头狼', description: '与其他狼人互相认识，并选择一名玩家变成普通狼人' },
+  { value: OnuWerewolfRole.AlphaWolf, label: '头狼', description: '与其他狼人互相认识，并将额外中心狼人牌与一名非狼玩家交换' },
   { value: OnuWerewolfRole.MysticWolf, label: '狼先知', description: '与其他狼人互相认识，还可查看一名其他玩家的角色' },
   { value: OnuWerewolfRole.Minion, label: '爪牙', description: '看见初始狼人；属于狼人阵营但不是狼人' },
   { value: OnuWerewolfRole.Seer, label: '预言家', description: '可以查看一名其他玩家的角色，或查看两张中心卡牌' },
@@ -717,7 +717,13 @@ const displayResultPlayerName = (player: { seat: number; name: string }) => {
   return formatPlayerName({ id: roomPlayer?.id, name: player.name }, props.currentUserId);
 };
 
-const centerCardOptions = computed(() => [0, 1, 2]);
+const centerCardOptions = computed(() => {
+  const positions = [0, 1, 2];
+  if (props.gameState?.config?.roles?.includes(OnuWerewolfRole.AlphaWolf)) {
+    positions.push(3);
+  }
+  return positions;
+});
 
 const activeRole = computed(() => props.playerSecret?.activeSkillRole ?? props.myRole);
 const mandatoryNightRoles = new Set<OnuWerewolfRole>([
@@ -727,7 +733,7 @@ const mandatoryNightRoles = new Set<OnuWerewolfRole>([
 const canSkipSkill = computed(() => Boolean(activeRole.value) && !mandatoryNightRoles.has(activeRole.value!));
 
 const getCenterCardLabel = (position: number) => {
-  return `中心卡 ${position}`;
+  return position === 3 ? '头狼中心狼人牌' : `中心卡 ${position + 1}`;
 };
 
 const votablePlayers = computed(() => {
@@ -762,6 +768,16 @@ const visionPlayers = computed(() => {
   const vision = props.playerSecret?.vision;
   if (!vision?.players || vision.players.length === 0) return [];
   return vision.players.filter(player => player.role !== OnuWerewolfRole.Unknown);
+});
+
+const alphaWolfTargets = computed(() => {
+  const knownWolfSeats = new Set(
+    visionPlayers.value
+      .filter(player => player.role === OnuWerewolfRole.Werewolf)
+      .map(player => player.seat)
+  );
+
+  return otherPlayers.value.filter(player => !knownWolfSeats.has(player.seat));
 });
 
 const displayVisionPlayerName = (seat: number) => {

@@ -4,7 +4,7 @@ import { Room } from '../models/Room';
 import { Player } from '../models/Player';
 import { createDeck, shuffleDeck } from '../utils/deck';
 import { evaluateHand } from '../utils/handEvaluator';
-import { splitPotSidePots, type SidePot } from '../utils/sidePot';
+import { calculateUncalledBetReturn, splitPotSidePots, type SidePot } from '../utils/sidePot';
 import { buildChatPayload, normalizeChatText } from '../utils/chat';
 
 if (!parentPort) {
@@ -580,9 +580,36 @@ class TexasHoldemWorker extends BaseGameWorker {
     this.sendToRoom('distribution_start', {});
   }
 
+  private returnUncalledCurrentRoundBet(): number {
+    const gs = this.gameState as TexasHoldemGameState;
+    const refund = calculateUncalledBetReturn(gs.bets);
+    if (!refund) return 0;
+
+    const player = this.room.players.find(p => p.id === refund.playerId);
+    if (!player) return 0;
+
+    const currentRoundBet = Math.max(0, Number(gs.bets[refund.playerId]) || 0);
+    const totalBet = Math.max(0, Number(gs.totalBets[refund.playerId]) || 0);
+    const amount = Math.min(refund.amount, currentRoundBet, totalBet, Math.max(0, Number(gs.pot) || 0));
+    if (amount <= 0) return 0;
+
+    gs.bets[refund.playerId] = currentRoundBet - amount;
+    gs.totalBets[refund.playerId] = totalBet - amount;
+    gs.pot -= amount;
+    player.gameMetadata.chips = Math.max(0, Number(player.gameMetadata.chips) || 0) + amount;
+    gs.currentBet = Math.max(0, ...Object.values(gs.bets).map(value => Number(value) || 0));
+
+    this.sendToRoom('chat_broadcast', {
+      message: `${player.nickname} 未被跟注的 ${amount} 筹码已退回`,
+      type: 'system'
+    });
+    return amount;
+  }
+
   private settleSingleActiveOrEmptyPot(activeIds: string[], emptyMessage = '所有玩家都已弃牌，游戏结束'): boolean {
     const gs = this.gameState as TexasHoldemGameState;
     if (activeIds.length === 1) {
+      this.returnUncalledCurrentRoundBet();
       const winner = this.room.players.find(p => p.id === activeIds[0]);
       if (!winner) {
         return false;
@@ -600,6 +627,7 @@ class TexasHoldemWorker extends BaseGameWorker {
     }
 
     if (activeIds.length === 0) {
+      this.returnUncalledCurrentRoundBet();
       if (this.isManualDealing() && gs.pot > 0) {
         this.enterManualDistribution(this.participants, `${emptyMessage}；线下发牌模式保留底池，需手动分配。`);
         return true;
@@ -1854,6 +1882,9 @@ class TexasHoldemWorker extends BaseGameWorker {
   // 进入下一回合
   private nextRound() {
     const gs = this.gameState as TexasHoldemGameState;
+
+    // 本轮唯一最高投注中，超过第二高投注的部分从未被跟注，不能进入奖池。
+    this.returnUncalledCurrentRoundBet();
 
     // 重置已行动列表和投注
     gs.acted = [];

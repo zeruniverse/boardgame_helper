@@ -3,6 +3,44 @@ export interface SidePot {
   eligibleIds: string[];
 }
 
+export interface UncalledBetReturn {
+  playerId: string;
+  amount: number;
+  matchedAmount: number;
+}
+
+/**
+ * Find the unique highest contribution in the current betting round. Any
+ * amount above the second-highest contribution was never called and must be
+ * returned before the round is closed or the pot is awarded.
+ */
+export function calculateUncalledBetReturn(
+  roundBets: Record<string, number>
+): UncalledBetReturn | null {
+  const entries = Object.entries(roundBets || {})
+    .map(([playerId, rawAmount]) => ({
+      playerId,
+      amount: Math.max(0, Number(rawAmount) || 0)
+    }))
+    .filter(entry => entry.amount > 0)
+    .sort((a, b) => b.amount - a.amount);
+
+  if (entries.length === 0) return null;
+
+  const highest = entries[0];
+  const secondHighestAmount = entries[1]?.amount || 0;
+  if (entries[1] && highest.amount === secondHighestAmount) return null;
+
+  const amount = highest.amount - secondHighestAmount;
+  if (amount <= 0) return null;
+
+  return {
+    playerId: highest.playerId,
+    amount,
+    matchedAmount: secondHighestAmount
+  };
+}
+
 /**
  * Calculate main pot and side pots from each player's total contribution.
  * Folded players cannot win, but their committed chips must stay in a
