@@ -51,7 +51,8 @@
               <el-button @click="onCashIn" :class="{ 'colored-border': true }">
                 Cash In
               </el-button>
-              <el-button type="danger" @click="onCashOut" :class="{ 'colored-border': true }">
+              <el-button type="danger" @click="onCashOut" :loading="cashOutPending" :disabled="cashOutPending"
+                         :class="{ 'colored-border': true }">
                 Cash Out
               </el-button>
             </template>
@@ -168,6 +169,7 @@ import { useTexasHoldemStore, useMainStore } from '../store';
 import { storeToRefs } from 'pinia';
 import { useRouter, useRoute } from 'vue-router';
 import { Loading, Back } from '@element-plus/icons-vue';
+import { ElMessage } from 'element-plus';
 import TexasHoldemChat from './TexasHoldemChat.vue';
 import TexasHoldemPlayerList from './TexasHoldemPlayerList.vue';
 import TexasHoldemActionBar from './TexasHoldemActionBar.vue';
@@ -192,9 +194,14 @@ const roomName = ref('');
 // 显示的房间号（优先使用服务器返回的名称，否则使用URL中的ID）
 const displayRoomName = computed(() => roomName.value || roomId);
 const isHost = computed(() => store.isHost);
+const cashOutPending = ref(false);
 
-function sendTexasAction(actionType: string, actionData: Record<string, any> = {}) {
-  emitGameAction(store.socket, store.currentRoom || roomId, store.playerId, actionType, actionData);
+function sendTexasAction(
+  actionType: string,
+  actionData: Record<string, any> = {},
+  ack?: (response: any) => void
+) {
+  return emitGameAction(store.socket, store.currentRoom || roomId, store.playerId, actionType, actionData, ack);
 }
 
 // 房间状态检查定时器
@@ -316,16 +323,26 @@ function onCashIn() {
 }
 // Cash Out - 使用game_action统一格式
 function onCashOut() {
-  if (confirm('确定要 Cash Out 并退出房间吗？')) {
-    sendTexasAction('cashout');
+  if (cashOutPending.value || !confirm('确定要 Cash Out 并退出房间吗？')) return;
 
-    // 清理所有状态
+  cashOutPending.value = true;
+  const sent = sendTexasAction('cashout', {}, (response: any) => {
+    cashOutPending.value = false;
+    if (!response?.success) {
+      ElMessage.error(response?.error || 'Cash Out 失败，请稍后重试');
+      return;
+    }
+
+    // 只有服务端确认玩家已退出房间后才清理本地状态，避免请求被拒绝时客户端误退房。
     store.resetGameState();
-
-    // 清理当前房间记忆，保留昵称与玩家ID便于下次加入
     localStorage.removeItem(GAME_STORAGE_KEYS['texas-holdem'].room || 'texas_currentRoom');
     store.currentRoom = null;
     router.push({ name: 'Lobby' });
+  });
+
+  if (!sent) {
+    cashOutPending.value = false;
+    ElMessage.error('连接不可用，无法 Cash Out');
   }
 }
 // 开始游戏 - 使用game_action统一格式

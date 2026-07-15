@@ -1717,7 +1717,7 @@ export function roomController(io: Server) {
         room.lastActiveTime = Date.now();
 
         // 发送游戏行动到房间线程
-        await sendTaskToRoom(
+        const taskResponse = await sendTaskToRoom(
           room.id,
           'game_action',
           {
@@ -1730,6 +1730,14 @@ export function roomController(io: Server) {
 
         const normalizedActionType = data.actionType.toLowerCase().replace(/[_-]/g, '');
         if (room.type === 'texas-holdem' && normalizedActionType === 'cashout') {
+          const cashOutResult = taskResponse?.data;
+          if (cashOutResult && cashOutResult.success === false) {
+            ack?.({
+              success: false,
+              error: typeof cashOutResult.error === 'string' ? cashOutResult.error : '当前无法 Cash Out'
+            });
+            return;
+          }
           await finalizeSelfRemovalByWorker(room.id, player, socket);
         }
         ack?.({ success: true });

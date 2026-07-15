@@ -333,15 +333,14 @@ class TexasHoldemWorker extends BaseGameWorker {
     }
   }
 
-  async gameAction(playerId: string, actionType: string, actionData: any): Promise<void> {
+  async gameAction(playerId: string, actionType: string, actionData: any): Promise<any> {
     try {
       switch (actionType) {
         case 'cashin':
           this.handleCashIn(playerId, actionData);
           break;
         case 'cashout':
-          this.handleCashOut(playerId, actionData);
-          break;
+          return this.handleCashOut(playerId, actionData);
         case 'startGame':
           this.handleStartGame(playerId, actionData);
           break;
@@ -738,34 +737,23 @@ class TexasHoldemWorker extends BaseGameWorker {
     });
   }
 
-  private handleCashOut(playerId: string, data: any) {
+  private handleCashOut(playerId: string, data: any): { success: boolean; error?: string } {
     const playerIndex = this.room.players.findIndex(p => p.id === playerId);
     if (playerIndex === -1) {
-      return;
+      return { success: false, error: '玩家不在房间中' };
     }
 
     const player = this.room.players[playerIndex];
     const gs = this.gameState as TexasHoldemGameState;
 
-    if (gs.stage === 'distribution' && gs.pot > 0) {
-      this.sendToPlayer(playerId, 'error', { message: '奖池结算中，请先完成分奖池后再 Cash Out' });
-      return;
-    }
-
-    // 如果游戏正在进行中且该玩家未fold，先fold
-    if (this.participants.includes(playerId) && !gs.folded.includes(playerId)) {
-      if (gs.currentTurn >= 0 && gs.currentTurn < this.room.players.length && this.room.players[gs.currentTurn].id === playerId) {
-        // 是当前回合，通过handleFold统一处理（会推进游戏）
-        this.handleFold(playerId);
-      } else {
-        // 不是当前回合，直接fold并检查是否只剩一个玩家
-        gs.folded.push(playerId);
-        this.sendToRoom('chat_broadcast', { message: `${player.nickname} cash out 并自动弃牌`, type: 'system' });
-        const activeIds = this.getActiveParticipantIds();
-        if (this.settleSingleActiveOrEmptyPot(activeIds)) {
-          // 牌局已结算或进入线下分奖池；仍继续执行 Cash Out，将该玩家移出房间。
-        }
-      }
+    // 牌局中的玩家可能已经投入筹码甚至处于全下状态。此时从房间和参与者列表中删除玩家，
+    // 会让其失去摊牌/边池资格并破坏 currentTurn、庄位和奖池结算。因此 Cash Out 只能在空闲阶段执行。
+    if (gs.stage !== 'idle') {
+      const error = gs.stage === 'distribution'
+        ? '奖池结算中，请先完成分奖池后再 Cash Out'
+        : '牌局进行中，无法 Cash Out；请等待本局结算完成';
+      this.sendToPlayer(playerId, 'error', { message: error });
+      return { success: false, error };
     }
 
     // 从房间中移除玩家
@@ -797,6 +785,7 @@ class TexasHoldemWorker extends BaseGameWorker {
 
     this.sendToRoom('chat_broadcast', { message: `${player.nickname} cash out 并退出房间`, type: 'cashout' });
     this.sendToRoom('room_update', this.room);
+    return { success: true };
   }
 
   // 开始游戏
