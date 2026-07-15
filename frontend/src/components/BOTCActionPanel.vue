@@ -453,6 +453,14 @@
               </div>
             </div>
           </div>
+          <el-button
+            v-if="canRestartGame"
+            type="primary"
+            class="restart-game-btn"
+            @click="restartGame"
+          >
+            返回准备并重新开局
+          </el-button>
         </div>
       </el-card>
     </div>
@@ -469,6 +477,7 @@ interface Props {
   nightInfo?: any
   roomId: string
   isStoryteller?: boolean
+  isHost?: boolean
   currentUserId?: string
   isAIStoryteller?: boolean
   storytellerQuestion?: { question: string, playerId: string, roleId: string } | null
@@ -483,6 +492,7 @@ interface Emits {
 const props = withDefaults(defineProps<Props>(), {
   nightInfo: null,
   isStoryteller: false,
+  isHost: false,
   currentUserId: '',
   isAIStoryteller: false,
   storytellerQuestion: null,
@@ -612,6 +622,8 @@ const hasVoted = computed(() => {
 const nominationTargets = computed(() => {
   return props.gameState?.players || []
 })
+
+const canRestartGame = computed(() => props.isHost || props.isStoryteller)
 
 const canUseDayAbility = computed(() => {
   if (props.isStoryteller || !props.currentUserId) return false
@@ -986,6 +998,13 @@ const endGame = () => {
   emit('game-action', {
     type: 'storytellerAction',
     data: { actionType: 'endGame', winner: props.gameState?.winner || 'good', reason: '说书人结束游戏' }
+  })
+}
+
+const restartGame = () => {
+  emit('game-action', {
+    type: 'restartGame',
+    data: {}
   })
 }
 

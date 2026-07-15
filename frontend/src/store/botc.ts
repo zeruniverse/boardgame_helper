@@ -313,6 +313,17 @@ export const useBOTCGameStore = defineStore('botc', () => {
           ElMessage.success(`${data.playerName} 复活！`)
         })
 
+        on('gameReset', (data) => {
+          gameState.value = data?.gameState || null
+          if (data?.gameConfig) gameConfig.value = data.gameConfig
+          playerRole.value = null
+          nightInfo.value = null
+          storytellerQuestion.value = null
+          aiStorytellerMessages.value = []
+          timeLeft.value = 0
+          ElMessage.success(data?.message || '游戏已重置，请开始新一局')
+        })
+
         // 监听游戏结束
         on('gameEnded', (data) => {
           if (gameState.value) {

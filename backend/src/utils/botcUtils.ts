@@ -17,6 +17,20 @@ import { ROLES, getRolesByTeam, NIGHT_ORDER } from './botcData';
 export const ZOMBUUL_ALIVE_REMINDER = 'Zombuul Alive';
 export const GOOD_TWIN_EXECUTED_REMINDER = 'Good Twin Executed';
 
+/**
+ * 这些角色需要说书人在白天理解自由文本、构造信息或进行主观裁决。
+ * 当前 AI 说书人没有对应的输入/裁决链路，因此自动组局时必须排除；
+ * 真人说书人模式仍可通过聊天与魔典手动主持这些角色。
+ */
+export const AI_STORYTELLER_MANUAL_ROLE_IDS: ReadonlySet<string> = new Set([
+  'gossip',
+  'minstrel',
+  'pacifist',
+  'lunatic',
+  'savant',
+  'juggler'
+]);
+
 export function isZombuulLivingWhileRegisteredDead(player?: GamePlayer | null): boolean {
   return Boolean(
     player &&
@@ -48,7 +62,11 @@ export function getPlayerSetup(playerCount: number): PlayerSetup | null {
 /**
  * 为游戏分配角色
  */
-export function assignRoles(playerIds: string[], editionId: string): Map<string, Role> {
+export function assignRoles(
+  playerIds: string[],
+  editionId: string,
+  excludedRoleIds: ReadonlySet<string> = new Set()
+): Map<string, Role> {
   const playerCount = playerIds.length;
   const setup = getPlayerSetup(playerCount);
   
@@ -57,10 +75,20 @@ export function assignRoles(playerIds: string[], editionId: string): Map<string,
   }
 
   // 获取版本的所有角色
-  const townsfolk = getRolesByTeam(editionId, Team.TOWNSFOLK);
-  const outsiders = getRolesByTeam(editionId, Team.OUTSIDER);
-  const minions = getRolesByTeam(editionId, Team.MINION);
-  const demons = getRolesByTeam(editionId, Team.DEMON);
+  const includeSupportedRole = (role: Role) => !excludedRoleIds.has(role.id);
+  const townsfolk = getRolesByTeam(editionId, Team.TOWNSFOLK).filter(includeSupportedRole);
+  const outsiders = getRolesByTeam(editionId, Team.OUTSIDER).filter(includeSupportedRole);
+  const minions = getRolesByTeam(editionId, Team.MINION).filter(includeSupportedRole);
+  const demons = getRolesByTeam(editionId, Team.DEMON).filter(includeSupportedRole);
+
+  if (
+    townsfolk.length < setup.townsfolk ||
+    outsiders.length < setup.outsiders ||
+    minions.length < setup.minions ||
+    demons.length < setup.demons
+  ) {
+    throw new Error('当前剧本中可由系统说书人安全主持的角色不足，无法生成本局配置');
+  }
 
   // 随机选择角色
   const selectedRoles: Role[] = [
@@ -90,7 +118,11 @@ export function assignRoles(playerIds: string[], editionId: string): Map<string,
  * 处理角色的setup标记
  * Baron(+2外来者), Drunk(替换镇民), FangGu(+1外来者), Vigormortis(-1外来者)
  */
-export function handleSetupMarkers(assignments: Map<string, Role>, editionId: string): Map<string, Role> {
+export function handleSetupMarkers(
+  assignments: Map<string, Role>,
+  editionId: string,
+  excludedRoleIds: ReadonlySet<string> = new Set()
+): Map<string, Role> {
   let townsfolkCount = 0;
   let outsiderCount = 0;
   
@@ -107,7 +139,8 @@ export function handleSetupMarkers(assignments: Map<string, Role>, editionId: st
     const townsfolkInPlay = Array.from(assignments.entries())
       .filter(([_, role]) => role.team === Team.TOWNSFOLK);
     
-    const outsiders = getRolesByTeam(editionId, Team.OUTSIDER);
+    const outsiders = getRolesByTeam(editionId, Team.OUTSIDER)
+      .filter(role => !excludedRoleIds.has(role.id));
     // 获取尚未使用的外来者角色
     const usedRoleIds = new Set(Array.from(assignments.values()).map(r => r.id));
     const availableOutsiders = shuffleArray(outsiders.filter(r => !usedRoleIds.has(r.id)));
@@ -133,7 +166,8 @@ export function handleSetupMarkers(assignments: Map<string, Role>, editionId: st
   if (hasFangGu) {
     const townsfolkInPlay = Array.from(assignments.entries())
       .filter(([_, role]) => role.team === Team.TOWNSFOLK);
-    const outsiders = getRolesByTeam(editionId, Team.OUTSIDER);
+    const outsiders = getRolesByTeam(editionId, Team.OUTSIDER)
+      .filter(role => !excludedRoleIds.has(role.id));
     if (outsiders.length > 0 && townsfolkInPlay.length > 0) {
       // 将一个镇民替换为外来者
       const usedOutsiderIds = new Set(Array.from(assignments.values())
@@ -150,7 +184,8 @@ export function handleSetupMarkers(assignments: Map<string, Role>, editionId: st
   if (hasVigormortis) {
     const outsidersInPlay = Array.from(assignments.entries())
       .filter(([_, role]) => role.team === Team.OUTSIDER);
-    const townsfolk = getRolesByTeam(editionId, Team.TOWNSFOLK);
+    const townsfolk = getRolesByTeam(editionId, Team.TOWNSFOLK)
+      .filter(role => !excludedRoleIds.has(role.id));
     if (outsidersInPlay.length > 0 && townsfolk.length > 0) {
       // 将一个外来者替换为镇民
       const usedTownsfolkIds = new Set(Array.from(assignments.values())
@@ -169,6 +204,7 @@ export function handleSetupMarkers(assignments: Map<string, Role>, editionId: st
     // 随机选择一个未使用的镇民角色作为酒鬼的"伪身份"
     const usedRoleIds = new Set(Array.from(assignments.values()).map(r => r.id));
     const availableTownsfolk = getRolesByTeam(editionId, Team.TOWNSFOLK)
+      .filter(role => !excludedRoleIds.has(role.id))
       .filter(r => !usedRoleIds.has(r.id));
     if (availableTownsfolk.length > 0) {
       // 在grimoire中记录酒鬼的伪身份（供说书人参考）

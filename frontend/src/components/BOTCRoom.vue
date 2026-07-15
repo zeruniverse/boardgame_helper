@@ -137,6 +137,7 @@
               :night-info="store.nightInfo"
               :room-id="roomId"
               :is-storyteller="store.isStoryteller"
+              :is-host="isHost"
               :current-user-id="store.currentUserId"
               :is-ai-storyteller="store.gameConfig?.isAIStoryteller || false"
               :storyteller-question="store.storytellerQuestion"

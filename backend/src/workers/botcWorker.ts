@@ -33,7 +33,8 @@ import {
   ZOMBUUL_ALIVE_REMINDER,
   isGoodTwinPlayer,
   GOOD_TWIN_EXECUTED_REMINDER,
-  hasLivingEvilTwin
+  hasLivingEvilTwin,
+  AI_STORYTELLER_MANUAL_ROLE_IDS
 } from '../utils/botcUtils';
 import { EDITIONS, getAllRoles, getEditionById, getRoleById, getRolesByTeam } from '../utils/botcData';
 import { processFirstNightInfo, processNightAction, processDeathAbility } from '../utils/botcSkills';
@@ -693,7 +694,9 @@ export class BOTCWorker extends BaseGameWorker {
   }
 
   private assignDrunkDisplayRoles(): void {
-    const townsfolkRoles = getRolesByTeam(this.gameConfig.edition, Team.TOWNSFOLK);
+    const isAIStoryteller = this.isComputerStoryteller();
+    const townsfolkRoles = getRolesByTeam(this.gameConfig.edition, Team.TOWNSFOLK)
+      .filter(role => !isAIStoryteller || !AI_STORYTELLER_MANUAL_ROLE_IDS.has(role.id));
     if (townsfolkRoles.length === 0) {
       return;
     }
@@ -1258,6 +1261,11 @@ export class BOTCWorker extends BaseGameWorker {
       return;
     }
 
+    if (actionType === 'restartGame') {
+      this.handleRestartGame(playerId);
+      return;
+    }
+
     if (actionType === 'storytellerAction') {
       await this.handleStoryteller(playerId, actionData);
       return;
@@ -1415,10 +1423,13 @@ export class BOTCWorker extends BaseGameWorker {
         return;
       }
       
-      const roleAssignments = assignRoles(playerIds, this.gameConfig.edition);
+      const excludedRoleIds = this.isComputerStoryteller()
+        ? AI_STORYTELLER_MANUAL_ROLE_IDS
+        : new Set<string>();
+      const roleAssignments = assignRoles(playerIds, this.gameConfig.edition, excludedRoleIds);
       
       // 处理setup标记（Baron等角色的设置影响）
-      handleSetupMarkers(roleAssignments, this.gameConfig.edition);
+      handleSetupMarkers(roleAssignments, this.gameConfig.edition, excludedRoleIds);
 
       // 创建游戏玩家（不包括说书人）
       let seatIndex = 0;
@@ -4107,6 +4118,56 @@ export class BOTCWorker extends BaseGameWorker {
     const remaining = candidates.filter(p => p.playerId !== first.playerId);
     const second = remaining[Math.floor(Math.random() * remaining.length)];
     return [first.playerId, second.playerId];
+  }
+
+  /**
+   * 终局后返回准备阶段。血染钟楼的角色、夜间行动和说书人私有状态都保存在 Worker 内存中，
+   * 因此不能只让前端切回 setup；必须在同一个原子操作中清空上一局状态，避免旧身份或旧计时器污染下一局。
+   */
+  private handleRestartGame(playerId: string): void {
+    const isHost = playerId === this.room.hostId;
+    const isHumanStoryteller = playerId === this.gameConfig.storytellerId && !this.isComputerStoryteller(playerId);
+    if (!isHost && !isHumanStoryteller) {
+      this.sendToPlayer(playerId, 'actionError', { message: '只有房主或说书人可以重新开始游戏' });
+      return;
+    }
+
+    if (this.gameState.phase !== GamePhase.ENDED) {
+      this.sendToPlayer(playerId, 'actionError', { message: '只有游戏结束后才能重新开始' });
+      return;
+    }
+
+    this.clearTimers();
+    this.gamePlayers.clear();
+    this.nightActions = [];
+    this.privateChatMessages.clear();
+    this.nightRound = 0;
+    this.previouslyPukkaTarget = null;
+    this.noExecutionToday = true;
+    this.deathsToday = [];
+    this.firstNightInfoPlayerIds.clear();
+
+    this.gameState = initializeGameState(this.gameConfig.storytellerId);
+    this.gameState.grimoire.startTime = Date.now();
+
+    // 所有客户端必须立即丢弃上一局私有身份/夜间信息；仅广播公开状态不足以清理这些本地字段。
+    for (const roomPlayer of this.room.players) {
+      this.sendToPlayer(roomPlayer.id, 'roleAssigned', {
+        role: null,
+        seat: -1,
+        isEvil: false,
+        nightInfo: null,
+        abilityState: {},
+        knownIdentities: []
+      });
+    }
+
+    this.sendToRoom('gameReset', {
+      message: '游戏已重置，请重新配置并开始新一局',
+      gameState: this.getPublicGameState(),
+      gameConfig: this.gameConfig
+    });
+    this.sendToRoom('room_update', this.room);
   }
 
   /**
