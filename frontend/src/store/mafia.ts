@@ -64,6 +64,7 @@ interface MafiaSecret {
   team: 'RED' | 'BLUE' | 'NONE';
   teammates?: string[];
   actionLock?: boolean;
+  sniperShot?: boolean;
   inspectResults?: Array<{
     target: string;
     result: 'RED' | 'BLUE';
@@ -379,6 +380,26 @@ export const useMafiaStore = defineStore('mafia', {
         if (data.message) this.addSystemMessage(data.message);
       });
 
+      // 后端会用这些事件反馈“已记录/等待队友/目标无效”等结果。
+      // 若客户端丢弃，玩家会误以为行动已提交并一直等待到夜晚超时。
+      const actionFeedbackEvents = [
+        'inspect_pending',
+        'inspect_rejected',
+        'kill_pending',
+        'kill_rejected',
+        'save_pending',
+        'save_rejected',
+        'snipe_result',
+        'snipe_rejected',
+        'vote_rejected',
+        'action_error'
+      ];
+      actionFeedbackEvents.forEach(event => {
+        on(event, (data: { message?: string }) => {
+          if (data.message) this.addSystemMessage(data.message);
+        });
+      });
+
       on('vote_received', (data: { playerId?: string; gameInfo?: MafiaGameState }) => {
         if (data.gameInfo) this.gameState = data.gameInfo;
       });
@@ -574,6 +595,10 @@ export const useMafiaStore = defineStore('mafia', {
 
     sniperShoot(targetId: string) {
       this.sendGameAction('sniper_shoot', { targetId });
+    },
+
+    skipSnipe() {
+      this.sendGameAction('sniper_skip', {});
     },
 
     vote(targetId: string) {

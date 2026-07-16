@@ -88,10 +88,17 @@
             v-for="player in getAliveOtherPlayers()"
             :key="player.id"
             @click="sniperShoot(player.id)"
-            :disabled="!canOperate || playerSecret?.sniperShot"
+            :disabled="!canUseSniper"
             size="small"
           >
             {{ displayPlayerName(player) }}
+          </el-button>
+          <el-button
+            @click="skipSnipe"
+            :disabled="!canUseSniper"
+            size="small"
+          >
+            本夜不狙击（保留机会）
           </el-button>
         </div>
       </div>
@@ -244,6 +251,7 @@ interface PlayerSecret {
   role: 'KILLER' | 'COP' | 'DOCTOR' | 'SNIPER' | 'CIVILIAN' | 'GUEST'
   team: 'RED' | 'BLUE' | 'NONE'
   teammates?: string[]
+  actionLock?: boolean
   inspectResults?: Array<{ target: string; day: number; result: 'RED' | 'BLUE' }>
   sniperShot?: boolean
 }
@@ -265,6 +273,11 @@ const canStartGame = computed(() => store.canStartGame)
 const canOperate = computed(() => store.canOperate)
 const isMyTurn = computed(() => store.isMyTurn)
 const isAlive = computed(() => store.isAlive)
+const canUseSniper = computed(() => {
+  return canOperate.value &&
+    !props.playerSecret?.sniperShot &&
+    props.playerSecret?.actionLock !== false
+})
 
 const isLastWordPlayer = computed(() => {
   return props.gameState?.lastWordPlayer === store.currentUserId
@@ -373,9 +386,13 @@ const getNightActionDescription = (): string => {
   } else if (props.playerSecret?.role === 'DOCTOR') {
     return '医生请选择今晚要救的目标'
   } else if (props.playerSecret?.role === 'SNIPER') {
-    return props.playerSecret?.sniperShot
-      ? '你已经使用过狙击机会了，请耐心等待...'
-      : '狙击手请选择今晚要狙击的目标（仅一次机会）'
+    if (props.playerSecret?.sniperShot) {
+      return '你已经使用过狙击机会了，请耐心等待...'
+    }
+    if (props.playerSecret?.actionLock === false) {
+      return '你本夜已选择保留狙击机会，请等待其他角色完成行动...'
+    }
+    return '狙击手可选择目标，或保留整局唯一一次狙击机会'
   } else {
     return '夜晚降临，请耐心等待...'
   }
@@ -397,6 +414,7 @@ const killPerson = (targetId: string) => safeAction(() => store.killPerson(targe
 const inspectSuspect = (targetId: string) => safeAction(() => store.inspectSuspect(targetId), 'inspectSuspect')
 const doctorSave = (targetId: string) => safeAction(() => store.doctorSave(targetId), 'doctorSave')
 const sniperShoot = (targetId: string) => safeAction(() => store.sniperShoot(targetId), 'sniperShoot')
+const skipSnipe = () => safeAction(() => store.skipSnipe(), 'skipSnipe')
 const vote = (targetId: string) => safeAction(() => store.vote(targetId), 'vote')
 const endSpeak = () => safeAction(() => store.endSpeak(), 'endSpeak')
 const confess = () => safeAction(() => store.confess(), 'confess')

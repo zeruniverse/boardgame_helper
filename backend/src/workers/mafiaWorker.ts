@@ -522,6 +522,9 @@ class MafiaWorker extends BaseGameWorker {
         case 'sniper_shoot':
           this.handleSniperShoot(playerId, actionData.targetId);
           break;
+        case 'sniper_skip':
+          this.handleSniperSkip(playerId);
+          break;
         case 'end_last_word':
           this.handleEndLastWord(playerId);
           break;
@@ -716,7 +719,7 @@ class MafiaWorker extends BaseGameWorker {
         saveSubmitted: Object.keys(gameState.wantToSave).length,
         saveRequired: this.getAliveOnlineDoctors().length,
         snipeSubmitted: Object.keys(gameState.wantToSnipe).length,
-        snipeRequired: gameState.sniperShot ? 0 : this.getAliveOnlineSnipers().length,
+        snipeRequired: gameState.sniperActionLock ? this.getAliveOnlineSnipers().length : 0,
         sniperShot: gameState.sniperShot
       }
     };
@@ -1214,8 +1217,40 @@ class MafiaWorker extends BaseGameWorker {
 
     const message = `你狙击了${this.getPlayerName(targetId)}`;
     this.sendToPlayer(playerId, 'snipe_result', { message });
+    this.sendToPlayer(playerId, 'secret_update', this.getSecretForPlayer(playerId));
 
     // 检查是否可以结束夜晚
+    this.endNightIfNoPendingActions();
+  }
+
+  private handleSniperSkip(playerId: string): void {
+    if (!this.gameState) return;
+    const gameState = this.gameState as MafiaGameState;
+
+    if (gameState.status !== GameStatus.NIGHT ||
+        !gameState.sniperActionLock ||
+        !gameState.topSecret?.sniper?.includes(playerId) ||
+        !gameState.players?.[playerId]?.alive) {
+      return;
+    }
+
+    if (gameState.sniperShot) {
+      this.sendToPlayer(playerId, 'snipe_rejected', {
+        message: '你已经使用过狙击机会了'
+      });
+      return;
+    }
+
+    // 本夜主动跳过不消耗整局唯一一次狙击机会。
+    gameState.sniperActionLock = false;
+    delete gameState.wantToSnipe[playerId];
+
+    this.sendToPlayer(playerId, 'snipe_result', {
+      message: '你选择本夜不使用狙击，狙击机会保留至后续回合'
+    });
+    this.sendToPlayer(playerId, 'secret_update', this.getSecretForPlayer(playerId));
+
+    // 其他角色仍未完成时保持夜晚；全部完成则立即推进，不再强制等待超时。
     this.endNightIfNoPendingActions();
   }
 
@@ -1598,6 +1633,12 @@ class MafiaWorker extends BaseGameWorker {
     gameState.copActionLock = aliveOnlineCops.length > 0;
     gameState.doctorActionLock = aliveOnlineDoctors.length > 0;
     gameState.sniperActionLock = !gameState.sniperShot && aliveOnlineSnipers.length > 0;
+
+    // 每个夜晚都刷新私密行动锁。否则狙击手上一晚主动保留机会后，
+    // 前端会一直保留 actionLock=false，后续夜晚无法再次选择是否开枪。
+    Object.keys(gameState.players).forEach(playerId => {
+      this.sendToPlayer(playerId, 'secret_update', this.getSecretForPlayer(playerId));
+    });
   }
 
   private getPlayerName(playerId: string): string {
