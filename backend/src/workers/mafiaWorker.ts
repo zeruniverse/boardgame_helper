@@ -620,7 +620,7 @@ class MafiaWorker extends BaseGameWorker {
         socketId,
         event: 'game_state_sync',
         data: {
-          game: this.getGameInfo(),
+          game: this.getGameInfo(playerId),
           secret: this.getSecretForPlayer(playerId),
           currentUserId: playerId
         }
@@ -658,7 +658,39 @@ class MafiaWorker extends BaseGameWorker {
     return roles;
   }
 
-  private getGameInfo(): any {
+  private getVisibleOperators(viewerId?: string): string[] {
+    const gameState = this.gameState as MafiaGameState;
+    if (gameState.status !== GameStatus.NIGHT) {
+      return gameState.operators;
+    }
+
+    // 夜晚 operators 是杀手/警察/医生/狙击手的真实身份集合。
+    // 房间广播必须隐藏；个性化重连状态最多只返回当前玩家自己。
+    return viewerId && gameState.operators.includes(viewerId) ? [viewerId] : [];
+  }
+
+  private canPlayerOperate(playerId: string): boolean {
+    const gameState = this.gameState as MafiaGameState;
+    if (gameState.status !== GameStatus.NIGHT) {
+      return gameState.operators.includes(playerId);
+    }
+    if (gameState.topSecret.killer.includes(playerId)) {
+      // 杀手在达成共识前允许修改选择。
+      return gameState.killerActionLock;
+    }
+    if (gameState.topSecret.cop.includes(playerId)) {
+      return gameState.copActionLock && !(playerId in gameState.inspect);
+    }
+    if (gameState.topSecret.doctor.includes(playerId)) {
+      return gameState.doctorActionLock && !(playerId in gameState.wantToSave);
+    }
+    if (gameState.topSecret.sniper.includes(playerId)) {
+      return gameState.sniperActionLock;
+    }
+    return false;
+  }
+
+  private getGameInfo(viewerId?: string): any {
     const gameState = this.gameState as MafiaGameState;
     const timeLeft = this.getTimeLeft();
     const displayConfig = this.getDisplayConfigForPlayerCount();
@@ -687,7 +719,7 @@ class MafiaWorker extends BaseGameWorker {
       players: this.getClientPlayers(),
       publicKnownRoles: this.getPublicKnownRoles(),
       day: gameState.day,
-      operators: gameState.operators,
+      operators: this.getVisibleOperators(viewerId),
       step: gameState.step,
       speakedCount: gameState.speakedCount,
       pkSpeakedCount: gameState.pkSpeakedCount,
@@ -710,18 +742,7 @@ class MafiaWorker extends BaseGameWorker {
       muteList: this.getMuteList(),
       alivePlayersOrder: gameState.alivePlayersOrder,
       speakingPlayerIndex,
-      deathQueue: gameState.deathQueue,
-      nightActions: {
-        killSubmitted: Object.keys(gameState.wantToKill).length,
-        killRequired: this.getAliveOnlineKillers().length,
-        inspectSubmitted: Object.keys(gameState.inspect).length,
-        inspectRequired: this.getAliveOnlineCops().length,
-        saveSubmitted: Object.keys(gameState.wantToSave).length,
-        saveRequired: this.getAliveOnlineDoctors().length,
-        snipeSubmitted: Object.keys(gameState.wantToSnipe).length,
-        snipeRequired: gameState.sniperActionLock ? this.getAliveOnlineSnipers().length : 0,
-        sniperShot: gameState.sniperShot
-      }
+      deathQueue: gameState.deathQueue
     };
   }
 
@@ -734,6 +755,7 @@ class MafiaWorker extends BaseGameWorker {
         role: 'KILLER',
         team: 'RED',
         teammates: gameState.topSecret.killer,
+        canOperate: this.canPlayerOperate(playerId),
         actionLock: gameState.killerActionLock,
         wantToKill: gameState.wantToKill
       };
@@ -743,6 +765,7 @@ class MafiaWorker extends BaseGameWorker {
         role: 'COP',
         team: 'BLUE',
         teammates: gameState.topSecret.cop,
+        canOperate: this.canPlayerOperate(playerId),
         actionLock: gameState.copActionLock,
         inspectResults: gameState.topSecret.copVersion.map(([target, result, day]) => ({
           target,
@@ -757,6 +780,7 @@ class MafiaWorker extends BaseGameWorker {
         role: 'DOCTOR',
         team: 'BLUE',
         teammates: gameState.topSecret.doctor,
+        canOperate: this.canPlayerOperate(playerId),
         actionLock: gameState.doctorActionLock
       };
     } else if (gameState.topSecret.sniper.includes(playerId)) {
@@ -765,6 +789,7 @@ class MafiaWorker extends BaseGameWorker {
         role: 'SNIPER',
         team: 'BLUE',
         teammates: gameState.topSecret.sniper,
+        canOperate: this.canPlayerOperate(playerId),
         actionLock: gameState.sniperActionLock,
         sniperShot: gameState.sniperShot
       };
@@ -773,6 +798,7 @@ class MafiaWorker extends BaseGameWorker {
         playerId,
         role: 'CIVILIAN',
         team: 'BLUE',
+        canOperate: this.canPlayerOperate(playerId),
         teammates: []
       };
     } else {
@@ -780,6 +806,7 @@ class MafiaWorker extends BaseGameWorker {
         playerId,
         role: 'GUEST',
         team: 'NONE',
+        canOperate: false,
         teammates: []
       };
     }
@@ -1034,7 +1061,7 @@ class MafiaWorker extends BaseGameWorker {
     shuffledPlayers.forEach(player => {
       this.sendToPlayer(player.id, 'game_started', {
         message,
-        game: this.getGameInfo(),
+        game: this.getGameInfo(player.id),
         secret: this.getSecretForPlayer(player.id)
       });
     });
@@ -1171,9 +1198,13 @@ class MafiaWorker extends BaseGameWorker {
     if (allDoctorsDone) {
       gameState.doctorActionLock = false;
       gameState.wantToSave = {};
+      aliveOnlineDoctors.forEach(doctorId => {
+        this.sendToPlayer(doctorId, 'secret_update', this.getSecretForPlayer(doctorId));
+      });
       // 检查是否可以结束夜晚
       this.endNightIfNoPendingActions();
     } else {
+      this.sendToPlayer(playerId, 'secret_update', this.getSecretForPlayer(playerId));
       this.sendToPlayer(playerId, 'save_pending', {
         message: '救人选择已记录，等待其他医生选择'
       });
@@ -1297,7 +1328,10 @@ class MafiaWorker extends BaseGameWorker {
       gameState.wantToKill = {};
 
       const message = `你们合伙谋害了${this.getPlayerName(personWillDie)}`;
-      gameState.topSecret.killer.forEach(kId => this.sendToPlayer(kId, 'kill_result', { message }));
+      gameState.topSecret.killer.forEach(kId => {
+        this.sendToPlayer(kId, 'kill_result', { message });
+        this.sendToPlayer(kId, 'secret_update', this.getSecretForPlayer(kId));
+      });
 
       // 检查是否可以结束夜晚（所有角色都完成行动）
       this.endNightIfNoPendingActions();

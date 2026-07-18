@@ -94,7 +94,8 @@ interface OnuWerewolfPlayer {
   ready: boolean;
   online?: boolean;
   voted: boolean;
-  skillUsed: boolean;
+  // 仅保留为兼容旧房间快照；服务端不再向其他玩家公开夜间行动进度。
+  skillUsed?: boolean;
   revealed?: boolean;
   revealedRole?: OnuWerewolfRole;
 }

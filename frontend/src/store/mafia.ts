@@ -63,6 +63,7 @@ interface MafiaSecret {
   role: 'KILLER' | 'COP' | 'DOCTOR' | 'SNIPER' | 'CIVILIAN' | 'GUEST';
   team: 'RED' | 'BLUE' | 'NONE';
   teammates?: string[];
+  canOperate?: boolean;
   actionLock?: boolean;
   sniperShot?: boolean;
   inspectResults?: Array<{
@@ -128,7 +129,11 @@ export const useMafiaStore = defineStore('mafia', {
     },
 
     canOperate(): boolean {
-      return this.gameState?.operators?.includes(this.currentUserId) ?? false;
+      if (!this.gameState) return false;
+      if (this.gameState.status === 'NIGHT') {
+        return this.playerSecret?.canOperate === true;
+      }
+      return this.gameState.operators?.includes(this.currentUserId) ?? false;
     },
 
     myPlayer(): MafiaPlayer | null {

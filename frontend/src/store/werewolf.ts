@@ -127,7 +127,18 @@ export const useWerewolfStore = defineStore('werewolf', {
     },
 
     canOperate(): boolean {
-      return this.gameState?.operators?.includes(this.currentUserId) ?? false;
+      if (!this.gameState || !this.currentUserId) return false;
+      const roleBySecretPhase: Record<string, string> = {
+        WOLF_KILL: 'WEREWOLF',
+        SEER_CHECK: 'SEER',
+        WITCH_ACT: 'WITCH',
+        GUARD_PROTECT: 'GUARD'
+      };
+      const requiredRole = roleBySecretPhase[this.gameState.status];
+      if (requiredRole) {
+        return this.playerSecret?.role === requiredRole && this.isAlive;
+      }
+      return this.gameState.operators?.includes(this.currentUserId) ?? false;
     },
 
     isAlive(): boolean {

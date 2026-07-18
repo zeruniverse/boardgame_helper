@@ -4253,7 +4253,9 @@ export class BOTCWorker extends BaseGameWorker {
         isAlive: !p.isDead,
         canVote: p.canVote,
         seat: p.seat,
-        hasActed: p.hasActed,
+        // 夜间是否已经行动属于魔典信息。普通玩家只能看到自己的状态，
+        // 否则房间广播会直接暴露哪些玩家会在夜间醒来以及行动顺序。
+        ...(viewerId === p.playerId ? { hasActed: p.hasActed } : {}),
         // 血染钟楼死亡后仍不公开真实角色；角色身份只给说书人/终局揭示。
         role: undefined,
         nominations: p.nominations

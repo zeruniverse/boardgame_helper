@@ -37,7 +37,7 @@
               {{ player.ready ? '已准备' : '未准备' }}
             </span>
             <span v-else-if="gameState?.status === 2" class="skill-status">
-              {{ player.skillUsed ? '已行动' : '行动中' }}
+              {{ getNightStatusText(player) }}
             </span>
             <span v-else-if="gameState?.status === 3" class="vote-status">
               {{ player.voted ? '已投票' : '投票中' }}
@@ -143,7 +143,7 @@ interface Player {
   seat?: number;
   ready: boolean;
   voted: boolean;
-  skillUsed: boolean;
+  skillUsed?: boolean;
   initialRole?: number;
   finalRole?: number;
   revealed?: boolean;
@@ -163,6 +163,8 @@ interface PlayerSecret {
   myRole?: OnuWerewolfRole;
   mySeat?: number;
   finalRole?: OnuWerewolfRole;
+  canUseSkill?: boolean;
+  skillUsed?: boolean;
   vision?: {
     players?: Array<{
       seat: number;
@@ -215,8 +217,22 @@ const getPlayerClass = (player: Player) => {
     'host-player': player.id === props.hostId,
     'ready-player': player.ready,
     'voted-player': player.voted,
-    'skill-used-player': player.skillUsed
+    // 仅允许本机根据私有状态标记自己，不能依赖公开玩家列表推断他人夜间进度。
+    'skill-used-player': player.id === props.currentUserId && props.playerSecret?.skillUsed === true
   };
+};
+
+const getNightStatusText = (player: Player): string => {
+  if (player.id !== props.currentUserId) {
+    return '夜间进行中';
+  }
+  if (props.playerSecret?.skillUsed) {
+    return '你已行动';
+  }
+  if (props.playerSecret?.canUseSkill) {
+    return '等待你的行动';
+  }
+  return '夜间进行中';
 };
 
 const canManagePlayer = (player: Player) => {
@@ -232,7 +248,7 @@ const getGameStatusText = (player: Player) => {
     case OnuWerewolfGameStatus.PREPARING:
       return '分配角色中';
     case OnuWerewolfGameStatus.NIGHT:
-      return player.skillUsed ? '已行动' : '夜晚行动中';
+      return getNightStatusText(player);
     case OnuWerewolfGameStatus.VOTING:
       return player.voted ? '已投票' : '投票中';
     case OnuWerewolfGameStatus.REVEALING:

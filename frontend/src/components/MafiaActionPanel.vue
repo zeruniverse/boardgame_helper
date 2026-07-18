@@ -251,6 +251,7 @@ interface PlayerSecret {
   role: 'KILLER' | 'COP' | 'DOCTOR' | 'SNIPER' | 'CIVILIAN' | 'GUEST'
   team: 'RED' | 'BLUE' | 'NONE'
   teammates?: string[]
+  canOperate?: boolean
   actionLock?: boolean
   inspectResults?: Array<{ target: string; day: number; result: 'RED' | 'BLUE' }>
   sniperShot?: boolean

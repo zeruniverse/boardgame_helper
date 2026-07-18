@@ -377,7 +377,8 @@ class OnuWerewolfWorker extends BaseGameWorker {
         seat: p.seat,
         ready: p.ready,
         voted: p.voted,
-        skillUsed: p.skillUsed,
+        // 夜间行动进度不能公开。按唤醒顺序展示“谁已行动”会直接泄露角色范围，
+        // 尤其在仅有少量夜间角色时几乎等同于公开身份。
         revealed: p.revealed,
         revealedRole: p.revealed ? p.actualRole : undefined
       }))
@@ -397,6 +398,7 @@ class OnuWerewolfWorker extends BaseGameWorker {
     // 根据游戏状态返回不同信息
     if (this.gameState.status === OnuWerewolfGameStatus.NIGHT) {
       result.canUseSkill = player.skillReady && !player.skillUsed;
+      result.skillUsed = player.skillUsed;
       result.skillData = player.skillData;
     } else if (this.gameState.status === OnuWerewolfGameStatus.VOTING) {
       result.canVote = !player.voted;

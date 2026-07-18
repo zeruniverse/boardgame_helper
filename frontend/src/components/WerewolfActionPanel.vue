@@ -521,7 +521,21 @@ const leaveMsg = ref<string>('')
 // 计算属性
 const canOperate = computed(() => {
   const playerId = props.playerSecret?.playerId
-  return !!playerId && !!props.gameState.operators?.includes(playerId)
+  if (!playerId) return false
+
+  const roleBySecretPhase: Record<string, string> = {
+    WOLF_KILL: 'WEREWOLF',
+    SEER_CHECK: 'SEER',
+    WITCH_ACT: 'WITCH',
+    GUARD_PROTECT: 'GUARD'
+  }
+  const requiredRole = roleBySecretPhase[props.gameState.status]
+  if (requiredRole) {
+    const alive = props.gameState.players[playerId]?.alive ?? true
+    return props.playerSecret?.role === requiredRole && alive
+  }
+
+  return !!props.gameState.operators?.includes(playerId)
 })
 
 const isCurrentSpeaker = computed(() => {

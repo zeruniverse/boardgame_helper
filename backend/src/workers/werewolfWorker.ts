@@ -370,8 +370,25 @@ class WerewolfWorker extends BaseGameWorker {
     }
   }
 
+  private getVisibleOperators(viewerId?: string): string[] {
+    const secretNightStatuses = new Set<GameStatus>([
+      GameStatus.WOLF_KILL,
+      GameStatus.SEER_CHECK,
+      GameStatus.WITCH_ACT,
+      GameStatus.GUARD_PROTECT
+    ]);
+
+    if (!secretNightStatuses.has(this.gameState.status)) {
+      return this.gameState.operators || [];
+    }
+
+    // 夜间操作者本身就是角色身份。公开状态不能携带完整 operators；
+    // 个性化重连状态最多只告诉当前玩家自己是否可操作。
+    return viewerId && this.gameState.operators?.includes(viewerId) ? [viewerId] : [];
+  }
+
   // 获取游戏公开信息
-  private getGameInfo(): any {
+  private getGameInfo(viewerId?: string): any {
     const players = this.getPublicPlayerInfo();
 
     const publicPlayers = players.map(p => ({
@@ -422,7 +439,7 @@ class WerewolfWorker extends BaseGameWorker {
       players: publicPlayers,
       playersById: playersRecord,
       needingCharacters: this.gameState.needingCharacters,
-      operators: this.gameState.operators || [],
+      operators: this.getVisibleOperators(viewerId),
       votes: votesRecord,
       currentSpeaker,
       speakOrder: this.gameState.speakOrder,
@@ -493,7 +510,7 @@ class WerewolfWorker extends BaseGameWorker {
     const secretInfo = this.getSecretForPlayer(playerId);
 
     this.sendToPlayer(playerId, 'game_state_sync', {
-      gameInfo: this.getGameInfo(),
+      gameInfo: this.getGameInfo(playerId),
       secretInfo,
       playerInfo: gamePlayer,
       currentUserId: playerId
