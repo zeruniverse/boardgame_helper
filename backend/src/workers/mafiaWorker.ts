@@ -143,6 +143,7 @@ const MAFIA_TEAM_CONFIG: Record<number, [number, number, number, number, number]
 
 const MAX_PLAYER_COUNT = 20;
 const MIN_PLAYER_COUNT = 6;
+const OFFLINE_TIMER_RETRY_MS = 1000;
 // 当前狙击结算使用单一 sniperShot/sniperTarget 状态，规则表也固定为 1 名狙击手；
 // 统一在配置入口限流，避免自定义配置出多个狙击手后后续狙击手无法行动。
 const MAX_SNIPER_COUNT = 1;
@@ -402,6 +403,12 @@ class MafiaWorker extends BaseGameWorker {
     }
 
     const gameState = this.gameState as MafiaGameState;
+    // 最后一名存活玩家离线时必须冻结当前流程。否则公开阶段会同步跳过所有操作者，
+    // 夜晚又会因为没有在线角色而立即结算，最终在同一个 Worker 事件循环里无限轮转。
+    if (![GameStatus.WAITING, GameStatus.OVER].includes(gameState.status) && !this.hasOnlineActivePlayers()) {
+      return;
+    }
+
     if (gameState.status === GameStatus.NIGHT) {
       this.refreshNightLocksForOnlinePlayers();
       this.endNightIfNoPendingActions();
@@ -416,11 +423,21 @@ class MafiaWorker extends BaseGameWorker {
       return;
     }
 
+    if (!this.hasOnlineActivePlayers()) {
+      return;
+    }
+
     this.skippingOfflineOperators = true;
     try {
       while (true) {
         const gameState = this.gameState as MafiaGameState;
         if ([GameStatus.WAITING, GameStatus.NIGHT, GameStatus.OVER].includes(gameState.status)) {
+          return;
+        }
+
+        // 某次自动跳过可能刚好跨入下一阶段；每轮重新确认仍有真人在线，
+        // 防止最后一个在线玩家掉线后继续同步吞掉整局。
+        if (!this.hasOnlineActivePlayers()) {
           return;
         }
 
@@ -1640,7 +1657,47 @@ class MafiaWorker extends BaseGameWorker {
       return;
     }
 
-    this.actionTimer = setTimeout(callback, ms);
+    let timer: NodeJS.Timeout;
+    let pausedForNoOnlinePlayers = false;
+
+    const schedule = (delay: number): void => {
+      timer = setTimeout(run, delay);
+      this.actionTimer = timer;
+    };
+
+    const run = (): void => {
+      if (this.actionTimer !== timer) {
+        return;
+      }
+      this.actionTimer = null;
+
+      const gameState = this.gameState as MafiaGameState;
+      const isActive = ![GameStatus.WAITING, GameStatus.OVER].includes(gameState.status);
+      if (isActive && !this.hasOnlineActivePlayers()) {
+        pausedForNoOnlinePlayers = true;
+        // 仅用于让重连快照显示“暂停中”而不是一个早已过期的截止时间。
+        gameState.operateEndTime = new Date(Date.now() + OFFLINE_TIMER_RETRY_MS);
+        schedule(OFFLINE_TIMER_RETRY_MS);
+        return;
+      }
+
+      if (pausedForNoOnlinePlayers && isActive) {
+        pausedForNoOnlinePlayers = false;
+        // 全员离线期间不消耗操作时间；首名有效玩家回来后重新给完整本阶段时间。
+        gameState.operateEndTime = new Date(Date.now() + ms);
+        this.sendToRoom('game_update', this.getGameInfo());
+        schedule(ms);
+        return;
+      }
+
+      callback();
+    };
+
+    schedule(ms);
+  }
+
+  private hasOnlineActivePlayers(): boolean {
+    return this.hasOnlinePlayers(this.getAlivePlayers());
   }
 
   private prepareNightActions(): void {

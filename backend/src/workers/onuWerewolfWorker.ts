@@ -60,6 +60,8 @@ interface GameTaskResponse {
   error?: string;
 }
 
+const OFFLINE_TIMER_RETRY_MS = 1000;
+
 class OnuWerewolfWorker extends BaseGameWorker {
   private config!: OnuWerewolfConfig;
   protected gameState!: OnuWerewolfGameState;
@@ -67,6 +69,7 @@ class OnuWerewolfWorker extends BaseGameWorker {
   private skillQueue: Array<{ player: OnuWerewolfPlayer; skill: OnuBaseSkill }> = [];
   private currentSkillIndex = 0;
   private skillTimeout: NodeJS.Timeout | null = null;
+  private nightQueuePausedForNoOnlinePlayers = false;
 
   constructor() {
     super();
@@ -180,6 +183,12 @@ class OnuWerewolfWorker extends BaseGameWorker {
       
       // 发送游戏状态给重连玩家
       this.sendGameStateToPlayer(playerId);
+
+      // 如果全员离线发生在两个夜间技能之间，队列不会留下 skillTimeout。
+      // 首名玩家回来后从当前索引继续，而不是等待全局夜间超时直接吞掉余下技能。
+      if (this.gameState.status === OnuWerewolfGameStatus.NIGHT && this.nightQueuePausedForNoOnlinePlayers) {
+        this.processNextSkill();
+      }
     }
   }
 
@@ -190,10 +199,18 @@ class OnuWerewolfWorker extends BaseGameWorker {
       this.sendToRoom('onu_player_offline', { message });
     }
 
+    if (this.gameState.status !== OnuWerewolfGameStatus.WAITING && !this.hasOnlineGamePlayers()) {
+      return;
+    }
+
     await this.handleOfflinePlayerAction(playerId);
   }
 
   private async handleOfflinePlayerAction(playerId: string): Promise<void> {
+    if (!this.hasOnlineGamePlayers()) {
+      return;
+    }
+
     if (this.gameState.status === OnuWerewolfGameStatus.NIGHT) {
       const currentSkillItem = this.skillQueue[this.currentSkillIndex];
       if (currentSkillItem?.player.id === playerId && !currentSkillItem.player.skillUsed) {
@@ -612,6 +629,7 @@ class OnuWerewolfWorker extends BaseGameWorker {
   private prepareSkillQueue(): void {
     this.skillQueue = [];
     this.currentSkillIndex = 0;
+    this.nightQueuePausedForNoOnlinePlayers = false;
 
     // 收集所有有技能的玩家
     const playersWithSkills: Array<{ player: OnuWerewolfPlayer; skill: OnuBaseSkill }> = [];
@@ -717,6 +735,13 @@ class OnuWerewolfWorker extends BaseGameWorker {
   }
 
   private processNextSkill(): void {
+    // 全员离线时保留当前技能索引，避免递归跳过所有秘密行动并直接结算整局。
+    if (!this.hasOnlineGamePlayers()) {
+      this.nightQueuePausedForNoOnlinePlayers = true;
+      return;
+    }
+    this.nightQueuePausedForNoOnlinePlayers = false;
+
     if (this.currentSkillIndex >= this.skillQueue.length) {
       // 所有技能处理完毕后应立即进入讨论/投票阶段；nightTime 只是夜间阶段的最长兜底时间。
       // 给一个短暂的延迟让玩家看到最后一个技能结果，同时清理全局夜间兜底计时器。
@@ -760,7 +785,7 @@ class OnuWerewolfWorker extends BaseGameWorker {
     // 使用配置的夜间时间平分每个技能时间；nightTime 为 0 时表示不限时，不应再给单个技能强制 10 秒超时。
     if (this.config.nightTime > 0) {
       const perSkillTime = Math.max(10000, Math.floor((this.config.nightTime * 1000) / Math.max(this.skillQueue.length, 1)));
-      this.skillTimeout = setTimeout(() => {
+      this.setSkillTimer(perSkillTime, () => {
         try {
           if (!player.skillUsed) {
             this.handleSkipSkill(player.id);
@@ -771,7 +796,7 @@ class OnuWerewolfWorker extends BaseGameWorker {
           this.currentSkillIndex++;
           this.processNextSkill();
         }
-      }, perSkillTime);
+      });
     }
   }
 
@@ -1420,7 +1445,83 @@ class OnuWerewolfWorker extends BaseGameWorker {
       return;
     }
 
-    this.gameTimer = setTimeout(callback, ms);
+    let timer: NodeJS.Timeout;
+    let pausedForNoOnlinePlayers = false;
+
+    const schedule = (delay: number): void => {
+      timer = setTimeout(run, delay);
+      this.gameTimer = timer;
+    };
+
+    const run = (): void => {
+      if (this.gameTimer !== timer) {
+        return;
+      }
+      this.gameTimer = null;
+
+      const isActive = ![
+        OnuWerewolfGameStatus.WAITING,
+        OnuWerewolfGameStatus.COMPLETED
+      ].includes(this.gameState.status);
+
+      if (isActive && !this.hasOnlineGamePlayers()) {
+        pausedForNoOnlinePlayers = true;
+        schedule(OFFLINE_TIMER_RETRY_MS);
+        return;
+      }
+
+      if (pausedForNoOnlinePlayers && isActive) {
+        pausedForNoOnlinePlayers = false;
+        schedule(ms);
+        return;
+      }
+
+      callback();
+    };
+
+    schedule(ms);
+  }
+
+  private setSkillTimer(ms: number, callback: () => void): void {
+    if (this.skillTimeout) {
+      clearTimeout(this.skillTimeout);
+      this.skillTimeout = null;
+    }
+
+    let timer: NodeJS.Timeout;
+    let pausedForNoOnlinePlayers = false;
+
+    const schedule = (delay: number): void => {
+      timer = setTimeout(run, delay);
+      this.skillTimeout = timer;
+    };
+
+    const run = (): void => {
+      if (this.skillTimeout !== timer) {
+        return;
+      }
+      this.skillTimeout = null;
+
+      if (this.gameState.status === OnuWerewolfGameStatus.NIGHT && !this.hasOnlineGamePlayers()) {
+        pausedForNoOnlinePlayers = true;
+        schedule(OFFLINE_TIMER_RETRY_MS);
+        return;
+      }
+
+      if (pausedForNoOnlinePlayers && this.gameState.status === OnuWerewolfGameStatus.NIGHT) {
+        pausedForNoOnlinePlayers = false;
+        schedule(ms);
+        return;
+      }
+
+      callback();
+    };
+
+    schedule(ms);
+  }
+
+  private hasOnlineGamePlayers(): boolean {
+    return this.hasOnlinePlayers(Object.keys(this.gameState.players));
   }
 
   private clearTimer(): void {
@@ -1437,6 +1538,7 @@ class OnuWerewolfWorker extends BaseGameWorker {
       this.skillTimeout = null;
     }
     this.initializeGameState();
+    this.nightQueuePausedForNoOnlinePlayers = false;
     this.gameState.config = this.config;
     
     // 重置房间玩家状态

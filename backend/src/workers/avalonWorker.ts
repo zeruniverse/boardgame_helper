@@ -162,6 +162,8 @@ const ROLE_NAMES: Record<Role, string> = {
   [Role.BAD]: '爪牙'
 };
 
+const OFFLINE_TIMER_RETRY_MS = 1000;
+
 class AvalonWorker extends BaseGameWorker {
   private config!: AvalonConfig;
   private actionTimer: NodeJS.Timeout | null = null;
@@ -299,6 +301,11 @@ class AvalonWorker extends BaseGameWorker {
       });
     }
 
+    const state = this.gameState as AvalonGameState;
+    if (![GameStatus.WAITING, GameStatus.OVER].includes(state.status) && !this.hasOnlineGamePlayers()) {
+      return;
+    }
+
     this.skipOfflineOperators();
   }
 
@@ -311,11 +318,19 @@ class AvalonWorker extends BaseGameWorker {
       return;
     }
 
+    if (!this.hasOnlineGamePlayers()) {
+      return;
+    }
+
     this.skippingOfflineOperators = true;
     try {
       while (true) {
         const state = this.gameState as AvalonGameState;
         if (state.status === GameStatus.WAITING || state.status === GameStatus.OVER) {
+          return;
+        }
+
+        if (!this.hasOnlineGamePlayers()) {
           return;
         }
 
@@ -993,9 +1008,7 @@ class AvalonWorker extends BaseGameWorker {
     }
 
     // 10秒后自动通过
-    this.assassinationTimer = setTimeout(() => {
-      this.autoApproveAssassination();
-    }, 10000);
+    this.setAssassinationTimer(10000, () => this.autoApproveAssassination());
 
     this.sendToRoom('assassinate_vote_start', {
       message: '刺客请求进行刺杀，红方成员请投票',
@@ -1372,9 +1385,85 @@ class AvalonWorker extends BaseGameWorker {
       return;
     }
 
-    this.actionTimer = setTimeout(() => {
+    const durationMs = seconds * 1000;
+    let timer: NodeJS.Timeout;
+    let pausedForNoOnlinePlayers = false;
+
+    const schedule = (delay: number): void => {
+      timer = setTimeout(run, delay);
+      this.actionTimer = timer;
+    };
+
+    const run = (): void => {
+      if (this.actionTimer !== timer) {
+        return;
+      }
+      this.actionTimer = null;
+
+      const state = this.gameState as AvalonGameState;
+      const isActive = ![GameStatus.WAITING, GameStatus.OVER].includes(state.status);
+      if (isActive && !this.hasOnlineGamePlayers()) {
+        pausedForNoOnlinePlayers = true;
+        state.operateEndTime = new Date(Date.now() + OFFLINE_TIMER_RETRY_MS);
+        schedule(OFFLINE_TIMER_RETRY_MS);
+        return;
+      }
+
+      if (pausedForNoOnlinePlayers && isActive) {
+        pausedForNoOnlinePlayers = false;
+        state.operateEndTime = new Date(Date.now() + durationMs);
+        this.sendToRoom('game_update', this.getGameInfo());
+        schedule(durationMs);
+        return;
+      }
+
       this.handleTimeout();
-    }, seconds * 1000);
+    };
+
+    schedule(durationMs);
+  }
+
+  private setAssassinationTimer(ms: number, callback: () => void): void {
+    if (this.assassinationTimer) {
+      clearTimeout(this.assassinationTimer);
+      this.assassinationTimer = null;
+    }
+
+    let timer: NodeJS.Timeout;
+    let pausedForNoOnlinePlayers = false;
+
+    const schedule = (delay: number): void => {
+      timer = setTimeout(run, delay);
+      this.assassinationTimer = timer;
+    };
+
+    const run = (): void => {
+      if (this.assassinationTimer !== timer) {
+        return;
+      }
+      this.assassinationTimer = null;
+
+      const state = this.gameState as AvalonGameState;
+      if (state.status === GameStatus.ASSASSINATE && !this.hasOnlineGamePlayers()) {
+        pausedForNoOnlinePlayers = true;
+        schedule(OFFLINE_TIMER_RETRY_MS);
+        return;
+      }
+
+      if (pausedForNoOnlinePlayers && state.status === GameStatus.ASSASSINATE) {
+        pausedForNoOnlinePlayers = false;
+        schedule(ms);
+        return;
+      }
+
+      callback();
+    };
+
+    schedule(ms);
+  }
+
+  private hasOnlineGamePlayers(): boolean {
+    return this.hasOnlinePlayers(Object.keys((this.gameState as AvalonGameState).players));
   }
 
   private handleTimeout(): void {

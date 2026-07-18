@@ -49,6 +49,7 @@ class WerewolfWorker extends BaseGameWorker {
   private config!: WerewolfConfig;
   private timers: NodeJS.Timeout[] = [];
   private skippingOfflineOperators = false;
+  private static readonly OFFLINE_TIMER_RETRY_MS = 1000;
 
   constructor() {
     super();
@@ -270,9 +271,17 @@ class WerewolfWorker extends BaseGameWorker {
       return;
     }
 
+    if (!this.hasOnlineGameActors()) {
+      return;
+    }
+
     this.skippingOfflineOperators = true;
     try {
       while (this.gameState.status !== GameStatus.WAITING && this.gameState.status !== GameStatus.OVER) {
+        if (!this.hasOnlineGameActors()) {
+          return;
+        }
+
         const offlineOperator = this.getSkippableOfflineOperator();
         if (!offlineOperator) {
           return;
@@ -933,8 +942,21 @@ class WerewolfWorker extends BaseGameWorker {
       sendToRoom: this.sendToRoom.bind(this),
       sendToPlayer: this.sendToPlayer.bind(this),
       getGameInfo: this.getGameInfo.bind(this),
+      hasOnlineGameActors: this.hasOnlineGameActors.bind(this),
       config: this.config
     };
+  }
+
+  private hasOnlineGameActors(): boolean {
+    const players = Object.values(this.gameState.players) as WerewolfPlayerState[];
+    const operatorIds = this.gameState.operators || [];
+
+    // 猎人开枪、警徽移交等阶段的操作者可能已经死亡，不能只按 isAlive 判断。
+    if (operatorIds.length > 0 && this.hasOnlinePlayers(operatorIds)) {
+      return true;
+    }
+
+    return this.hasOnlinePlayers(players.filter(player => player.isAlive).map(player => player.id));
   }
 
   // ==================== 角色行动处理 ====================
@@ -1786,16 +1808,42 @@ class WerewolfWorker extends BaseGameWorker {
   private saveTimeout(callback: () => void, ms: number): NodeJS.Timeout {
     const expectedStatus = this.gameState.status;
     const expectedSeq = (this.gameState as any).stateSeq;
-    const timer = setTimeout(() => {
+    let timer!: NodeJS.Timeout;
+    let pausedForNoOnlinePlayers = false;
+
+    const schedule = (delay: number): void => {
+      timer = setTimeout(run, delay);
+      this.timers.push(timer);
+    };
+
+    const run = (): void => {
       this.timers = this.timers.filter(t => t !== timer);
       if (this.gameState.status !== expectedStatus ||
           (this.gameState as any).stateSeq !== expectedSeq ||
           (this.gameState as any).endingStateSeq === expectedSeq) {
         return;
       }
+
+      if (!this.hasOnlineGameActors()) {
+        pausedForNoOnlinePlayers = true;
+        this.gameState.operateEndTime = new Date(Date.now() + WerewolfWorker.OFFLINE_TIMER_RETRY_MS);
+        schedule(WerewolfWorker.OFFLINE_TIMER_RETRY_MS);
+        return;
+      }
+
+      if (pausedForNoOnlinePlayers) {
+        pausedForNoOnlinePlayers = false;
+        const resumeDelay = Math.max(ms, WerewolfWorker.OFFLINE_TIMER_RETRY_MS);
+        this.gameState.operateEndTime = new Date(Date.now() + resumeDelay);
+        this.sendToRoom('game_info', { gameInfo: this.getGameInfo() });
+        schedule(resumeDelay);
+        return;
+      }
+
       callback();
-    }, ms);
-    this.timers.push(timer);
+    };
+
+    schedule(ms);
     return timer;
   }
 

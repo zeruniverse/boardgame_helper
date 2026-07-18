@@ -59,18 +59,55 @@ function getTimeoutForStatus(handler: StateHandler, context: any): number {
   return baseTimeout;
 }
 
-function scheduleStateTask(gameState: WerewolfGameState, callback: () => void, ms: number): NodeJS.Timeout {
+const OFFLINE_TIMER_RETRY_MS = 1000;
+
+function hasOnlineGameActors(context: any): boolean {
+  return typeof context?.hasOnlineGameActors !== 'function' || context.hasOnlineGameActors();
+}
+
+function scheduleStateTask(
+  gameState: WerewolfGameState,
+  context: any,
+  callback: () => void,
+  ms: number
+): NodeJS.Timeout {
   const state = gameState as WerewolfGameState & { scheduledTimers?: NodeJS.Timeout[]; stateSeq?: number };
   const expectedStatus = gameState.status;
   const expectedSeq = state.stateSeq;
-  const timer = setTimeout(() => {
+  let timer!: NodeJS.Timeout;
+  let pausedForNoOnlinePlayers = false;
+
+  const schedule = (delay: number): void => {
+    timer = setTimeout(run, delay);
+    state.scheduledTimers = [...(state.scheduledTimers || []), timer];
+  };
+
+  const run = (): void => {
     state.scheduledTimers = (state.scheduledTimers || []).filter(t => t !== timer);
     if (gameState.status !== expectedStatus || state.stateSeq !== expectedSeq) {
       return;
     }
+
+    if (!hasOnlineGameActors(context)) {
+      pausedForNoOnlinePlayers = true;
+      gameState.operateEndTime = new Date(Date.now() + OFFLINE_TIMER_RETRY_MS);
+      schedule(OFFLINE_TIMER_RETRY_MS);
+      return;
+    }
+
+    if (pausedForNoOnlinePlayers) {
+      pausedForNoOnlinePlayers = false;
+      const resumeDelay = Math.max(ms, OFFLINE_TIMER_RETRY_MS);
+      gameState.operateEndTime = new Date(Date.now() + resumeDelay);
+      context.sendToRoom('game_info', { gameInfo: context.getGameInfo() });
+      schedule(resumeDelay);
+      return;
+    }
+
     callback();
-  }, ms);
-  state.scheduledTimers = [...(state.scheduledTimers || []), timer];
+  };
+
+  schedule(ms);
   return timer;
 }
 
@@ -125,7 +162,7 @@ function extendIncompleteVoteOnce(
     gameInfo: context.getGameInfo()
   });
 
-  scheduleStateTask(gameState, () => {
+  scheduleStateTask(gameState, context, () => {
     handler.endOfState(gameState, context);
   }, VOTE_TIMEOUT_GRACE_MS);
 
@@ -177,17 +214,49 @@ export function startCurrentState(
 
   // 只有超时时间大于0才设置定时器（支持不限时模式）
   if (timeout > 0) {
-    gameState.timer = setTimeout(() => {
+    const durationMs = timeout * 1000;
+    let timer: NodeJS.Timeout;
+    let pausedForNoOnlinePlayers = false;
+
+    const schedule = (delay: number): void => {
+      timer = setTimeout(run, delay);
+      gameState.timer = timer;
+    };
+
+    const run = (): void => {
+      if (gameState.timer !== timer) {
+        return;
+      }
+      gameState.timer = undefined;
+
       try {
         const currentState = gameState as WerewolfGameState & { stateSeq?: number; endingStateSeq?: number };
         if (gameState.status !== handler.status || currentState.stateSeq !== stateSeq || currentState.endingStateSeq === stateSeq) {
           return;
         }
+
+        if (!hasOnlineGameActors(context)) {
+          pausedForNoOnlinePlayers = true;
+          gameState.operateEndTime = new Date(Date.now() + OFFLINE_TIMER_RETRY_MS);
+          schedule(OFFLINE_TIMER_RETRY_MS);
+          return;
+        }
+
+        if (pausedForNoOnlinePlayers) {
+          pausedForNoOnlinePlayers = false;
+          gameState.operateEndTime = new Date(Date.now() + durationMs);
+          context.sendToRoom('game_info', { gameInfo: context.getGameInfo() });
+          schedule(durationMs);
+          return;
+        }
+
         handler.endOfState(gameState, context);
       } catch (error) {
         console.error(`状态 ${handler.status} 结束处理出错:`, error);
       }
-    }, timeout * 1000);
+    };
+
+    schedule(durationMs);
   }
 
   gameState.operateEndTime = new Date(Date.now() + (timeout > 0 ? timeout : 0) * 1000);
@@ -777,7 +846,7 @@ export const SheriffSpeechHandler: StateHandler = {
     context.sendToRoom('show_message', {
       message: '警长竞选发言结束，即将进入警长投票'
     });
-    scheduleStateTask(gameState, () => {
+    scheduleStateTask(gameState, context, () => {
       SheriffVoteHandler.startOfState(gameState, context);
     }, 1000);
   },
@@ -795,7 +864,7 @@ export const SheriffSpeechHandler: StateHandler = {
 
     const speakOrder = gameState.speakOrder || [];
     if ((gameState.currentSpeakerIndex || 0) < speakOrder.length) {
-      scheduleStateTask(gameState, () => {
+      scheduleStateTask(gameState, context, () => {
         SheriffSpeechHandler.startOfState(gameState, context);
       }, 1000);
     } else {
@@ -970,7 +1039,7 @@ export const BeforeDayDiscussHandler: StateHandler = {
         const timeoutMs = TIMEOUT[GameStatus.BEFORE_DAY_DISCUSS] > 0
           ? TIMEOUT[GameStatus.BEFORE_DAY_DISCUSS] * 1000
           : 3000; // 不限时模式下使用默认3秒
-        scheduleStateTask(gameState, () => {
+        scheduleStateTask(gameState, context, () => {
           processDeathChain(gameState, context, gameState.pendingDeaths![0]);
         }, timeoutMs);
         return; // 提前返回，死亡链会继续处理
@@ -1005,7 +1074,7 @@ export const BeforeDayDiscussHandler: StateHandler = {
     const discussTimeoutMs = TIMEOUT[GameStatus.BEFORE_DAY_DISCUSS] > 0
       ? TIMEOUT[GameStatus.BEFORE_DAY_DISCUSS] * 1000
       : 3000;
-    scheduleStateTask(gameState, () => {
+    scheduleStateTask(gameState, context, () => {
       DayDiscussHandler.startOfState(gameState, context);
     }, discussTimeoutMs);
   },
@@ -1057,7 +1126,7 @@ export const DayDiscussHandler: StateHandler = {
     });
 
     // 延迟后进入投票
-    scheduleStateTask(gameState, () => {
+    scheduleStateTask(gameState, context, () => {
       ExileVoteHandler.startOfState(gameState, context);
     }, 3000);
   },
@@ -1078,7 +1147,7 @@ export const DayDiscussHandler: StateHandler = {
     const speakOrder = gameState.speakOrder || [];
     if ((gameState.currentSpeakerIndex || 0) < speakOrder.length) {
       // 继续下一个发言者
-      scheduleStateTask(gameState, () => {
+      scheduleStateTask(gameState, context, () => {
         DayDiscussHandler.startOfState(gameState, context);
       }, 1000);
     } else {
@@ -1128,7 +1197,7 @@ export const ExileVoteHandler: StateHandler = {
       context.sendToRoom('show_message', {
         message: '所有人都弃票，无人被放逐，即将进入夜晚'
       });
-      scheduleStateTask(gameState, () => {
+      scheduleStateTask(gameState, context, () => {
         WolfKillHandler.startOfState(gameState, context, true);
       }, getNoExileTransitionDelayMs(context));
     } else if (highestVotes.length === 1) {
@@ -1159,7 +1228,7 @@ export const ExileVoteHandler: StateHandler = {
 
         // 处理死亡链（猎人、遗言、警长传递）
         gameState.deathContext = 'day';
-        scheduleStateTask(gameState, () => {
+        scheduleStateTask(gameState, context, () => {
           processDeathChain(gameState, context, target);
         }, 3000);
         return;
@@ -1174,7 +1243,7 @@ export const ExileVoteHandler: StateHandler = {
         context.sendToRoom('show_message', {
           message: '平票PK已达最大轮数，无人被放逐，即将进入夜晚'
         });
-        scheduleStateTask(gameState, () => {
+        scheduleStateTask(gameState, context, () => {
           if (!checkAndHandleGameEnd(gameState, context)) {
             WolfKillHandler.startOfState(gameState, context, true);
           }
@@ -1201,7 +1270,7 @@ export const ExileVoteHandler: StateHandler = {
       });
 
       // PK发言后重新投票
-      scheduleStateTask(gameState, () => {
+      scheduleStateTask(gameState, context, () => {
         // 先重置投票记录，再进入PK发言状态，避免竞争条件。不能写入 0；
         // 0 是弃票，也会被 allAlivePlayersVoted 视为已投票，导致 PK 后重投提前结束。
         gameState.votes = {};
@@ -1227,7 +1296,7 @@ export const ExileVoteCheckHandler: StateHandler = {
     });
 
     // 短暂延迟后自动结束
-    scheduleStateTask(gameState, () => {
+    scheduleStateTask(gameState, context, () => {
       ExileVoteCheckHandler.endOfState(gameState, context);
     }, TIMEOUT[GameStatus.EXILE_VOTE_CHECK] * 1000);
   },
@@ -1326,7 +1395,7 @@ export const HunterShootHandler: StateHandler = {
         ...remainingDeaths
       ];
 
-      scheduleStateTask(gameState, () => {
+      scheduleStateTask(gameState, context, () => {
         processDeathChain(gameState, context, gameState.pendingDeaths![0]);
       }, 3000);
       return;
@@ -1334,7 +1403,7 @@ export const HunterShootHandler: StateHandler = {
 
     // 检查警长传递
     if (hunter && hunter.isSheriff) {
-      scheduleStateTask(gameState, () => {
+      scheduleStateTask(gameState, context, () => {
         gameState.curDyingPlayer = hunter;
         SheriffAssignHandler.startOfState(gameState, context);
       }, 3000);
@@ -1343,7 +1412,7 @@ export const HunterShootHandler: StateHandler = {
 
     // 检查遗言
     if (hunter && (hunter.die?.fromCharacter === 'VILLAGER' || gameState.currentDay <= 1)) {
-      scheduleStateTask(gameState, () => {
+      scheduleStateTask(gameState, context, () => {
         LeaveMsgHandler.startOfState(gameState, context);
       }, 3000);
       return;
@@ -1360,7 +1429,7 @@ export const HunterCheckHandler: StateHandler = {
   startOfState(gameState, context) {
     startCurrentState(this, gameState, context);
 
-    scheduleStateTask(gameState, () => {
+    scheduleStateTask(gameState, context, () => {
       HunterCheckHandler.endOfState(gameState, context);
     }, TIMEOUT[GameStatus.HUNTER_CHECK] * 1000);
   },
@@ -1401,7 +1470,7 @@ export const LeaveMsgHandler: StateHandler = {
       });
     } else {
       // 没有遗言对象，直接跳过
-      scheduleStateTask(gameState, () => {
+      scheduleStateTask(gameState, context, () => {
         LeaveMsgHandler.endOfState(gameState, context);
       }, 1000);
     }
@@ -1423,7 +1492,7 @@ export const LeaveMsgHandler: StateHandler = {
 
     // 如果是警长死亡，传递警徽
     if (dyingPlayer && dyingPlayer.isSheriff) {
-      scheduleStateTask(gameState, () => {
+      scheduleStateTask(gameState, context, () => {
         SheriffAssignHandler.startOfState(gameState, context);
       }, 1000);
       return;
@@ -1450,7 +1519,7 @@ export const SheriffAssignHandler: StateHandler = {
       });
     } else {
       // 没有需要传递警徽的警长
-      scheduleStateTask(gameState, () => {
+      scheduleStateTask(gameState, context, () => {
         SheriffAssignHandler.endOfState(gameState, context);
       }, 1000);
     }
@@ -1496,7 +1565,7 @@ export const SheriffAssignCheckHandler: StateHandler = {
   startOfState(gameState, context) {
     startCurrentState(this, gameState, context);
 
-    scheduleStateTask(gameState, () => {
+    scheduleStateTask(gameState, context, () => {
       SheriffAssignCheckHandler.endOfState(gameState, context);
     }, TIMEOUT[GameStatus.SHERIFF_ASSIGN_CHECK] * 1000);
   },
@@ -1537,7 +1606,7 @@ export const WolfKillCheckHandler: StateHandler = {
         });
       });
 
-    scheduleStateTask(gameState, () => {
+    scheduleStateTask(gameState, context, () => {
       WolfKillCheckHandler.endOfState(gameState, context);
     }, TIMEOUT[GameStatus.WOLF_KILL_CHECK] * 1000);
   },
@@ -1570,7 +1639,7 @@ export const SheriffVoteCheckHandler: StateHandler = {
   startOfState(gameState, context) {
     startCurrentState(this, gameState, context);
 
-    scheduleStateTask(gameState, () => {
+    scheduleStateTask(gameState, context, () => {
       SheriffVoteCheckHandler.endOfState(gameState, context);
     }, TIMEOUT[GameStatus.SHERIFF_VOTE_CHECK] * 1000);
   },
@@ -1594,7 +1663,7 @@ export const stateHandlers: Record<GameStatus, StateHandler> = {
     status: GameStatus.WAITING,
     startOfState(gameState, context) {
       // WAITING状态自动推进到WOLF_KILL，避免卡住
-      scheduleStateTask(gameState, () => {
+      scheduleStateTask(gameState, context, () => {
         WolfKillHandler.startOfState(gameState, context, true);
       }, 1000);
     },

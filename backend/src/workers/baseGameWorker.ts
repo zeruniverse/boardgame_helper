@@ -77,6 +77,25 @@ export abstract class BaseGameWorker {
   }
 
   /**
+   * 判断指定玩家集合中是否仍有在线玩家。
+   *
+   * 游戏线程收到 player_offline 前，主线程会先同步最新 Room，因此这里可以作为
+   * 各游戏“全员离线时暂停自动推进”的统一事实来源。未传 playerIds 时检查整个房间。
+   */
+  protected hasOnlinePlayers(playerIds?: Iterable<string>): boolean {
+    if (!this.room?.players?.length) {
+      return false;
+    }
+
+    if (!playerIds) {
+      return this.room.players.some(player => player.online !== false);
+    }
+
+    const allowedIds = new Set(playerIds);
+    return this.room.players.some(player => allowedIds.has(player.id) && player.online !== false);
+  }
+
+  /**
    * 根据框架传入的玩家信息同步房间内的玩家对象。
    * Worker 收到的 task.data.player 与 this.room.players 中的对象不是同一个引用，
    * 因此游戏初始化数据必须写回房间里的玩家对象。
