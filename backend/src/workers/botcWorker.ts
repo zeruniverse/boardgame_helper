@@ -4265,7 +4265,10 @@ export class BOTCWorker extends BaseGameWorker {
       endDayProposal: this.endDayProposal.isActive ? {
         isActive: this.endDayProposal.isActive,
         proposerId: this.endDayProposal.proposerId,
-        votes: this.endDayProposal.votes
+        votes: this.endDayProposal.votes,
+        // 客户端必须基于服务端的绝对截止时间显示倒计时；仅在提议者本地启动
+        // 60 秒计时会让其他玩家和重连玩家一直看到静止的“60 秒”。
+        endTime: this.endDayProposal.startTime + 60000
       } : undefined
     };
   }

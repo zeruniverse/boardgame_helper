@@ -43,7 +43,7 @@
           <span class="quick-actions-title">快捷操作</span>
           <div class="quick-action-buttons">
             <template v-if="store.stage === 'idle' && isInRoom">
-              <el-button type="success" @click="onStartGame"
+              <el-button v-if="isHost" type="success" @click="onStartGame"
                          :disabled="!canStartGame"
                          :class="{ 'colored-border': canStartGame, 'disabled-border': !canStartGame }">
                 开始游戏
@@ -377,7 +377,7 @@ const quickBetAmount = computed(() => Math.max(minRaiseDelta.value, Math.floor(s
 const canStartGame = computed(() => {
   // 修复：游戏开始前participants为空，应直接检查有多少玩家有筹码
   const playersWithChips = store.players.filter((p: any) => p.gameMetadata?.chips > 0);
-  return playersWithChips.length >= 2;
+  return isHost.value && playersWithChips.length >= 2;
 });
 // 使用playerId判断是否在参与游戏中
 const isInGame = computed(() => {

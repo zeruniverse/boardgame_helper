@@ -89,16 +89,15 @@ export const useBOTCGameStore = defineStore('botc', () => {
           reject(error)
         })
 
-        // 监听错误消息 - 后端使用actionError，房间控制器使用error
-        on('actionError', (data) => {
+        // worker 的普通行动错误使用 actionError，启动失败使用 gameError，
+        // 房间控制器使用 error；统一处理，避免关键失败在客户端静默丢失。
+        const handleServerError = (data: unknown) => {
           console.error('血染钟楼: 服务器错误:', data)
           ElMessage.error(normalizeErrorMessage(data, '发生未知错误'))
-        })
-
-        on('error', (data) => {
-          console.error('血染钟楼: 通用错误:', data)
-          ElMessage.error(normalizeErrorMessage(data, '发生未知错误'))
-        })
+        }
+        on('actionError', handleServerError)
+        on('gameError', handleServerError)
+        on('error', handleServerError)
 
         // 监听用户认证
         on('user_authenticated', (data) => {

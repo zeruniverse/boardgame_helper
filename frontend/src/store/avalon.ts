@@ -260,12 +260,15 @@ export const useAvalonStore = defineStore('avalon', {
         this.addSystemMessage(data.message || '刺客请求进行刺杀');
       });
 
-      // 错误事件
-      on('error', (error: unknown) => {
+      // 错误事件：房间控制器使用 error，阿瓦隆 worker 使用 game_error。
+      // 两种事件必须走同一处理逻辑，否则被后端拒绝的关键操作在前端会表现为“点击无反应”。
+      const handleServerError = (error: unknown) => {
         const message = normalizeErrorMessage(error);
         this.errorMessage = message;
         this.addSystemMessage(`错误：${message}`);
-      });
+      };
+      on('game_error', handleServerError);
+      on('error', handleServerError);
 
       // 时间同步
       on('time_update', (data: { timeLeft: number }) => {

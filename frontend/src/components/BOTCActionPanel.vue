@@ -549,11 +549,20 @@ const watchNightActionConfirmation = watch(() => props.nightInfo, (info) => {
   }
 })
 
-const watchEndDayProposal = watch(() => props.gameState?.endDayProposal?.isActive, (isActive) => {
-  if (!isActive) {
-    stopEndDayTimer()
-  }
-})
+const watchEndDayProposal = watch(
+  () => ({
+    isActive: props.gameState?.endDayProposal?.isActive === true,
+    endTime: Number(props.gameState?.endDayProposal?.endTime) || 0
+  }),
+  ({ isActive, endTime }) => {
+    if (isActive) {
+      startEndDayTimer(endTime)
+    } else {
+      stopEndDayTimer()
+    }
+  },
+  { immediate: true }
+)
 
 onUnmounted(() => {
   watchPhase()
@@ -875,7 +884,6 @@ const proposeEndDay = () => {
     type: 'proposeEndDay',
     data: {}
   })
-  startEndDayTimer()
 }
 
 const voteEndDay = (voteChoice: 'agree' | 'disagree') => {
@@ -885,13 +893,23 @@ const voteEndDay = (voteChoice: 'agree' | 'disagree') => {
   })
 }
 
-const startEndDayTimer = () => {
-  endDayTimeLeft.value = 60
+const startEndDayTimer = (endTime: number) => {
   if (endDayTimerInterval) {
     clearInterval(endDayTimerInterval)
+    endDayTimerInterval = null
   }
+
+  const updateTimeLeft = () => {
+    endDayTimeLeft.value = endTime > 0
+      ? Math.max(0, Math.ceil((endTime - Date.now()) / 1000))
+      : 0
+  }
+
+  updateTimeLeft()
+  if (endDayTimeLeft.value <= 0) return
+
   endDayTimerInterval = setInterval(() => {
-    endDayTimeLeft.value--
+    updateTimeLeft()
     if (endDayTimeLeft.value <= 0) {
       if (endDayTimerInterval) {
         clearInterval(endDayTimerInterval)

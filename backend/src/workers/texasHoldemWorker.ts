@@ -928,6 +928,7 @@ class TexasHoldemWorker extends BaseGameWorker {
   private handleStartGame(playerId: string, data: any) {
     // 检查是否为房主
     if (this.room.hostId !== playerId) {
+      this.sendToPlayer(playerId, 'error', { message: '只有房主可以开始游戏' });
       return;
     }
 
