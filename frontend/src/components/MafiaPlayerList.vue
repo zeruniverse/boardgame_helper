@@ -397,7 +397,9 @@ const resetRoleConfigToDefault = () => {
 
 // 计算属性
 const isHost = computed(() => props.hostId === props.currentUserId)
-const gameStarted = computed(() => !!props.gamePlayersById && Object.keys(props.gamePlayersById).length > 0)
+// 后端在等待阶段也会同步 gamePlayersById，不能再用玩家数据是否存在判断游戏已开始。
+// 以状态机为唯一事实来源，避免等待阶段误隐藏准备列表和房主配置面板。
+const gameStarted = computed(() => props.gameState?.status !== undefined && props.gameState.status !== 'WAITING')
 
 const gamePlayersList = computed(() => {
   if (!props.gamePlayersById) return []
