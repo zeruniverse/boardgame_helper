@@ -23,6 +23,7 @@ export const GOOD_TWIN_EXECUTED_REMINDER = 'Good Twin Executed';
  * 真人说书人模式仍可通过聊天与魔典手动主持这些角色。
  */
 export const AI_STORYTELLER_MANUAL_ROLE_IDS: ReadonlySet<string> = new Set([
+  'artist',
   'gossip',
   'minstrel',
   'pacifist',

@@ -405,6 +405,9 @@ export class BOTCWorker extends BaseGameWorker {
         const role = this.resolveSubmittedRole(action.data?.ability || action.data?.characterId || action.data?.roleId);
         if (!role) return '哲学家必须选择一个有效角色';
         if (role.team !== Team.TOWNSFOLK && role.team !== Team.OUTSIDER) return '哲学家只能选择善良角色';
+        if (this.isComputerStoryteller() && AI_STORYTELLER_MANUAL_ROLE_IDS.has(role.id)) {
+          return '电脑说书人模式暂不支持该角色，请选择其他善良角色';
+        }
         return null;
       }
       case 'cerenovus':
@@ -413,7 +416,11 @@ export class BOTCWorker extends BaseGameWorker {
       case 'pithag': {
         const role = this.resolveSubmittedRole(action.data?.characterId || action.data?.character || action.data?.roleId);
         return requireExactlyOne('坑巫必须选择一名玩家') ||
-          (!role ? '坑巫选择的角色不存在' : null);
+          (!role
+            ? '坑巫选择的角色不存在'
+            : (this.isComputerStoryteller() && AI_STORYTELLER_MANUAL_ROLE_IDS.has(role.id)
+              ? '电脑说书人模式暂不支持把玩家变成该角色'
+              : null));
       }
       case 'fanggu':
         return requireExactlyOne('彊尸必须选择一名玩家');
@@ -856,10 +863,10 @@ export class BOTCWorker extends BaseGameWorker {
 
   /**
    * AI说书人生成模板回答
-   * 根据AI偏好（good/evil/neutral）生成对不同问题的回答
+   * 这里只生成客观答案；阵营偏好只能影响说书人的裁量选择，不能让正常能力无故收到假信息。
    */
   private generateAIStorytellerResponse(player: GamePlayer, questionType: string, data: any): any {
-    const aiBias = this.gameConfig.aiBias || 'neutral';
+    void player;
     const allPlayers = Array.from(this.gamePlayers.values());
 
     switch (questionType) {
@@ -869,17 +876,8 @@ export class BOTCWorker extends BaseGameWorker {
         const target = this.gamePlayers.get(targetId);
         if (!target) return { answer: '无法确定', targetId };
         const actuallyEvil = isEvilPlayer(target);
-        // AI偏向影响答案准确性
-        let reportedEvil = actuallyEvil;
-        if (aiBias === 'good' && actuallyEvil && Math.random() < 0.3) {
-          reportedEvil = false;
-        } else if (aiBias === 'evil' && !actuallyEvil && Math.random() < 0.3) {
-          reportedEvil = true;
-        } else if (aiBias === 'neutral' && Math.random() < 0.15) {
-          reportedEvil = !actuallyEvil;
-        }
         return {
-          answer: reportedEvil ? '坏人' : '好人',
+          answer: actuallyEvil ? '坏人' : '好人',
           targetId,
           targetName: this.getPlayerName(targetId)
         };
@@ -891,21 +889,9 @@ export class BOTCWorker extends BaseGameWorker {
         const target = this.gamePlayers.get(targetId);
         if (!target) return { answer: '无法确定', targetId };
         const actualRole = this.getEffectiveRole(target);
-        let reportedRole = actualRole;
-        // 邪恶偏向可能给出错误信息
-        if (aiBias === 'evil' && !isEvilPlayer(target) && Math.random() < 0.35) {
-          const outsiderRoles = getRolesByTeam(this.gameConfig.edition, Team.OUTSIDER);
-          const townsfolkRoles = getRolesByTeam(this.gameConfig.edition, Team.TOWNSFOLK);
-          const fakePool = [...outsiderRoles, ...townsfolkRoles].filter(r => r.id !== actualRole?.id);
-          reportedRole = fakePool[Math.floor(Math.random() * fakePool.length)] || actualRole;
-        } else if (aiBias === 'good' && isEvilPlayer(target) && Math.random() < 0.25) {
-          // 善良偏向：可能将邪恶角色报告为较不危险的角色
-          const outsiderRoles = getRolesByTeam(this.gameConfig.edition, Team.OUTSIDER);
-          reportedRole = outsiderRoles[Math.floor(Math.random() * outsiderRoles.length)] || actualRole;
-        }
         return {
-          answer: reportedRole?.name || '未知',
-          roleId: reportedRole?.id,
+          answer: actualRole?.name || '未知',
+          roleId: actualRole?.id,
           targetId,
           targetName: this.getPlayerName(targetId)
         };
@@ -914,33 +900,17 @@ export class BOTCWorker extends BaseGameWorker {
       case 'yesNo': {
         // "是/否"回答 —— 供艺术家等角色
         const actualAnswer = data.actualAnswer;
-        let answer = actualAnswer;
-        if (aiBias === 'good' && !actualAnswer && Math.random() < 0.2) {
-          answer = true;
-        } else if (aiBias === 'evil' && actualAnswer && Math.random() < 0.35) {
-          answer = false;
-        } else if (aiBias === 'neutral' && Math.random() < 0.15) {
-          answer = !actualAnswer;
-        }
         return {
-          answer: answer ? '是' : '否'
+          answer: actualAnswer ? '是' : '否'
         };
       }
 
       case 'adjacentEvil': {
         // "X个坏人相邻" —— 供厨师类信息
         const actualCount = data.adjacentEvilPairs ?? 0;
-        let reportedCount = actualCount;
-        if (aiBias === 'good' && actualCount > 0 && Math.random() < 0.25) {
-          reportedCount = Math.max(0, actualCount - 1);
-        } else if (aiBias === 'evil' && actualCount === 0 && Math.random() < 0.3) {
-          reportedCount = 1;
-        } else if (aiBias === 'neutral' && Math.random() < 0.15) {
-          reportedCount = (reportedCount + 1) % 3;
-        }
         return {
-          answer: `${reportedCount}个坏人相邻`,
-          count: reportedCount
+          answer: `${actualCount}个坏人相邻`,
+          count: actualCount
         };
       }
 
@@ -949,14 +919,8 @@ export class BOTCWorker extends BaseGameWorker {
         const characterId = data.characterId;
         const characterRole = getRoleById(characterId);
         const isInPlay = allPlayers.some(p => !p.isDead && (p.role?.id === characterId || p.displayRole?.id === characterId));
-        let answer = isInPlay;
-        if (aiBias === 'evil' && isInPlay && Math.random() < 0.3) {
-          answer = false;
-        } else if (aiBias === 'good' && !isInPlay && Math.random() < 0.2) {
-          answer = true;
-        }
         return {
-          answer: answer ? '该角色在场且能力有效' : '该角色不在场或能力无效',
+          answer: isInPlay ? '该角色在场且能力有效' : '该角色不在场或能力无效',
           characterId,
           characterName: characterRole?.name || characterId
         };
@@ -1595,8 +1559,8 @@ export class BOTCWorker extends BaseGameWorker {
         this.schedulePhaseTimer('night', this.gameConfig.nightTimer, () => this.handleNightTimeout());
       }
 
-      // 如果配置了电脑说书人，自动处理夜晚
-      this.autoStorytellerProcess();
+      // 电脑说书人只负责裁决和超时推进，不能替玩家选择夜间目标。
+      // 未行动玩家由 nightTimer 到期后的 handleNightTimeout 统一跳过。
     }
 
     this.sendToRoom('nightStarted', {
@@ -2884,6 +2848,12 @@ export class BOTCWorker extends BaseGameWorker {
           this.sendToPlayer(playerId, 'actionError', { message: '你不是艺术家' });
           return;
         }
+        if (this.isComputerStoryteller()) {
+          this.sendToPlayer(playerId, 'actionError', {
+            message: '电脑说书人模式暂不支持需要理解自由文本问题的艺术家'
+          });
+          return;
+        }
         if (player.reminders.includes('No ability')) {
           this.sendToPlayer(playerId, 'actionError', { message: '你已经使用过艺术家能力了' });
           return;
@@ -3717,37 +3687,19 @@ export class BOTCWorker extends BaseGameWorker {
       }
       this.broadcastGameState();
 
-      // 乌鸦饲养员可以选择任意玩家学习其角色；规则文本没有限制为存活玩家或非自己。
+      // 乌鸦饲养员必须由玩家本人选择目标。电脑说书人只裁决结果，不能代替玩家选择。
       const allPlayers = Array.from(this.gamePlayers.values());
       const availableTargets = allPlayers;
       if (availableTargets.length > 0) {
-        // 检查是否是AI说书人模式
-        const isComputerStoryteller = this.isComputerStoryteller();
-        if (isComputerStoryteller) {
-          // AI模式下随机选择
-          const randomPlayer = availableTargets[Math.floor(Math.random() * availableTargets.length)];
-          this.sendNightInfoToPlayer(playerId, {
-            role: 'ravenkeeper',
-            information: { 
-              playerId: randomPlayer.playerId,
-              playerName: this.getPlayerName(randomPlayer.playerId),
-              roleName: randomPlayer.role?.name,
-              roleId: randomPlayer.role?.id
-            },
-            isDeathAbility: true
-          });
-        } else {
-          // 玩家模式下，提示玩家选择目标
-          player.reminders.push('ravenkeeperDeathAbilityPending');
-          this.sendToPlayer(playerId, 'deathAbilityPrompt', {
-            role: 'ravenkeeper',
-            message: '你是乌鸦饲养员，你死了。请选择一名玩家来学习他的角色。',
-            availableTargets: availableTargets.map(p => ({
-              playerId: p.playerId,
-              playerName: this.getPlayerName(p.playerId)
-            }))
-          });
-        }
+        player.reminders.push('ravenkeeperDeathAbilityPending');
+        this.sendToPlayer(playerId, 'deathAbilityPrompt', {
+          role: 'ravenkeeper',
+          message: '你是乌鸦饲养员，你死了。请选择一名玩家来学习他的角色。',
+          availableTargets: availableTargets.map(p => ({
+            playerId: p.playerId,
+            playerName: this.getPlayerName(p.playerId)
+          }))
+        });
       }
       const gameEndRk = checkGameEnd(
         Array.from(this.gamePlayers.values()),
