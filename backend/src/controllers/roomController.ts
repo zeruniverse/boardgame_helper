@@ -18,6 +18,10 @@ const hostKickVotes: Map<string, {
   timer: NodeJS.Timeout;
 }> = new Map();
 
+// 房主临时断线时保留一个很短的重连窗口；超过该时间仍离线，则把房主交给
+// 当前在线玩家，避免锁房、开局、重开和配置入口永久卡在离线房主手中。
+const HOST_DISCONNECT_FAILOVER_GRACE_MS = 15000;
+
 // 每个房间座位的服务端会话令牌。令牌只通过 room_joined 返回给本人，
 // 不进入 room_update / player.gameMetadata，避免房间内其他玩家凭公开 playerId 冒用座位。
 const playerSessionTokens: Map<string, string> = new Map();
@@ -658,6 +662,71 @@ export function roomController(io: Server) {
     return latestRoom;
   }
 
+  async function reassignOfflineHost(
+    roomId: string,
+    expectedHostId: string,
+    expectedOfflineAt: number,
+    reason: 'disconnect' | 'leave'
+  ): Promise<Room | undefined> {
+    const latestRoom = rooms.get(roomId);
+    if (!latestRoom || latestRoom.hostId !== expectedHostId) {
+      return latestRoom;
+    }
+
+    const offlineHost = latestRoom.players.find(player => player.id === expectedHostId);
+    if (!offlineHost || offlineHost.online !== false || Number(offlineHost.lastHeartbeat || 0) !== expectedOfflineAt) {
+      return latestRoom;
+    }
+
+    const nextHost = latestRoom.players.find(player => player.id !== expectedHostId && player.online);
+    if (!nextHost) {
+      return latestRoom;
+    }
+
+    latestRoom.hostId = nextHost.id;
+    latestRoom.lastActiveTime = Math.max(Date.now(), Number(latestRoom.lastActiveTime || 0) + 1);
+
+    const pendingVote = hostKickVotes.get(roomId);
+    if (pendingVote) {
+      clearTimeout(pendingVote.timer);
+      hostKickVotes.delete(roomId);
+    }
+
+    rooms.set(roomId, latestRoom);
+    threadManager.updateRoomData(roomId, latestRoom);
+    try {
+      await sendTaskToRoom(roomId, 'update_room_data', { room: latestRoom });
+    } catch (error) {
+      // 控制层仍保留新房主，避免前端继续被离线房主锁死；后续房间同步会再次
+      // 把该状态送入 worker。这里记录错误，不把断线回调升级为未处理异常。
+      console.error(`同步离线房主接替状态失败: ${roomId}`, error);
+    }
+
+    const reasonText = reason === 'leave' ? '已离开房间' : '断线超时';
+    io.to(roomId).emit('chat_broadcast', {
+      message: `房主 ${offlineHost.nickname} ${reasonText}，${nextHost.nickname} 成为新的房主`,
+      type: 'system'
+    });
+    io.to(roomId).emit('room_update', toClientRoom(latestRoom));
+    return latestRoom;
+  }
+
+  function scheduleOfflineHostFailoverIfNeeded(room: Room): void {
+    const host = room.players.find(player => player.id === room.hostId);
+    if (!host || host.online !== false || !room.players.some(player => player.id !== host.id && player.online)) {
+      return;
+    }
+
+    const offlineAt = Number(host.lastHeartbeat || 0);
+    const elapsed = Math.max(0, Date.now() - offlineAt);
+    const delay = Math.max(0, HOST_DISCONNECT_FAILOVER_GRACE_MS - elapsed);
+    setTimeout(() => {
+      reassignOfflineHost(room.id, host.id, offlineAt, 'disconnect').catch(error => {
+        console.error(`房间 ${room.id} 自动接替离线房主失败:`, error);
+      });
+    }, delay);
+  }
+
 
   async function detachSeatSocketById(
     roomId: string,
@@ -772,6 +841,7 @@ export function roomController(io: Server) {
       // 只有控制层和 worker 都确认新连接后，才移除旧连接并轮换令牌。
       await detachSeatSocketById(latestRoom.id, previousSocketId, socket, previousSocketMessage);
       const sessionToken = rotatePlayerSessionToken(latestRoom.id, latestPlayer.id);
+      scheduleOfflineHostFailoverIfNeeded(latestRoom);
       return {
         room: latestRoom,
         player: latestPlayer,
@@ -1345,6 +1415,7 @@ export function roomController(io: Server) {
         const latestRoom = rooms.get(room.id) || room;
         const latestPlayer = latestRoom.players.find(p => p.id === player!.id) || player;
         const payload = buildRoomJoinedPayload(latestRoom, latestPlayer!);
+        scheduleOfflineHostFailoverIfNeeded(latestRoom);
         socket.emit('room_joined', payload);
         socket.emit('room_update', toClientRoom(latestRoom));
         ack?.({ success: true, ...payload });
@@ -1489,6 +1560,7 @@ export function roomController(io: Server) {
         const latestRoom = rooms.get(room.id) || room;
         const latestPlayer = latestRoom.players.find(p => p.id === player.id) || player;
         const payload = buildRoomJoinedPayload(latestRoom, latestPlayer);
+        scheduleOfflineHostFailoverIfNeeded(latestRoom);
         socket.emit('room_joined', payload);
         socket.emit('room_update', toClientRoom(latestRoom));
         ack?.({ success: true, ...payload });
@@ -1530,9 +1602,10 @@ export function roomController(io: Server) {
         // 先将玩家标记为离线并通知 worker；多数游戏需要在玩家仍存在于房间时
         // 处理自动弃牌、死亡/托管、阶段推进等逻辑。主动离房的 socket 仍保持连接，
         // 需要清空旧 socketId，避免后续私有身份/行动消息继续发到已离开的页面。
+        const offlineAt = Math.max(Date.now(), Number(player.lastHeartbeat || 0) + 1);
         player.online = false;
         player.socketId = '';
-        player.lastHeartbeat = Date.now();
+        player.lastHeartbeat = offlineAt;
         room.lastActiveTime = Date.now();
         rooms.set(room.id, room);
         threadManager.updateRoomData(room.id, room);
@@ -1565,38 +1638,41 @@ export function roomController(io: Server) {
           if (latestPlayer) {
             latestPlayer.online = false;
             latestPlayer.socketId = '';
-            latestPlayer.lastHeartbeat = Date.now();
+            latestPlayer.lastHeartbeat = offlineAt;
           }
           latestRoom.lastActiveTime = Date.now();
           rooms.set(latestRoom.id, latestRoom);
           threadManager.updateRoomData(latestRoom.id, latestRoom);
-          io.to(latestRoom.id).emit('room_update', toClientRoom(latestRoom));
-          if (!latestRoom.private) {
+          const activeRoom = latestRoom.hostId === player.id
+            ? (await reassignOfflineHost(latestRoom.id, player.id, offlineAt, 'leave')) || latestRoom
+            : latestRoom;
+          io.to(activeRoom.id).emit('room_update', toClientRoom(activeRoom));
+          if (!activeRoom.private) {
             broadcastLobbyUpdate();
           }
 
-          const onlinePlayers = latestRoom.players.filter(p => p.online);
+          const onlinePlayers = activeRoom.players.filter(p => p.online);
           if (onlinePlayers.length === 0) {
-            if (latestRoom.cleanupTimer) {
-              clearTimeout(latestRoom.cleanupTimer);
+            if (activeRoom.cleanupTimer) {
+              clearTimeout(activeRoom.cleanupTimer);
             }
-            latestRoom.cleanupTimer = setTimeout(() => {
-              console.log(`清理空房间: ${latestRoom.id}`);
-              const roomToClean = rooms.get(latestRoom.id);
+            activeRoom.cleanupTimer = setTimeout(() => {
+              console.log(`清理空房间: ${activeRoom.id}`);
+              const roomToClean = rooms.get(activeRoom.id);
               if (!roomToClean) return;
               const stillOnline = roomToClean.players.filter(p => p.online);
               if (stillOnline.length > 0) return;
 
-              threadManager.stopRoomThread(latestRoom.id).catch(err => {
-                console.error(`清理空房间时停止线程失败: ${latestRoom.id}`, err);
+              threadManager.stopRoomThread(activeRoom.id).catch(err => {
+                console.error(`清理空房间时停止线程失败: ${activeRoom.id}`, err);
               });
-              rooms.delete(latestRoom.id);
-              hostKickVotes.delete(latestRoom.id);
-              clearRoomSessionTokens(latestRoom.id);
+              rooms.delete(activeRoom.id);
+              hostKickVotes.delete(activeRoom.id);
+              clearRoomSessionTokens(activeRoom.id);
               broadcastLobbyUpdate();
             }, config.server.roomCleanupTimeout || 60000);
-            rooms.set(latestRoom.id, latestRoom);
-            threadManager.updateRoomData(latestRoom.id, latestRoom);
+            rooms.set(activeRoom.id, activeRoom);
+            threadManager.updateRoomData(activeRoom.id, activeRoom);
           }
 
           socket.emit('room_left', { roomId: room.id });
@@ -1965,7 +2041,9 @@ export function roomController(io: Server) {
         console.log(`玩家 ${player.nickname} (${player.id}) 从房间 ${roomId} 断开连接`);
 
         // 将玩家标记为离线
+        const offlineAt = Math.max(Date.now(), Number(player.lastHeartbeat || 0) + 1);
         player.online = false;
+        player.lastHeartbeat = offlineAt;
         
         // 将更新后的房间数据同步到工作线程
         try {
@@ -1985,11 +2063,13 @@ export function roomController(io: Server) {
         const latestPlayer = latestRoom.players.find(p => p.id === player.id);
         if (latestPlayer) {
           latestPlayer.online = false;
+          latestPlayer.lastHeartbeat = offlineAt;
         }
         currentRoom = latestRoom;
         rooms.set(roomId, latestRoom);
         threadManager.updateRoomData(roomId, latestRoom);
         io.to(roomId).emit('room_update', toClientRoom(latestRoom));
+        scheduleOfflineHostFailoverIfNeeded(latestRoom);
 
         // 更新大厅中该房间的玩家数量
         if (!latestRoom.private) {
