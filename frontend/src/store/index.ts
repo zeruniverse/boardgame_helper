@@ -34,6 +34,16 @@ export const useMainStore = defineStore('main', {
   }),
   
   actions: {
+    startHeartbeat() {
+      if (this.heartbeatInterval) {
+        clearInterval(this.heartbeatInterval);
+      }
+      this.socket?.emit('heartbeat');
+      this.heartbeatInterval = setInterval(() => {
+        this.socket?.emit('heartbeat');
+      }, 5000);
+    },
+
     initSocket() {
       // 防止重复连接
       if (this.socket?.connected) {
@@ -67,6 +77,8 @@ export const useMainStore = defineStore('main', {
         this.connected = true;
         // 连接成功后自动获取大厅数据
         this.socket?.emit('get_lobby');
+        // 网络闪断时 disconnect 会清理定时器，连接恢复后必须重新启动。
+        this.startHeartbeat();
       };
       this.socket.on('connect', connectHandler);
       this.socketListeners.push(['connect', connectHandler]);
@@ -129,11 +141,6 @@ export const useMainStore = defineStore('main', {
       this.socket.on('room_joined', roomJoinedHandler);
       this.socketListeners.push(['room_joined', roomJoinedHandler]);
       
-      // 心跳保持在线
-      this.heartbeatInterval = setInterval(() => {
-        this.socket?.emit('heartbeat');
-      }, 5000);
-
       // 监听服务器重置开始事件
       const serverResetHandler = (data: { message: string }) => {
         alert(data.message);

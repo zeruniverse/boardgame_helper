@@ -2,7 +2,7 @@ import { defineStore } from 'pinia';
 import { io, Socket } from 'socket.io-client';
 import { SOCKET_URL } from '../config';
 import { clearGameSession, ensureGameSession, rememberGameSession } from '../utils/gameSession';
-import { emitChatAction, emitGameAction } from '../utils/gameSocket';
+import { emitChatAction, emitGameAction, emitRoomReconnect } from '../utils/gameSocket';
 import { appendLimitedMessage, createSystemMessage, normalizeErrorMessage, normalizeIncomingMessage, normalizeSystemMessage } from '../utils/messages';
 import { getForcedExitMessage, redirectToLobbyAfterForcedExit, shouldClearSessionOnForcedExit } from '../utils/forcedExit';
 
@@ -217,6 +217,7 @@ export const useOnuWerewolfStore = defineStore('onuWerewolf', {
 
       this.socket = io(SOCKET_URL);
       this.socketListeners = [];
+      let hasConnectedOnce = this.socket.connected;
 
       // 辅助函数：追踪监听器
       const on = (event: string, handler: (...args: any[]) => void) => {
@@ -330,6 +331,10 @@ export const useOnuWerewolfStore = defineStore('onuWerewolf', {
       on('connect', () => {
         console.log('OnuWerewolf socket connected');
         this.connected = true;
+        if (hasConnectedOnce) {
+          emitRoomReconnect(this.socket, 'one-night-werewolf', this.currentRoomId, this.currentUserId);
+        }
+        hasConnectedOnce = true;
       });
 
       on('connect_error', (error: Error) => {

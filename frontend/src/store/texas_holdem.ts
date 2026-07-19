@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia';
 import { useMainStore } from './index';
-import { emitGameAction } from '../utils/gameSocket';
+import { emitGameAction, emitRoomReconnect } from '../utils/gameSocket';
 import { appendLimitedMessage, normalizeIncomingMessage } from '../utils/messages';
 import { GAME_STORAGE_KEYS } from '../utils/gameMeta';
 import { clearGameSession, ensureGameSession, rememberGameSession } from '../utils/gameSession';
@@ -85,6 +85,7 @@ export const useTexasHoldemStore = defineStore('texas_holdem', {
       // 先移除之前的监听器，防止重复注册
       this.removeSocketListeners();
       this.socketListeners = [];
+      let hasConnectedOnce = mainStore.socket.connected;
 
       // 辅助函数：追踪监听器
       const on = (event: string, handler: (...args: any[]) => void) => {
@@ -92,6 +93,15 @@ export const useTexasHoldemStore = defineStore('texas_holdem', {
         mainStore.socket.on(event, handler);
         this.socketListeners.push([event, handler]);
       };
+
+      // 主 socket 在网络闪断后会获得新的 socket.id；重新绑定原座位后，
+      // 服务端才能继续接受行动并把私有手牌/牌局状态发到新连接。
+      on('connect', () => {
+        if (hasConnectedOnce) {
+          emitRoomReconnect(mainStore.socket, 'texas-holdem', this.currentRoom, this.playerId);
+        }
+        hasConnectedOnce = true;
+      });
 
       // 接收手牌
       on('deal_hand', (data: { hand: string[] }) => {

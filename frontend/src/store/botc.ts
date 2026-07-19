@@ -4,7 +4,7 @@ import { io, Socket } from 'socket.io-client'
 import { ElMessage } from 'element-plus'
 import { SOCKET_URL } from '../config'
 import { clearGameSession, ensureGameSession, rememberGameSession } from '../utils/gameSession'
-import { emitChatAction, emitGameAction } from '../utils/gameSocket'
+import { emitChatAction, emitGameAction, emitRoomReconnect } from '../utils/gameSocket'
 import { appendLimitedMessage, normalizeErrorMessage, normalizeIncomingMessage } from '../utils/messages'
 import { getForcedExitMessage, redirectToLobbyAfterForcedExit, shouldClearSessionOnForcedExit } from '../utils/forcedExit'
 
@@ -71,10 +71,15 @@ export const useBOTCGameStore = defineStore('botc', () => {
           timeout: 10000,
         })
         socketListeners.value = []
+        let hasConnectedOnce = socket.value.connected
 
         on('connect', () => {
           console.log('血染钟楼: 连接到服务器成功')
           connected.value = true
+          if (hasConnectedOnce) {
+            emitRoomReconnect(socket.value, 'blood-on-the-clocktower', currentRoomId.value, currentUserId.value)
+          }
+          hasConnectedOnce = true
           resolve(void 0)
         })
 
