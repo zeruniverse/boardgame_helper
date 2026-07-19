@@ -53,6 +53,9 @@ export class BOTCWorker extends BaseGameWorker {
   private gamePlayers: Map<string, GamePlayer> = new Map();
   private nightActions: NightAction[] = [];
   private dayTimers: Map<string, NodeJS.Timeout> = new Map();
+  // 只记录会直接推进当前公开阶段的计时器截止时间，供所有客户端和重连玩家统一显示。
+  private phaseTimerDeadlines: Map<'day' | 'night' | 'voting', number> = new Map();
+  private isProcessingNight: boolean = false;
   private privateChatMessages: Map<string, any[]> = new Map();
   private nightRound: number = 0;
   private previouslyPukkaTarget: string | null = null;
@@ -798,6 +801,59 @@ export class BOTCWorker extends BaseGameWorker {
     return this.gameConfig.enableTimers === true || this.isComputerStoryteller();
   }
 
+  private schedulePhaseTimer(
+    key: 'day' | 'night' | 'voting',
+    seconds: number,
+    callback: () => void | Promise<void>
+  ): void {
+    this.clearPhaseTimer(key);
+
+    const durationSeconds = Math.max(1, Number(seconds) || 1);
+    this.phaseTimerDeadlines.set(key, Date.now() + durationSeconds * 1000);
+
+    const timer = setTimeout(() => {
+      this.dayTimers.delete(key);
+      this.phaseTimerDeadlines.delete(key);
+      try {
+        void Promise.resolve(callback()).catch(error => {
+          console.error(`血染钟楼${key}计时器处理失败:`, error);
+        });
+      } catch (error) {
+        console.error(`血染钟楼${key}计时器处理失败:`, error);
+      }
+    }, durationSeconds * 1000);
+
+    this.dayTimers.set(key, timer);
+  }
+
+  private clearPhaseTimer(key: 'day' | 'night' | 'voting'): void {
+    const timer = this.dayTimers.get(key);
+    if (timer) {
+      clearTimeout(timer);
+      this.dayTimers.delete(key);
+    }
+    this.phaseTimerDeadlines.delete(key);
+  }
+
+  private getActivePhaseEndTime(): number | undefined {
+    const deadlines: number[] = [];
+
+    if (this.gameState.phase === GamePhase.FIRST_NIGHT || this.gameState.phase === GamePhase.NIGHT) {
+      const nightDeadline = this.phaseTimerDeadlines.get('night');
+      if (nightDeadline) deadlines.push(nightDeadline);
+    }
+
+    if (this.gameState.phase === GamePhase.DAY) {
+      const dayDeadline = this.phaseTimerDeadlines.get('day');
+      const votingDeadline = this.phaseTimerDeadlines.get('voting');
+      if (dayDeadline) deadlines.push(dayDeadline);
+      if (votingDeadline) deadlines.push(votingDeadline);
+    }
+
+    if (deadlines.length === 0) return undefined;
+    return Math.min(...deadlines);
+  }
+
   /**
    * AI说书人生成模板回答
    * 根据AI偏好（good/evil/neutral）生成对不同问题的回答
@@ -1488,6 +1544,7 @@ export class BOTCWorker extends BaseGameWorker {
     this.clearTimers();
 
     this.gameState.phase = isFirstNight ? GamePhase.FIRST_NIGHT : GamePhase.NIGHT;
+    this.isProcessingNight = false;
     this.gameState.nightOrder = getNightOrder(Array.from(this.gamePlayers.values()), isFirstNight);
     this.nightActions = [];
     this.firstNightInfoPlayerIds.clear();
@@ -1527,8 +1584,24 @@ export class BOTCWorker extends BaseGameWorker {
       this.sendRoleStateToPlayer(playerId, false);
     });
 
+    // 如果没有夜晚行动，直接进入白天
+    if (this.gameState.nightOrder.length === 0) {
+      const timer = setTimeout(() => this.startDay(), 2000);
+      this.dayTimers.set('nightToDay', timer);
+    } else {
+      // 人类说书人模式此前完全没有使用 nightTimer：只要一名夜间角色掉线或不行动，
+      // 自动计时流程就会永久停在夜晚。超时后跳过未提交的能力并按已提交行动结算。
+      if (this.shouldUseAutomaticTimers()) {
+        this.schedulePhaseTimer('night', this.gameConfig.nightTimer, () => this.handleNightTimeout());
+      }
+
+      // 如果配置了电脑说书人，自动处理夜晚
+      this.autoStorytellerProcess();
+    }
+
     this.sendToRoom('nightStarted', {
-      isFirstNight
+      isFirstNight,
+      phaseEndTime: this.getActivePhaseEndTime()
     });
     this.broadcastGameState();
 
@@ -1536,20 +1609,37 @@ export class BOTCWorker extends BaseGameWorker {
     this.sendToPlayer(this.gameConfig.storytellerId, 'storytellerNightInfo', {
       players: Array.from(this.gamePlayers.values()),
       nightOrder: this.gameState.nightOrder,
-      isFirstNight
+      isFirstNight,
+      phaseEndTime: this.getActivePhaseEndTime()
     });
 
     // 首夜信息不能在夜晚刚开始时立即发送。
     // 投毒者、普卡等首夜前置行动需要先按夜晚顺序结算，否则信息角色可能拿到未受影响的错误信息。
+  }
 
-    // 如果没有夜晚行动，直接进入白天
-    if (this.gameState.nightOrder.length === 0) {
-      const timer = setTimeout(() => this.startDay(), 2000);
-      this.dayTimers.set('nightToDay', timer);
-    } else {
-      // 如果配置了电脑说书人，自动处理夜晚
-      this.autoStorytellerProcess();
+  private async handleNightTimeout(): Promise<void> {
+    if (this.gameState.phase !== GamePhase.NIGHT && this.gameState.phase !== GamePhase.FIRST_NIGHT) {
+      return;
     }
+
+    const skippedPlayerIds = this.gameState.nightOrder.filter(playerId => {
+      const player = this.gamePlayers.get(playerId);
+      return Boolean(player && !player.hasActed);
+    });
+
+    for (const playerId of skippedPlayerIds) {
+      const player = this.gamePlayers.get(playerId);
+      if (player) player.hasActed = true;
+    }
+
+    if (skippedPlayerIds.length > 0) {
+      this.sendToRoom('gameMessage', {
+        message: `夜晚计时结束，已跳过 ${skippedPlayerIds.length} 名未行动玩家并结算本夜`,
+        type: 'warning'
+      });
+    }
+
+    await this.processNightActions();
   }
 
   /**
@@ -1709,6 +1799,7 @@ export class BOTCWorker extends BaseGameWorker {
   private async startDay(): Promise<void> {
     // 任何进入白天的路径都必须清理上一阶段计时器，避免旧的夜晚/转阶段计时器继续触发。
     this.clearTimers();
+    this.isProcessingNight = false;
 
     this.gameState.phase = GamePhase.DAY;
     this.gameState.day++;
@@ -1736,20 +1827,18 @@ export class BOTCWorker extends BaseGameWorker {
       // 注意：死亡玩家的遗言票一生只能用一次，在killPlayer中给予，投票后消耗，这里不恢复
     });
 
+    // 设置白天计时器
+    if (this.shouldUseAutomaticTimers()) {
+      this.schedulePhaseTimer('day', this.gameConfig.dayTimer, () => this.endDay());
+    }
+
     this.sendToRoom('dayStarted', {
       day: this.gameState.day,
       isFirstDay: this.gameState.isFirstDay,
-      alivePlayers: Array.from(this.gamePlayers.values()).filter(p => !p.isDead).length
+      alivePlayers: Array.from(this.gamePlayers.values()).filter(p => !p.isDead).length,
+      phaseEndTime: this.getActivePhaseEndTime()
     });
     this.broadcastGameState();
-
-    // 设置白天计时器
-    if (this.shouldUseAutomaticTimers()) {
-      const timer = setTimeout(() => {
-        this.endDay();
-      }, this.gameConfig.dayTimer * 1000);
-      this.dayTimers.set('day', timer);
-    }
   }
 
   /**
@@ -2001,6 +2090,11 @@ export class BOTCWorker extends BaseGameWorker {
     const alivePlayers = Array.from(this.gamePlayers.values()).filter(p => !p.isDead);
     const deadWithVotes = Array.from(this.gamePlayers.values()).filter(p => p.isDead && p.canVote);
     
+    // 设置投票计时器。先登记绝对截止时间再广播，保证所有客户端和重连玩家看到同一倒计时。
+    if (this.shouldUseAutomaticTimers()) {
+      this.schedulePhaseTimer('voting', this.gameConfig.votingTimer, () => this.endVoting(nomination));
+    }
+
     this.sendToRoom('votingStarted', {
       nomination: {
         nominator: {
@@ -2016,16 +2110,10 @@ export class BOTCWorker extends BaseGameWorker {
         id: p.playerId,
         name: this.getPlayerName(p.playerId),
         isDead: p.isDead
-      }))
+      })),
+      phaseEndTime: this.getActivePhaseEndTime()
     });
-
-    // 设置投票计时器
-    if (this.shouldUseAutomaticTimers()) {
-      const timer = setTimeout(() => {
-        this.endVoting(nomination);
-      }, this.gameConfig.votingTimer * 1000);
-      this.dayTimers.set('voting', timer);
-    }
+    this.broadcastGameState();
   }
 
   /**
@@ -2104,11 +2192,7 @@ export class BOTCWorker extends BaseGameWorker {
    * 结束投票
    */
   private async endVoting(nomination: Nomination): Promise<void> {
-    const votingTimer = this.dayTimers.get('voting');
-    if (votingTimer) {
-      clearTimeout(votingTimer);
-      this.dayTimers.delete('voting');
-    }
+    this.clearPhaseTimer('voting');
     nomination.isOnTrial = false;
 
     const alivePlayers = Array.from(this.gamePlayers.values()).filter(p => !p.isDead).length;
@@ -2830,6 +2914,17 @@ export class BOTCWorker extends BaseGameWorker {
       return;
     }
 
+    // 夜晚结算包含死亡、角色晋升和被动能力等不可重复副作用。定时器、玩家最后一次行动和
+    // 说书人按钮可能在同一时间触发结算，必须保证整个结算阶段只执行一次。
+    if (this.isProcessingNight) {
+      return;
+    }
+    this.isProcessingNight = true;
+
+    try {
+
+      this.clearPhaseTimer('night');
+
     const pendingNightTimer = this.dayTimers.get('pendingNightActions');
     if (pendingNightTimer) {
       clearTimeout(pendingNightTimer);
@@ -2957,9 +3052,14 @@ export class BOTCWorker extends BaseGameWorker {
       return;
     }
 
-    // 进入白天
-    const timer = setTimeout(() => this.startDay(), 3000);
-    this.dayTimers.set('processNightToDay', timer);
+      // 进入白天
+      const timer = setTimeout(() => this.startDay(), 3000);
+      this.dayTimers.set('processNightToDay', timer);
+    } catch (error) {
+      // 未完成结算时允许说书人重试，避免一次异常把房间永久锁死。
+      this.isProcessingNight = false;
+      throw error;
+    }
   }
 
   /**
@@ -4140,6 +4240,7 @@ export class BOTCWorker extends BaseGameWorker {
     this.clearTimers();
     this.gamePlayers.clear();
     this.nightActions = [];
+    this.isProcessingNight = false;
     this.privateChatMessages.clear();
     this.nightRound = 0;
     this.previouslyPukkaTarget = null;
@@ -4175,6 +4276,7 @@ export class BOTCWorker extends BaseGameWorker {
    */
   private async endGame(winner: 'good' | 'evil', reason: string): Promise<void> {
     this.gameState.phase = GamePhase.ENDED;
+    this.isProcessingNight = false;
     this.clearTimers();
 
     const gameResult = {
@@ -4262,6 +4364,7 @@ export class BOTCWorker extends BaseGameWorker {
       })),
       playerCount: this.room.players.length,
       nightOrder: viewerNightOrder,
+      phaseEndTime: this.getActivePhaseEndTime(),
       endDayProposal: this.endDayProposal.isActive ? {
         isActive: this.endDayProposal.isActive,
         proposerId: this.endDayProposal.proposerId,
@@ -4279,6 +4382,7 @@ export class BOTCWorker extends BaseGameWorker {
   private clearTimers(): void {
     this.dayTimers.forEach(timer => clearTimeout(timer));
     this.dayTimers.clear();
+    this.phaseTimerDeadlines.clear();
     this.clearEndDayProposal();
   }
 

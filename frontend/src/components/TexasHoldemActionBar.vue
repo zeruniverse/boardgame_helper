@@ -1,9 +1,9 @@
 <template>
   <div class="texas-action-bar">
     <el-button @click="extendTime"
-               :disabled="!store.gameActive || !isInGame"
-               :class="{ 'colored-border': store.gameActive && isInGame, 'disabled-border': !store.gameActive || !isInGame }">
-      延时
+               :disabled="!store.gameActive || !isMyTurn || !isInGame"
+               :class="{ 'colored-border': store.gameActive && isMyTurn && isInGame, 'disabled-border': !store.gameActive || !isMyTurn || !isInGame }">
+      延时一次
     </el-button>
     <el-button :disabled="!canCheck"
                @click="action('check')"
@@ -96,7 +96,7 @@ function raise() {
 }
 
 function extendTime() {
-  if (!store.gameActive || !isInGame.value) return;
+  if (!store.gameActive || !isMyTurn.value || !isInGame.value) return;
   store.extendTime();
 }
 </script>

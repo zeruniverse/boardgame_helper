@@ -253,17 +253,22 @@ onUnmounted(() => {
   store.disconnectFromRoom()
 })
 
-// 计时器更新 - 从store同步timeLeft
+// 计时器更新 - 使用服务端绝对截止时间，避免重连或不同客户端各自从固定秒数重新计时。
 const startTimer = () => {
   if (timerInterval) {
     clearInterval(timerInterval)
     timerInterval = null
   }
 
-  timerInterval = setInterval(() => {
-    // 从store同步timeLeft
-    timeLeft.value = store.timeLeft || 0
-  }, 1000)
+  const syncTimeLeft = () => {
+    const deadline = Number(store.gameState?.phaseEndTime || 0)
+    timeLeft.value = deadline > 0
+      ? Math.max(0, Math.ceil((deadline - Date.now()) / 1000))
+      : 0
+  }
+
+  syncTimeLeft()
+  timerInterval = setInterval(syncTimeLeft, 250)
 }
 
 // 获取状态信息

@@ -70,6 +70,8 @@ class TexasHoldemWorker extends BaseGameWorker {
   private config!: TexasHoldemConfig;
   private actionTimer: NodeJS.Timeout | null = null;
   private actionDeadline: number | null = null;
+  // 每个行动轮次只允许当前行动者延时一次，避免任意玩家反复刷新计时器导致牌局永久卡住。
+  private actionExtendedForPlayerId: string | null = null;
 
   constructor() {
     super();
@@ -1044,6 +1046,10 @@ class TexasHoldemWorker extends BaseGameWorker {
       return;
     }
 
+    // 进入一个新的行动轮次时重新开放一次延时机会。非法下注导致的原地重试不会经过这里，
+    // 因此不能借由重复提交非法操作无限获得延时。
+    this.actionExtendedForPlayerId = null;
+
     // 广播游戏状态更新并请求当前玩家行动
     this.sendToRoom('game_state', this.buildPublicGameState());
     this.sendToRoom('action_request', { playerId: currentPlayer.id, seconds: 30 });
@@ -1445,12 +1451,22 @@ class TexasHoldemWorker extends BaseGameWorker {
 
     const currentPlayer = this.room.players[gs.currentTurn];
 
+    // 延时属于当前行动者自己的单次机会。原实现允许任意参局玩家无限点击，
+    // 可以持续重置30秒计时器并让整手牌永远无法继续。
+    if (currentPlayer.id !== playerId) {
+      this.sendToPlayer(playerId, 'error', { message: '只有当前行动玩家可以延时' });
+      return;
+    }
+
+    if (this.actionExtendedForPlayerId === playerId) {
+      this.sendToPlayer(playerId, 'error', { message: '本次行动已经使用过延时' });
+      return;
+    }
+
+    this.actionExtendedForPlayerId = playerId;
+
     if (player) {
-      if (currentPlayer.id === playerId) {
-        this.sendToRoom('chat_broadcast', { message: `[玩家${player.nickname} 延时当前行动30s]` });
-      } else {
-        this.sendToRoom('chat_broadcast', { message: `[玩家${player.nickname} 为${currentPlayer.nickname}延时30s]` });
-      }
+      this.sendToRoom('chat_broadcast', { message: `[玩家${player.nickname} 延时当前行动30s]` });
     }
 
     // 重置超时定时器
