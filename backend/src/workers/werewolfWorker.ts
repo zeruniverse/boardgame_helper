@@ -959,6 +959,24 @@ class WerewolfWorker extends BaseGameWorker {
     return this.hasOnlinePlayers(players.filter(player => player.isAlive).map(player => player.id));
   }
 
+  /**
+   * Consume a one-shot operator before applying an irreversible role action.
+   *
+   * Several role phases remain active for a short animation/transition delay.
+   * Without removing the operator synchronously, duplicate socket messages can
+   * reveal multiple identities or apply multiple role skills in one phase.
+   */
+  private claimSingleUseAction(playerId: string): boolean {
+    const operators = this.gameState.operators || [];
+    if (!operators.includes(playerId)) {
+      this.sendToPlayer(playerId, 'error', { message: '本阶段操作已提交，请勿重复操作' });
+      return false;
+    }
+
+    this.gameState.operators = operators.filter((id: string) => id !== playerId);
+    return true;
+  }
+
   // ==================== 角色行动处理 ====================
 
   private handleCharacterAction(playerId: string, actionData: any): void {
@@ -1112,6 +1130,7 @@ class WerewolfWorker extends BaseGameWorker {
     }
 
     if (targetIndex <= 0) {
+      if (!this.claimSingleUseAction(playerId)) return;
       this.sendToPlayer(playerId, 'system_message', { message: '你选择放弃验人' });
       // 结束预言家阶段
       this.saveTimeout(() => {
@@ -1126,6 +1145,8 @@ class WerewolfWorker extends BaseGameWorker {
       this.sendToPlayer(playerId, 'error', { message: '目标玩家不存在或已死亡' });
       return;
     }
+
+    if (!this.claimSingleUseAction(playerId)) return;
 
     const isWerewolf = target.character === 'WEREWOLF';
 
@@ -1186,6 +1207,7 @@ class WerewolfWorker extends BaseGameWorker {
     const actionType = actionData?.actionType || actionData?.type;
 
     if (actionType === 'skip' || actionType === 'pass') {
+      if (!this.claimSingleUseAction(playerId)) return;
       this.sendToPlayer(playerId, 'system_message', { message: '你选择跳过' });
       // 结束女巫阶段
       this.saveTimeout(() => {
@@ -1214,6 +1236,8 @@ class WerewolfWorker extends BaseGameWorker {
         this.sendToPlayer(playerId, 'error', { message: '女巫不能对自己使用解药' });
         return;
       }
+
+      if (!this.claimSingleUseAction(playerId)) return;
 
       // 记录使用解药（usedAt记录被救玩家的index）
       witchStatus.MEDICINE = { usedDay: this.gameState.currentDay, usedAt: killTarget };
@@ -1268,6 +1292,8 @@ class WerewolfWorker extends BaseGameWorker {
         return;
       }
 
+      if (!this.claimSingleUseAction(playerId)) return;
+
       // 记录使用毒药
       witchStatus.POISON = { usedDay: this.gameState.currentDay, usedAt: targetIndex };
       this.gameState.nightActions.witchPoisonTarget = targetIndex;
@@ -1285,6 +1311,7 @@ class WerewolfWorker extends BaseGameWorker {
     }
 
     // 未知操作类型，视为跳过
+    if (!this.claimSingleUseAction(playerId)) return;
     this.sendToPlayer(playerId, 'system_message', { message: '未知操作，视为跳过' });
     this.saveTimeout(() => {
       const context = this.createContext();
@@ -1324,6 +1351,7 @@ class WerewolfWorker extends BaseGameWorker {
     }
 
     if (targetIndex <= 0) {
+      if (!this.claimSingleUseAction(playerId)) return;
       this.sendToPlayer(playerId, 'system_message', { message: '你选择放弃保护' });
     } else {
       // 不能连续两晚守护同一个人
@@ -1339,6 +1367,8 @@ class WerewolfWorker extends BaseGameWorker {
         this.sendToPlayer(playerId, 'error', { message: '保护目标不存在或已死亡' });
         return;
       }
+
+      if (!this.claimSingleUseAction(playerId)) return;
 
       // 记录保护
       if (!gamePlayer.characterStatus.protects) {
@@ -1382,6 +1412,7 @@ class WerewolfWorker extends BaseGameWorker {
 
     // 被毒死的猎人不能开枪（fromCharacter为'WITCH'表示被女巫毒死）
     if (this.gameState.curDyingPlayer.die?.fromCharacter === 'WITCH') {
+      if (!this.claimSingleUseAction(playerId)) return;
       this.sendToPlayer(playerId, 'system_message', { message: '你被女巫毒死，无法开枪' });
       // 结束猎人开枪阶段，继续死亡链
       this.saveTimeout(() => {
@@ -1416,6 +1447,8 @@ class WerewolfWorker extends BaseGameWorker {
       this.sendToPlayer(playerId, 'error', { message: '猎人开枪目标无效' });
       return;
     }
+
+    if (!this.claimSingleUseAction(playerId)) return;
 
     // 记录开枪目标
     gamePlayer.characterStatus.shootAt = {
@@ -1667,6 +1700,8 @@ class WerewolfWorker extends BaseGameWorker {
         targetIndex = Number(actionData.target) || 0;
       }
     }
+
+    if (!this.claimSingleUseAction(playerId)) return;
 
     // 清除所有警长标记
     (Object.values(this.gameState.players) as WerewolfPlayerState[]).forEach(p => {
