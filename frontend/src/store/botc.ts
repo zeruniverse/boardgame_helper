@@ -425,6 +425,43 @@ export const useBOTCGameStore = defineStore('botc', () => {
           }
         })
 
+        // 结束白天提议/投票进度（状态本身随 gameState 同步，这里做消息提示）
+        on('endDayProposed', (data) => {
+          ElMessage.info(`${data?.proposerName || '有玩家'} 提议结束白天，请投票`)
+        })
+
+        on('endDayVoteSubmitted', (data) => {
+          if (data?.playerName) {
+            ElMessage.info(`${data.playerName} ${data.vote === 'agree' ? '同意' : '反对'}结束白天`)
+          }
+        })
+
+        // 夜晚行动回执与夜间结算通知（主要发给出说书人/行动玩家）
+        on('nightActionReceived', (data) => {
+          if (data?.message) ElMessage.info(data.message)
+        })
+
+        on('nightProcessed', (data) => {
+          if (data?.message) ElMessage.info(data.message)
+        })
+
+        // 说书人夜间信息/决定类通知
+        const storytellerInfoEvents = ['storytellerNightInfo', 'storytellerDecision', 'storytellerQuestionAnswered', 'playerProtected', 'sweetheartEffect']
+        storytellerInfoEvents.forEach((eventName) => {
+          on(eventName, (data) => {
+            const text = data?.message || data?.info || ''
+            if (text) ElMessage.info(text)
+          })
+        })
+
+        // 玩家进出/上下线通知（玩家列表状态以 gameState/room_update 同步为准）
+        on('playerJoined', (data) => {
+          if (data?.playerName || data?.message) ElMessage.info(data.message || `${data.playerName} 加入了房间`)
+        })
+        on('playerKicked', (data) => {
+          if (data?.message) ElMessage.info(data.message)
+        })
+
       } catch (error) {
         console.error('血染钟楼: 连接失败:', error)
         reject(error)

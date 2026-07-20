@@ -621,6 +621,37 @@ export const useOnuWerewolfStore = defineStore('onuWerewolf', {
         if (text) this.addSystemMessage(text);
       });
 
+      // worker 实际广播的系统消息事件名
+      on('onu_system_message', (message: unknown) => {
+        const text = normalizeSystemMessage(message);
+        if (text) this.addSystemMessage(text);
+      });
+
+      // 白天/讨论阶段开始（与 onu_night_ended 同 payload，worker 两种事件名都会发）
+      const handleDayPhaseStarted = (data: any) => {
+        applyIncomingGame(data);
+        if (this.gameState) {
+          this.gameState.status = OnuWerewolfGameStatus.VOTING;
+          this.gameState.currentPhase = data.message || '讨论投票阶段';
+          this.gameState.timeLeft = data.timeLeft || 0;
+          this.updateTimer();
+        }
+        if (this.playerSecret) {
+          this.playerSecret.canUseSkill = false;
+          this.playerSecret.canVote = true;
+        }
+      };
+      on('onu_day_started', handleDayPhaseStarted);
+      on('onu_discussion_started', handleDayPhaseStarted);
+
+      // 玩家上下线/被踢通知（payload 仅含 message；在线状态以 room_update 为准）
+      ['onu_player_online', 'onu_player_offline', 'onu_player_kicked'].forEach((eventName) => {
+        on(eventName, (data: unknown) => {
+          const text = normalizeSystemMessage(data);
+          if (text) this.addSystemMessage(text);
+        });
+      });
+
       // 错误事件
       on('onu_error', (data: unknown) => {
         const message = normalizeErrorMessage(data);

@@ -201,6 +201,19 @@ export const useAvalonStore = defineStore('avalon', {
         this.playerSecret = secret;
       });
 
+      // worker 在 secret_update 之前还会单独发 role_assigned，作为角色到达的兜底
+      on('role_assigned', (data: { role?: any; team?: any; visions?: any; playerId?: string }) => {
+        if (!data || (data.playerId && data.playerId !== this.currentUserId)) return;
+        if (!this.playerSecret || !this.playerSecret.role) {
+          this.playerSecret = {
+            ...(this.playerSecret || {}),
+            role: data.role,
+            team: data.team,
+            visions: data.visions
+          } as AvalonSecret;
+        }
+      });
+
       on('game_over', (data: { winner: 'blue' | 'red'; reason?: string; gameInfo?: AvalonGameState }) => {
         if (data.gameInfo) {
           this.gameState = data.gameInfo;

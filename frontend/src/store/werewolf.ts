@@ -417,6 +417,28 @@ export const useWerewolfStore = defineStore('werewolf', {
         this.addSystemMessage(`错误：${msg}`);
       });
 
+      // 房间准备/配置确认（worker 实际广播事件）
+      on('game_prepared', (data: any) => {
+        if (data?.gameInfo) {
+          this.updateGameStateFromGameInfo(data.gameInfo);
+        }
+        if (data?.config && this.gameState) {
+          this.gameState.config = data.config;
+          this.gameState.needingCharacters = data.config.characters || this.gameState.needingCharacters;
+        }
+      });
+
+      // 玩家被踢出（房间内其他成员的通知）
+      on('player_kicked', (data: any) => {
+        if (data?.gameInfo) {
+          this.updateGameStateFromGameInfo(data.gameInfo);
+        }
+        const message = typeof data === 'string' ? data : (data?.message || '');
+        if (message) {
+          this.addSystemMessage(message);
+        }
+      });
+
       // 游戏状态同步（用于重连）
       on('game_state_sync', (data: {
         gameInfo: any;

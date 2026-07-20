@@ -42,7 +42,7 @@
           <div class="game-status" v-if="gameState">
             <h3 class="status-title">{{ getStatusMessage() }}</h3>
             <div class="status-info">
-              <span>第{{ gameState.day }}天</span>
+              <span v-if="Number(gameState?.day) > 0">第{{ gameState?.day }}天</span>
               <span v-if="timeLeft > 0">剩余时间: {{ timeLeft }}s</span>
             </div>
           </div>

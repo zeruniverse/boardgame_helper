@@ -474,6 +474,28 @@ export const useMafiaStore = defineStore('mafia', {
         this.addSystemMessage(`错误：${message}`);
       });
 
+      // 行动被拒绝/失败的即时反馈（worker 实际广播的事件名）
+      ['action_error', 'inspect_rejected', 'kill_rejected', 'save_rejected', 'snipe_rejected', 'vote_rejected'].forEach((eventName) => {
+        on(eventName, (data: unknown) => {
+          const message = normalizeErrorMessage(data);
+          this.errorMessage = message;
+          this.addSystemMessage(`错误：${message}`);
+        });
+      });
+
+      // 行动已记录（等待结算）与狙击结果提示
+      ['inspect_pending', 'kill_pending', 'save_pending', 'snipe_result'].forEach((eventName) => {
+        on(eventName, (data: unknown) => {
+          const text = normalizeSystemMessage(data);
+          if (text) this.addSystemMessage(text);
+        });
+      });
+
+      on('player_kicked', (data: { message?: string }) => {
+        const text = normalizeSystemMessage(data);
+        if (text) this.addSystemMessage(text);
+      });
+
       // 时间同步
       on('time_update', (data: { timeLeft: number }) => {
         this.timeLeft = Math.max(0, Number(data.timeLeft) || 0);

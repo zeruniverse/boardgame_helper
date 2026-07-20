@@ -3,8 +3,8 @@
     <template #header>
       <div class="card-header">
         <span>玩家列表 ({{ players.length }}人)</span>
-        <div v-if="gameState?.day" class="day-info">
-          第{{ Math.ceil(gameState.day / 2) }}天
+        <div v-if="Number(gameState?.day) > 0" class="day-info">
+          第{{ Math.ceil((gameState?.day || 0) / 2) }}天
         </div>
       </div>
     </template>
@@ -319,11 +319,12 @@ const findSeerCheckForPlayer = (player: Player): SeerCheck | undefined => {
 
 const getKnownIdentity = (player: Player): KnownIdentity | null => {
   const publicRole = props.gameState?.publicKnownRoles?.[player.id]
-  if (publicRole) {
+  if (publicRole && publicRole !== 'UNKNOWN') {
     return { label: formatRole(publicRole), role: publicRole }
   }
 
-  if (player.id === props.currentUserId && props.playerSecret?.role) {
+  // 开局前后端会下发 UNKNOWN 占位角色，此时不应展示"已知 UNKNOWN"标签
+  if (player.id === props.currentUserId && props.playerSecret?.role && props.playerSecret.role !== 'UNKNOWN') {
     return { label: formatRole(props.playerSecret.role), role: props.playerSecret.role }
   }
 
@@ -642,6 +643,12 @@ const updateTimeConfig = () => {
   grid-template-columns: repeat(2, 1fr);
   gap: 8px;
   margin-bottom: 8px;
+}
+
+@media (max-width: 480px) {
+  .role-config {
+    grid-template-columns: 1fr;
+  }
 }
 
 .role-count {

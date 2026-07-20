@@ -9,7 +9,7 @@
       </div>
     </el-header>
     <el-main class="lobby-main">
-      <el-row :gutter="20">
+      <el-row :gutter="20" v-if="rooms.length > 0">
         <el-col v-for="room in rooms" :key="room.id" :xs="24" :sm="24" :md="8">
           <el-card class="room-card app-panel">
             <h3>{{ room.name }}</h3>
@@ -21,6 +21,10 @@
           </el-card>
         </el-col>
       </el-row>
+      <div v-else class="lobby-empty app-panel">
+        <p class="lobby-empty__title">暂无进行中的房间</p>
+        <p class="lobby-empty__hint">点击下方"创建房间"开始一局新游戏，或通过"加入房间"输入房间号加入好友的对局。</p>
+      </div>
       
       <!-- 游戏操作按钮 -->
       <div class="reset-server-section">
@@ -440,7 +444,8 @@
       <el-dialog
         v-model="createRoomDialogVisible"
         title="创建房间"
-        width="600px"
+        width="720px"
+        class="create-room-dialog"
         center
       >
         <el-steps :active="createRoomStep" finish-status="success" align-center>
@@ -452,7 +457,7 @@
         <div v-if="createRoomStep === 0" class="game-selection">
           <h3 style="text-align: center; margin: 20px 0;">选择游戏类型</h3>
           <el-row :gutter="20">
-            <el-col :span="8">
+            <el-col :span="12" :xs="24">
               <el-card 
                 class="game-card"
                 :class="{ 'selected': createRoomForm.gameType === 'texas-holdem' }"
@@ -466,7 +471,7 @@
                 </div>
               </el-card>
             </el-col>
-            <el-col :span="8">
+            <el-col :span="12" :xs="24">
               <el-card 
                 class="game-card"
                 :class="{ 'selected': createRoomForm.gameType === 'avalon' }"
@@ -480,7 +485,7 @@
                 </div>
               </el-card>
             </el-col>
-            <el-col :span="8">
+            <el-col :span="12" :xs="24">
               <el-card 
                 class="game-card"
                 :class="{ 'selected': createRoomForm.gameType === 'mafia' }"
@@ -496,7 +501,7 @@
             </el-col>
           </el-row>
           <el-row :gutter="20" style="margin-top: 20px;">
-            <el-col :span="8">
+            <el-col :span="12" :xs="24">
               <el-card 
                 class="game-card"
                 :class="{ 'selected': createRoomForm.gameType === 'werewolf' }"
@@ -510,7 +515,7 @@
                 </div>
               </el-card>
             </el-col>
-            <el-col :span="8">
+            <el-col :span="12" :xs="24">
               <el-card 
                 class="game-card"
                 :class="{ 'selected': createRoomForm.gameType === 'one-night-werewolf' }"
@@ -524,7 +529,7 @@
                 </div>
               </el-card>
             </el-col>
-            <el-col :span="8">
+            <el-col :span="12" :xs="24">
               <el-card 
                 class="game-card"
                 :class="{ 'selected': createRoomForm.gameType === 'blood-on-the-clocktower' }"
@@ -1335,6 +1340,16 @@ function nextStep() {
   margin: 5px 0;
   color: var(--app-text-secondary);
   font-size: 14px;
+  word-break: keep-all;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+@media (max-width: 768px) {
+  .game-info p {
+    white-space: normal;
+  }
 }
 
 .room-config {
@@ -1366,5 +1381,26 @@ function nextStep() {
   font-size: 16px;
   border-bottom: 1px solid var(--app-border);
   padding-bottom: 5px;
+}
+
+.lobby-empty {
+  text-align: center;
+  padding: 48px 24px;
+  margin-bottom: 20px;
+  border-radius: 8px;
+  background: var(--app-panel);
+  border: 1px dashed var(--app-border);
+}
+
+.lobby-empty__title {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--app-text, #303133);
+  margin-bottom: 8px;
+}
+
+.lobby-empty__hint {
+  font-size: 14px;
+  color: var(--app-text-secondary, #909399);
 }
 </style>

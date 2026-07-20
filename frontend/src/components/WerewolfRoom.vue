@@ -11,7 +11,7 @@
       </div>
       <div class="header-right">
         <span class="room-id">房间ID: {{ roomId }}</span>
-        <span v-if="gameState?.day" class="day-badge">第{{ Math.ceil(gameState.day / 2) }}天</span>
+        <span v-if="Number(gameState?.day) > 0" class="day-badge">第{{ Math.ceil(((gameState && gameState.day) || 0) / 2) }}天</span>
         <el-button v-if="isHost" size="small" @click="toggleRoomLock" :type="room?.locked ? 'danger' : 'success'">
           {{ room?.locked ? '解锁房间' : '锁定房间' }}
         </el-button>
@@ -43,16 +43,16 @@
           <div class="game-status" v-if="gameState">
             <h3 class="status-title">{{ getStatusMessage() }}</h3>
             <div class="status-info">
-              <span v-if="gameState.day">第{{ Math.ceil(gameState.day / 2) }}天 {{ gameState.day % 2 === 1 ? '白天' : '夜晚' }}</span>
+              <span v-if="Number(gameState?.day) > 0">第{{ Math.ceil((gameState?.day || 0) / 2) }}天 {{ (gameState?.day || 0) % 2 === 1 ? '白天' : '夜晚' }}</span>
               <span v-if="timeLeft > 0" class="time-left">剩余时间: {{ timeLeft }}s</span>
-              <span v-if="playerSecret" class="my-role-badge" :class="playerSecret.team">
+              <span v-if="playerSecret && playerSecret.role && playerSecret.role !== 'UNKNOWN'" class="my-role-badge" :class="playerSecret.team">
                 {{ getRoleName(playerSecret.role) }}
               </span>
             </div>
           </div>
 
           <!-- 角色信息 -->
-          <div class="role-info" v-if="playerSecret">
+          <div class="role-info" v-if="playerSecret && playerSecret.role && playerSecret.role !== 'UNKNOWN'">
             <h4>你的身份</h4>
             <div class="my-role" :class="playerSecret.team">
               <div class="role-name">{{ getRoleName(playerSecret.role) }}</div>

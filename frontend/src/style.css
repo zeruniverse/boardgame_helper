@@ -351,3 +351,8 @@ html.dark-mode .loading-overlay {
     width: 100%;
   }
 }
+
+/* 创建房间对话框在窄屏下不溢出 */
+.create-room-dialog {
+  max-width: 92vw;
+}
