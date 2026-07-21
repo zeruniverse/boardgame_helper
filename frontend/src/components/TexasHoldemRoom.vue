@@ -276,6 +276,7 @@ onMounted(() => {
       store.playerId = data.player.id;
     }
     rememberGameSession(data.room, data.player, data.sessionToken);
+    sessionStorage.removeItem('texas_newJoin');
     // 保存房间名称
     if (data.room.name) {
       roomName.value = data.room.name;
