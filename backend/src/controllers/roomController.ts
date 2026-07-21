@@ -224,6 +224,9 @@ function mergeRoomUpdateFromWorker(existingRoom: Room | undefined, workerRoom: R
   const controllerOnlyPlayers = (existingRoom.players || []).filter(player =>
     shouldPreserveControllerOnlyPlayer(existingRoom, workerRoom, player, incomingPlayerIds)
   );
+  const workerHostMayBeStale =
+    Number(workerRoom.lastActiveTime || 0) <= Number(existingRoom.lastActiveTime || 0);
+  const preserveControllerHost = workerHostMayBeStale && incomingPlayerIds.has(existingRoom.hostId);
 
   if (controllerOnlyPlayers.length > 0) {
     console.warn(
@@ -234,6 +237,8 @@ function mergeRoomUpdateFromWorker(existingRoom: Room | undefined, workerRoom: R
   return {
     ...existingRoom,
     ...workerRoom,
+    // 房主转让由控制线程处理。旧 worker 快照只能在当前房主已被移除时覆盖 hostId。
+    hostId: preserveControllerHost ? existingRoom.hostId : workerRoom.hostId,
     private: existingRoom.private,
     cleanupTimer: existingRoom.cleanupTimer,
     gameMetadata: {
