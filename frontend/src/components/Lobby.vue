@@ -1096,6 +1096,10 @@ async function confirmCreateRoom() {
     return;
   }
 
+  if (creatingRoom.value) {
+    return;
+  }
+
   try {
     creatingRoom.value = true;
     
@@ -1142,7 +1146,8 @@ async function confirmCreateRoom() {
     }
 
     // 通过socket创建房间
-    if (store.socket) {
+    const socket = store.socket;
+    if (socket) {
       // 如果是德州扑克，设置昵称到store
       if (createRoomForm.value.gameType === 'texas-holdem') {
         const texasStore = useTexasHoldemStore();
@@ -1153,23 +1158,23 @@ async function confirmCreateRoom() {
       }
       
       // Bug L6: 检查socket连接状态，避免请求静默失败
-      if (!store.socket.connected) {
+      if (!socket.connected) {
         ElMessage.error('连接未建立，请刷新页面重试');
-        creatingRoom.value = false;
         return;
       }
-      store.socket.emit('create_room', {
-        gameType: createRoomForm.value.gameType,
-        gameConfig,
-        isPrivate: createRoomForm.value.isPrivate
-      }, (response: any) => {
-        if (!response?.success) {
-          ElMessage.error(response?.error || '创建房间失败');
-          return;
-        }
-        ElMessage.success('房间创建成功');
-        createRoomDialogVisible.value = false;
+      const response = await new Promise<any>((resolve) => {
+        socket.emit('create_room', {
+          gameType: createRoomForm.value.gameType,
+          gameConfig,
+          isPrivate: createRoomForm.value.isPrivate
+        }, resolve);
       });
+      if (!response?.success) {
+        ElMessage.error(response?.error || '创建房间失败');
+        return;
+      }
+      ElMessage.success('房间创建成功');
+      createRoomDialogVisible.value = false;
     } else {
       ElMessage.error('连接未建立，请刷新页面重试');
     }
