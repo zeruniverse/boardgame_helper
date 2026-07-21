@@ -1421,7 +1421,7 @@ export class BOTCWorker extends BaseGameWorker {
 
     // 排除说书人后计算参与游戏的玩家数
     const gamePlayerCount = this.room.players.filter(p => p.online !== false && p.id !== this.gameConfig.storytellerId).length;
-    const minPlayers = isComputerStoryteller ? 4 : 5;
+    const minPlayers = 5;
     if (gamePlayerCount < minPlayers) {
       this.sendToPlayer(playerId, 'actionError', { message: `排除说书人后至少需要${minPlayers}名玩家才能开始游戏，当前只有${gamePlayerCount}名` });
       return;
@@ -1445,7 +1445,7 @@ export class BOTCWorker extends BaseGameWorker {
         .filter(p => p.online !== false && p.id !== storytellerId)
         .map(p => p.id);
       
-      const minPlayers = this.isComputerStoryteller() ? 4 : 5;
+      const minPlayers = 5;
       if (playerIds.length < minPlayers) {
         this.sendToRoom('gameError', { message: `需要至少${minPlayers}名非说书人玩家才能开始游戏，当前只有${playerIds.length}名` });
         return;
