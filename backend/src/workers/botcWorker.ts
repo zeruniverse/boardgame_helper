@@ -815,7 +815,10 @@ export class BOTCWorker extends BaseGameWorker {
   ): void {
     this.clearPhaseTimer(key);
 
-    const durationSeconds = Math.max(1, Number(seconds) || 1);
+    const durationSeconds = Number(seconds);
+    if (!Number.isFinite(durationSeconds) || durationSeconds <= 0) {
+      return;
+    }
     this.phaseTimerDeadlines.set(key, Date.now() + durationSeconds * 1000);
 
     const timer = setTimeout(() => {
@@ -1151,9 +1154,9 @@ export class BOTCWorker extends BaseGameWorker {
       isPrivate: config.isPrivate || false,
       maxPlayers: config.maxPlayers || 15,
       enableTimers: config.enableTimers || false,
-      dayTimer: config.dayTimer || 300,
-      nightTimer: config.nightTimer || 180,
-      votingTimer: config.votingTimer || 60,
+      dayTimer: config.dayTimer ?? 300,
+      nightTimer: config.nightTimer ?? 180,
+      votingTimer: config.votingTimer ?? 60,
       allowPrivateChat: config.allowPrivateChat !== undefined ? config.allowPrivateChat : true,
       storytellerMode: config.storytellerMode || 'player',
       aiBias: config.aiBias || 'neutral'

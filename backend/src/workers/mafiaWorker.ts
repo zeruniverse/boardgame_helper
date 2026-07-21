@@ -262,9 +262,9 @@ class MafiaWorker extends BaseGameWorker {
     const fallbackPlayerCount = this.room?.maxPlayers || this.room?.players?.length || MIN_PLAYER_COUNT;
     const [defaultKillers, defaultCops, defaultDoctors, defaultSnipers] = this.getDefaultRoleConfig(fallbackPlayerCount);
     return {
-      speakTime: this.toBoundedInt(config.speakTime, this.config?.speakTime ?? 60, 15, 600),
-      actionTime: this.toBoundedInt(config.actionTime, this.config?.actionTime ?? 60, 15, 600),
-      nightTime: this.toBoundedInt(config.nightTime, this.config?.nightTime ?? 60, 15, 600),
+      speakTime: this.toBoundedInt(config.speakTime, this.config?.speakTime ?? 60, 0, 600),
+      actionTime: this.toBoundedInt(config.actionTime, this.config?.actionTime ?? 60, 0, 600),
+      nightTime: this.toBoundedInt(config.nightTime, this.config?.nightTime ?? 60, 0, 600),
       lastWordRound: this.toBoundedInt(config.lastWordRound, this.config?.lastWordRound ?? 3, 0, 10),
       killerCount: this.toBoundedInt(config.killerCount, this.config?.killerCount ?? defaultKillers, 1, MAX_PLAYER_COUNT),
       copCount: this.toBoundedInt(config.copCount, this.config?.copCount ?? defaultCops, 0, MAX_PLAYER_COUNT),

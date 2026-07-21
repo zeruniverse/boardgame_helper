@@ -129,15 +129,15 @@
         <div class="config-grid">
           <div class="config-item">
             <label>发言时间</label>
-            <el-input-number v-model="editableConfig.speakTime" :min="15" :max="600" :step="15" size="small" @change="emitTimingConfigChange" />
+            <el-input-number v-model="editableConfig.speakTime" :min="0" :max="600" :step="15" size="small" @change="emitTimingConfigChange" />
           </div>
           <div class="config-item">
             <label>行动时间</label>
-            <el-input-number v-model="editableConfig.actionTime" :min="15" :max="600" :step="15" size="small" @change="emitTimingConfigChange" />
+            <el-input-number v-model="editableConfig.actionTime" :min="0" :max="600" :step="15" size="small" @change="emitTimingConfigChange" />
           </div>
           <div class="config-item">
             <label>夜晚时间</label>
-            <el-input-number v-model="editableConfig.nightTime" :min="15" :max="600" :step="15" size="small" @change="emitTimingConfigChange" />
+            <el-input-number v-model="editableConfig.nightTime" :min="0" :max="600" :step="15" size="small" @change="emitTimingConfigChange" />
           </div>
           <div class="config-item">
             <label>遗言轮数</label>
