@@ -1183,7 +1183,11 @@ export function roomController(io: Server) {
         // 创建房间，房间ID和名称使用相同的6位随机字符
         const roomIdAndName = generateUniqueRoomIdAndName();
         const configuredMaxPlayers = Number(data.gameConfig?.maxPlayers || data.gameConfig?.playerCount || config.games[data.gameType].maxPlayers);
-        const maxPlayers = Math.max(1, Math.min(configuredMaxPlayers || config.games[data.gameType].maxPlayers, config.games[data.gameType].maxPlayers));
+        const gamePlayerLimit = Math.max(1, Math.min(configuredMaxPlayers || config.games[data.gameType].maxPlayers, config.games[data.gameType].maxPlayers));
+        // 血染钟楼的配置人数是实际参与游戏的人数；真人说书人需要额外占用一个房间席位。
+        const maxPlayers = data.gameType === 'blood-on-the-clocktower'
+          ? gamePlayerLimit + 1
+          : gamePlayerLimit;
         const gameConfig = buildGameConfig(data.gameType, data.gameConfig);
         const room: Room = {
           id: roomIdAndName,

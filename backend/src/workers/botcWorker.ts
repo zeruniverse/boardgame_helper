@@ -1184,7 +1184,8 @@ export class BOTCWorker extends BaseGameWorker {
     }
 
     const roomPlayer = this.upsertRoomPlayer(player);
-    if (this.room.players.length > this.gameConfig.maxPlayers) {
+    // maxPlayers 表示实际游戏玩家数，真人说书人不计入该人数。
+    if (this.room.players.length > this.gameConfig.maxPlayers + 1) {
       throw new Error('房间已满');
     }
 
@@ -1425,6 +1426,10 @@ export class BOTCWorker extends BaseGameWorker {
       this.sendToPlayer(playerId, 'actionError', { message: `排除说书人后至少需要${minPlayers}名玩家才能开始游戏，当前只有${gamePlayerCount}名` });
       return;
     }
+    if (gamePlayerCount > this.gameConfig.maxPlayers) {
+      this.sendToPlayer(playerId, 'actionError', { message: `实际游戏玩家不能超过${this.gameConfig.maxPlayers}名，当前有${gamePlayerCount}名` });
+      return;
+    }
 
     await this.startGame();
   }
@@ -1443,6 +1448,10 @@ export class BOTCWorker extends BaseGameWorker {
       const minPlayers = this.isComputerStoryteller() ? 4 : 5;
       if (playerIds.length < minPlayers) {
         this.sendToRoom('gameError', { message: `需要至少${minPlayers}名非说书人玩家才能开始游戏，当前只有${playerIds.length}名` });
+        return;
+      }
+      if (playerIds.length > this.gameConfig.maxPlayers) {
+        this.sendToRoom('gameError', { message: `实际游戏玩家不能超过${this.gameConfig.maxPlayers}名，当前有${playerIds.length}名` });
         return;
       }
       
