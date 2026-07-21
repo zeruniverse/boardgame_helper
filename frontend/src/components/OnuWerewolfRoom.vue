@@ -185,7 +185,7 @@ onMounted(() => {
 
 onUnmounted(() => {
   try {
-    store.cleanup();
+    store.disconnectFromRoom();
   } catch (error) {
     console.error('Error during cleanup:', error);
   }

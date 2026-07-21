@@ -292,6 +292,13 @@ onMounted(() => {
 // 组件级事件处理器（提升到作用域顶部以便onUnmounted引用）
 let onRoomUpdateHandler: ((data: any) => void) | null = null;
 let onRoomJoinedHandler: ((data: any) => void) | null = null;
+let roomLeaveRequested = false;
+
+function leaveCurrentRoom() {
+  if (roomLeaveRequested || !store.socket || !store.currentRoom) return;
+  roomLeaveRequested = true;
+  store.socket.emit('leave_room', { roomId: store.currentRoom });
+}
 
 onUnmounted(() => {
   if (statusCheckInterval) {
@@ -303,14 +310,12 @@ onUnmounted(() => {
     if (onRoomUpdateHandler) store.socket.off('room_update', onRoomUpdateHandler);
     if (onRoomJoinedHandler) store.socket.off('room_joined', onRoomJoinedHandler);
   }
+  leaveCurrentRoom();
 });
 
 // 返回大厅
 function goToLobby() {
-  // 先离开当前房间
-  if (store.socket && store.currentRoom) {
-    store.socket.emit('leave_room', { roomId: store.currentRoom });
-  }
+  leaveCurrentRoom();
   store.resetGameState();
   router.push({ name: 'Lobby' });
 }
