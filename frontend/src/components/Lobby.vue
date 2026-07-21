@@ -893,12 +893,14 @@ function findStoredSessionForHiddenRoom(roomId: string, nickname: string): Store
 }
 
 function canEnterRoom(room: any): boolean {
-  return !room?.locked || hasReconnectSession(room);
+  // 是否能占用新座位由服务端在拿到昵称后判断。锁房时仍需允许点击，
+  // 否则没有本地 sessionToken 的同昵称玩家无法走既有的座位接管流程。
+  return Boolean(room?.id);
 }
 
 function getRoomActionText(room: any): string {
   if (!room?.locked) return '进入';
-  return hasReconnectSession(room) ? '重连' : '已锁定';
+  return hasReconnectSession(room) ? '重连' : '进入';
 }
 
 // Bug L1+L2: 使用作用域变量存储处理器引用，便于在onUnmounted中清理
@@ -977,10 +979,14 @@ function enter(roomId: string) {
   const room = rooms.value.find(r => r.id === roomId);
   if (!room) return;
 
-  // 锁房只应阻止“新成员”加入；已有有效会话的原玩家需要能从大厅入口重连。
-  // 真正的身份校验仍由后端 sessionToken 完成，避免前端误把同昵称新用户当成重连。
+  // 锁房只阻止新增座位；服务端仍允许同昵称接管既有座位。
+  // 没有本地 token 时先由服务端确认，避免普通新成员被提前导航到房间页。
   if (room.locked && !hasReconnectSession(room)) {
-    ElMessage.warning('房间已锁定，不允许新成员加入');
+    joinRoomForm.value = {
+      roomName: room.id,
+      nickname: nickname.trim()
+    };
+    confirmJoinRoom();
     return;
   }
 
