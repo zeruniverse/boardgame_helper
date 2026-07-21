@@ -1310,7 +1310,7 @@ export function roomController(io: Server) {
         let player = requestedPlayerId ? room.players.find(p => p.id === requestedPlayerId) : undefined;
 
         // 如果同一个玩家ID已存在，优先按有效会话重连处理。
-        // 若本地会话令牌丢失/被轮换，但请求昵称仍命中房内座位，在未锁房间内按
+        // 若本地会话令牌丢失/被轮换，但请求昵称仍命中房内座位，按
         // “同昵称接管”处理，避免用户因为旧 playerId + 失效 token 被卡在房间外。
         if (player) {
           const suppliedNickname = nicknameKey(data.nickname);
@@ -1318,10 +1318,6 @@ export function roomController(io: Server) {
           if (!isValidPlayerSessionToken(room.id, player.id, data.sessionToken)) {
             const takeoverTarget = findNicknameTakeoverTarget(room, suppliedNickname, player);
             if (takeoverTarget) {
-              if (room.locked === true) {
-                rejectLockedRoom(socket, ack);
-                return;
-              }
               await takeOverPlayerByNickname(room, takeoverTarget, normalizeNickname(data.nickname, takeoverTarget.nickname), socket, ack);
               return;
             }
@@ -1346,16 +1342,16 @@ export function roomController(io: Server) {
           return;
         }
 
-        // 检查房间是否被锁定（非重连的新玩家）
-        if (room.locked === true && !player) {
-          rejectLockedRoom(socket, ack);
-          return;
-        }
-
         const nickname = normalizeNickname(data.nickname, `玩家${socket.id.substring(0, 6)}`);
         const existingSameNamePlayer = findPlayerByNickname(room, nickname);
         if (existingSameNamePlayer) {
           await takeOverPlayerByNickname(room, existingSameNamePlayer, nickname, socket, ack);
+          return;
+        }
+
+        // 锁房只阻止新增座位；同昵称接管已在上方完成。
+        if (room.locked === true) {
+          rejectLockedRoom(socket, ack);
           return;
         }
 
@@ -1456,17 +1452,13 @@ export function roomController(io: Server) {
         let player = requestedPlayerId ? room.players.find(p => p.id === requestedPlayerId) : undefined;
 
         // 旧版直接链接接口也支持按 playerId 重连，避免刷新/分享链接后重复占座。
-        // 令牌失效但请求昵称仍命中房内座位时，在未锁房间中降级为同昵称接管。
+        // 令牌失效但请求昵称仍命中房内座位时，降级为同昵称接管。
         if (player) {
           const suppliedNickname = nicknameKey(data.nickname);
           const nextNickname = normalizeNickname(data.nickname, player.nickname);
           if (!isValidPlayerSessionToken(room.id, player.id, data.sessionToken)) {
             const takeoverTarget = findNicknameTakeoverTarget(room, suppliedNickname, player);
             if (takeoverTarget) {
-              if (room.locked === true) {
-                rejectLockedRoom(socket, ack);
-                return;
-              }
               await takeOverPlayerByNickname(room, takeoverTarget, normalizeNickname(data.nickname, takeoverTarget.nickname), socket, ack);
               return;
             }
@@ -1491,16 +1483,16 @@ export function roomController(io: Server) {
           return;
         }
 
-        // 检查房间是否被锁定
-        if (room.locked === true) {
-          rejectLockedRoom(socket, ack);
-          return;
-        }
-
         const nickname = normalizeNickname(data.nickname, `玩家${socket.id.substring(0, 6)}`);
         const existingSameNamePlayer = findPlayerByNickname(room, nickname);
         if (existingSameNamePlayer) {
           await takeOverPlayerByNickname(room, existingSameNamePlayer, nickname, socket, ack);
+          return;
+        }
+
+        // 锁房只阻止新增座位；同昵称接管已在上方完成。
+        if (room.locked === true) {
+          rejectLockedRoom(socket, ack);
           return;
         }
 
