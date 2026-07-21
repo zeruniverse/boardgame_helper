@@ -2017,20 +2017,13 @@ export function roomController(io: Server) {
     socket.on('disconnect', async () => {
       console.log(`客户端断开连接: ${socket.id}`);
       
-      // 查找玩家所在的房间
-      let currentRoom: Room | undefined;
-      let currentPlayer: Player | undefined;
-
-      for (const room of rooms.values()) {
+      // 同一个 socket 可能同时加入多个房间；断线时必须同步清理所有房间中的席位。
+      const memberships = Array.from(rooms.values()).flatMap(room => {
         const player = room.players.find(p => p.socketId === socket.id);
-        if (player) {
-          currentRoom = room;
-          currentPlayer = player;
-          break;
-        }
-      }
+        return player ? [{ room, player }] : [];
+      });
 
-      if (currentRoom && currentPlayer) {
+      for (let { room: currentRoom, player: currentPlayer } of memberships) {
         const roomId = currentRoom.id;
         const player = currentPlayer;
 
@@ -2108,11 +2101,11 @@ export function roomController(io: Server) {
     // 处理心跳
     socket.on('heartbeat', () => {
       try {
+        const heartbeatAt = Date.now();
         for (const room of rooms.values()) {
           const player = room.players.find(p => p.socketId === socket.id);
           if (player) {
-            player.lastHeartbeat = Date.now();
-            break;
+            player.lastHeartbeat = heartbeatAt;
           }
         }
       } catch (error) {
