@@ -804,7 +804,7 @@
 import { onMounted, onUnmounted, ref } from 'vue';
 import { useMainStore, useTexasHoldemStore } from '../store';
 import { storeToRefs } from 'pinia';
-import { useRouter } from 'vue-router';
+import { useRoute, useRouter } from 'vue-router';
 import { ElMessage } from 'element-plus';
 import { SOCKET_URL } from '../config';
 import { GAME_META, GAME_ROUTES } from '../utils/gameMeta';
@@ -814,6 +814,7 @@ const store = useMainStore();
 const texasStore = useTexasHoldemStore();
 const { rooms } = storeToRefs(store);
 const router = useRouter();
+const route = useRoute();
 
 // 重置服务器相关状态
 const resetDialogVisible = ref(false);
@@ -934,6 +935,28 @@ onMounted(() => {
   };
   if (store.socket) {
     store.socket.on('room_joined', handleRoomJoined);
+  }
+
+  // 兼容旧房间链接以及路由守卫转回大厅的直接房间链接。
+  // 保留房间号并打开加入对话框，否则 redirect/room 查询参数会被静默丢弃。
+  const roomQuery = Array.isArray(route.query.room) ? route.query.room[0] : route.query.room;
+  const redirectQuery = Array.isArray(route.query.redirect) ? route.query.redirect[0] : route.query.redirect;
+  let requestedRoomId = typeof roomQuery === 'string' ? roomQuery : '';
+
+  if (!requestedRoomId && typeof redirectQuery === 'string') {
+    const resolvedRoute = router.resolve(redirectQuery);
+    const resolvedRoomId = Array.isArray(resolvedRoute.params.id)
+      ? resolvedRoute.params.id[0]
+      : resolvedRoute.params.id;
+    if (typeof resolvedRoomId === 'string') {
+      requestedRoomId = resolvedRoomId;
+    }
+  }
+
+  if (requestedRoomId.trim()) {
+    joinRoomForm.value.roomName = requestedRoomId.trim().toUpperCase();
+    joinRoomForm.value.nickname = '';
+    joinRoomDialogVisible.value = true;
   }
 });
 
