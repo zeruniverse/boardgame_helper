@@ -1364,18 +1364,19 @@ export function roomController(io: Server) {
         const requestedPlayerId = data.playerId || data.userId;
         let player = requestedPlayerId ? room.players.find(p => p.id === requestedPlayerId) : undefined;
 
-        // 如果同一个玩家ID已存在，优先按有效会话重连处理。
-        // 若本地会话令牌丢失/被轮换，但请求昵称仍命中房内座位，按
-        // “同昵称接管”处理，避免用户因为旧 playerId + 失效 token 被卡在房间外。
+        // 同昵称接管优先于 playerId 会话重连。即使请求携带的是另一个座位的
+        // 有效令牌，也必须把请求昵称对应的已有座位迁移到新连接。
         if (player) {
           const suppliedNickname = nicknameKey(data.nickname);
           const nextNickname = normalizeNickname(data.nickname, player.nickname);
-          if (!isValidPlayerSessionToken(room.id, player.id, data.sessionToken)) {
-            const takeoverTarget = findNicknameTakeoverTarget(room, suppliedNickname, player);
-            if (takeoverTarget) {
-              await takeOverPlayerByNickname(room, takeoverTarget, normalizeNickname(data.nickname, takeoverTarget.nickname), socket, ack);
-              return;
-            }
+          const sessionTokenValid = isValidPlayerSessionToken(room.id, player.id, data.sessionToken);
+          const takeoverTarget = findNicknameTakeoverTarget(room, suppliedNickname, player);
+          if (takeoverTarget && (!sessionTokenValid || takeoverTarget.id !== player.id)) {
+            await takeOverPlayerByNickname(room, takeoverTarget, normalizeNickname(data.nickname, takeoverTarget.nickname), socket, ack);
+            return;
+          }
+
+          if (!sessionTokenValid) {
             rejectInvalidPlayerSession(socket, ack);
             return;
           }
@@ -1506,17 +1507,18 @@ export function roomController(io: Server) {
         const requestedPlayerId = data.playerId || data.userId;
         let player = requestedPlayerId ? room.players.find(p => p.id === requestedPlayerId) : undefined;
 
-        // 旧版直接链接接口也支持按 playerId 重连，避免刷新/分享链接后重复占座。
-        // 令牌失效但请求昵称仍命中房内座位时，降级为同昵称接管。
+        // 旧版直接链接接口同样让同昵称接管优先于 playerId 会话重连。
         if (player) {
           const suppliedNickname = nicknameKey(data.nickname);
           const nextNickname = normalizeNickname(data.nickname, player.nickname);
-          if (!isValidPlayerSessionToken(room.id, player.id, data.sessionToken)) {
-            const takeoverTarget = findNicknameTakeoverTarget(room, suppliedNickname, player);
-            if (takeoverTarget) {
-              await takeOverPlayerByNickname(room, takeoverTarget, normalizeNickname(data.nickname, takeoverTarget.nickname), socket, ack);
-              return;
-            }
+          const sessionTokenValid = isValidPlayerSessionToken(room.id, player.id, data.sessionToken);
+          const takeoverTarget = findNicknameTakeoverTarget(room, suppliedNickname, player);
+          if (takeoverTarget && (!sessionTokenValid || takeoverTarget.id !== player.id)) {
+            await takeOverPlayerByNickname(room, takeoverTarget, normalizeNickname(data.nickname, takeoverTarget.nickname), socket, ack);
+            return;
+          }
+
+          if (!sessionTokenValid) {
             rejectInvalidPlayerSession(socket, ack);
             return;
           }
