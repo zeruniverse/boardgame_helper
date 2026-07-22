@@ -25,9 +25,35 @@ const HOST_DISCONNECT_FAILOVER_GRACE_MS = 15000;
 // 每个房间座位的服务端会话令牌。令牌只通过 room_joined 返回给本人，
 // 不进入 room_update / player.gameMetadata，避免房间内其他玩家凭公开 playerId 冒用座位。
 const playerSessionTokens: Map<string, string> = new Map();
+const existingSeatConnectionQueues: Map<string, Promise<void>> = new Map();
 
 function playerSessionKey(roomId: string, playerId: string): string {
   return `${roomId}:${playerId}`;
+}
+
+async function runExistingSeatConnectionExclusive<T>(
+  roomId: string,
+  playerId: string,
+  operation: () => Promise<T>
+): Promise<T> {
+  const key = playerSessionKey(roomId, playerId);
+  const previous = existingSeatConnectionQueues.get(key) || Promise.resolve();
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => {
+    release = resolve;
+  });
+  const queued = previous.catch(() => undefined).then(() => gate);
+  existingSeatConnectionQueues.set(key, queued);
+
+  await previous.catch(() => undefined);
+  try {
+    return await operation();
+  } finally {
+    release();
+    if (existingSeatConnectionQueues.get(key) === queued) {
+      existingSeatConnectionQueues.delete(key);
+    }
+  }
 }
 
 function ensurePlayerSessionToken(roomId: string, playerId: string): string {
@@ -796,6 +822,30 @@ export function roomController(io: Server) {
     nickname: string,
     socket: Socket,
     previousSocketMessage = '该座位已在其他连接重新进入房间'
+  ): Promise<ExistingSeatConnectionResult> {
+    return runExistingSeatConnectionExclusive(room.id, existingPlayer.id, async () => {
+      const latestRoom = rooms.get(room.id);
+      const latestPlayer = latestRoom?.players.find(player => player.id === existingPlayer.id);
+      if (!latestRoom || !latestPlayer) {
+        throw new Error('原玩家座位已不存在');
+      }
+
+      return connectExistingPlayerSeatUnlocked(
+        latestRoom,
+        latestPlayer,
+        nickname,
+        socket,
+        previousSocketMessage
+      );
+    });
+  }
+
+  async function connectExistingPlayerSeatUnlocked(
+    room: Room,
+    existingPlayer: Player,
+    nickname: string,
+    socket: Socket,
+    previousSocketMessage: string
   ): Promise<ExistingSeatConnectionResult> {
     const occupiedSeat = room.players.find(player =>
       player.id !== existingPlayer.id && player.socketId === socket.id
