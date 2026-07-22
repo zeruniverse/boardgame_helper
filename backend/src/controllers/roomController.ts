@@ -2037,28 +2037,47 @@ export function roomController(io: Server) {
         // 将玩家标记为离线
         const offlineAt = Math.max(Date.now(), Number(player.lastHeartbeat || 0) + 1);
         player.online = false;
+        player.socketId = '';
         player.lastHeartbeat = offlineAt;
-        
+
+        rooms.set(roomId, currentRoom);
+        threadManager.updateRoomData(roomId, currentRoom);
+
+        // 两个任务都要在首次 await 前入队。否则新连接可能在两次 await 之间完成
+        // 座位接管，随后旧连接的 player_offline 会错误覆盖新的在线状态。
+        const updateRoomTask = sendTaskToRoom(roomId, 'update_room_data', { room: currentRoom });
+        const playerOfflineTask = sendTaskToRoom(roomId, 'player_offline', { playerId: player.id });
+        const [updateRoomResult, playerOfflineResult] = await Promise.allSettled([
+          updateRoomTask,
+          playerOfflineTask
+        ]);
+
         // 将更新后的房间数据同步到工作线程
-        try {
-          await sendTaskToRoom(roomId, 'update_room_data', { room: currentRoom });
-        } catch (error: any) {
-          console.error(`向房间 ${roomId} 同步数据失败 (disconnect):`, error);
+        if (updateRoomResult.status === 'rejected') {
+          console.error(`向房间 ${roomId} 同步数据失败 (disconnect):`, updateRoomResult.reason);
         }
 
         // 向游戏线程发送玩家离线事件
-        try {
-          await sendTaskToRoom(roomId, 'player_offline', { playerId: player.id });
-        } catch (error: any) {
-          console.error(`向房间 ${roomId} 发送 player_offline 任务失败:`, error);
+        if (playerOfflineResult.status === 'rejected') {
+          console.error(`向房间 ${roomId} 发送 player_offline 任务失败:`, playerOfflineResult.reason);
         }
 
-        const latestRoom = rooms.get(roomId) || currentRoom;
-        const latestPlayer = latestRoom.players.find(p => p.id === player.id);
-        if (latestPlayer) {
-          latestPlayer.online = false;
-          latestPlayer.lastHeartbeat = offlineAt;
+        const latestRoom = rooms.get(roomId);
+        if (!latestRoom) {
+          continue;
         }
+        const latestPlayer = latestRoom.players.find(p => p.id === player.id);
+        // 等待 worker 响应期间，座位可能已经被重连或同昵称接管。
+        // 仅当座位仍属于本次断线快照时，才继续广播离线状态和安排清理。
+        if (
+          !latestPlayer ||
+          latestPlayer.online !== false ||
+          latestPlayer.socketId !== '' ||
+          Number(latestPlayer.lastHeartbeat || 0) !== offlineAt
+        ) {
+          continue;
+        }
+
         currentRoom = latestRoom;
         rooms.set(roomId, latestRoom);
         threadManager.updateRoomData(roomId, latestRoom);
