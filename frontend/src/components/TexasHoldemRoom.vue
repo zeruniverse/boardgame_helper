@@ -229,15 +229,18 @@ onMounted(() => {
   const socket = store.socket;
   if (!socket) return;
 
-  // 检查是否需要重连
+  // 直接进入/刷新房间页时使用普通加入流程：有效令牌可恢复原座位，
+  // 令牌缺失或失效时仍可按同昵称接管；reconnect_room 仅用于网络断线重连。
   const isNewJoin = sessionStorage.getItem('texas_newJoin') === 'true';
-  if (store.playerId && store.currentRoom === roomId && !isNewJoin) {
-    console.log(`尝试重连房间 ${roomId}，玩家ID ${store.playerId}`);
-    const session = ensureGameSession('texas-holdem', undefined, roomId);
-    socket.emit('reconnect_room', {
-      roomId: store.currentRoom,
-      playerId: store.playerId,
-      sessionToken: session.sessionToken
+  const rememberedRoomId = store.currentRoom;
+  if (store.playerId && !isNewJoin) {
+    console.log(`尝试进入房间 ${roomId}，玩家ID ${store.playerId}`);
+    const session = ensureGameSession('texas-holdem', store.nickname || undefined, roomId);
+    socket.emit('join_room', {
+      roomId,
+      nickname: session.nickname,
+      playerId: session.playerId,
+      sessionToken: rememberedRoomId === roomId ? session.sessionToken : undefined
     });
   }
   // 成功加入或重连后，清除新加入标记
