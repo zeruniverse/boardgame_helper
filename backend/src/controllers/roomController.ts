@@ -2121,6 +2121,8 @@ export function roomController(io: Server) {
         player.online = false;
         player.socketId = '';
         player.lastHeartbeat = offlineAt;
+        // 断线也算最近活动，避免空闲清理轮询抢在重连宽限/房间清理定时器之前删除长期房间。
+        currentRoom.lastActiveTime = Date.now();
 
         rooms.set(roomId, currentRoom);
         threadManager.updateRoomData(roomId, currentRoom);
