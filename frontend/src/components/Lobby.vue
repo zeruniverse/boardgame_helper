@@ -811,7 +811,6 @@ import { GAME_META, GAME_ROUTES } from '../utils/gameMeta';
 import { ensureGameSession, getStoredSessionToken, hasStoredRoomSession, rememberGameSession } from '../utils/gameSession';
 
 const store = useMainStore();
-const texasStore = useTexasHoldemStore();
 const { rooms } = storeToRefs(store);
 const router = useRouter();
 const route = useRoute();
@@ -979,33 +978,11 @@ function enter(roomId: string) {
   const room = rooms.value.find(r => r.id === roomId);
   if (!room) return;
 
-  // 锁房只阻止新增座位；服务端仍允许同昵称接管既有座位。
-  // 没有本地 token 时先由服务端确认，避免普通新成员被提前导航到房间页。
-  if (room.locked && !hasReconnectSession(room)) {
-    joinRoomForm.value = {
-      roomName: room.id,
-      nickname: nickname.trim()
-    };
-    confirmJoinRoom();
-    return;
-  }
-
-  const session = ensureLocalSession(room.type, nickname, roomId);
-  const playerId = session.playerId;
-  
-  const routeName = gameRoutes[room.type];
-  if (!routeName) {
-    ElMessage.warning('暂不支持该游戏类型');
-    return;
-  }
-
-  // Bug L3: 统一所有游戏类型的处理逻辑
-  // 德州扑克先设置昵称和房间信息，再统一跳转
-  if (room.type === 'texas-holdem') {
-    texasStore.joinRoom(roomId, nickname);
-  }
-  // 所有游戏类型统一跳转，确保逻辑一致性
-  router.push({ name: routeName, params: { id: roomId }, query: playerId ? { playerId } : undefined });
+  joinRoomForm.value = {
+    roomName: room.id,
+    nickname: nickname.trim()
+  };
+  confirmJoinRoom();
 }
 
 // 显示重置对话框

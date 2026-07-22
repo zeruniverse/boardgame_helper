@@ -15,6 +15,6 @@ export function redirectToLobbyAfterForcedExit(message: string): void {
   if (typeof window === 'undefined') return;
   window.alert(message);
   setTimeout(() => {
-    window.location.href = '/';
+    window.location.hash = '#/';
   }, 100);
 }
