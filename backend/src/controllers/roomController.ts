@@ -1665,19 +1665,49 @@ export function roomController(io: Server) {
 
         let canRemovePlayer = true;
         if (threadManager.getRoomThreadStatus(room.id) !== 'not_found') {
-          try {
-            await sendTaskToRoom(room.id, 'update_room_data', { room });
-            await sendTaskToRoom(room.id, 'player_offline', { playerId: player.id });
+          // 两个离线任务都要在首次 await 前入队，避免同昵称接管在两次 await 之间
+          // 完成后，又被旧连接迟到的 player_offline 覆盖成离线状态。
+          const updateRoomTask = sendTaskToRoom(room.id, 'update_room_data', { room });
+          const playerOfflineTask = sendTaskToRoom(room.id, 'player_offline', { playerId: player.id });
+          const [updateRoomResult, playerOfflineResult] = await Promise.allSettled([
+            updateRoomTask,
+            playerOfflineTask
+          ]);
 
-            // 是否能从房间中真正移除玩家必须由对应游戏 worker 决定。
-            // 进行中的局通常只能把玩家置为离线，否则 room.players 与 worker 内的
-            // gameState/座位/手牌/角色列表会错位，导致流程卡死或私有信息错发。
-            const kickResponse = await sendTaskToRoom(room.id, 'kick_out_player', { targetId: player.id });
-            const kickResult = readKickResult(kickResponse);
-            canRemovePlayer = kickResult.kicked;
-          } catch (error) {
-            console.error(`通知房间线程玩家离开失败: ${room.id}`, error);
+          if (updateRoomResult.status === 'rejected') {
+            console.error(`通知房间线程同步离房状态失败: ${room.id}`, updateRoomResult.reason);
             canRemovePlayer = false;
+          }
+          if (playerOfflineResult.status === 'rejected') {
+            console.error(`通知房间线程玩家离线失败: ${room.id}`, playerOfflineResult.reason);
+            canRemovePlayer = false;
+          }
+
+          const currentSeat = rooms.get(room.id)?.players.find(p => p.id === player.id);
+          const seatWasTakenOver = Boolean(currentSeat && (
+            currentSeat.online !== false ||
+            currentSeat.socketId !== '' ||
+            Number(currentSeat.lastHeartbeat || 0) !== offlineAt
+          ));
+          if (seatWasTakenOver) {
+            await socket.leave(room.id);
+            socket.emit('room_left', { roomId: room.id });
+            console.log(`玩家 ${player.nickname} 的旧连接离房期间座位已被重新接管，跳过移除新连接`);
+            return;
+          }
+
+          if (canRemovePlayer) {
+            try {
+              // 是否能从房间中真正移除玩家必须由对应游戏 worker 决定。
+              // 进行中的局通常只能把玩家置为离线，否则 room.players 与 worker 内的
+              // gameState/座位/手牌/角色列表会错位，导致流程卡死或私有信息错发。
+              const kickResponse = await sendTaskToRoom(room.id, 'kick_out_player', { targetId: player.id });
+              const kickResult = readKickResult(kickResponse);
+              canRemovePlayer = kickResult.kicked;
+            } catch (error) {
+              console.error(`通知房间线程玩家离开失败: ${room.id}`, error);
+              canRemovePlayer = false;
+            }
           }
         }
 
