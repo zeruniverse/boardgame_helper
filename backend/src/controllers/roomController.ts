@@ -416,6 +416,13 @@ function buildGameConfig(gameType: string, incomingConfig: any): any {
     // 前端使用 dayTime/nightTime，worker 使用 dayTimer/nightTimer。
     gameConfig.dayTimer = gameConfig.dayTimer ?? gameConfig.dayTime;
     gameConfig.nightTimer = gameConfig.nightTimer ?? gameConfig.nightTime;
+
+    const hasExplicitTimerConfig = ['dayTime', 'nightTime', 'dayTimer', 'nightTimer'].some(
+      key => Object.prototype.hasOwnProperty.call(incomingConfig || {}, key)
+    );
+    if (gameConfig.enableTimers === undefined && hasExplicitTimerConfig) {
+      gameConfig.enableTimers = Number(gameConfig.dayTimer) > 0 || Number(gameConfig.nightTimer) > 0;
+    }
   }
 
   return gameConfig;

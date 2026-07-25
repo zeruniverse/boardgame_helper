@@ -491,7 +491,7 @@ export const useWerewolfStore = defineStore('werewolf', {
         if (gameInfo.operators) this.gameState.operators = gameInfo.operators;
         if (gameInfo.votes) this.gameState.votes = gameInfo.votes;
         if (gameInfo.publicKnownRoles) this.gameState.publicKnownRoles = gameInfo.publicKnownRoles;
-        if (gameInfo.currentSpeaker !== undefined) this.gameState.currentSpeaker = gameInfo.currentSpeaker;
+        this.gameState.currentSpeaker = gameInfo.currentSpeaker;
         if (gameInfo.config) this.gameState.config = gameInfo.config;
         if (gameInfo.needingCharacters) this.gameState.needingCharacters = gameInfo.needingCharacters;
         if (gameInfo.statusMessage) this.gameState.statusMessage = gameInfo.statusMessage;
