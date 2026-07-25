@@ -119,14 +119,23 @@ export class RoomThreadManager {
         workerData: { roomId: room.id, room }
       };
       
-      // 如果是 TS 环境，则通过 ts-node/register 加载源文件
-      if (__filename.endsWith('.ts')) {
-        workerOptions.execArgv = ['-r', 'ts-node/register'];
-      }
-      
       const workerPath = this.getWorkerPath(room.type);
       console.log(`Worker路径: ${workerPath}`);
-      const worker = new Worker(workerPath, workerOptions);
+
+      // Node.js 会在执行 execArgv 中的 ts-node hook 前解析 Worker 入口，
+      // 因此开发环境不能直接把 .ts 文件作为入口；改用 CommonJS 引导脚本加载它。
+      const isTypeScriptRuntime = __filename.endsWith('.ts');
+      const workerEntry = isTypeScriptRuntime
+        ? [
+            `process.env.TS_NODE_PROJECT = ${JSON.stringify(path.join(__dirname, '../../tsconfig.json'))};`,
+            `require(${JSON.stringify(require.resolve('ts-node/register'))});`,
+            `require(${JSON.stringify(workerPath)});`
+          ].join('\n')
+        : workerPath;
+      const worker = new Worker(workerEntry, {
+        ...workerOptions,
+        eval: isTypeScriptRuntime
+      });
 
       // 设置消息监听
       worker.on('message', (message: any) => {
