@@ -719,6 +719,9 @@ const minTargetCount = computed(() => {
   if (roleId === 'po') {
     return isPoCharged.value ? 1 : 0
   }
+  if (roleId === 'shabaloth') {
+    return 1
+  }
   if (roleId === 'godfather' || roleId === 'zombuul') {
     return 0
   }
