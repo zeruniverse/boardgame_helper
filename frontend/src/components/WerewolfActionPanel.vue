@@ -1,14 +1,14 @@
 <template>
   <div class="werewolf-action-panel">
     <!-- 时间显示 -->
-    <div v-if="gameState.timeLeft && gameState.timeLeft > 0" class="time-display">
+    <div v-if="timeLeft && timeLeft > 0" class="time-display">
       <el-progress
         :percentage="getTimePercentage()"
         :color="getTimeColor()"
         :show-text="false"
       />
       <div class="time-text">
-        剩余时间: {{ formatTime(gameState.timeLeft) }}
+        剩余时间: {{ formatTime(timeLeft ?? 0) }}
       </div>
     </div>
 
@@ -615,7 +615,8 @@ const getStatusDisplayName = () => {
 
 // 获取时间百分比
 const getTimePercentage = () => {
-  if (!props.gameState.timeLeft || !props.gameState.config) return 0
+  const remaining = Math.max(0, Number(props.timeLeft) || 0)
+  if (!remaining || !props.gameState.config) return 0
 
   let totalTime = 60
   switch (props.gameState.status) {
@@ -634,7 +635,7 @@ const getTimePercentage = () => {
   }
 
   if (totalTime <= 0) return 100
-  return Math.min(100, Math.max(0, (props.gameState.timeLeft / totalTime) * 100))
+  return Math.min(100, Math.max(0, (remaining / totalTime) * 100))
 }
 
 // 获取时间进度条颜色
