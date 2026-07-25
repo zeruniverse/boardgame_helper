@@ -83,6 +83,13 @@ export class RoomThreadManager {
       return null;
     }
 
+    // doStartRoomThread 会在 prepare_room 完成前先登记 Worker。必须优先复用
+    // 启动 Promise，避免并发调用把“Worker 已创建”误判成“房间已准备完成”。
+    if (this.startingPromises.has(room.id)) {
+      console.log(`房间 ${room.id} 的线程正在启动中，复用现有启动任务`);
+      return this.startingPromises.get(room.id)!;
+    }
+
     if (this.workers.has(room.id)) {
       console.log(`房间 ${room.id} 的线程已存在`);
       // 如果已存在，也认为成功，并返回更新后的房间对象
@@ -92,12 +99,6 @@ export class RoomThreadManager {
         return existingRoom;
       }
       return room; // Fallback
-    }
-
-    // 如果正在启动中，返回现有的 promise，防止并发启动
-    if (this.startingPromises.has(room.id)) {
-      console.log(`房间 ${room.id} 的线程正在启动中，复用现有启动任务`);
-      return this.startingPromises.get(room.id)!;
     }
 
     const startPromise = this.doStartRoomThread(room, config);
@@ -180,7 +181,17 @@ export class RoomThreadManager {
 
       worker.on('error', (error: any) => {
         console.error(`房间 ${room.id} 线程出错:`, error);
-        this.rejectPendingTasksForRoom(room.id, new Error(`房间 ${room.id} 线程出错: ${error?.message || String(error)}`));
+        let errorMessage = '未知错误';
+        if (typeof error?.message === 'string' && error.message) {
+          errorMessage = error.message;
+        } else {
+          try {
+            errorMessage = String(error);
+          } catch {
+            // 某些 Worker 错误对象没有可用的原始值，保留兜底信息。
+          }
+        }
+        this.rejectPendingTasksForRoom(room.id, new Error(`房间 ${room.id} 线程出错: ${errorMessage}`));
         this.stopRoomThread(room.id);
       });
 
@@ -376,11 +387,7 @@ export class RoomThreadManager {
       return false;
     }
 
-    if (this.workers.has(room.id)) {
-      return true; // 线程已在运行
-    }
-
-    // 如果线程不存在，则启动它
+    // startRoomThread 会区分“正在启动”和“已经运行”，并等待 prepare_room 完成。
     const updatedRoom = await this.startRoomThread(room, config);
     return !!updatedRoom;
   }
