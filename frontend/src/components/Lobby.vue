@@ -657,10 +657,15 @@
               <el-form-item label="最大人数">
                 <el-select v-model="createRoomForm.maxPlayers" placeholder="选择最大人数">
                   <el-option label="6人" :value="6" />
+                  <el-option label="7人" :value="7" />
                   <el-option label="8人" :value="8" />
                   <el-option label="9人" :value="9" />
                   <el-option label="10人" :value="10" />
+                  <el-option label="11人" :value="11" />
                   <el-option label="12人" :value="12" />
+                  <el-option label="13人" :value="13" />
+                  <el-option label="14人" :value="14" />
+                  <el-option label="15人" :value="15" />
                   <el-option label="16人" :value="16" />
                 </el-select>
               </el-form-item>
@@ -701,6 +706,7 @@
                   <el-option label="6人" :value="6" />
                   <el-option label="7人" :value="7" />
                   <el-option label="8人" :value="8" />
+                  <el-option label="9人" :value="9" />
                   <el-option label="10人" :value="10" />
                 </el-select>
               </el-form-item>
