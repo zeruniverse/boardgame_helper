@@ -477,7 +477,8 @@ class WerewolfWorker extends BaseGameWorker {
         dayDiscussTime: this.config?.dayTime ?? 120,
         voteTime: this.config?.voteTime ?? 60,
         nightActionTime: this.config?.actionTime ?? 60,
-        speakTime: this.config?.speakTime ?? 60
+        speakTime: this.config?.speakTime ?? 60,
+        autoCharacters: this.config?.autoCharacters === true
       }
     };
   }

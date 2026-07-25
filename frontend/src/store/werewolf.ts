@@ -38,6 +38,7 @@ interface WerewolfGameState {
     voteTime: number;
     nightActionTime: number;
     speakTime: number;
+    autoCharacters?: boolean;
   };
 }
 
@@ -123,7 +124,9 @@ export const useWerewolfStore = defineStore('werewolf', {
       const activePlayers = this.room.players.filter(p => p.online !== false);
       const readyCount = activePlayers.filter(p => p.ready).length;
       const requiredCount = this.gameState?.needingCharacters?.length || this.room.config?.playerCount || 6;
-      return readyCount === requiredCount;
+      return this.gameState?.config?.autoCharacters === true
+        ? readyCount >= 6
+        : readyCount === requiredCount;
     },
 
     canOperate(): boolean {

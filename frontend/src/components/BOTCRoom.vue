@@ -139,7 +139,7 @@
               :is-storyteller="store.isStoryteller"
               :is-host="isHost"
               :current-user-id="store.currentUserId"
-              :is-ai-storyteller="store.gameConfig?.isAIStoryteller || false"
+              :is-ai-storyteller="store.gameConfig?.storytellerMode === 'ai'"
               :storyteller-question="store.storytellerQuestion"
               :ai-storyteller-messages="store.aiStorytellerMessages"
               @game-action="handleGameAction"

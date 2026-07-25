@@ -113,6 +113,7 @@ interface OnuWerewolfGameState {
     nightTime: number;
     votingTime: number;
     discussTime: number;
+    autoRoles?: boolean;
   };
 }
 
@@ -179,7 +180,8 @@ export const useOnuWerewolfStore = defineStore('onuWerewolf', {
       const readyCount = activePlayers.filter(p => p.ready).length;
       
       // 后端按在线玩家开局：离线玩家留在房间中，但不参与新局。
-      return roleCount === playerCount + 3 && readyCount === playerCount && playerCount >= 3;
+      return (this.gameState.config.autoRoles === true || roleCount === playerCount + 3) &&
+        readyCount === playerCount && playerCount >= 3;
     },
 
     canUseSkill(): boolean {

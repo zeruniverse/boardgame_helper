@@ -476,6 +476,7 @@ interface GameConfig {
   voteTime?: number
   nightActionTime?: number
   speakTime?: number
+  autoCharacters?: boolean
 }
 
 interface GameState {
@@ -555,7 +556,9 @@ const canStartGame = computed(() => {
   const readyCount = players.filter((p: any) => p.ready).length
   // 需要至少角色配置所需人数的玩家准备
   const needingCount = props.gameState.needingCharacters?.length || 6
-  return readyCount >= needingCount && readyCount >= Math.min(players.length, 6)
+  return props.gameState.config?.autoCharacters === true
+    ? readyCount >= 6
+    : readyCount === needingCount
 })
 
 const displayPlayerName = (player?: Partial<GamePlayer> | null): string => {
