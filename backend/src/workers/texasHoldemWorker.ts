@@ -20,6 +20,7 @@ interface TexasHoldemGameState {
   totalBets: Record<string, number>;
   currentTurn: number;
   dealerIndex: number;
+  dealerPlayerId: string;
   blinds: { sb: number; bb: number };
   sbIndex: number;
   bbIndex: number;
@@ -83,6 +84,7 @@ class TexasHoldemWorker extends BaseGameWorker {
       totalBets: {},
       currentTurn: -1,
       dealerIndex: -1,
+      dealerPlayerId: '',
       blinds: { sb: 5, bb: 10 },
       sbIndex: -1,
       bbIndex: -1,
@@ -176,7 +178,7 @@ class TexasHoldemWorker extends BaseGameWorker {
       if (!player.gameMetadata) {
         player.gameMetadata = {};
       }
-      if (typeof player.gameMetadata.chips !== 'number' || player.gameMetadata.chips === 0) {
+      if (typeof player.gameMetadata.chips !== 'number') {
         player.gameMetadata.chips = config.defaultStack || 1000;
       }
       player.gameMetadata.inGame = true;
@@ -213,7 +215,7 @@ class TexasHoldemWorker extends BaseGameWorker {
     const roomPlayer = this.upsertRoomPlayer(player);
 
     // 初始化玩家的德州扑克游戏数据，写回 this.room.players 中的对象
-    if (typeof roomPlayer.gameMetadata.chips !== 'number' || roomPlayer.gameMetadata.chips === 0) {
+    if (typeof roomPlayer.gameMetadata.chips !== 'number') {
       roomPlayer.gameMetadata.chips = this.config?.defaultStack || 1000;
     }
     roomPlayer.gameMetadata.inGame = true;
@@ -410,6 +412,7 @@ class TexasHoldemWorker extends BaseGameWorker {
       return { kicked: false, reason: '目标玩家不存在' };
     }
 
+    this.preserveDealerCursorBeforeRemoval(targetId);
     this.room.players.splice(playerIndex, 1);
 
     // 从参与者列表中移除
@@ -788,6 +791,7 @@ class TexasHoldemWorker extends BaseGameWorker {
 
     // 从房间中移除玩家
     const removedIndex = playerIndex;
+    this.preserveDealerCursorBeforeRemoval(playerId);
     this.room.players.splice(playerIndex, 1);
 
     const participantIdx = this.participants.indexOf(playerId);
@@ -816,6 +820,54 @@ class TexasHoldemWorker extends BaseGameWorker {
     this.sendToRoom('chat_broadcast', { message: `${player.nickname} cash out 并退出房间`, type: 'cashout' });
     this.sendToRoom('room_update', this.room);
     return { success: true };
+  }
+
+  private getNextDealerIndex(participatingPlayers: Player[]): number {
+    const gs = this.gameState as TexasHoldemGameState;
+    if (participatingPlayers.length === 0) {
+      return -1;
+    }
+
+    if (gs.dealerPlayerId) {
+      const previousDealerRoomIndex = this.room.players.findIndex(p => p.id === gs.dealerPlayerId);
+      if (previousDealerRoomIndex !== -1) {
+        const participatingIndexById = new Map(
+          participatingPlayers.map((player, index) => [player.id, index])
+        );
+
+        for (let offset = 1; offset <= this.room.players.length; offset++) {
+          const candidate = this.room.players[(previousDealerRoomIndex + offset) % this.room.players.length];
+          const candidateIndex = participatingIndexById.get(candidate.id);
+          if (candidateIndex !== undefined) {
+            return candidateIndex;
+          }
+        }
+      }
+
+      // 兼容由主线程直接移除旧庄家的房间快照：旧索引位置通常正好是其下一座位。
+      if (gs.dealerIndex >= 0) {
+        return gs.dealerIndex % participatingPlayers.length;
+      }
+    }
+
+    return 0;
+  }
+
+  private preserveDealerCursorBeforeRemoval(playerId: string): void {
+    const gs = this.gameState as TexasHoldemGameState;
+    if (gs.dealerPlayerId !== playerId) {
+      return;
+    }
+
+    const playerIndex = this.room.players.findIndex(p => p.id === playerId);
+    if (playerIndex === -1 || this.room.players.length <= 1) {
+      gs.dealerPlayerId = '';
+      gs.dealerIndex = -1;
+      return;
+    }
+
+    const previousPlayerIndex = (playerIndex - 1 + this.room.players.length) % this.room.players.length;
+    gs.dealerPlayerId = this.room.players[previousPlayerIndex].id;
   }
 
   // 开始游戏
@@ -873,10 +925,10 @@ class TexasHoldemWorker extends BaseGameWorker {
       });
     }
 
-    // 初始化回合参数 - dealerIndex 始终保持在 participatingPlayers 索引空间
-    const prevDealerIdx = (gs.dealerIndex >= 0) ? gs.dealerIndex : -1;
-    const dealerIdx = (prevDealerIdx + 1) % participatingPlayers.length;
+    // 按上一局庄家的实际座位轮转，避免参与玩家变化时跳过或重复庄位。
+    const dealerIdx = this.getNextDealerIndex(participatingPlayers);
     gs.dealerIndex = dealerIdx; // participatingPlayers 中的索引
+    gs.dealerPlayerId = participatingPlayers[dealerIdx].id;
 
     let sbIndex: number;
     let bbIndex: number;
@@ -1265,6 +1317,7 @@ class TexasHoldemWorker extends BaseGameWorker {
 
     const playerIndex = this.room.players.findIndex(p => p.id === playerId);
     if (playerIndex !== -1) {
+      this.preserveDealerCursorBeforeRemoval(playerId);
       this.room.players.splice(playerIndex, 1);
 
       // 从参与者列表中移除
