@@ -27,6 +27,18 @@ if (!parentPort) {
   throw new Error('这个文件只能在Worker线程中运行');
 }
 
+function defaultWerewolfCharacters(playerCount: number): WerewolfCharacter[] {
+  const count = Math.max(6, Math.min(18, Math.floor(playerCount || 6)));
+  const roles: WerewolfCharacter[] = [];
+  const wolves = count >= 12 ? 4 : count >= 8 ? 3 : 2;
+  for (let i = 0; i < wolves; i++) roles.push('WEREWOLF');
+  roles.push('SEER', 'WITCH');
+  if (count >= 8) roles.push('HUNTER');
+  if (count >= 10) roles.push('GUARD');
+  while (roles.length < count) roles.push('VILLAGER');
+  return roles.slice(0, count);
+}
+
 // 游戏任务接口
 interface GameTask {
   id: string;
@@ -86,7 +98,8 @@ class WerewolfWorker extends BaseGameWorker {
       nightTime: config.nightTime ?? config.actionTime ?? 60,
       dayTime: config.dayTime ?? config.speakTime ?? 120,
       voteTime: config.voteTime ?? 60,
-      characters: config.characters || []
+      characters: config.characters || [],
+      autoCharacters: config.autoCharacters === true
     };
 
     // 验证角色配置
@@ -138,7 +151,8 @@ class WerewolfWorker extends BaseGameWorker {
   }
 
   async changeConfig(config: Partial<WerewolfConfig>): Promise<void> {
-    const nextCharacters = config.characters ?? this.config.characters;
+    const hasCharacterUpdate = Array.isArray(config.characters);
+    const nextCharacters = hasCharacterUpdate ? config.characters! : this.config.characters;
     if (!validateCharacterConfig(nextCharacters)) {
       throw new Error('角色配置不合法');
     }
@@ -153,7 +167,8 @@ class WerewolfWorker extends BaseGameWorker {
       nightTime: config.nightTime ?? config.actionTime ?? this.config.nightTime,
       dayTime: config.dayTime ?? config.speakTime ?? this.config.dayTime,
       voteTime: config.voteTime ?? this.config.voteTime,
-      characters: nextCharacters
+      characters: nextCharacters,
+      autoCharacters: hasCharacterUpdate ? false : this.config.autoCharacters
     };
     this.gameState.needingCharacters = this.config.characters;
     this.sendToRoom('config_changed', { config: this.config, gameInfo: this.getGameInfo() });
@@ -782,6 +797,11 @@ class WerewolfWorker extends BaseGameWorker {
     }
 
     const readyPlayers = this.room.players.filter(p => p.online !== false && p.gameMetadata?.ready);
+
+    if (this.config.autoCharacters) {
+      this.config.characters = defaultWerewolfCharacters(readyPlayers.length);
+      this.gameState.needingCharacters = this.config.characters;
+    }
 
     if (readyPlayers.length !== this.gameState.needingCharacters.length) {
       this.sendToPlayer(playerId, 'error', {

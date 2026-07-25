@@ -37,6 +37,7 @@ import {
   OnuBaseSkill,
   OnuSkillResult
 } from '../utils/onuWerewolfSkills';
+import { getRecommendedRoles } from '../utils/onuWerewolfPresets';
 
 if (!parentPort) {
   throw new Error('这个文件只能在Worker线程中运行');
@@ -115,7 +116,8 @@ class OnuWerewolfWorker extends BaseGameWorker {
       loneWolf: config.loneWolf === true,
       nightTime: config.nightTime ?? (config as any).actionTime ?? 300,
       votingTime: config.votingTime ?? (config as any).voteTime ?? 300,
-      discussTime: config.discussTime ?? (config as any).discussionTime ?? 180
+      discussTime: config.discussTime ?? (config as any).discussionTime ?? 180,
+      autoRoles: config.autoRoles === true
     };
 
     this.gameState.config = this.config;
@@ -151,7 +153,8 @@ class OnuWerewolfWorker extends BaseGameWorker {
       ...config,
       nightTime: config.nightTime ?? (config as any).actionTime ?? this.config.nightTime,
       votingTime: config.votingTime ?? (config as any).voteTime ?? this.config.votingTime,
-      discussTime: config.discussTime ?? (config as any).discussionTime ?? this.config.discussTime
+      discussTime: config.discussTime ?? (config as any).discussionTime ?? this.config.discussTime,
+      autoRoles: Array.isArray(config.roles) ? false : this.config.autoRoles
     };
 
     this.config = { ...this.config, ...normalizedConfig };
@@ -512,12 +515,17 @@ class OnuWerewolfWorker extends BaseGameWorker {
     }
 
     // 检查玩家数量
+    const playerCount = this.getOnlinePlayers().length;
+    if (this.config.autoRoles) {
+      this.config.roles = getRecommendedRoles(playerCount);
+      this.gameState.config = this.config;
+    }
+
     const validation = onuValidateGameConfig(this.config.roles);
     if (!validation.valid) {
       throw new Error(validation.error);
     }
 
-    const playerCount = this.getOnlinePlayers().length;
     if (playerCount !== validation.playerCount) {
       throw new Error(`需要 ${validation.playerCount} 个玩家，当前只有 ${playerCount} 个玩家`);
     }

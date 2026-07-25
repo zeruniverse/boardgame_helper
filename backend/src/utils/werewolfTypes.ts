@@ -175,6 +175,7 @@ export interface WerewolfConfig {
   dayTime: number;        // 白天时间（秒）
   voteTime: number;       // 投票时间（秒）
   characters: WerewolfCharacter[];  // 角色配置
+  autoCharacters?: boolean;         // 默认角色是否按实际准备人数自动生成
 }
 
 // 状态超时时间配置

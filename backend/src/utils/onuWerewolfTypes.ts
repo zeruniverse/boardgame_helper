@@ -227,6 +227,7 @@ export interface OnuWerewolfConfig {
   votingTime: number;      // 投票阶段时间（秒）
   discussTime: number;     // 讨论时间（秒）
   allowRoleReveal?: boolean; // 游戏结束后是否揭示所有玩家的最终角色
+  autoRoles?: boolean;       // 默认角色是否按实际在线人数自动生成
 }
 
 // 游戏状态

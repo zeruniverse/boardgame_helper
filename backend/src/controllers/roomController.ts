@@ -371,12 +371,20 @@ function buildGameConfig(gameType: string, incomingConfig: any): any {
   const gameConfig = { ...baseConfig, ...(incomingConfig || {}) };
   const desiredPlayerCount = Number(gameConfig.playerCount || gameConfig.maxPlayers || config.games[gameType]?.maxPlayers || 0);
 
-  if (gameType === 'werewolf' && (!Array.isArray(gameConfig.characters) || gameConfig.characters.length === 0)) {
-    gameConfig.characters = defaultWerewolfCharacters(desiredPlayerCount);
+  if (gameType === 'werewolf') {
+    const hasCustomCharacters = Array.isArray(incomingConfig?.characters) && incomingConfig.characters.length > 0;
+    if (!Array.isArray(gameConfig.characters) || gameConfig.characters.length === 0) {
+      gameConfig.characters = defaultWerewolfCharacters(desiredPlayerCount);
+    }
+    gameConfig.autoCharacters = !hasCustomCharacters;
   }
 
-  if (gameType === 'one-night-werewolf' && (!Array.isArray(gameConfig.roles) || gameConfig.roles.length === 0)) {
-    gameConfig.roles = defaultOnuRoles(desiredPlayerCount);
+  if (gameType === 'one-night-werewolf') {
+    const hasCustomRoles = Array.isArray(incomingConfig?.roles) && incomingConfig.roles.length > 0;
+    if (!Array.isArray(gameConfig.roles) || gameConfig.roles.length === 0) {
+      gameConfig.roles = defaultOnuRoles(desiredPlayerCount);
+    }
+    gameConfig.autoRoles = !hasCustomRoles;
     gameConfig.random = gameConfig.random !== false;
   }
 
