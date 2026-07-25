@@ -1722,6 +1722,20 @@ export function roomController(io: Server) {
         // 离开房间频道
         await socket.leave(room.id);
 
+        // kick_out_player 和 socket.leave 都会让出事件循环；这期间同昵称连接可能已完成座位接管。
+        // 在任何离线回写或实际移除前再次核对快照，避免旧连接把新连接重新置离线或删掉。
+        const latestSeatAfterLeave = rooms.get(room.id)?.players.find(p => p.id === player.id);
+        const seatWasTakenOverAfterLeave = Boolean(latestSeatAfterLeave && (
+          latestSeatAfterLeave.online !== false ||
+          latestSeatAfterLeave.socketId !== '' ||
+          Number(latestSeatAfterLeave.lastHeartbeat || 0) !== offlineAt
+        ));
+        if (seatWasTakenOverAfterLeave) {
+          socket.emit('room_left', { roomId: room.id });
+          console.log(`玩家 ${player.nickname} 的旧连接离房期间座位已被重新接管，跳过移除新连接`);
+          return;
+        }
+
         // worker 拒绝移除时，保持玩家为离线状态，使用与断线相同的重连/清理模型。
         if (!canRemovePlayer) {
           const latestRoom = rooms.get(room.id) || room;
