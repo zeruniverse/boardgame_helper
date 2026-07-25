@@ -1283,6 +1283,10 @@ class TexasHoldemWorker extends BaseGameWorker {
         this.reassignHost();
       }
 
+      // The controller rejects stale worker membership snapshots. Mark this
+      // worker-initiated removal as a fresh room update so the offline seat is
+      // actually removed from the authoritative room state.
+      this.room.lastActiveTime = Date.now();
       this.sendToRoom('room_update', this.room);
     }
   }
