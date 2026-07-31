@@ -555,7 +555,14 @@ export function roomController(io: Server) {
     if (!existingRoom || !workerRoom?.id || !Array.isArray(workerRoom.players)) return;
 
     const incomingPlayerIds = new Set(workerRoom.players.map(player => player.id));
-    const removedPlayers = (existingRoom.players || []).filter(player => !incomingPlayerIds.has(player.id));
+    const removedPlayers = (existingRoom.players || [])
+      .filter(player => !incomingPlayerIds.has(player.id))
+      .map(player => ({
+        id: player.id,
+        nickname: player.nickname,
+        socketId: player.socketId,
+        sessionToken: playerSessionTokens.get(playerSessionKey(workerRoom.id, player.id))
+      }));
     if (removedPlayers.length === 0) return;
 
     // 如果worker回传的是比主线程更新前更旧的房间快照，不能据此清理新加入玩家的socket订阅。
@@ -565,6 +572,19 @@ export function roomController(io: Server) {
     }
 
     for (const removedPlayer of removedPlayers) {
+      // 前一次 socket.leave() 会让出事件循环；期间座位可能已由重连连接接管并轮换令牌。
+      // 每次清理前都基于不可变快照复核，避免迟到的 worker 成员列表误踢新连接。
+      const latestPlayer = rooms.get(workerRoom.id)?.players.find(player => player.id === removedPlayer.id);
+      const latestSessionToken = playerSessionTokens.get(playerSessionKey(workerRoom.id, removedPlayer.id));
+      if (
+        !latestPlayer ||
+        latestPlayer.socketId !== removedPlayer.socketId ||
+        latestSessionToken !== removedPlayer.sessionToken
+      ) {
+        console.warn(`房间 ${workerRoom.id} 的玩家 ${removedPlayer.nickname} 已在worker同步期间变更，跳过旧连接清理`);
+        continue;
+      }
+
       clearPlayerSessionToken(workerRoom.id, removedPlayer.id);
       if (!removedPlayer.socketId) continue;
 
