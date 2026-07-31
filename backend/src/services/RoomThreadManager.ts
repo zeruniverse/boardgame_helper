@@ -27,6 +27,7 @@ export class RoomThreadManager {
   private roomTasks: Map<string, Set<string>> = new Map(); // roomId -> Set<taskId>
   private roomData: Map<string, Room> = new Map();
   private startingPromises: Map<string, Promise<Room | null>> = new Map();
+  private stoppingPromises: Map<string, Promise<boolean>> = new Map();
   private cleanupInterval: NodeJS.Timeout | null;
   private onMessage?: (data: any) => void;
   private shuttingDown = false;
@@ -83,6 +84,22 @@ export class RoomThreadManager {
       return null;
     }
 
+    const stoppingPromise = this.stoppingPromises.get(room.id);
+    if (stoppingPromise) {
+      console.log(`房间 ${room.id} 的线程正在停止，等待停止完成后重新启动`);
+      const stopped = await stoppingPromise;
+      if (!stopped || this.shuttingDown) {
+        return null;
+      }
+      // 停止可能发生在 prepare_room 期间；先等旧启动任务收尾，避免递归复用一个注定失败的 Promise。
+      const interruptedStart = this.startingPromises.get(room.id);
+      if (interruptedStart) {
+        await interruptedStart;
+      }
+      // 多个调用可能同时等待同一个停止任务；递归进入后会复用第一个调用创建的启动 Promise。
+      return this.startRoomThread(room, config);
+    }
+
     // doStartRoomThread 会在 prepare_room 完成前先登记 Worker。必须优先复用
     // 启动 Promise，避免并发调用把“Worker 已创建”误判成“房间已准备完成”。
     if (this.startingPromises.has(room.id)) {
@@ -112,6 +129,7 @@ export class RoomThreadManager {
   }
 
   private async doStartRoomThread(room: Room, config: any): Promise<Room | null> {
+    let worker: Worker | undefined;
     try {
       console.log(`正在启动房间 ${room.id} (${room.type}) 的线程...`);
       
@@ -133,7 +151,7 @@ export class RoomThreadManager {
             `require(${JSON.stringify(workerPath)});`
           ].join('\n')
         : workerPath;
-      const worker = new Worker(workerEntry, {
+      worker = new Worker(workerEntry, {
         ...workerOptions,
         eval: isTypeScriptRuntime
       });
@@ -141,6 +159,10 @@ export class RoomThreadManager {
       // 设置消息监听
       worker.on('message', (message: any) => {
         try {
+          // 已被替换或停止的旧 Worker 可能仍有排队消息；绝不能让它覆盖新线程的状态。
+          if (this.workers.get(room.id) !== worker) {
+            return;
+          }
           // 各个游戏 worker 早期实现的消息格式不完全一致，这里统一兼容。
           const forwardedEvent = this.normalizeWorkerEvent(room.id, message);
           if (forwardedEvent) {
@@ -180,6 +202,11 @@ export class RoomThreadManager {
       });
 
       worker.on('error', (error: any) => {
+        // 旧 Worker 的延迟 error 事件不能停止同房间已经启动的新 Worker。
+        if (this.workers.get(room.id) !== worker) {
+          return;
+        }
+
         console.error(`房间 ${room.id} 线程出错:`, error);
         let errorMessage = '未知错误';
         if (typeof error?.message === 'string' && error.message) {
@@ -192,27 +219,27 @@ export class RoomThreadManager {
           }
         }
         this.rejectPendingTasksForRoom(room.id, new Error(`房间 ${room.id} 线程出错: ${errorMessage}`));
-        this.stopRoomThread(room.id);
+        void this.stopRoomThread(room.id).catch(stopError => {
+          console.error(`房间 ${room.id} 出错后停止线程失败:`, stopError);
+        });
       });
 
       worker.on('exit', (code) => {
         console.log(`房间 ${room.id} 线程退出，代码: ${code}`);
-        // Worker退出时（无论正常还是异常），拒绝所有pending tasks
+
+        // terminate() 返回与 exit 事件之间存在时序窗口。若此 Worker 已被替换，
+        // 旧 exit 事件不得拒绝新任务，也不得删除新 Worker/房间快照。
+        if (this.workers.get(room.id) !== worker) {
+          return;
+        }
+
         if (code !== 0) {
           this.rejectPendingTasksForRoom(room.id, new Error(`房间 ${room.id} Worker异常退出，代码: ${code}`));
         } else {
           this.rejectPendingTasksForRoom(room.id, new Error(`房间 ${room.id} Worker正常退出`));
         }
 
-        // 先更新房间状态，再删除数据
-        const roomData = this.roomData.get(room.id);
-        if (roomData) {
-          roomData.threadStatus = 'idle';
-          roomData.threadId = undefined;
-        }
-
-        this.workers.delete(room.id);
-        this.roomData.delete(room.id);
+        this.clearCurrentWorker(room.id, worker!);
       });
 
       this.workers.set(room.id, worker);
@@ -240,45 +267,79 @@ export class RoomThreadManager {
       return room;
     } catch (error) {
       console.error(`启动房间 ${room.id} 线程失败:`, error);
-      const worker = this.workers.get(room.id);
-      if (worker) {
-        try {
-          await worker.terminate();
-        } catch (terminateError) {
-          console.error(`终止失败的房间 ${room.id} 线程时出错:`, terminateError);
-        }
+      if (worker && this.workers.get(room.id) === worker) {
+        await this.stopRoomThread(room.id);
       }
-      this.workers.delete(room.id);
-      this.roomData.delete(room.id);
-      room.threadStatus = 'idle';
-      room.threadId = undefined;
+      if (!this.workers.has(room.id)) {
+        room.threadStatus = 'idle';
+        room.threadId = undefined;
+      }
       return null;
     }
   }
 
   // 停止房间线程
   async stopRoomThread(roomId: string): Promise<boolean> {
+    const existingStop = this.stoppingPromises.get(roomId);
+    if (existingStop) {
+      return existingStop;
+    }
+
     const worker = this.workers.get(roomId);
     if (!worker) {
-      // 即使worker不存在，也要清理该房间的pending tasks
+      // 即使worker不存在，也要清理该房间的pending tasks和残留快照。
       this.rejectPendingTasksForRoom(roomId, new Error(`房间 ${roomId} 线程已停止`));
+      this.roomData.delete(roomId);
       return true;
     }
 
+    const stopPromise = this.doStopRoomThread(roomId, worker);
+    this.stoppingPromises.set(roomId, stopPromise);
     try {
-      // 先拒绝所有该房间的pending tasks
-      this.rejectPendingTasksForRoom(roomId, new Error(`房间 ${roomId} 线程被终止`));
+      return await stopPromise;
+    } finally {
+      if (this.stoppingPromises.get(roomId) === stopPromise) {
+        this.stoppingPromises.delete(roomId);
+      }
+    }
+  }
 
+  private async doStopRoomThread(roomId: string, worker: Worker): Promise<boolean> {
+    const roomData = this.roomData.get(roomId);
+    if (this.workers.get(roomId) === worker && roomData) {
+      roomData.threadStatus = 'stopping';
+    }
+
+    try {
+      // 启动会等待 stoppingPromises，因此这里拒绝的只可能是当前 Worker 的任务。
+      this.rejectPendingTasksForRoom(roomId, new Error(`房间 ${roomId} 线程被终止`));
       await worker.terminate();
-      this.workers.delete(roomId);
-      this.roomData.delete(roomId);
+      this.clearCurrentWorker(roomId, worker);
 
       console.log(`房间 ${roomId} 线程已停止`);
       return true;
     } catch (error) {
+      if (this.workers.get(roomId) === worker && roomData) {
+        roomData.threadStatus = 'running';
+      }
       console.error(`停止房间 ${roomId} 线程失败:`, error);
       return false;
     }
+  }
+
+  private clearCurrentWorker(roomId: string, worker: Worker): boolean {
+    if (this.workers.get(roomId) !== worker) {
+      return false;
+    }
+
+    const roomData = this.roomData.get(roomId);
+    if (roomData) {
+      roomData.threadStatus = 'idle';
+      roomData.threadId = undefined;
+    }
+    this.workers.delete(roomId);
+    this.roomData.delete(roomId);
+    return true;
   }
 
   // 拒绝指定房间的所有pending tasks
@@ -301,6 +362,10 @@ export class RoomThreadManager {
 
   // 向房间线程发送任务
   async sendTask(roomId: string, task: Omit<GameTask, 'id' | 'timestamp'>): Promise<GameTaskResponse> {
+    if (this.stoppingPromises.has(roomId)) {
+      throw new Error(`房间 ${roomId} 线程正在停止`);
+    }
+
     const worker = this.workers.get(roomId);
     if (!worker) {
       throw new Error(`房间 ${roomId} 线程不存在`);
@@ -341,7 +406,17 @@ export class RoomThreadManager {
       }
       roomTaskSet.add(taskId);
 
-      worker.postMessage(fullTask);
+      try {
+        worker.postMessage(fullTask);
+      } catch (error) {
+        clearTimeout(timeout);
+        this.tasks.delete(taskId);
+        roomTaskSet.delete(taskId);
+        if (roomTaskSet.size === 0) {
+          this.roomTasks.delete(roomId);
+        }
+        reject(error instanceof Error ? error : new Error(String(error)));
+      }
     });
   }
 
@@ -375,6 +450,7 @@ export class RoomThreadManager {
 
   // 获取房间线程状态
   getRoomThreadStatus(roomId: string): 'idle' | 'running' | 'stopping' | 'not_found' {
+    if (this.stoppingPromises.has(roomId)) return 'stopping';
     if (!this.workers.has(roomId)) return 'not_found';
     const room = this.roomData.get(roomId);
     return room?.threadStatus || 'idle';
@@ -431,7 +507,10 @@ export class RoomThreadManager {
 
   // 更新房间数据（用于外部调用更新房间状态）
   updateRoomData(roomId: string, room: Room): void {
-    this.roomData.set(roomId, room);
+    // Worker 已退出时不要重新创建孤立快照；下一次 startRoomThread 会使用传入的 room 重新登记。
+    if (this.workers.has(roomId) || this.startingPromises.has(roomId)) {
+      this.roomData.set(roomId, room);
+    }
   }
 
   private normalizeWorkerEvent(roomId: string, message: any): any | null {

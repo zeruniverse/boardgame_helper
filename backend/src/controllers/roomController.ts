@@ -136,13 +136,15 @@ function getPublicRooms() {
 
 function toClientPlayer(player: Player): any {
   const metadata = player.gameMetadata || {};
+  const { seatKey: _seatKey, ...publicMetadata } = metadata;
   const nickname = normalizeUserVisibleNickname(player.nickname || player.name, '玩家');
   const name = normalizeUserVisibleNickname(player.name || player.nickname, nickname);
+  const { socketId: _socketId, lastHeartbeat: _lastHeartbeat, ...publicPlayer } = player;
   return {
-    ...player,
+    ...publicPlayer,
     nickname,
     name,
-    gameMetadata: metadata,
+    gameMetadata: publicMetadata,
     // 统一前端读取的准备状态。旧代码只写入 gameMetadata.ready，多个 UI 读取 player.ready。
     ready: Boolean(metadata.ready)
   };
