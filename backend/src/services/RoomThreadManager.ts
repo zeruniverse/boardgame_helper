@@ -156,9 +156,12 @@ export class RoomThreadManager {
         eval: isTypeScriptRuntime
       });
 
-      // 设置消息监听
+      // Worker 会在任务响应前发送 room_update 等事件。控制层处理这些事件时可能
+      // await socket.leave()，因此必须按 Worker 的原始顺序串行消费消息，并在事件
+      // 真正落地后再解析对应的任务响应，避免调用方读取到旧房间状态。
+      let messageChain = Promise.resolve();
       worker.on('message', (message: any) => {
-        try {
+        messageChain = messageChain.then(async () => {
           // 已被替换或停止的旧 Worker 可能仍有排队消息；绝不能让它覆盖新线程的状态。
           if (this.workers.get(room.id) !== worker) {
             return;
@@ -166,7 +169,7 @@ export class RoomThreadManager {
           // 各个游戏 worker 早期实现的消息格式不完全一致，这里统一兼容。
           const forwardedEvent = this.normalizeWorkerEvent(room.id, message);
           if (forwardedEvent) {
-            this.onMessage?.(forwardedEvent);
+            await this.onMessage?.(forwardedEvent);
             return;
           }
 
@@ -196,9 +199,9 @@ export class RoomThreadManager {
               }
             }
           }
-        } catch (error) {
+        }).catch(error => {
           console.error(`房间 ${room.id} 处理Worker消息时出错:`, error);
-        }
+        });
       });
 
       worker.on('error', (error: any) => {
