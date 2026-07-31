@@ -591,7 +591,7 @@ export function roomController(io: Server) {
     const existingRoom = rooms.get(payload.id);
     if (!existingRoom) {
       console.warn(`忽略已删除房间 ${payload.id} 的迟到 room_update`);
-      return payload;
+      return null;
     }
 
     const oldPrivate = existingRoom.private === true;
@@ -619,11 +619,13 @@ export function roomController(io: Server) {
         // 广播到房间内所有客户端
         console.log(`广播事件到房间 ${data.roomId}: ${data.event}`, data.data);
         const outgoingData = await applyWorkerRoomUpdate(data.event, data.data);
+        if (data.event === 'room_update' && outgoingData === null) return;
         io.to(data.roomId).emit(data.event, serializeEventData(data.event, outgoingData));
       } else if (data.type === 'emit_to_socket') {
         // 发送到特定socket
         console.log(`发送事件到socket ${data.socketId}: ${data.event}`, data.data);
         const outgoingData = await applyWorkerRoomUpdate(data.event, data.data);
+        if (data.event === 'room_update' && outgoingData === null) return;
         io.to(data.socketId).emit(data.event, serializeEventData(data.event, outgoingData));
       }
     } catch (error) {
