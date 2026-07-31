@@ -2173,6 +2173,16 @@ export function roomController(io: Server) {
 
       for (let { room: currentRoom, player: currentPlayer } of memberships) {
         const roomId = currentRoom.id;
+        // 处理前一个房间的 worker 响应期间，同一座位可能已经由新 socket 重连。
+        // 必须基于当前控制层快照复核旧 socket 仍拥有该座位，不能用循环开始时的
+        // memberships 快照把新连接再次标记为离线。
+        const latestRoomBeforeDisconnect = rooms.get(roomId);
+        const latestPlayerBeforeDisconnect = latestRoomBeforeDisconnect?.players.find(p => p.id === currentPlayer.id);
+        if (!latestRoomBeforeDisconnect || !latestPlayerBeforeDisconnect || latestPlayerBeforeDisconnect.socketId !== socket.id) {
+          continue;
+        }
+        currentRoom = latestRoomBeforeDisconnect;
+        currentPlayer = latestPlayerBeforeDisconnect;
         const player = currentPlayer;
 
         console.log(`玩家 ${player.nickname} (${player.id}) 从房间 ${roomId} 断开连接`);
