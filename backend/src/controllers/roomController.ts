@@ -582,12 +582,20 @@ export function roomController(io: Server) {
       return payload;
     }
 
+    const roomBeforeDetach = rooms.get(payload.id);
+    await detachSocketsRemovedByWorker(roomBeforeDetach, payload as Room);
+
+    // socket.leave() 是异步的；等待期间房间可能被删除、重连或由其他控制层操作更新。
+    // 必须重新读取当前快照，既不能让已停止 Worker 的迟到消息复活房间，也不能用
+    // await 之前的旧对象覆盖最新的 socket/online/host 状态。
     const existingRoom = rooms.get(payload.id);
-    const oldPrivate = existingRoom?.private === true;
-    const oldLocked = existingRoom?.locked === true;
+    if (!existingRoom) {
+      console.warn(`忽略已删除房间 ${payload.id} 的迟到 room_update`);
+      return payload;
+    }
 
-    await detachSocketsRemovedByWorker(existingRoom, payload as Room);
-
+    const oldPrivate = existingRoom.private === true;
+    const oldLocked = existingRoom.locked === true;
     const mergedRoom = mergeRoomUpdateFromWorker(existingRoom, payload as Room);
     rooms.set(payload.id, mergedRoom);
     threadManager.updateRoomData(payload.id, mergedRoom);
