@@ -362,19 +362,6 @@ function rejectLockedRoom(socket: Socket, ack?: (response: any) => void): void {
   sendErrorResponse(socket, '房间已被锁定，不允许新成员加入', ack);
 }
 
-function isSameNicknameForPlayer(player: Player, nickname: string): boolean {
-  return nicknameKey(nickname) === nicknameKey(player.nickname || player.name);
-}
-
-function findNicknameTakeoverTarget(room: Room, nickname: string, preferredPlayer?: Player): Player | undefined {
-  const requestedName = nicknameKey(nickname);
-  if (!requestedName) return undefined;
-  if (preferredPlayer && isSameNicknameForPlayer(preferredPlayer, requestedName)) {
-    return preferredPlayer;
-  }
-  return findPlayerByNickname(room, requestedName);
-}
-
 function buildGameConfig(gameType: string, incomingConfig: any): any {
   const baseConfig = config.games[gameType]?.gameSpecificConfig || {};
   const gameConfig = { ...baseConfig, ...(incomingConfig || {}) };
@@ -558,6 +545,33 @@ export function roomController(io: Server) {
     io.emit('lobby_update', { rooms: getPublicRooms() });
   };
 
+  async function leaveSocketRoomSafely(
+    socket: Socket,
+    roomId: string,
+    context: string,
+    disconnectOnFailure = true
+  ): Promise<boolean> {
+    if (!socket.rooms.has(roomId)) {
+      return true;
+    }
+
+    try {
+      await socket.leave(roomId);
+      return true;
+    } catch (error) {
+      console.error(`${context}时移除 socket ${socket.id} 的房间订阅失败:`, error);
+      if (disconnectOnFailure) {
+        try {
+          // 离房失败时不能让已离开/被移除的连接继续接收角色、手牌或阵营消息。
+          socket.disconnect(true);
+        } catch (disconnectError) {
+          console.error(`${context}时强制断开 socket ${socket.id} 失败:`, disconnectError);
+        }
+      }
+      return false;
+    }
+  }
+
   async function detachSocketsRemovedByWorker(existingRoom: Room | undefined, workerRoom: Room): Promise<void> {
     if (!existingRoom || !workerRoom?.id || !Array.isArray(workerRoom.players)) return;
 
@@ -598,8 +612,10 @@ export function roomController(io: Server) {
       const removedSocket = io.sockets.sockets.get(removedPlayer.socketId);
       if (!removedSocket) continue;
 
-      await removedSocket.leave(workerRoom.id);
       removedSocket.emit('room_left', { roomId: workerRoom.id });
+      // Socket.IO 适配器异常不能中断 room_update 的落地，否则 worker 已经移除玩家，
+      // 控制层却仍保留旧座位，后续状态会永久分叉。离房失败时强制断开作为隔离兜底。
+      await leaveSocketRoomSafely(removedSocket, workerRoom.id, '同步 worker 移除玩家');
       console.log(`玩家 ${removedPlayer.nickname} 已由worker移出房间 ${workerRoom.id}，同步清理socket房间订阅`);
     }
   }
@@ -641,16 +657,20 @@ export function roomController(io: Server) {
   // 处理来自worker线程的消息
   async function handleThreadMessage(data: any) {
     try {
-      console.log('处理Worker消息:', data);
+      console.log('处理Worker消息:', {
+        type: data?.type,
+        roomId: data?.roomId,
+        event: data?.event
+      });
       if (data.type === 'emit') {
-        // 广播到房间内所有客户端
-        console.log(`广播事件到房间 ${data.roomId}: ${data.event}`, data.data);
+        // 不记录事件正文：其中可能包含手牌、角色、查验结果等私有游戏信息。
+        console.log(`广播事件到房间 ${data.roomId}: ${data.event}`);
         const outgoingData = await applyWorkerRoomUpdate(data.event, data.data);
         if (data.event === 'room_update' && outgoingData === null) return;
         io.to(data.roomId).emit(data.event, serializeEventData(data.event, outgoingData));
       } else if (data.type === 'emit_to_socket') {
-        // 发送到特定socket
-        console.log(`发送事件到socket ${data.socketId}: ${data.event}`, data.data);
+        // 不把私有事件正文写入服务端日志，避免角色/手牌等敏感信息泄露。
+        console.log(`发送事件到socket ${data.socketId}: ${data.event}`);
         const outgoingData = await applyWorkerRoomUpdate(data.event, data.data);
         if (data.event === 'room_update' && outgoingData === null) return;
         io.to(data.socketId).emit(data.event, serializeEventData(data.event, outgoingData));
@@ -707,6 +727,9 @@ export function roomController(io: Server) {
     if (!latestRoom) return undefined;
 
     const targetIndex = latestRoom.players.findIndex(p => p.id === targetPlayer.id);
+    const targetSocketId = targetIndex !== -1
+      ? latestRoom.players[targetIndex].socketId
+      : targetPlayer.socketId;
     if (targetIndex !== -1) {
       latestRoom.players.splice(targetIndex, 1);
     }
@@ -725,10 +748,13 @@ export function roomController(io: Server) {
 
     latestRoom.lastActiveTime = Date.now();
 
-    io.to(targetPlayer.socketId).emit('kicked_out', { message, clearSession: true });
-    const kickedSocket = io.sockets.sockets.get(targetPlayer.socketId);
+    if (targetSocketId) {
+      io.to(targetSocketId).emit('kicked_out', { message, clearSession: true });
+    }
+    const kickedSocket = io.sockets.sockets.get(targetSocketId);
     if (kickedSocket) {
-      await kickedSocket.leave(latestRoom.id);
+      kickedSocket.emit('room_left', { roomId: latestRoom.id });
+      await leaveSocketRoomSafely(kickedSocket, latestRoom.id, '踢出玩家');
     }
 
     rooms.set(latestRoom.id, latestRoom);
@@ -830,34 +856,50 @@ export function roomController(io: Server) {
 
     previousSocket.emit('kicked_out', { message, clearSession: false });
     previousSocket.emit('room_left', { roomId });
-    try {
-      await previousSocket.leave(roomId);
-    } catch (error) {
-      // 新连接已经完成 worker 同步，不能因为旧连接离房失败把新连接回滚成半连接状态。
-      // 断开旧 socket 是最后的隔离兜底，避免它继续收到该房间的私有/阵营消息。
-      console.error(`移除座位旧连接失败，强制断开 socket ${previousSocketId}:`, error);
-      previousSocket.disconnect(true);
-    }
+    // 新连接已经完成 worker 同步，不能因为旧连接离房失败把新连接回滚成半连接状态。
+    await leaveSocketRoomSafely(previousSocket, roomId, '移除座位旧连接');
   }
 
-  function clonePlayerSnapshot(player: Player): Player {
-    let gameMetadata = player.gameMetadata;
-    try {
-      gameMetadata = gameMetadata === undefined ? undefined : JSON.parse(JSON.stringify(gameMetadata));
-    } catch {
-      gameMetadata = { ...(gameMetadata || {}) };
-    }
+  interface PlayerConnectionSnapshot {
+    id: string;
+    socketId: string;
+    nickname: string;
+    name: string;
+    online: boolean;
+    lastHeartbeat: number;
+    hadInGame: boolean;
+    inGame: unknown;
+  }
 
+  function snapshotPlayerConnection(player: Player): PlayerConnectionSnapshot {
+    const metadata = player.gameMetadata || {};
     return {
-      ...player,
-      gameMetadata
+      id: player.id,
+      socketId: player.socketId,
+      nickname: player.nickname,
+      name: player.name,
+      online: player.online,
+      lastHeartbeat: player.lastHeartbeat,
+      hadInGame: Object.prototype.hasOwnProperty.call(metadata, 'inGame'),
+      inGame: metadata.inGame
     };
   }
 
-  function restorePlayerSnapshot(player: Player, snapshot: Player): void {
-    Object.assign(player, snapshot, {
-      gameMetadata: clonePlayerSnapshot(snapshot).gameMetadata
-    });
+  function restorePlayerConnection(player: Player, snapshot: PlayerConnectionSnapshot): void {
+    player.socketId = snapshot.socketId;
+    player.nickname = snapshot.nickname;
+    player.name = snapshot.name;
+    player.online = snapshot.online;
+    player.lastHeartbeat = snapshot.lastHeartbeat;
+
+    // 座位迁移只会额外修改德州扑克的 inGame。回滚时不能把整份
+    // gameMetadata 恢复成 await 之前的旧副本，否则并发牌局更新会丢失筹码/准备状态。
+    player.gameMetadata = player.gameMetadata || {};
+    if (snapshot.hadInGame) {
+      player.gameMetadata.inGame = snapshot.inGame;
+    } else {
+      delete player.gameMetadata.inGame;
+    }
   }
 
   interface ExistingSeatConnectionResult {
@@ -916,15 +958,23 @@ export function roomController(io: Server) {
     socket: Socket,
     previousSocketMessage: string
   ): Promise<ExistingSeatConnectionResult> {
-    const occupiedSeat = room.players.find(player =>
-      player.id !== existingPlayer.id && player.socketId === socket.id
-    );
-    if (occupiedSeat) {
-      throw new Error('当前连接已占用此房间的其他座位');
-    }
+    const assertSeatCanMove = (candidateRoom: Room): void => {
+      const occupiedSeat = candidateRoom.players.find(player =>
+        player.id !== existingPlayer.id && player.socketId === socket.id
+      );
+      if (occupiedSeat) {
+        throw new Error('当前连接已占用此房间的其他座位');
+      }
 
-    const playerSnapshot = clonePlayerSnapshot(existingPlayer);
-    const previousSocketId = playerSnapshot.socketId;
+      if (hasDuplicateNickname(candidateRoom, nickname, existingPlayer.id)) {
+        throw new Error('昵称已被占用，请更换昵称后再加入房间');
+      }
+    };
+
+    assertSeatCanMove(room);
+
+    let playerSnapshot: PlayerConnectionSnapshot | undefined;
+    let previousSocketId: string | undefined;
     const previousLastActiveTime = room.lastActiveTime;
     const hadCleanupTimer = Boolean(room.cleanupTimer);
     const socketWasInRoom = socket.rooms.has(room.id);
@@ -950,6 +1000,14 @@ export function roomController(io: Server) {
         throw new Error('原玩家座位已不存在');
       }
 
+      // 等待 worker 启动期间，其他座位可能已改名或被同一 socket 接管。
+      // 在最新房间快照上、且在改写座位前再次校验，避免不同座位锁之间的并发迁移
+      // 产生重复昵称或让一个连接同时占用多个座位。
+      assertSeatCanMove(transactionRoom);
+      // 等待 worker 启动期间旧连接可能断线、牌局也可能推进。必须在真正提交迁移前
+      // 对最新座位拍快照，失败时也只回滚本事务改写的连接字段。
+      playerSnapshot = snapshotPlayerConnection(transactionPlayer);
+      previousSocketId = playerSnapshot.socketId;
       markPlayerOnlineForController(transactionRoom, transactionPlayer, socket.id, nickname);
       transactionRoom.lastActiveTime = Date.now();
       await socket.join(transactionRoom.id);
@@ -977,9 +1035,11 @@ export function roomController(io: Server) {
       }
 
       const rollbackRoom = rooms.get(room.id) || room;
-      const rollbackPlayer = rollbackRoom.players.find(player => player.id === playerSnapshot.id);
-      if (rollbackPlayer) {
-        restorePlayerSnapshot(rollbackPlayer, playerSnapshot);
+      const rollbackPlayer = playerSnapshot
+        ? rollbackRoom.players.find(player => player.id === playerSnapshot!.id)
+        : undefined;
+      if (rollbackPlayer && playerSnapshot) {
+        restorePlayerConnection(rollbackPlayer, playerSnapshot);
       }
       // 使用新的时间戳标记回滚结果，避免稍晚到达的失败事务快照覆盖旧座位绑定。
       rollbackRoom.lastActiveTime = Math.max(previousLastActiveTime || 0, Date.now());
@@ -999,41 +1059,6 @@ export function roomController(io: Server) {
       }
       throw error;
     }
-  }
-
-  async function takeOverPlayerByNickname(
-    room: Room,
-    existingPlayer: Player,
-    nickname: string,
-    socket: Socket,
-    ack?: (response: any) => void
-  ): Promise<void> {
-    const result = await connectExistingPlayerSeat(
-      room,
-      existingPlayer,
-      nickname,
-      socket,
-      { previousSocketMessage: '同昵称玩家重新进入，当前连接已移出房间' }
-    );
-    const latestRoom = result.room;
-    const latestPlayer = result.player;
-    const payload = result.payload;
-
-    socket.emit('room_joined', payload);
-    socket.emit('room_update', toClientRoom(latestRoom));
-    ack?.({ success: true, ...payload });
-
-    io.to(latestRoom.id).emit('room_update', toClientRoom(latestRoom));
-    io.to(latestRoom.id).emit('chat_broadcast', {
-      message: `${latestPlayer.nickname} 已重新进入，原同昵称连接已移出房间`,
-      type: 'system'
-    });
-
-    if (!latestRoom.private) {
-      broadcastLobbyUpdate();
-    }
-
-    console.log(`玩家 ${latestPlayer.nickname} 以同昵称方式重新进入了房间 ${latestRoom.name}`);
   }
 
   function scheduleRoomCleanupIfNoOnlinePlayers(room: Room): void {
@@ -1066,17 +1091,7 @@ export function roomController(io: Server) {
   }
 
   async function leaveSocketRoomForRollback(socket: Socket, roomId: string, context: string): Promise<void> {
-    if (!socket.rooms.has(roomId)) {
-      return;
-    }
-
-    try {
-      await socket.leave(roomId);
-    } catch (error) {
-      // 回滚不能因为适配器离房异常而中止；断开失败连接可避免其继续接收房间消息。
-      console.error(`${context}时移除 socket ${socket.id} 的房间订阅失败，强制断开:`, error);
-      socket.disconnect(true);
-    }
+    await leaveSocketRoomSafely(socket, roomId, context);
   }
 
   async function rollbackFailedCreatedRoom(roomId: string, socket: Socket): Promise<void> {
@@ -1146,8 +1161,8 @@ export function roomController(io: Server) {
 
     clearPlayerSessionToken(roomId, player.id);
     if (socket.rooms.has(roomId)) {
-      await socket.leave(roomId);
       socket.emit('room_left', { roomId });
+      await leaveSocketRoomSafely(socket, roomId, '完成 worker 主动移除玩家');
     }
 
     // 有些游戏动作（当前为德州扑克 Cash Out）会在 worker 中直接移出行动玩家。
@@ -1445,19 +1460,11 @@ export function roomController(io: Server) {
         const requestedPlayerId = data.playerId || data.userId;
         let player = requestedPlayerId ? room.players.find(p => p.id === requestedPlayerId) : undefined;
 
-        // 同昵称接管优先于 playerId 会话重连。即使请求携带的是另一个座位的
-        // 有效令牌，也必须把请求昵称对应的已有座位迁移到新连接。
+        // 已有座位只能凭该座位的会话令牌迁移。昵称会随 room_update 公开，
+        // 不能把“同昵称”当作身份凭证，否则任何房间成员都能冒用昵称踢掉原连接。
         if (player) {
-          const suppliedNickname = nicknameKey(data.nickname);
           const nextNickname = normalizeNickname(data.nickname, player.nickname);
-          const sessionTokenValid = isValidPlayerSessionToken(room.id, player.id, data.sessionToken);
-          const takeoverTarget = findNicknameTakeoverTarget(room, suppliedNickname, player);
-          if (takeoverTarget && (!sessionTokenValid || takeoverTarget.id !== player.id)) {
-            await takeOverPlayerByNickname(room, takeoverTarget, normalizeNickname(data.nickname, takeoverTarget.nickname), socket, ack);
-            return;
-          }
-
-          if (!sessionTokenValid) {
+          if (!isValidPlayerSessionToken(room.id, player.id, data.sessionToken)) {
             rejectInvalidPlayerSession(socket, ack);
             return;
           }
@@ -1492,19 +1499,18 @@ export function roomController(io: Server) {
         }
 
         const nickname = normalizeNickname(data.nickname, `玩家${socket.id.substring(0, 6)}`);
-        const existingSameNamePlayer = findPlayerByNickname(room, nickname);
-        if (existingSameNamePlayer) {
-          await takeOverPlayerByNickname(room, existingSameNamePlayer, nickname, socket, ack);
+        if (hasDuplicateNickname(room, nickname)) {
+          rejectDuplicateNickname(socket, ack);
           return;
         }
 
-        // 锁房只阻止新增座位；同昵称接管已在上方完成。
+        // 锁房只阻止新增座位；持有效令牌的座位重连已在上方完成。
         if (room.locked === true) {
           rejectLockedRoom(socket, ack);
           return;
         }
 
-        // 检查房间是否已满。同昵称接管已在上方完成，因此满房也能恢复原座位。
+        // 检查房间是否已满。有效会话重连已在上方完成，因此满房仍可恢复原座位。
         if (room.players.length >= room.maxPlayers) {
           socket.emit('error', { message: '房间已满' });
           ack?.({ success: false, error: '房间已满' });
@@ -1600,18 +1606,10 @@ export function roomController(io: Server) {
         const requestedPlayerId = data.playerId || data.userId;
         let player = requestedPlayerId ? room.players.find(p => p.id === requestedPlayerId) : undefined;
 
-        // 旧版直接链接接口同样让同昵称接管优先于 playerId 会话重连。
+        // 直接链接接口也必须使用该座位的会话令牌，不能凭公开昵称接管座位。
         if (player) {
-          const suppliedNickname = nicknameKey(data.nickname);
           const nextNickname = normalizeNickname(data.nickname, player.nickname);
-          const sessionTokenValid = isValidPlayerSessionToken(room.id, player.id, data.sessionToken);
-          const takeoverTarget = findNicknameTakeoverTarget(room, suppliedNickname, player);
-          if (takeoverTarget && (!sessionTokenValid || takeoverTarget.id !== player.id)) {
-            await takeOverPlayerByNickname(room, takeoverTarget, normalizeNickname(data.nickname, takeoverTarget.nickname), socket, ack);
-            return;
-          }
-
-          if (!sessionTokenValid) {
+          if (!isValidPlayerSessionToken(room.id, player.id, data.sessionToken)) {
             rejectInvalidPlayerSession(socket, ack);
             return;
           }
@@ -1646,19 +1644,18 @@ export function roomController(io: Server) {
         }
 
         const nickname = normalizeNickname(data.nickname, `玩家${socket.id.substring(0, 6)}`);
-        const existingSameNamePlayer = findPlayerByNickname(room, nickname);
-        if (existingSameNamePlayer) {
-          await takeOverPlayerByNickname(room, existingSameNamePlayer, nickname, socket, ack);
+        if (hasDuplicateNickname(room, nickname)) {
+          rejectDuplicateNickname(socket, ack);
           return;
         }
 
-        // 锁房只阻止新增座位；同昵称接管已在上方完成。
+        // 锁房只阻止新增座位；持有效令牌的座位重连已在上方完成。
         if (room.locked === true) {
           rejectLockedRoom(socket, ack);
           return;
         }
 
-        // 检查房间是否已满。同昵称接管已在上方完成，因此满房也能恢复原座位。
+        // 检查房间是否已满。有效会话重连已在上方完成，因此满房仍可恢复原座位。
         if (room.players.length >= room.maxPlayers) {
           socket.emit('error', { message: '房间已满' });
           ack?.({ success: false, error: '房间已满' });
@@ -1752,8 +1749,8 @@ export function roomController(io: Server) {
         if (!player) {
           // 玩家可能已先被具体游戏worker从房间移除（例如德州扑克cash out）。
           // 这种情况下仍需清理Socket.IO房间订阅，避免旧房间广播继续进入大厅或其他房间页面。
-          await socket.leave(room.id);
           socket.emit('room_left', { roomId: room.id });
+          await leaveSocketRoomSafely(socket, room.id, '清理已被 worker 移除玩家的旧订阅');
           return;
         }
 
@@ -1795,8 +1792,8 @@ export function roomController(io: Server) {
             Number(currentSeat.lastHeartbeat || 0) !== offlineAt
           ));
           if (seatWasTakenOver) {
-            await socket.leave(room.id);
             socket.emit('room_left', { roomId: room.id });
+            await leaveSocketRoomSafely(socket, room.id, '旧连接离房');
             console.log(`玩家 ${player.nickname} 的旧连接离房期间座位已被重新接管，跳过移除新连接`);
             return;
           }
@@ -1817,7 +1814,7 @@ export function roomController(io: Server) {
         }
 
         // 离开房间频道
-        await socket.leave(room.id);
+        await leaveSocketRoomSafely(socket, room.id, '玩家主动离房');
 
         // kick_out_player 和 socket.leave 都会让出事件循环；这期间同昵称连接可能已完成座位接管。
         // 在任何离线回写或实际移除前再次核对快照，避免旧连接把新连接重新置离线或删掉。
