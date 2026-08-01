@@ -993,10 +993,11 @@ export function roomController(io: Server) {
       }
 
       // prepare_room 可能在启动过程中回传新的 room 快照；后续必须基于最新对象提交，
-      // 否则旧引用会覆盖 worker 已初始化的游戏状态。
-      const transactionRoom = rooms.get(room.id) || room;
-      const transactionPlayer = transactionRoom.players.find(player => player.id === existingPlayer.id);
-      if (!transactionPlayer) {
+      // 否则旧引用会覆盖 worker 已初始化的游戏状态。房间若已被清理则直接失败，
+      // 绝不能退回 await 前的旧引用并通过 rooms.set 把已删除房间复活。
+      const transactionRoom = rooms.get(room.id);
+      const transactionPlayer = transactionRoom?.players.find(player => player.id === existingPlayer.id);
+      if (!transactionRoom || !transactionPlayer) {
         throw new Error('原玩家座位已不存在');
       }
 
@@ -1012,16 +1013,33 @@ export function roomController(io: Server) {
       transactionRoom.lastActiveTime = Date.now();
       await socket.join(transactionRoom.id);
 
-      rooms.set(transactionRoom.id, transactionRoom);
-      threadManager.updateRoomData(transactionRoom.id, transactionRoom);
-      await sendTaskToRoom(transactionRoom.id, 'update_room_data', { room: transactionRoom });
-      await sendTaskToRoom(transactionRoom.id, 'player_online', { playerId: transactionPlayer.id });
+      // socket.join 也会让出事件循环。使用此时仍在 rooms 中的当前快照继续提交；
+      // 不再调用 rooms.set(transactionRoom)，以免清理定时器在 join 期间删除房间后被复活。
+      const joinedRoom = rooms.get(transactionRoom.id);
+      const joinedPlayer = joinedRoom?.players.find(player => player.id === transactionPlayer.id);
+      if (!joinedRoom || !joinedPlayer || joinedPlayer.socketId !== socket.id || joinedPlayer.online === false) {
+        throw new Error('房间或玩家座位已在加入连接期间失效');
+      }
 
-      const latestRoom = rooms.get(transactionRoom.id) || transactionRoom;
-      const latestPlayer = latestRoom.players.find(p => p.id === transactionPlayer.id) || transactionPlayer;
+      threadManager.updateRoomData(joinedRoom.id, joinedRoom);
+      await sendTaskToRoom(joinedRoom.id, 'update_room_data', { room: joinedRoom });
+      await sendTaskToRoom(joinedRoom.id, 'player_online', { playerId: joinedPlayer.id });
 
-      // 只有控制层和 worker 都确认新连接后，才移除旧连接并轮换令牌。
+      let latestRoom = rooms.get(joinedRoom.id);
+      let latestPlayer = latestRoom?.players.find(p => p.id === joinedPlayer.id);
+      if (!latestRoom || !latestPlayer || latestPlayer.socketId !== socket.id || latestPlayer.online === false) {
+        throw new Error('房间或玩家座位已在连接期间失效');
+      }
+
+      // 只有控制层和 worker 都确认新连接后，才移除旧连接。离房会让出事件循环，
+      // 因此轮换令牌前还要再次确认房间没有被清理、座位也没有被踢出。
       await detachSeatSocketById(latestRoom.id, previousSocketId, socket, previousSocketMessage);
+      latestRoom = rooms.get(transactionRoom.id);
+      latestPlayer = latestRoom?.players.find(p => p.id === transactionPlayer.id);
+      if (!latestRoom || !latestPlayer || latestPlayer.socketId !== socket.id || latestPlayer.online === false) {
+        throw new Error('房间或玩家座位已在连接提交期间失效');
+      }
+
       const sessionToken = rotatePlayerSessionToken(latestRoom.id, latestPlayer.id);
       scheduleOfflineHostFailoverIfNeeded(latestRoom);
       return {
@@ -1034,7 +1052,16 @@ export function roomController(io: Server) {
         await leaveSocketRoomForRollback(socket, room.id, '回滚已有座位连接');
       }
 
-      const rollbackRoom = rooms.get(room.id) || room;
+      // 回滚期间房间可能已被清理或服务器已重置。绝不能用进入事务前的旧引用
+      // 把已删除房间复活；此时只需确保新连接不再订阅旧房间并向调用方返回失败。
+      const rollbackRoom = rooms.get(room.id);
+      if (!rollbackRoom) {
+        if (socket.rooms.has(room.id)) {
+          await leaveSocketRoomForRollback(socket, room.id, '清理已删除房间的连接订阅');
+        }
+        throw error;
+      }
+
       const rollbackPlayer = playerSnapshot
         ? rollbackRoom.players.find(player => player.id === playerSnapshot!.id)
         : undefined;
@@ -1054,8 +1081,11 @@ export function roomController(io: Server) {
         }
       }
 
-      if (hadCleanupTimer || !rollbackRoom.players.some(player => player.online)) {
-        scheduleRoomCleanupIfNoOnlinePlayers(rollbackRoom);
+      // 上面的 worker 同步同样会让出事件循环。只对仍存在的当前房间安排清理，
+      // 避免失败回滚在房间已删除后通过 scheduleRoomCleanupIfNoOnlinePlayers 将其复活。
+      const activeRollbackRoom = rooms.get(rollbackRoom.id);
+      if (activeRollbackRoom && (hadCleanupTimer || !activeRollbackRoom.players.some(player => player.online))) {
+        scheduleRoomCleanupIfNoOnlinePlayers(activeRollbackRoom);
       }
       throw error;
     }
