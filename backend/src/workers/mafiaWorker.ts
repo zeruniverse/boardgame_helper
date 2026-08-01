@@ -2543,7 +2543,9 @@ class MafiaWorker extends BaseGameWorker {
 const worker = new MafiaWorker();
 
 // 处理主线程发送的消息
-parentPort.on('message', async (task: GameTask) => {
+let taskQueue: Promise<void> = Promise.resolve();
+parentPort.on('message', (task: GameTask) => {
+  taskQueue = taskQueue.then(async () => {
   try {
     let response: GameTaskResponse;
     
@@ -2595,4 +2597,5 @@ parentPort.on('message', async (task: GameTask) => {
       error: error instanceof Error ? error.message : '未知错误'
     });
   }
+  });
 }); 

@@ -1576,7 +1576,9 @@ class OnuWerewolfWorker extends BaseGameWorker {
 // Worker消息处理
 const worker = new OnuWerewolfWorker();
 
-parentPort?.on('message', async (task: GameTask) => {
+let taskQueue: Promise<void> = Promise.resolve();
+parentPort?.on('message', (task: GameTask) => {
+  taskQueue = taskQueue.then(async () => {
   try {
     const response: GameTaskResponse = {
       taskId: task.id,
@@ -1623,4 +1625,5 @@ parentPort?.on('message', async (task: GameTask) => {
     };
     parentPort?.postMessage(response);
   }
+  });
 });

@@ -4406,53 +4406,56 @@ export class BOTCWorker extends BaseGameWorker {
 if (parentPort) {
   const worker = new BOTCWorker();
 
-  parentPort.on('message', async (task: any) => {
-    try {
-      let responseData: any;
-      switch (task.type) {
-        case 'prepare_room':
-        case 'prepareRoom':
-          await worker.prepareRoom(task.data?.room || task.room || workerData?.room, task.data?.config || task.config);
-          break;
-        case 'change_config':
-        case 'changeConfig':
-          await worker.changeConfig(task.data?.config || task.config);
-          break;
-        case 'update_room_data':
-          worker.syncRoom(task.data.room);
-          break;
-        case 'join_room':
-        case 'joinRoom':
-          await worker.joinRoom(task.data?.player || task.player);
-          break;
-        case 'player_online':
-        case 'playerOnline':
-          await worker.playerOnline(task.playerId || task.data?.playerId);
-          break;
-        case 'player_offline':
-        case 'playerOffline':
-          await worker.playerOffline(task.playerId || task.data?.playerId);
-          break;
-        case 'game_action':
-        case 'gameAction':
-          await worker.gameAction(task.playerId || task.data?.playerId, task.data?.actionType || task.actionType, task.data?.actionData || task.actionData);
-          break;
-        case 'kick_player':
-        case 'kick_out_player':
-        case 'kickOutPlayer':
-          responseData = await worker.kickOutPlayer(task.data?.targetId || task.targetId);
-          break;
-        default:
-          parentPort!.postMessage({ taskId: task.id, success: false, error: `未知任务类型: ${task.type}` });
-          return;
+  let taskQueue: Promise<void> = Promise.resolve();
+  parentPort.on('message', (task: any) => {
+    taskQueue = taskQueue.then(async () => {
+      try {
+        let responseData: any;
+        switch (task.type) {
+          case 'prepare_room':
+          case 'prepareRoom':
+            await worker.prepareRoom(task.data?.room || task.room || workerData?.room, task.data?.config || task.config);
+            break;
+          case 'change_config':
+          case 'changeConfig':
+            await worker.changeConfig(task.data?.config || task.config);
+            break;
+          case 'update_room_data':
+            worker.syncRoom(task.data.room);
+            break;
+          case 'join_room':
+          case 'joinRoom':
+            await worker.joinRoom(task.data?.player || task.player);
+            break;
+          case 'player_online':
+          case 'playerOnline':
+            await worker.playerOnline(task.playerId || task.data?.playerId);
+            break;
+          case 'player_offline':
+          case 'playerOffline':
+            await worker.playerOffline(task.playerId || task.data?.playerId);
+            break;
+          case 'game_action':
+          case 'gameAction':
+            await worker.gameAction(task.playerId || task.data?.playerId, task.data?.actionType || task.actionType, task.data?.actionData || task.actionData);
+            break;
+          case 'kick_player':
+          case 'kick_out_player':
+          case 'kickOutPlayer':
+            responseData = await worker.kickOutPlayer(task.data?.targetId || task.targetId);
+            break;
+          default:
+            parentPort!.postMessage({ taskId: task.id, success: false, error: `未知任务类型: ${task.type}` });
+            return;
+        }
+        parentPort!.postMessage({ taskId: task.id, success: true, data: responseData });
+      } catch (error) {
+        parentPort!.postMessage({
+          taskId: task.id,
+          success: false,
+          error: error instanceof Error ? error.message : String(error)
+        });
       }
-      parentPort!.postMessage({ taskId: task.id, success: true, data: responseData });
-    } catch (error) {
-      parentPort!.postMessage({
-        taskId: task.id,
-        success: false,
-        error: error instanceof Error ? error.message : String(error)
-      });
-    }
+    });
   });
 }

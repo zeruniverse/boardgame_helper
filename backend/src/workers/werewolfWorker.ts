@@ -1919,7 +1919,9 @@ const worker = new WerewolfWorker();
 
 // 监听主线程消息
 if (parentPort) {
-  parentPort.on('message', async (task: GameTask) => {
+  let taskQueue: Promise<void> = Promise.resolve();
+  parentPort.on('message', (task: GameTask) => {
+    taskQueue = taskQueue.then(async () => {
     try {
       let response: GameTaskResponse;
 
@@ -1990,5 +1992,6 @@ if (parentPort) {
         error: error.message || '未知错误'
       });
     }
+    });
   });
 }

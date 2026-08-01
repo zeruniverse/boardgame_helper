@@ -73,6 +73,7 @@ class TexasHoldemWorker extends BaseGameWorker {
   private actionDeadline: number | null = null;
   // 每个行动轮次只允许当前行动者延时一次，避免任意玩家反复刷新计时器导致牌局永久卡住。
   private actionExtendedForPlayerId: string | null = null;
+  private autoStartTimer: NodeJS.Timeout | null = null;
 
   constructor() {
     super();
@@ -104,25 +105,28 @@ class TexasHoldemWorker extends BaseGameWorker {
 
     // 监听来自主线程的消息
     if (parentPort) {
-      parentPort.on('message', async (task: GameTask) => {
-        if (task.type === 'dispose') {
-          this.dispose();
-          return;
-        }
-        try {
-          const response = await this.handleTask(task);
-          parentPort?.postMessage({
-            taskId: task.id,
-            success: true,
-            data: response
-          });
-        } catch (error: any) {
-          parentPort?.postMessage({
-            taskId: task.id,
-            success: false,
-            error: error.message
-          });
-        }
+      let taskQueue: Promise<void> = Promise.resolve();
+      parentPort.on('message', (task: GameTask) => {
+        taskQueue = taskQueue.then(async () => {
+          if (task.type === 'dispose') {
+            this.dispose();
+            return;
+          }
+          try {
+            const response = await this.handleTask(task);
+            parentPort?.postMessage({
+              taskId: task.id,
+              success: true,
+              data: response
+            });
+          } catch (error: any) {
+            parentPort?.postMessage({
+              taskId: task.id,
+              success: false,
+              error: error.message
+            });
+          }
+        });
       });
     }
   }
@@ -872,6 +876,7 @@ class TexasHoldemWorker extends BaseGameWorker {
 
   // 开始游戏
   private startGame() {
+    this.clearAutoStartTimer();
     const gs = this.gameState as TexasHoldemGameState;
     // 重置游戏状态
     gs.communityCards = [];
@@ -1262,9 +1267,11 @@ class TexasHoldemWorker extends BaseGameWorker {
     this.checkAndKickOfflinePlayers();
 
     // 自动开始下一局逻辑
+    this.clearAutoStartTimer();
     if (this.room.gameMetadata?.autoStart) {
       // 延迟到下一个事件循环执行自动开始逻辑
-      setTimeout(() => {
+      this.autoStartTimer = setTimeout(() => {
+        this.autoStartTimer = null;
         this.attemptAutoStart();
       }, 1000); // 1秒后尝试自动开始
     }
@@ -1272,6 +1279,13 @@ class TexasHoldemWorker extends BaseGameWorker {
 
   // 尝试自动开始游戏
   private attemptAutoStart() {
+    const gs = this.gameState as TexasHoldemGameState;
+    // 延迟期间房主可能关闭自动开始，或已经手动开始了下一局。
+    // 两种情况下旧定时器都不能再启动第二手牌并覆盖正在进行的状态。
+    if (!this.room.gameMetadata?.autoStart || gs.stage !== 'idle' || this.participants.length > 0) {
+      return;
+    }
+
     // 检查房间状态是否适合自动开始
     const eligiblePlayers = this.room.players.filter(p => {
       const gm = p.gameMetadata || {};
@@ -1550,6 +1564,9 @@ class TexasHoldemWorker extends BaseGameWorker {
       this.room.gameMetadata = {};
     }
     this.room.gameMetadata.autoStart = !this.room.gameMetadata.autoStart;
+    if (!this.room.gameMetadata.autoStart) {
+      this.clearAutoStartTimer();
+    }
     const status = this.room.gameMetadata.autoStart ? '开启' : '关闭';
 
     this.sendToRoom('chat_broadcast', { message: `[房主${player.nickname} ${status}了自动开始游戏]`, type: 'system' });
@@ -2275,6 +2292,14 @@ class TexasHoldemWorker extends BaseGameWorker {
   // Worker线程终止时清理资源
   private dispose() {
     this.clearActionTimer();
+    this.clearAutoStartTimer();
+  }
+
+  private clearAutoStartTimer(): void {
+    if (this.autoStartTimer) {
+      clearTimeout(this.autoStartTimer);
+      this.autoStartTimer = null;
+    }
   }
 }
 

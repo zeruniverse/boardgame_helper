@@ -1868,7 +1868,9 @@ class AvalonWorker extends BaseGameWorker {
 // Worker消息处理
 const worker = new AvalonWorker();
 
-parentPort.on('message', async (task: GameTask) => {
+let taskQueue: Promise<void> = Promise.resolve();
+parentPort.on('message', (task: GameTask) => {
+  taskQueue = taskQueue.then(async () => {
   try {
     let response: GameTaskResponse;
 
@@ -1927,4 +1929,5 @@ parentPort.on('message', async (task: GameTask) => {
       error: error instanceof Error ? error.message : String(error)
     });
   }
+  });
 });
