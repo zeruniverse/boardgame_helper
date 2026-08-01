@@ -552,6 +552,8 @@ export function roomController(io: Server) {
       }
       hostKickVotes.clear();
       playerSessionTokens.clear();
+      existingSeatConnectionQueues.clear();
+      roomConnectionAttempts.clear();
       
       // 6. 重新初始化线程管理器
       threadManager = new RoomThreadManager(handleThreadMessage);
