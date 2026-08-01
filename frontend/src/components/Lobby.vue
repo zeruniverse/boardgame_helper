@@ -898,14 +898,13 @@ function findStoredSessionForHiddenRoom(roomId: string, nickname: string): Store
 }
 
 function canEnterRoom(room: any): boolean {
-  // 是否能占用新座位由服务端在拿到昵称后判断。锁房时仍需允许点击，
-  // 否则没有本地 sessionToken 的同昵称玩家无法走既有的座位接管流程。
-  return Boolean(room?.id);
+  // 锁房后只允许持有该房间会话令牌的原座位重连。
+  return Boolean(room?.id) && (!room.locked || hasReconnectSession(room));
 }
 
 function getRoomActionText(room: any): string {
   if (!room?.locked) return '进入';
-  return hasReconnectSession(room) ? '重连' : '进入';
+  return hasReconnectSession(room) ? '重连' : '已锁定';
 }
 
 // Bug L1+L2: 使用作用域变量存储处理器引用，便于在onUnmounted中清理
