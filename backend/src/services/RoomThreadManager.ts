@@ -179,7 +179,10 @@ export class RoomThreadManager {
               : (message?.taskId ? message as GameTaskResponse : undefined);
 
           if (!response?.taskId) {
-            console.warn(`房间 ${room.id} 收到无法识别的Worker消息:`, message);
+            console.warn(`房间 ${room.id} 收到无法识别的Worker消息`, {
+              type: message?.type,
+              event: message?.event || message?.data?.event
+            });
             return;
           }
 
@@ -526,9 +529,11 @@ export class RoomThreadManager {
     const socketEventTypes = new Set(['emit_to_socket', 'player_message', 'player', 'socket', 'send_to_player', 'sendToPlayer']);
 
     if (roomEventTypes.has(payload.type)) {
+      // Worker 只能向自己的房间广播。即使某个游戏实现误带了其他 roomId，
+      // 也不能让单个房间线程跨房间污染状态或泄露聊天/游戏信息。
       return {
         type: 'emit',
-        roomId: payload.roomId || roomId,
+        roomId,
         event: payload.event,
         data: payload.data
       };
@@ -537,17 +542,23 @@ export class RoomThreadManager {
     if (socketEventTypes.has(payload.type)) {
       let socketId = payload.socketId;
       if (payload.playerId) {
-        const room = this.roomData.get(payload.roomId || roomId);
+        const room = this.roomData.get(roomId);
         const currentPlayer = room?.players.find(p => p.id === payload.playerId);
-        if (currentPlayer) {
-          // The controller thread owns the live socket mapping. Prefer it over a
-          // socketId carried by a worker snapshot so private events are not sent
-          // to a socket that has already left or reconnected elsewhere.
-          socketId = currentPlayer.socketId;
+
+        // 带 playerId 的消息必须按控制线程当前座位映射投递。玩家已被移出、
+        // 已离线或尚无有效 socket 时，worker 携带的旧 socketId 绝不能作为回退，
+        // 否则 room_update 移除玩家后排队到达的私有身份/手牌仍会发给旧连接。
+        if (!currentPlayer || currentPlayer.online === false || !currentPlayer.socketId) {
+          console.warn(`房间 ${roomId} 的玩家 ${payload.playerId} 当前不可投递，丢弃迟到的私有事件 ${payload.event || '(unknown)'}`);
+          return null;
         }
+        socketId = currentPlayer.socketId;
       }
       if (!socketId) {
-        console.warn(`房间 ${roomId} 无法投递给玩家/socket的Worker消息:`, payload);
+        console.warn(`房间 ${roomId} 无法投递Worker私有消息`, {
+          playerId: payload.playerId,
+          event: payload.event
+        });
         return null;
       }
       return {

@@ -628,16 +628,20 @@ export function roomController(io: Server) {
   // 处理来自worker线程的消息
   async function handleThreadMessage(data: any) {
     try {
-      console.log('处理Worker消息:', data);
+      console.log('处理Worker消息:', {
+        type: data?.type,
+        roomId: data?.roomId,
+        event: data?.event
+      });
       if (data.type === 'emit') {
-        // 广播到房间内所有客户端
-        console.log(`广播事件到房间 ${data.roomId}: ${data.event}`, data.data);
+        // 不记录事件正文：其中可能包含手牌、角色、查验结果等私有游戏信息。
+        console.log(`广播事件到房间 ${data.roomId}: ${data.event}`);
         const outgoingData = await applyWorkerRoomUpdate(data.event, data.data);
         if (data.event === 'room_update' && outgoingData === null) return;
         io.to(data.roomId).emit(data.event, serializeEventData(data.event, outgoingData));
       } else if (data.type === 'emit_to_socket') {
-        // 发送到特定socket
-        console.log(`发送事件到socket ${data.socketId}: ${data.event}`, data.data);
+        // 不把私有事件正文写入服务端日志，避免角色/手牌等敏感信息泄露。
+        console.log(`发送事件到socket ${data.socketId}: ${data.event}`);
         const outgoingData = await applyWorkerRoomUpdate(data.event, data.data);
         if (data.event === 'room_update' && outgoingData === null) return;
         io.to(data.socketId).emit(data.event, serializeEventData(data.event, outgoingData));
@@ -903,12 +907,20 @@ export function roomController(io: Server) {
     socket: Socket,
     previousSocketMessage: string
   ): Promise<ExistingSeatConnectionResult> {
-    const occupiedSeat = room.players.find(player =>
-      player.id !== existingPlayer.id && player.socketId === socket.id
-    );
-    if (occupiedSeat) {
-      throw new Error('当前连接已占用此房间的其他座位');
-    }
+    const assertSeatCanMove = (candidateRoom: Room): void => {
+      const occupiedSeat = candidateRoom.players.find(player =>
+        player.id !== existingPlayer.id && player.socketId === socket.id
+      );
+      if (occupiedSeat) {
+        throw new Error('当前连接已占用此房间的其他座位');
+      }
+
+      if (hasDuplicateNickname(candidateRoom, nickname, existingPlayer.id)) {
+        throw new Error('昵称已被占用，请更换昵称后再加入房间');
+      }
+    };
+
+    assertSeatCanMove(room);
 
     const playerSnapshot = clonePlayerSnapshot(existingPlayer);
     const previousSocketId = playerSnapshot.socketId;
@@ -937,6 +949,10 @@ export function roomController(io: Server) {
         throw new Error('原玩家座位已不存在');
       }
 
+      // 等待 worker 启动期间，其他座位可能已改名或被同一 socket 接管。
+      // 在最新房间快照上、且在改写座位前再次校验，避免不同座位锁之间的并发迁移
+      // 产生重复昵称或让一个连接同时占用多个座位。
+      assertSeatCanMove(transactionRoom);
       markPlayerOnlineForController(transactionRoom, transactionPlayer, socket.id, nickname);
       transactionRoom.lastActiveTime = Date.now();
       await socket.join(transactionRoom.id);

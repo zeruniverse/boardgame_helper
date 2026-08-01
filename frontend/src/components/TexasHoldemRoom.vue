@@ -229,8 +229,8 @@ onMounted(() => {
   const socket = store.socket;
   if (!socket) return;
 
-  // 直接进入/刷新房间页时使用普通加入流程：有效令牌可恢复原座位，
-  // 令牌缺失或失效时仍可按同昵称接管；reconnect_room 仅用于网络断线重连。
+  // 直接进入/刷新房间页时使用普通加入流程：已有座位必须携带有效会话令牌，
+  // 防止公开昵称被用于接管他人座位；reconnect_room 仅用于网络断线重连。
   const isNewJoin = sessionStorage.getItem('texas_newJoin') === 'true';
   const rememberedRoomId = store.currentRoom;
   if (store.playerId && !isNewJoin) {
