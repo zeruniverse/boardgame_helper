@@ -26,6 +26,14 @@ const HOST_DISCONNECT_FAILOVER_GRACE_MS = 15000;
 // 不进入 room_update / player.gameMetadata，避免房间内其他玩家凭公开 playerId 冒用座位。
 const playerSessionTokens: Map<string, string> = new Map();
 const existingSeatConnectionQueues: Map<string, Promise<void>> = new Map();
+const INVALID_PLAYER_SESSION_MESSAGE = '重连身份校验失败，请使用原设备或原链接重新进入';
+
+class InvalidPlayerSessionError extends Error {
+  constructor() {
+    super(INVALID_PLAYER_SESSION_MESSAGE);
+    this.name = 'InvalidPlayerSessionError';
+  }
+}
 
 function playerSessionKey(roomId: string, playerId: string): string {
   return `${roomId}:${playerId}`;
@@ -89,9 +97,8 @@ function clearRoomSessionTokens(roomId: string): void {
 }
 
 function rejectInvalidPlayerSession(socket: Socket, ack?: (response: any) => void): void {
-  const message = '重连身份校验失败，请使用原设备或原链接重新进入';
-  socket.emit('error', { message });
-  ack?.({ success: false, error: message });
+  socket.emit('error', { message: INVALID_PLAYER_SESSION_MESSAGE });
+  ack?.({ success: false, error: INVALID_PLAYER_SESSION_MESSAGE });
 }
 
 // 广播大厅更新函数，将在 roomController 中被赋值
@@ -859,6 +866,12 @@ export function roomController(io: Server) {
     payload: any;
   }
 
+  interface ExistingSeatConnectionOptions {
+    previousSocketMessage?: string;
+    sessionToken?: string;
+    requireValidSessionToken?: boolean;
+  }
+
   /**
    * 把已有座位迁移到新 socket。整个过程以 worker 同步成功为提交点：
    * 失败时恢复旧座位绑定、在线状态、昵称和游戏元数据，且旧连接不会被提前踢出。
@@ -868,7 +881,7 @@ export function roomController(io: Server) {
     existingPlayer: Player,
     nickname: string,
     socket: Socket,
-    previousSocketMessage = '该座位已在其他连接重新进入房间'
+    options: ExistingSeatConnectionOptions = {}
   ): Promise<ExistingSeatConnectionResult> {
     return runExistingSeatConnectionExclusive(room.id, existingPlayer.id, async () => {
       const latestRoom = rooms.get(room.id);
@@ -877,12 +890,21 @@ export function roomController(io: Server) {
         throw new Error('原玩家座位已不存在');
       }
 
+      // 外层请求在等待同一座位的迁移锁时，前一个连接可能已经完成接管并轮换令牌。
+      // 必须在锁内基于当前令牌复核，不能让两个同时携带旧令牌的请求依次接管同一座位。
+      if (
+        options.requireValidSessionToken &&
+        !isValidPlayerSessionToken(latestRoom.id, latestPlayer.id, options.sessionToken)
+      ) {
+        throw new InvalidPlayerSessionError();
+      }
+
       return connectExistingPlayerSeatUnlocked(
         latestRoom,
         latestPlayer,
         nickname,
         socket,
-        previousSocketMessage
+        options.previousSocketMessage || '该座位已在其他连接重新进入房间'
       );
     });
   }
@@ -991,7 +1013,7 @@ export function roomController(io: Server) {
       existingPlayer,
       nickname,
       socket,
-      '同昵称玩家重新进入，当前连接已移出房间'
+      { previousSocketMessage: '同昵称玩家重新进入，当前连接已移出房间' }
     );
     const latestRoom = result.room;
     const latestPlayer = result.player;
@@ -1366,7 +1388,10 @@ export function roomController(io: Server) {
 
           console.log(`玩家 ${player.nickname} (${playerId}) 正在重连到房间 ${roomId}`);
 
-          const result = await connectExistingPlayerSeat(room, player, player.nickname, socket);
+          const result = await connectExistingPlayerSeat(room, player, player.nickname, socket, {
+            sessionToken: data.sessionToken,
+            requireValidSessionToken: true
+          });
           socket.emit('room_joined', result.payload);
           socket.emit('room_update', toClientRoom(result.room));
 
@@ -1381,6 +1406,10 @@ export function roomController(io: Server) {
           socket.emit('error', { message: '重连失败，房间或玩家不存在' });
         }
       } catch (error) {
+        if (error instanceof InvalidPlayerSessionError) {
+          rejectInvalidPlayerSession(socket);
+          return;
+        }
         console.error('重连房间失败:', error);
         socket.emit('error', { message: '重连房间时发生服务器错误' });
       }
@@ -1433,7 +1462,10 @@ export function roomController(io: Server) {
             return;
           }
 
-          const result = await connectExistingPlayerSeat(room, player, nextNickname, socket);
+          const result = await connectExistingPlayerSeat(room, player, nextNickname, socket, {
+            sessionToken: data.sessionToken,
+            requireValidSessionToken: true
+          });
           socket.emit('room_joined', result.payload);
           socket.emit('room_update', toClientRoom(result.room));
           ack?.({ success: true, ...result.payload });
@@ -1530,6 +1562,10 @@ export function roomController(io: Server) {
 
         console.log(`玩家 ${player.nickname} 加入了房间 ${room.name}`);
       } catch (error) {
+        if (error instanceof InvalidPlayerSessionError) {
+          rejectInvalidPlayerSession(socket, ack);
+          return;
+        }
         console.error('加入房间失败:', error);
         socket.emit('error', { message: '加入房间失败' });
         ack?.({ success: false, error: error instanceof Error ? error.message : '加入房间失败' });
@@ -1575,7 +1611,10 @@ export function roomController(io: Server) {
             return;
           }
 
-          const result = await connectExistingPlayerSeat(room, player, nextNickname, socket);
+          const result = await connectExistingPlayerSeat(room, player, nextNickname, socket, {
+            sessionToken: data.sessionToken,
+            requireValidSessionToken: true
+          });
           socket.emit('room_joined', result.payload);
           socket.emit('room_update', toClientRoom(result.room));
           ack?.({ success: true, ...result.payload });
@@ -1672,6 +1711,10 @@ export function roomController(io: Server) {
 
         console.log(`玩家 ${player.nickname} 通过链接加入了房间 ${room.name}`);
       } catch (error) {
+        if (error instanceof InvalidPlayerSessionError) {
+          rejectInvalidPlayerSession(socket, ack);
+          return;
+        }
         console.error('通过链接加入房间失败:', error);
         socket.emit('error', { message: '加入房间失败' });
         ack?.({ success: false, error: error instanceof Error ? error.message : '加入房间失败' });
