@@ -2,7 +2,7 @@ import { parentPort, workerData } from 'worker_threads';
 import { BaseGameWorker } from './baseGameWorker';
 import { Room } from '../models/Room';
 import { Player } from '../models/Player';
-import { normalizeChatText } from '../utils/chat';
+import { buildChatPayload, normalizeChatChannel, normalizeChatText } from '../utils/chat';
 
 if (!parentPort) {
   throw new Error('这个文件只能在Worker线程中运行');
@@ -1115,14 +1115,31 @@ class AvalonWorker extends BaseGameWorker {
     const message = normalizeChatText(data?.message);
     if (!message) return;
 
-    this.sendToRoom('chat_broadcast', {
-      playerId,
-      playerName: player.nickname,
-      message,
-      channel: 'all',
-      timestamp: Date.now(),
-      type: 'chat'
-    });
+    const channel = normalizeChatChannel(data?.channel, ['all', 'evil']);
+    const payload = buildChatPayload(player, message, channel, { type: 'chat' });
+
+    if (channel === 'all') {
+      this.sendToRoom('chat_broadcast', payload);
+      return;
+    }
+
+    const state = this.gameState as AvalonGameState;
+    const senderRole = state.topSecret.red[playerId];
+    if (!senderRole || senderRole === Role.OBERON) {
+      this.sendToPlayer(playerId, 'game_error', {
+        message: '你无法使用邪恶阵营频道'
+      });
+      return;
+    }
+
+    // 奥伯伦与其他邪恶玩家互不相认，因此不能发送或接收邪恶阵营聊天。
+    const recipients = Object.entries(state.topSecret.red)
+      .filter(([, role]) => role !== Role.OBERON)
+      .map(([id]) => id);
+
+    for (const recipientId of recipients) {
+      this.sendToPlayer(recipientId, 'chat_broadcast', payload);
+    }
   }
 
   private handleHeartbeat(playerId: string): void {

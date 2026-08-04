@@ -1,5 +1,12 @@
 <template>
   <div class="avalon-chat-wrapper">
+    <div v-if="canUseEvilChannel" class="chat-tabs">
+      <el-radio-group v-model="activeChannel" size="small">
+        <el-radio-button value="all">公共频道</el-radio-button>
+        <el-radio-button value="evil">邪恶频道</el-radio-button>
+      </el-radio-group>
+    </div>
+
     <el-card ref="chatContainer" class="chat-messages">
       <div v-for="(msg, idx) in filteredMessages" :key="idx"
            :class="getMessageClass(msg)"
@@ -9,6 +16,9 @@
     </el-card>
     
     <div class="chat-input">
+      <div v-if="activeChannel === 'evil'" class="input-info">
+        <span class="channel-indicator">仅对除奥伯伦外的邪恶阵营可见</span>
+      </div>
       <div class="input-row">
         <el-input 
           v-model="input" 
@@ -53,22 +63,33 @@ const props = withDefaults(defineProps<Props>(), {
   gameState: null
 })
 
+type ChatChannel = 'all' | 'evil';
+
 const input = ref('');
+const activeChannel = ref<ChatChannel>('all');
 const chatContainer = ref<HTMLElement>();
+
+const canUseEvilChannel = computed(() =>
+  props.playerTeam === 'red' && props.playerRole !== 'oberon'
+);
 
 // 检查是否可以发送消息
 const canSend = computed(() => {
-  return props.socket && props.roomId && props.nickname && input.value.trim()
-})
-
-// 阿瓦隆房间只保留公共聊天；投票和任务结果会以游戏消息进入同一对话框。
-const filteredMessages = computed(() => {
-  return props.messages.filter(msg =>
-    !msg.channel || msg.channel === 'all' || msg.type === 'system' || msg.type === 'game'
-  );
+  if (!props.socket || !props.roomId || !props.nickname || !input.value.trim()) return false;
+  return activeChannel.value !== 'evil' || canUseEvilChannel.value;
 });
 
-const getInputPlaceholder = () => '输入公共聊天消息...';
+const filteredMessages = computed(() => {
+  return props.messages.filter(msg => {
+    if (msg.type === 'system' || msg.type === 'game') return true;
+    const channel = msg.channel || 'all';
+    return channel === activeChannel.value;
+  });
+});
+
+const getInputPlaceholder = () => activeChannel.value === 'evil'
+  ? '输入邪恶阵营消息...'
+  : '输入公共聊天消息...';
 
 // 滚动到底部
 const scrollToBottom = () => {
@@ -88,6 +109,10 @@ const getMessageClass = (msg: any) => {
   if (msg.type === 'system') {
     classes.push('system-message');
   }
+
+  if (msg.channel === 'evil') {
+    classes.push('evil-message');
+  }
   
   return classes.join(' ');
 };
@@ -103,6 +128,8 @@ const getMessageColor = (type: string) => {
       return '#7c3aed'; // 紫色 - 角色相关消息
     case 'mission':
       return '#059669'; // 绿色 - 任务消息
+    case 'evil':
+      return '#b91c1c'; // 红色 - 邪恶阵营频道
     default:
       return 'var(--app-text)'; // 默认颜色
   }
@@ -121,7 +148,8 @@ const formatChatMessage = (msg: any): string => {
   const baseMessage = msg.message || msg.content || '';
   const senderName = formatSenderName(msg);
   const senderPrefix = senderName ? `${senderName}: ` : '';
-  return `${senderPrefix}${baseMessage}`;
+  const channelPrefix = msg.channel === 'evil' ? '[邪恶频道] ' : '';
+  return `${channelPrefix}${senderPrefix}${baseMessage}`;
 };
 
 // HTML转义防止XSS
@@ -190,9 +218,19 @@ watch(
   }
 );
 
+watch(canUseEvilChannel, (allowed) => {
+  if (!allowed && activeChannel.value === 'evil') {
+    activeChannel.value = 'all';
+  }
+});
+
+watch(activeChannel, () => {
+  scrollToBottom();
+});
+
 function send() {
   if (canSend.value) {
-    emit('send-message', input.value, 'all');
+    emit('send-message', input.value.trim(), activeChannel.value);
     input.value = '';
   }
 }

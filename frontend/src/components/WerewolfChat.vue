@@ -1,5 +1,12 @@
 <template>
   <div class="werewolf-chat-wrapper">
+    <div v-if="canUseWerewolfChannel" class="chat-tabs">
+      <el-radio-group v-model="activeChannel" size="small">
+        <el-radio-button value="all">公共频道</el-radio-button>
+        <el-radio-button value="werewolf">狼人频道</el-radio-button>
+      </el-radio-group>
+    </div>
+
     <el-card ref="chatContainer" class="chat-messages">
       <div v-for="(msg, idx) in filteredMessages" :key="idx"
            :class="getMessageClass(msg)"
@@ -9,6 +16,9 @@
     </el-card>
 
     <div class="chat-input">
+      <div v-if="activeChannel === 'werewolf'" class="input-info">
+        <span class="channel-indicator">仅对存活狼人可见，夜间也可使用</span>
+      </div>
       <div class="input-row">
         <el-input
           v-model="input"
@@ -37,6 +47,7 @@ interface Props {
   playerTeam?: string
   gameState?: any
   isAlive?: boolean
+  socket?: any
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -47,49 +58,56 @@ const props = withDefaults(defineProps<Props>(), {
   playerRole: '',
   playerTeam: '',
   gameState: null,
-  isAlive: true
+  isAlive: true,
+  socket: null
 })
 
 const emit = defineEmits<{
   sendMessage: [message: string, channel: string]
 }>()
 
+type ChatChannel = 'all' | 'werewolf';
+
 const input = ref('');
+const activeChannel = ref<ChatChannel>('all');
 const chatContainer = ref<HTMLElement>();
 
-// 判断是否可以发送消息。狼人杀仅保留公聊，夜间闭眼阶段禁止玩家聊天，避免频道误导和信息错发。
+const canUseWerewolfChannel = computed(() => props.playerTeam === 'werewolf' && props.isAlive);
+
+// 公聊在闭眼阶段禁用；存活狼人可在整个对局中使用狼人频道。
 const canSendMessage = computed(() => {
   if (!props.isAlive) return false;
+  if (activeChannel.value === 'werewolf') return canUseWerewolfChannel.value;
 
   const status = props.gameState?.status;
   if (!status || status === 'preparing' || status === 'waiting') return true;
 
-  const nightPhases = ['WOLF_KILL', 'WOLF_KILL_CHECK', 'SEER_CHECK', 'WITCH_ACT', 'GUARD_PROTECT', 'BEFORE_DAY_DISCUSS', 'HUNTER_SHOOT'];
-  if (nightPhases.includes(status)) return false;
-
-  return true;
+  const nightPhases = ['WOLF_KILL', 'WOLF_KILL_CHECK', 'SEER_CHECK', 'WITCH_ACT', 'GUARD_PROTECT', 'BEFORE_DAY_DISCUSS'];
+  return !nightPhases.includes(status);
 });
 
 const canSend = computed(() => {
-  return Boolean(input.value.trim()) && canSendMessage.value;
+  return Boolean(props.socket && props.roomId && input.value.trim()) && canSendMessage.value;
 });
 
 const filteredMessages = computed(() => {
-  return props.messages.filter(msg =>
-    !msg.channel || msg.channel === 'all' || msg.type === 'system' || msg.type === 'game'
-  );
+  return props.messages.filter(msg => {
+    if (msg.type === 'system' || msg.type === 'game') return true;
+    const channel = msg.channel || 'all';
+    return channel === activeChannel.value;
+  });
 });
 
 const getInputPlaceholder = () => {
   if (!props.isAlive) return '死亡玩家无法发言...';
-  if (!canSendMessage.value) return '当前阶段无法发言...';
-  return '输入公聊消息...';
+  if (!canSendMessage.value) return '当前阶段无法使用此频道...';
+  return activeChannel.value === 'werewolf' ? '输入狼人频道消息...' : '输入公聊消息...';
 };
 
 const send = () => {
   if (!canSend.value) return;
 
-  emit('sendMessage', input.value.trim(), 'all');
+  emit('sendMessage', input.value.trim(), activeChannel.value);
   input.value = '';
 };
 
@@ -114,6 +132,10 @@ const getMessageClass = (msg: any) => {
     classes.push('game-message');
   }
 
+  if (msg.channel === 'werewolf') {
+    classes.push('werewolf-message');
+  }
+
   return classes.join(' ');
 };
 
@@ -129,6 +151,8 @@ const getMessageColor = (type: string) => {
       return '#dc2626';
     case 'vote':
       return '#059669';
+    case 'werewolf':
+      return '#b91c1c';
     default:
       return undefined;
   }
@@ -147,7 +171,9 @@ const formatMessage = (msg: any): string => {
 
   if (typeof msg === 'string') return escapeHtml(msg);
 
-  let result = '';
+  let result = msg.channel === 'werewolf'
+    ? '<span style="color: #b91c1c; font-weight: bold;">[狼人频道]</span> '
+    : '';
 
   if (msg.sender || msg.playerName) {
     const senderColor = '#409eff';
@@ -211,6 +237,16 @@ watch(
     scrollToBottom();
   }
 );
+
+watch(canUseWerewolfChannel, (allowed) => {
+  if (!allowed && activeChannel.value === 'werewolf') {
+    activeChannel.value = 'all';
+  }
+});
+
+watch(activeChannel, () => {
+  scrollToBottom();
+});
 </script>
 
 <style scoped>
@@ -220,6 +256,11 @@ watch(
   height: 100%;
   flex: 1;
   min-height: 0;
+}
+
+.chat-tabs {
+  margin-bottom: 8px;
+  text-align: center;
 }
 
 .chat-messages {
@@ -250,8 +291,23 @@ watch(
   border-left: 3px solid #1890ff;
 }
 
+.werewolf-message {
+  background: rgba(185, 28, 28, 0.08);
+  border-left: 3px solid #b91c1c;
+}
+
 .chat-input {
   margin-top: auto;
+}
+
+.input-info {
+  margin-bottom: 4px;
+}
+
+.channel-indicator {
+  color: #b91c1c;
+  font-size: 12px;
+  font-weight: 600;
 }
 
 .input-row {

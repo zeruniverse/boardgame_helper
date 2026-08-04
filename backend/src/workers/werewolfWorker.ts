@@ -21,7 +21,7 @@ import {
   shuffleArray
 } from '../utils/werewolfUtils';
 import { stateHandlers, clearScheduledStateTasks } from '../utils/werewolfStateHandlers';
-import { normalizeChatChannel, normalizeChatText } from '../utils/chat';
+import { buildChatPayload, normalizeChatChannel, normalizeChatText } from '../utils/chat';
 
 if (!parentPort) {
   throw new Error('这个文件只能在Worker线程中运行');
@@ -1785,22 +1785,40 @@ class WerewolfWorker extends BaseGameWorker {
     if (!player) return;
 
     const gamePlayer = this.gameState.players[playerId];
-
     const message = normalizeChatText(actionData?.message);
-    const rawChannel = actionData?.channel === 'wolf' ? 'werewolf' : actionData?.channel;
-    if (typeof rawChannel === 'string' && rawChannel !== 'all') {
-      this.sendToPlayer(playerId, 'error', { message: '狼人杀仅支持公聊，请使用公共聊天频道' });
-      return;
-    }
-    const channel = 'all';
-
     if (!message) return;
+
+    const requestedChannel = actionData?.channel === 'wolf' ? 'werewolf' : actionData?.channel;
+    const channel = normalizeChatChannel(requestedChannel, ['all', 'werewolf']);
+
     if (!gamePlayer && this.gameState.status !== GameStatus.WAITING && this.gameState.status !== GameStatus.OVER) {
       this.sendToPlayer(playerId, 'error', { message: '旁观者在游戏进行中不能发言' });
       return;
     }
     if (gamePlayer && !gamePlayer.isAlive) {
       this.sendToPlayer(playerId, 'error', { message: '死亡玩家无法发送消息' });
+      return;
+    }
+
+    if (channel === 'werewolf') {
+      if (!gamePlayer || gamePlayer.character !== 'WEREWOLF') {
+        this.sendToPlayer(playerId, 'error', { message: '你无法使用狼人频道' });
+        return;
+      }
+
+      const chatMsg = {
+        ...buildChatPayload(player, message, channel, { type: 'chat' }),
+        senderId: playerId,
+        playerIndex: gamePlayer.index
+      };
+
+      // 仅向仍存活的狼人发送，避免将夜间信息泄露给村民或已出局玩家。
+      const recipients = (Object.values(this.gameState.players) as WerewolfPlayerState[])
+        .filter(candidate => candidate.character === 'WEREWOLF' && candidate.isAlive)
+        .map(candidate => candidate.id);
+      for (const recipientId of recipients) {
+        this.sendToPlayer(recipientId, 'chat_message', chatMsg);
+      }
       return;
     }
 
@@ -1812,23 +1830,16 @@ class WerewolfWorker extends BaseGameWorker {
       GameStatus.GUARD_PROTECT,
       GameStatus.BEFORE_DAY_DISCUSS
     ];
-    if (channel === 'all' && secretNightStatuses.includes(this.gameState.status)) {
+    if (secretNightStatuses.includes(this.gameState.status)) {
       this.sendToPlayer(playerId, 'error', { message: '夜晚闭眼阶段不能使用公共频道' });
       return;
     }
 
-    // 构建聊天消息
-    const chatMsg = {
-      sender: player.nickname,
+    this.sendToRoom('chat_message', {
+      ...buildChatPayload(player, message, 'all', { type: 'chat' }),
       senderId: playerId,
-      playerIndex: gamePlayer?.index || 0,
-      message,
-      channel: channel,
-      timestamp: Date.now(),
-      type: 'chat'
-    };
-
-    this.sendToRoom('chat_message', chatMsg);
+      playerIndex: gamePlayer?.index || 0
+    });
   }
 
   private handleHeartbeat(playerId: string): void {

@@ -449,6 +449,12 @@ function getAllowedChatChannels(room: Room): string[] {
   if (room.type === 'blood-on-the-clocktower') {
     return ['all', 'storyteller', 'private'];
   }
+  if (room.type === 'avalon') {
+    return ['all', 'evil'];
+  }
+  if (room.type === 'werewolf') {
+    return ['all', 'werewolf'];
+  }
   return ['all'];
 }
 
@@ -456,7 +462,9 @@ function describeAllowedChatChannels(channels: string[]): string {
   const names: Record<string, string> = {
     all: '公共聊天',
     storyteller: '说书人频道',
-    private: '玩家私聊'
+    private: '玩家私聊',
+    evil: '邪恶阵营频道',
+    werewolf: '狼人频道'
   };
   return channels.map(channel => names[channel] || channel).join('、');
 }
@@ -484,9 +492,11 @@ function normalizeChatActionPayload(
   }
 
   const message = rawMessage.trim();
-  const channel = typeof actionData?.channel === 'string' && actionData.channel.trim()
+  const rawChannel = typeof actionData?.channel === 'string' && actionData.channel.trim()
     ? actionData.channel.trim()
     : 'all';
+  // 兼容早期前端使用的 wolf 名称，避免合法狼人消息在进入 worker 前被控制层拒绝。
+  const channel = room.type === 'werewolf' && rawChannel === 'wolf' ? 'werewolf' : rawChannel;
   const allowedChannels = getAllowedChatChannels(room);
   if (!allowedChannels.includes(channel)) {
     sendErrorResponse(socket, `该游戏仅支持${describeAllowedChatChannels(allowedChannels)}`, ack);
