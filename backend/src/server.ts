@@ -20,11 +20,18 @@ const io = new SocketIOServer(httpServer, {
 } as any);
 
 // 初始化房间控制器
-roomController(io);
+const roomControllerHandle = roomController(io);
 
 // 健康检查接口
 app.get('/', (_req: Request, res: Response) => {
   res.send('Boardgame Helper Server running');
+});
+
+app.get('/health', (_req: Request, res: Response) => {
+  res.json({
+    status: 'healthy',
+    timestamp: new Date().toISOString()
+  });
 });
 
 function passwordsMatch(provided: unknown, expected: string): boolean {
@@ -90,3 +97,33 @@ const PORT = process.env.PORT || 3000;
 httpServer.listen(PORT, () => {
   console.log(`Server listening on port ${PORT}`);
 });
+
+let isShuttingDown = false;
+async function shutdown(signal: NodeJS.Signals): Promise<void> {
+  if (isShuttingDown) return;
+  isShuttingDown = true;
+  console.log(`收到 ${signal}，正在关闭服务器...`);
+
+  const forceExitTimer = setTimeout(() => {
+    console.error('服务器优雅关闭超时，强制退出');
+    process.exit(1);
+  }, 10000);
+  forceExitTimer.unref();
+
+  try {
+    // Socket.IO 关闭会停止接收新连接并关闭底层 HTTP 服务；控制器同时停止所有 Worker 与定时器。
+    await Promise.all([
+      new Promise<void>(resolve => io.close(() => resolve())),
+      roomControllerHandle.shutdown()
+    ]);
+    clearTimeout(forceExitTimer);
+    process.exit(0);
+  } catch (error) {
+    clearTimeout(forceExitTimer);
+    console.error('服务器关闭失败:', error);
+    process.exit(1);
+  }
+}
+
+process.on('SIGTERM', () => void shutdown('SIGTERM'));
+process.on('SIGINT', () => void shutdown('SIGINT'));

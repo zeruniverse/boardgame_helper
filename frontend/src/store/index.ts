@@ -67,9 +67,7 @@ export const useMainStore = defineStore('main', {
 
       // 创建新的socket连接
       console.log('创建新的socket连接到:', SOCKET_URL);
-      this.socket = io(SOCKET_URL, {
-        transports: ['websocket'],
-      });
+      this.socket = io(SOCKET_URL);
 
       // 连接建立后的处理
       const connectHandler = () => {

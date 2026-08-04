@@ -1,12 +1,14 @@
 import { createRouter, createWebHashHistory } from 'vue-router';
 import type { RouteRecordRaw, NavigationGuardNext, RouteLocationNormalized } from 'vue-router';
 import Lobby from '../components/Lobby.vue';
-import TexasHoldemRoom from '../components/TexasHoldemRoom.vue';
-import AvalonRoom from '../components/AvalonRoom.vue';
-import MafiaRoom from '../components/MafiaRoom.vue';
-import OnuWerewolfRoom from '../components/OnuWerewolfRoom.vue';
-import BOTCRoom from '../components/BOTCRoom.vue';
-import WerewolfRoom from '../components/WerewolfRoom.vue';
+
+// 各游戏房间按路由懒加载，避免大厅首屏一次性下载六套大型游戏组件。
+const TexasHoldemRoom = () => import('../components/TexasHoldemRoom.vue');
+const AvalonRoom = () => import('../components/AvalonRoom.vue');
+const MafiaRoom = () => import('../components/MafiaRoom.vue');
+const OnuWerewolfRoom = () => import('../components/OnuWerewolfRoom.vue');
+const BOTCRoom = () => import('../components/BOTCRoom.vue');
+const WerewolfRoom = () => import('../components/WerewolfRoom.vue');
 
 const routes: RouteRecordRaw[] = [
   { path: '/', name: 'Lobby', component: Lobby },

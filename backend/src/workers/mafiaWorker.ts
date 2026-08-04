@@ -59,6 +59,7 @@ interface MafiaGameState {
   inspect: Record<string, string>;    // 警察验人 {警察ID: 被验者ID}
   wantToKill: Record<string, string>; // 杀手杀人 {杀手ID: 被杀者ID}
   wantToSave: Record<string, string>; // 医生救人 {医生ID: 被救者ID}
+  doctorSaves: Record<string, { target: string; day: number }>; // 已结算/已提交的医生历史，用于限制连续两晚救同一人
   personWillDie: string | null;       // 夜晚将死的人（杀手目标）
   sniperTarget: string | null;        // 狙击手目标（独立于杀手目标）
   personSaved: string[];             // 夜晚被救的人列表（支持多名医生）
@@ -182,6 +183,7 @@ class MafiaWorker extends BaseGameWorker {
       inspect: {},
       wantToKill: {},
       wantToSave: {},
+      doctorSaves: {},
       personWillDie: null,
       sniperTarget: null,
       personSaved: [],
@@ -1029,7 +1031,7 @@ class MafiaWorker extends BaseGameWorker {
     gameState.alivePlayersOrder = shuffledPlayers.map(p => p.id);
     gameState.speakingPlayerIndex = 0;
     gameState.deathQueue = [];
-    (gameState as any).doctorSaves = {};
+    gameState.doctorSaves = {};
     
     // 分配玩家信息和角色
     shuffledPlayers.forEach((player, index) => {
@@ -1174,16 +1176,21 @@ class MafiaWorker extends BaseGameWorker {
       return;
     }
 
-    // 移除离线医生的选择
+    // 移除离线医生尚未结算的选择，并同步回滚本夜历史记录。
     const aliveOfflineDoctors = this.getAliveOfflineDoctors();
     aliveOfflineDoctors.forEach(docId => {
+      const abandonedTarget = gameState.wantToSave[docId];
       delete gameState.wantToSave[docId];
+      const recordedSave = gameState.doctorSaves[docId];
+      if (abandonedTarget && recordedSave?.day === gameState.day && recordedSave.target === abandonedTarget) {
+        delete gameState.doctorSaves[docId];
+      }
     });
+    gameState.personSaved = [...new Set(Object.values(gameState.wantToSave))];
 
     // 执行救人（每个医生独立选择，无需达成一致）
     // 检查不可连续两晚救同一人（按医生各自记录）
-    const doctorSaves = (gameState as any).doctorSaves as Record<string, {target: string; day: number}> || {};
-    const myLastSave = doctorSaves[playerId];
+    const myLastSave = gameState.doctorSaves[playerId];
     if (myLastSave && myLastSave.target === targetId && myLastSave.day === gameState.day - 1) {
       delete gameState.wantToSave[playerId];
       this.sendToPlayer(playerId, 'save_rejected', {
@@ -1200,10 +1207,7 @@ class MafiaWorker extends BaseGameWorker {
     const savedByThisDoctor = Object.values(gameState.wantToSave as Record<string, string>);
     gameState.personSaved = [...new Set(savedByThisDoctor)];
 
-    if (!(gameState as any).doctorSaves) {
-      (gameState as any).doctorSaves = {};
-    }
-    (gameState as any).doctorSaves[playerId] = { target: targetId, day: gameState.day };
+    gameState.doctorSaves[playerId] = { target: targetId, day: gameState.day };
 
     const message = `你救了${this.getPlayerName(targetId)}`;
     this.sendToPlayer(playerId, 'save_result', { message });
@@ -1788,14 +1792,25 @@ class MafiaWorker extends BaseGameWorker {
       }
     }
 
-    const aliveOfflineDoctors = this.getAliveOfflineDoctors();
-    aliveOfflineDoctors.forEach(docId => {
-      delete gameState.wantToSave[docId];
-    });
     if (gameState.doctorActionLock) {
+      const aliveOfflineDoctors = this.getAliveOfflineDoctors();
+      aliveOfflineDoctors.forEach(docId => {
+        const abandonedTarget = gameState.wantToSave[docId];
+        delete gameState.wantToSave[docId];
+
+        // 离线医生的本夜选择被明确撤销时，也必须撤销同一笔历史记录。
+        // 否则该选择既不会产生救治效果，却会错误阻止医生下一夜再次选择该目标。
+        const recordedSave = gameState.doctorSaves[docId];
+        if (abandonedTarget && recordedSave?.day === gameState.day && recordedSave.target === abandonedTarget) {
+          delete gameState.doctorSaves[docId];
+        }
+      });
+
+      // 仅在医生行动尚未结算时根据待选项重算。锁关闭后 wantToSave 会被清空，
+      // 此时 personSaved 是已经提交的夜晚结果，不能被后续断线事件覆盖。
+      gameState.personSaved = [...new Set(Object.values(gameState.wantToSave))];
       const aliveOnlineDoctors = this.getAliveOnlineDoctors();
       if (aliveOnlineDoctors.length === 0 || aliveOnlineDoctors.every(docId => docId in gameState.wantToSave)) {
-        gameState.personSaved = [...new Set(Object.values(gameState.wantToSave as Record<string, string>))];
         gameState.doctorActionLock = false;
         gameState.wantToSave = {};
       }

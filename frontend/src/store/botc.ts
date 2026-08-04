@@ -67,7 +67,6 @@ export const useBOTCGameStore = defineStore('botc', () => {
         }
 
         socket.value = io(SOCKET_URL, {
-          transports: ['websocket'],
           timeout: 10000,
         })
         socketListeners.value = []

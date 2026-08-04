@@ -1875,12 +1875,14 @@ export class BOTCWorker extends BaseGameWorker {
 
     this.gameState.execution = undefined;
 
-    // 检查镇长（Mayor）特殊胜利条件：只剩3名存活且无执行
+    // 检查镇长（Mayor）特殊胜利条件：只剩3名非旅行者存活且无执行。
+    // 旅行者不计入镇长/邪恶阵营的存活人数胜负条件。
     const alivePlayers = Array.from(this.gamePlayers.values()).filter(p => !p.isDead);
-    const mayor = alivePlayers.find(p => p.role?.id === 'mayor' && this.playerAbilityWorks(p));
-    if (mayor && alivePlayers.length === 3) {
-      // 今天没有处决且只剩3人存活（含镇长），善良获胜
-      await this.endGame('good', '镇长特殊胜利：仅剩3名存活玩家且无执行');
+    const aliveNonTravelers = alivePlayers.filter(p => p.role?.team !== Team.TRAVELER);
+    const mayor = aliveNonTravelers.find(p => p.role?.id === 'mayor' && this.playerAbilityWorks(p));
+    if (mayor && aliveNonTravelers.length === 3) {
+      // 今天没有处决且只剩3名非旅行者存活（含镇长），善良获胜
+      await this.endGame('good', '镇长特殊胜利：仅剩3名非旅行者存活且无执行');
       return;
     }
 

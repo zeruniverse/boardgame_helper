@@ -1157,12 +1157,6 @@ class OnuWerewolfWorker extends BaseGameWorker {
     }
   }
 
-  private getDefaultVoteTarget(playerId: string): OnuWerewolfPlayer | undefined {
-    return Object.values(this.gameState.players)
-      .filter(player => player.id !== playerId)
-      .sort((a, b) => a.seat - b.seat)[0];
-  }
-
   private hasAllPlayersVoted(): boolean {
     return Object.values(this.gameState.players).every(player => player.voted);
   }
@@ -1185,13 +1179,10 @@ class OnuWerewolfWorker extends BaseGameWorker {
       return false;
     }
 
-    const target = this.getDefaultVoteTarget(player.id);
-    if (!target) {
-      return false;
-    }
-
-    this.sendToRoom('onu_system_message', { message });
-    this.recordVote(player, target.id);
+    // 超时或离线不应随机/固定指向某位真实玩家，否则系统代投会直接改变处决结果。
+    // 项目已支持投向墓地（中心牌）作为弃权，因此自动操作统一投墓地。
+    this.sendToRoom('onu_system_message', { message: `${message}（自动投向墓地）` });
+    this.recordVote(player, ONU_WEREWOLF_CENTER_VOTE_TARGET);
     return true;
   }
 

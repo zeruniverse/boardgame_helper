@@ -18,7 +18,7 @@
     },
     "werewolf": {
       "displayName": "狼人杀",
-      "maxPlayers": 16,
+      "maxPlayers": 18,
       "gameSpecificConfig": {
         "allowCustomRoles": true,
         "dayTime": 300,
@@ -27,7 +27,7 @@
     },
     "mafia": {
       "displayName": "杀人游戏",
-      "maxPlayers": 16,
+      "maxPlayers": 20,
       "gameSpecificConfig": {
         "speakTime": 60,
         "actionTime": 60,

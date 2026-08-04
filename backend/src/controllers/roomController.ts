@@ -497,9 +497,30 @@ function normalizeChatActionPayload(
 export function roomController(io: Server) {
   // 初始化线程管理器
   threadManager = new RoomThreadManager(handleThreadMessage);
+  let idleCleanupInterval: NodeJS.Timeout | null = null;
+  let controllerShuttingDown = false;
+  let resetInProgress = false;
+
+  function clearRoomAndVoteTimers(): void {
+    for (const room of rooms.values()) {
+      if (room.cleanupTimer) {
+        clearTimeout(room.cleanupTimer);
+        room.cleanupTimer = undefined;
+      }
+    }
+
+    for (const voteData of hostKickVotes.values()) {
+      clearTimeout(voteData.timer);
+    }
+  }
 
   // 重置服务器函数
   async function resetServer() {
+    if (resetInProgress || controllerShuttingDown) {
+      return false;
+    }
+    resetInProgress = true;
+
     try {
       console.log('开始重置服务器...');
       
@@ -516,17 +537,22 @@ export function roomController(io: Server) {
         socket.disconnect(true);
       }
       
-      // 4. 关闭所有房间线程
+      // 4. 先取消仍可能回写旧房间状态的定时器，再关闭所有房间线程。
+      clearRoomAndVoteTimers();
       if (threadManager) {
         await threadManager.shutdown();
       }
       
-      // 5. 清空所有房间
+      // 5. 清空所有房间。
       rooms.clear();
       hostKickVotes.clear();
       playerSessionTokens.clear();
+      existingSeatConnectionQueues.clear();
       
-      // 6. 重新初始化线程管理器
+      // 6. 重新初始化线程管理器。若进程已开始关闭，不再创建新的 Worker 管理器。
+      if (controllerShuttingDown) {
+        return false;
+      }
       threadManager = new RoomThreadManager(handleThreadMessage);
       
       console.log('服务器重置完成，所有房间已清空');
@@ -534,6 +560,8 @@ export function roomController(io: Server) {
     } catch (error) {
       console.error('重置服务器失败:', error);
       return false;
+    } finally {
+      resetInProgress = false;
     }
   }
 
@@ -2520,7 +2548,9 @@ export function roomController(io: Server) {
   });
 
   // 定期清理空闲房间
-  setInterval(async () => {
+  idleCleanupInterval = setInterval(async () => {
+    if (resetInProgress || controllerShuttingDown) return;
+
     const now = Date.now();
     const idleThreshold = 300000; // 5分钟空闲时间
 
@@ -2558,5 +2588,23 @@ export function roomController(io: Server) {
     }
   }, 60000); // 每分钟检查一次
 
+  async function shutdown(): Promise<void> {
+    if (controllerShuttingDown) return;
+    controllerShuttingDown = true;
+
+    if (idleCleanupInterval) {
+      clearInterval(idleCleanupInterval);
+      idleCleanupInterval = null;
+    }
+
+    clearRoomAndVoteTimers();
+    await threadManager.shutdown();
+    rooms.clear();
+    hostKickVotes.clear();
+    playerSessionTokens.clear();
+    existingSeatConnectionQueues.clear();
+  }
+
   console.log('房间控制器初始化完成');
+  return { shutdown };
 }

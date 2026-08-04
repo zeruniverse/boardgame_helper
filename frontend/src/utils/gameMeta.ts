@@ -46,7 +46,7 @@ export const GAME_META: Record<GameType, GameMeta> = {
     displayName: '杀人游戏 Mafia',
     routeName: 'MafiaRoom',
     minPlayers: 6,
-    maxPlayers: 16,
+    maxPlayers: 20,
     description: '昼夜轮替、杀手与好人阵营对抗。',
     storage: { id: 'mafia_userId', nickname: 'mafia_nickname', room: 'mafia_currentRoom' }
   },
@@ -55,7 +55,7 @@ export const GAME_META: Record<GameType, GameMeta> = {
     displayName: '狼人杀 Werewolf',
     routeName: 'WerewolfRoom',
     minPlayers: 6,
-    maxPlayers: 16,
+    maxPlayers: 18,
     description: '狼人夜袭、神职行动、白天发言投票。',
     storage: { id: 'werewolf_userId', nickname: 'werewolf_nickname', room: 'werewolf_currentRoom' }
   },
