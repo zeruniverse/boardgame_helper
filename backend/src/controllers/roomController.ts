@@ -167,6 +167,23 @@ function toClientRoom(room: Room): any {
   };
 }
 
+/**
+ * cleanupTimer is owned by the controller thread and contains a Node.js Timeout
+ * object, which cannot be cloned through worker_threads.postMessage(). Keep it
+ * out of every room snapshot sent to a game worker.
+ */
+function toWorkerRoom(room: Room): Omit<Room, 'cleanupTimer'> {
+  const { cleanupTimer: _cleanupTimer, ...workerRoom } = room;
+  return workerRoom;
+}
+
+function getConnectedSocketPlayer(room: Room, socket: Socket): Player | undefined {
+  return room.players.find(player =>
+    player.socketId === socket.id &&
+    player.online !== false
+  );
+}
+
 function buildRoomJoinedPayload(room: Room, player: Player, issuedSessionToken?: string): any {
   const sessionToken = issuedSessionToken || ensurePlayerSessionToken(room.id, player.id);
   return {
@@ -717,10 +734,14 @@ export function roomController(io: Server) {
         throw new Error(`房间 ${roomId} 不存在或已被删除`);
       }
 
+      const workerTaskData = taskType === 'update_room_data' && taskData?.room
+        ? { ...taskData, room: toWorkerRoom(taskData.room as Room) }
+        : taskData;
+
       const response = await threadManager.sendTask(roomId, {
         type: taskType,
         roomId,
-        data: taskData,
+        data: workerTaskData,
         socketId,
         playerId
       });
@@ -1027,6 +1048,11 @@ export function roomController(io: Server) {
       room.cleanupTimer = undefined;
     }
 
+    // A cleanup callback may already be awaiting Worker termination. Advance
+    // the activity timestamp before the first await so that callback can detect
+    // this in-flight reconnect and cannot delete the room underneath it.
+    room.lastActiveTime = Math.max(Date.now(), Number(room.lastActiveTime || 0) + 1);
+
     try {
       // 先确保 worker 可用，再改写控制层座位；启动失败时旧用户仍保持完整连接。
       const gameConfig = getRoomGameConfig(room);
@@ -1134,6 +1160,62 @@ export function roomController(io: Server) {
     }
   }
 
+  async function cleanupRoomIfStillInactive(
+    roomId: string,
+    expectedLastActiveTime: number,
+    reason: string,
+    expectedTimer?: NodeJS.Timeout
+  ): Promise<boolean> {
+    const roomBeforeStop = rooms.get(roomId);
+    if (!roomBeforeStop) return false;
+
+    if (expectedTimer && roomBeforeStop.cleanupTimer !== expectedTimer) {
+      return false;
+    }
+    if (
+      roomBeforeStop.players.some(player => player.online) ||
+      Number(roomBeforeStop.lastActiveTime || 0) !== expectedLastActiveTime
+    ) {
+      return false;
+    }
+
+    if (roomBeforeStop.cleanupTimer) {
+      clearTimeout(roomBeforeStop.cleanupTimer);
+      roomBeforeStop.cleanupTimer = undefined;
+    }
+
+    let stopped = false;
+    try {
+      stopped = await threadManager.stopRoomThread(roomId);
+    } catch (error) {
+      console.error(`${reason}时停止线程失败: ${roomId}`, error);
+    }
+
+    // stopRoomThread yields. A join/reconnect may have started meanwhile, so
+    // always re-read and compare the authoritative room after it resolves.
+    const roomAfterStop = rooms.get(roomId);
+    if (!roomAfterStop) return false;
+    if (
+      roomAfterStop.players.some(player => player.online) ||
+      Number(roomAfterStop.lastActiveTime || 0) !== expectedLastActiveTime
+    ) {
+      return false;
+    }
+
+    if (!stopped) {
+      console.warn(`${reason}时房间线程未能停止，保留房间并稍后重试: ${roomId}`);
+      scheduleRoomCleanupIfNoOnlinePlayers(roomAfterStop);
+      return false;
+    }
+
+    rooms.delete(roomId);
+    hostKickVotes.delete(roomId);
+    clearRoomSessionTokens(roomId);
+    broadcastLobbyUpdate();
+    console.log(`${reason}: ${roomId}`);
+    return true;
+  }
+
   function scheduleRoomCleanupIfNoOnlinePlayers(room: Room): void {
     if (room.players.some(player => player.online)) {
       return;
@@ -1144,20 +1226,16 @@ export function roomController(io: Server) {
     }
 
     const roomId = room.id;
-    room.cleanupTimer = setTimeout(() => {
-      const roomToClean = rooms.get(roomId);
-      if (!roomToClean || roomToClean.players.some(player => player.online)) {
-        return;
-      }
-
-      threadManager.stopRoomThread(roomId).catch(error => {
-        console.error(`清理空房间时停止线程失败: ${roomId}`, error);
-      });
-      rooms.delete(roomId);
-      hostKickVotes.delete(roomId);
-      clearRoomSessionTokens(roomId);
-      broadcastLobbyUpdate();
+    const expectedLastActiveTime = Number(room.lastActiveTime || 0);
+    const cleanupTimer = setTimeout(() => {
+      void cleanupRoomIfStillInactive(
+        roomId,
+        expectedLastActiveTime,
+        '清理空房间',
+        cleanupTimer
+      );
     }, config.server.roomCleanupTimeout || 60000);
+    room.cleanupTimer = cleanupTimer;
 
     rooms.set(roomId, room);
     threadManager.updateRoomData(roomId, room);
@@ -1367,6 +1445,11 @@ export function roomController(io: Server) {
         }
         const room = rooms.get(data.roomId);
         if (room) {
+          const player = getConnectedSocketPlayer(room, socket);
+          if (!player) {
+            console.warn(`get_room_state: socket ${socket.id} is not an active member of room ${room.id}`);
+            return;
+          }
           socket.emit('room_update', toClientRoom(room));
 
           // 德州扑克的当前底池、公共牌、手牌和待行动玩家存在于游戏线程中，
@@ -1374,11 +1457,8 @@ export function roomController(io: Server) {
           // 在客户端显式拉取房间状态时，顺带向当前 socket 重新同步一次完整牌局状态，
           // 避免玩家回到房间后停留在空白/未开局界面并错过自己的行动。
           if (room.type === 'texas-holdem') {
-            const player = room.players.find(p => p.socketId === socket.id);
-            if (player) {
-              sendTaskToRoom(room.id, 'sync_player_state', { playerId: player.id }, socket.id, player.id)
-                .catch(error => console.warn(`get_room_state: sync texas state failed for room ${room.id}:`, error));
-            }
+            sendTaskToRoom(room.id, 'sync_player_state', { playerId: player.id }, socket.id, player.id)
+              .catch(error => console.warn(`get_room_state: sync texas state failed for room ${room.id}:`, error));
           }
         }
       } catch (error) {
@@ -1395,6 +1475,10 @@ export function roomController(io: Server) {
         }
         const room = rooms.get(data.roomId);
         if (room) {
+          if (!getConnectedSocketPlayer(room, socket)) {
+            console.warn(`room_status_check: socket ${socket.id} is not an active member of room ${room.id}`);
+            return;
+          }
           socket.emit('room_ready', {
             roomId: room.id,
             status: room.threadStatus === 'running' ? 'ready' : 'starting',
@@ -1692,7 +1776,7 @@ export function roomController(io: Server) {
         // 将玩家添加到房间
         room.players.push(player);
         ensurePlayerSessionToken(room.id, player.id);
-        room.lastActiveTime = Date.now();
+        room.lastActiveTime = Math.max(Date.now(), Number(room.lastActiveTime || 0) + 1);
         if (room.cleanupTimer) {
           clearTimeout(room.cleanupTimer);
           room.cleanupTimer = undefined;
@@ -1856,7 +1940,7 @@ export function roomController(io: Server) {
         // 将玩家添加到房间
         room.players.push(player);
         ensurePlayerSessionToken(room.id, player.id);
-        room.lastActiveTime = Date.now();
+        room.lastActiveTime = Math.max(Date.now(), Number(room.lastActiveTime || 0) + 1);
         if (room.cleanupTimer) {
           clearTimeout(room.cleanupTimer);
           room.cleanupTimer = undefined;
@@ -2202,16 +2286,17 @@ export function roomController(io: Server) {
           player.id
         );
 
+        const actionResult = taskResponse?.data;
+        if (actionResult && actionResult.success === false) {
+          ack?.({
+            success: false,
+            error: typeof actionResult.error === 'string' ? actionResult.error : '操作未被游戏接受'
+          });
+          return;
+        }
+
         const normalizedActionType = data.actionType.toLowerCase().replace(/[_-]/g, '');
         if (room.type === 'texas-holdem' && normalizedActionType === 'cashout') {
-          const cashOutResult = taskResponse?.data;
-          if (cashOutResult && cashOutResult.success === false) {
-            ack?.({
-              success: false,
-              error: typeof cashOutResult.error === 'string' ? cashOutResult.error : '当前无法 Cash Out'
-            });
-            return;
-          }
           await finalizeSelfRemovalByWorker(room.id, player, socket);
         }
         ack?.({ success: true });
@@ -2498,35 +2583,10 @@ export function roomController(io: Server) {
           broadcastLobbyUpdate();
         }
 
-        // 检查房间是否已空，如果空则设置清理定时器
-        const onlinePlayers = latestRoom.players.filter(p => p.online);
-        if (onlinePlayers.length === 0) {
+        // 检查房间是否已空，如果空则使用统一的竞态安全清理流程。
+        if (!latestRoom.players.some(p => p.online)) {
           console.log(`房间 ${roomId} 已没有在线玩家，设置清理定时器`);
-          
-          // 如果已有定时器，先清除
-          if (currentRoom.cleanupTimer) {
-            clearTimeout(currentRoom.cleanupTimer);
-          }
-
-          currentRoom.cleanupTimer = setTimeout(() => {
-            console.log(`清理空房间: ${roomId}`);
-            // 再次检查房间是否仍然存在（防止在定时器等待期间房间已被清理）
-            const roomToClean = rooms.get(roomId);
-            if (!roomToClean) return;
-            // 再次检查是否确实没有在线玩家
-            const stillOnline = roomToClean.players.filter(p => p.online);
-            if (stillOnline.length > 0) return;
-
-            threadManager.stopRoomThread(roomId).catch(err => {
-              console.error(`清理空房间时停止线程失败: ${roomId}`, err);
-            });
-            rooms.delete(roomId);
-            hostKickVotes.delete(roomId);
-            clearRoomSessionTokens(roomId);
-
-            // 更新大厅
-            broadcastLobbyUpdate();
-          }, config.server.roomCleanupTimeout || 60000);
+          scheduleRoomCleanupIfNoOnlinePlayers(latestRoom);
         }
       }
     });
@@ -2571,20 +2631,8 @@ export function roomController(io: Server) {
       if (room.players.length > 0 && onlinePlayers.length > 0) continue;
       if (room.players.length > 0 && (now - room.lastActiveTime <= idleThreshold)) continue;
 
-      console.log(`清理空闲房间: ${room.name}`);
-      try {
-        await threadManager.cleanupIdleRoom(roomId);
-      } catch (err) {
-        console.error(`清理空闲房间 ${roomId} 时出错:`, err);
-      }
-      rooms.delete(roomId);
-      hostKickVotes.delete(roomId);
-      clearRoomSessionTokens(roomId);
-
-      // 更新大厅
-      if (!room.private) {
-        broadcastLobbyUpdate();
-      }
+      const expectedLastActiveTime = Number(room.lastActiveTime || 0);
+      await cleanupRoomIfStillInactive(roomId, expectedLastActiveTime, `清理空闲房间 ${room.name}`);
     }
   }, 60000); // 每分钟检查一次
 

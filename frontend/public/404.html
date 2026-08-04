@@ -1,19 +1,47 @@
 <!doctype html>
-<html lang="en">
+<html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="./vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Texas Hold'em</title>
+    <meta name="robots" content="noindex" />
+    <title>桌游助手</title>
     <script>
-      // GitHub Pages 404 重定向到主页
-      // 将当前路径转换为hash路径
-      sessionStorage.redirect = location.href;
+      (function () {
+        var routePrefixes = [
+          'texas-holdem',
+          'avalon',
+          'mafia',
+          'onu-werewolf',
+          'werewolf',
+          'botc',
+          'room'
+        ];
+        var segments = window.location.pathname.split('/').filter(Boolean);
+        var routeIndex = segments.findIndex(function (segment) {
+          return routePrefixes.indexOf(segment) !== -1;
+        });
+
+        var baseSegments;
+        var routeSegments;
+        if (routeIndex >= 0) {
+          baseSegments = segments.slice(0, routeIndex);
+          routeSegments = segments.slice(routeIndex);
+        } else {
+          // GitHub Pages project sites normally keep one repository segment.
+          baseSegments = window.location.hostname.endsWith('.github.io') && segments.length > 0
+            ? [segments[0]]
+            : [];
+          routeSegments = [];
+        }
+
+        var basePath = '/' + (baseSegments.length ? baseSegments.join('/') + '/' : '');
+        var routePath = routeSegments.length ? '/' + routeSegments.join('/') : '/';
+        var target = window.location.origin + basePath + '#' + routePath + window.location.search;
+        window.location.replace(target);
+      })();
     </script>
-    <meta http-equiv="refresh" content="0;URL='./'">
   </head>
   <body>
-    <div id="app"></div>
-    <script type="module" src="./src/main.ts"></script>
+    <p>正在返回桌游助手……</p>
   </body>
-</html> 
+</html>

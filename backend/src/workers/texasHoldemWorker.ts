@@ -66,6 +66,11 @@ interface GameTaskResponse {
   error?: string;
 }
 
+interface PlayerActionResult {
+  success: boolean;
+  error?: string;
+}
+
 
 class TexasHoldemWorker extends BaseGameWorker {
   private config!: TexasHoldemConfig;
@@ -353,8 +358,7 @@ class TexasHoldemWorker extends BaseGameWorker {
           this.handleStartGame(playerId, actionData);
           break;
         case 'playerAction':
-          this.handlePlayerAction(playerId, actionData);
-          break;
+          return this.handlePlayerAction(playerId, actionData);
         case 'chat':
         case 'chat_message':
           this.handleChatMessage(playerId, actionData);
@@ -390,10 +394,14 @@ class TexasHoldemWorker extends BaseGameWorker {
           break;
         default:
           console.warn(`未知的游戏行动类型: ${actionType}`);
+          return { success: false, error: `未知的游戏行动类型: ${actionType}` };
       }
+      return { success: true };
     } catch (error: any) {
       console.error(`处理游戏行动时发生错误: ${error}`);
-      this.sendToPlayer(playerId, 'error', { message: error.message || '操作失败，请重试' });
+      const message = error.message || '操作失败，请重试';
+      this.sendToPlayer(playerId, 'error', { message });
+      return { success: false, error: message };
     }
   }
 
@@ -1373,40 +1381,43 @@ class TexasHoldemWorker extends BaseGameWorker {
   }
 
   // 德州扑克特有的处理方法
-  private handlePlayerAction(playerId: string, data: any) {
-    const { action, amount } = data;
+  private rejectPlayerAction(playerId: string, error: string): PlayerActionResult {
+    this.sendToPlayer(playerId, 'error', { message: error });
+    return { success: false, error };
+  }
+
+  private handlePlayerAction(playerId: string, data: any): PlayerActionResult {
+    const action = data?.action;
+    const amount = data?.amount;
     const gs = this.gameState as TexasHoldemGameState;
 
-    if (!gs || this.participants.length === 0) {
-      return;
+    if (!gs || gs.stage !== 'playing' || this.participants.length === 0) {
+      return this.rejectPlayerAction(playerId, '当前没有可操作的牌局');
     }
 
     const player = this.room.players.find(p => p.id === playerId);
     if (!player) {
-      return;
+      return this.rejectPlayerAction(playerId, '玩家不存在');
     }
 
     // 安全检查：currentTurn 有效
     if (gs.currentTurn < 0 || gs.currentTurn >= this.room.players.length) {
-      return;
+      return this.rejectPlayerAction(playerId, '当前行动位置无效，请等待状态恢复');
     }
 
     // 检查是否轮到该玩家
     if (this.room.players[gs.currentTurn].id !== playerId) {
-      return;
+      return this.rejectPlayerAction(playerId, '还没有轮到你行动');
     }
 
     // 检查玩家是否已经fold
     if (gs.folded.includes(playerId)) {
-      return;
+      return this.rejectPlayerAction(playerId, '你已经弃牌');
     }
 
     // 检查玩家是否已经全下且投注足够（不需要再行动）
     if (player.gameMetadata.chips === 0) {
-      const currentBet = gs.bets[playerId] || 0;
-      if (currentBet >= gs.currentBet) {
-        return;
-      }
+      return this.rejectPlayerAction(playerId, '你已经全下，无需继续行动');
     }
 
     const currentBet = gs.bets[playerId] || 0;
@@ -1418,40 +1429,63 @@ class TexasHoldemWorker extends BaseGameWorker {
       case 'fold':
         this.clearActionTimer();
         this.handleFold(playerId);
-        break;
+        return { success: true };
       case 'check':
         if (toCall > 0) {
-          return;
+          return this.rejectPlayerAction(playerId, `当前需要跟注 ${toCall}，不能看牌`);
         }
         this.clearActionTimer();
         this.handleCheck(playerId);
-        break;
+        return { success: true };
       case 'call':
         if (toCall <= 0) {
-          return;
+          return this.rejectPlayerAction(playerId, '当前无需跟注，可以看牌');
         }
         this.clearActionTimer();
         this.handleCall(playerId, toCall);
-        break;
+        return { success: true };
       case 'raise': {
         const raiseTo = Math.floor(Number(amount));
         if (!Number.isFinite(raiseTo) || raiseTo <= gs.currentBet) {
-          return;
+          return this.rejectPlayerAction(playerId, `加注总额必须高于当前下注 ${gs.currentBet}`);
         }
+
+        const chips = Math.max(0, Number(player.gameMetadata.chips) || 0);
+        const allInAmount = currentBet + chips;
+        const needToPay = raiseTo - currentBet;
+        const effectiveRaiseTo = Math.min(raiseTo, allInAmount);
+
+        // A short all-in does not reopen raising for a player who has already
+        // acted. Reject before clearing the timer, otherwise repeated invalid
+        // raises can reset the full 30-second action window indefinitely.
+        if ((gs.raiseLocked || []).includes(playerId) && effectiveRaiseTo > gs.currentBet) {
+          return this.rejectPlayerAction(playerId, '短码全下未构成完整加注，不能再次加注');
+        }
+
+        // Reaching or exceeding the player's stack is a legal all-in even when
+        // it is smaller than a full raise. Non-all-in raises must meet minRaiseTo.
+        if (needToPay < chips && raiseTo < this.getMinimumFullRaiseTo()) {
+          return this.rejectPlayerAction(playerId, `最小加注到 ${this.getMinimumFullRaiseTo()}`);
+        }
+
         this.clearActionTimer();
         this.handleRaise(playerId, raiseTo);
-        break;
+        return { success: true };
       }
       case 'all-in':
-      case 'allin':
+      case 'allin': {
+        const chips = Math.max(0, Number(player.gameMetadata.chips) || 0);
+        const allInAmount = currentBet + chips;
+        if ((gs.raiseLocked || []).includes(playerId) && allInAmount > gs.currentBet) {
+          return this.rejectPlayerAction(playerId, '短码全下未构成完整加注，不能再次加注');
+        }
         this.clearActionTimer();
         this.handleAllIn(playerId);
-        break;
+        return { success: true };
+      }
       default:
-        return;
+        return this.rejectPlayerAction(playerId, '未知的德州扑克行动');
     }
-
-
   }
 
   private handleChatMessage(playerId: string, data: any) {
