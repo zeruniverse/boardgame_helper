@@ -44,6 +44,17 @@ export class RoomThreadManager {
     }, 30000); // 每30秒检查一次
   }
 
+
+  /**
+   * Controller rooms may contain live Timeout handles used for delayed cleanup. Those
+   * handles are not structured-cloneable and must never cross a worker_threads boundary.
+   * Keep the controller object intact and create a shallow worker-safe snapshot instead.
+   */
+  private toWorkerRoomSnapshot(room: Room): Omit<Room, 'cleanupTimer'> {
+    const { cleanupTimer: _cleanupTimer, ...snapshot } = room;
+    return snapshot;
+  }
+
   // 根据游戏类型获取对应的Worker文件路径
   private getWorkerPath(gameType: string): string {
     const workerFileName = this.getWorkerFileName(gameType);
@@ -134,8 +145,9 @@ export class RoomThreadManager {
       console.log(`正在启动房间 ${room.id} (${room.type}) 的线程...`);
       
       // 配置 Worker 选项
+      const workerRoom = this.toWorkerRoomSnapshot(room);
       const workerOptions: WorkerOptions = {
-        workerData: { roomId: room.id, room }
+        workerData: { roomId: room.id, room: workerRoom }
       };
       
       const workerPath = this.getWorkerPath(room.type);
@@ -262,7 +274,7 @@ export class RoomThreadManager {
       const prepareResponse = await this.sendTask(room.id, {
         type: 'prepare_room',
         roomId: room.id,
-        data: { room, config }
+        data: { room: workerRoom, config }
       });
 
       if (!prepareResponse.success) {
@@ -378,10 +390,14 @@ export class RoomThreadManager {
     }
 
     const taskId = uuidv4();
+    const taskData = task.data?.room
+      ? { ...task.data, room: this.toWorkerRoomSnapshot(task.data.room as Room) }
+      : task.data;
     const fullTask: GameTask = {
       ...task,
-      playerId: task.playerId || task.data?.playerId || task.data?.userId,
-      socketId: task.socketId || task.data?.socketId,
+      data: taskData,
+      playerId: task.playerId || taskData?.playerId || taskData?.userId,
+      socketId: task.socketId || taskData?.socketId,
       id: taskId,
       timestamp: Date.now()
     };
@@ -563,6 +579,7 @@ export class RoomThreadManager {
       }
       return {
         type: 'emit_to_socket',
+        roomId,
         socketId,
         event: payload.event,
         data: payload.data

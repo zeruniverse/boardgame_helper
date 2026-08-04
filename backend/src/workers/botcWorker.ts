@@ -1183,11 +1183,16 @@ export class BOTCWorker extends BaseGameWorker {
       throw new Error('游戏已开始且未开放旁观，无法加入');
     }
 
-    const roomPlayer = this.upsertRoomPlayer(player);
-    // maxPlayers 表示实际游戏玩家数，真人说书人不计入该人数。
-    if (this.room.players.length > this.gameConfig.maxPlayers + 1) {
+    // maxPlayers 表示实际游戏玩家数；只有真人说书人额外占用一个 room.players 席位。
+    // AI 说书人是虚拟 ID，不在房间成员列表中，不能无条件多放一名真人玩家。
+    // 必须在 upsert 前拒绝新席位，否则抛错后超额玩家仍会残留在 Worker 房间状态中。
+    const storytellerSeatCount = this.isComputerStoryteller() ? 0 : 1;
+    const isExistingPlayer = this.room.players.some(existingPlayer => existingPlayer.id === player.id);
+    if (!isExistingPlayer && this.room.players.length >= this.gameConfig.maxPlayers + storytellerSeatCount) {
       throw new Error('房间已满');
     }
+
+    const roomPlayer = this.upsertRoomPlayer(player);
 
     this.sendToRoom('playerJoined', {
       player: {

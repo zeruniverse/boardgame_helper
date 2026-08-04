@@ -158,7 +158,16 @@ function toClientPlayer(player: Player): any {
 }
 
 function toClientRoom(room: Room): any {
-  const { cleanupTimer, ...safeRoom } = room;
+  // Worker lifecycle fields are controller-only implementation details. Besides reducing
+  // payload noise, keeping them out of client snapshots prevents reconnect state from
+  // depending on a stale thread id/status that the browser cannot act on.
+  const {
+    cleanupTimer: _cleanupTimer,
+    threadId: _threadId,
+    threadStatus: _threadStatus,
+    lastActiveTime: _lastActiveTime,
+    ...safeRoom
+  } = room;
   return {
     ...safeRoom,
     players: (room.players || []).map(toClientPlayer),
@@ -195,16 +204,18 @@ function buildRoomJoinedPayload(room: Room, player: Player, issuedSessionToken?:
   };
 }
 
-function serializeEventData(event: string, data: any): any {
+function serializeEventData(event: string, data: any, roomId?: string): any {
   if (!data) return data;
   if (event === 'room_update' && data.id && Array.isArray(data.players)) {
     return toClientRoom(data as Room);
   }
-  if (event === 'room_ready' && data.room?.id) {
-    return { ...data, room: toClientRoom(data.room) };
-  }
+
   if (data.room?.id && Array.isArray(data.room.players)) {
-    return { ...data, room: toClientRoom(data.room) };
+    // A reconnect/state-sync event may have been assembled from a worker snapshot that
+    // predates a socket migration, host transfer or online-status update. Always attach
+    // the controller's current room snapshot when available.
+    const authoritativeRoom = (roomId ? rooms.get(roomId) : undefined) || rooms.get(data.room.id) || data.room;
+    return { ...data, room: toClientRoom(authoritativeRoom) };
   }
   return data;
 }
@@ -479,6 +490,10 @@ function isGameActionChatType(actionType: string): boolean {
   return actionType === 'chat' || actionType === 'chat_message' || actionType === 'chatMessage';
 }
 
+function isPrivateChatActionType(actionType: string): boolean {
+  return actionType === 'private_message' || actionType === 'privateMessage';
+}
+
 function normalizeChatActionPayload(
   room: Room,
   actionData: any,
@@ -722,13 +737,13 @@ export function roomController(io: Server) {
         console.log(`广播事件到房间 ${data.roomId}: ${data.event}`);
         const outgoingData = await applyWorkerRoomUpdate(data.event, data.data);
         if (data.event === 'room_update' && outgoingData === null) return;
-        io.to(data.roomId).emit(data.event, serializeEventData(data.event, outgoingData));
+        io.to(data.roomId).emit(data.event, serializeEventData(data.event, outgoingData, data.roomId));
       } else if (data.type === 'emit_to_socket') {
         // 不把私有事件正文写入服务端日志，避免角色/手牌等敏感信息泄露。
         console.log(`发送事件到socket ${data.socketId}: ${data.event}`);
         const outgoingData = await applyWorkerRoomUpdate(data.event, data.data);
         if (data.event === 'room_update' && outgoingData === null) return;
-        io.to(data.socketId).emit(data.event, serializeEventData(data.event, outgoingData));
+        io.to(data.socketId).emit(data.event, serializeEventData(data.event, outgoingData, data.roomId));
       }
     } catch (error) {
       console.error('处理线程消息失败:', error);
@@ -1553,13 +1568,15 @@ export function roomController(io: Server) {
 
         // 创建房间，房间ID和名称使用相同的6位随机字符
         const roomIdAndName = generateUniqueRoomIdAndName();
-        const configuredMaxPlayers = Number(data.gameConfig?.maxPlayers || data.gameConfig?.playerCount || config.games[data.gameType].maxPlayers);
-        const gamePlayerLimit = Math.max(1, Math.min(configuredMaxPlayers || config.games[data.gameType].maxPlayers, config.games[data.gameType].maxPlayers));
-        // 血染钟楼的配置人数是实际参与游戏的人数；真人说书人需要额外占用一个房间席位。
-        const maxPlayers = data.gameType === 'blood-on-the-clocktower'
-          ? gamePlayerLimit + 1
-          : gamePlayerLimit;
         const gameConfig = buildGameConfig(data.gameType, data.gameConfig);
+        const configuredMaxPlayers = Number(gameConfig.maxPlayers || gameConfig.playerCount || config.games[data.gameType].maxPlayers);
+        const gamePlayerLimit = Math.max(1, Math.min(configuredMaxPlayers || config.games[data.gameType].maxPlayers, config.games[data.gameType].maxPlayers));
+        // 血染钟楼的配置人数是实际参与游戏的人数。只有真人说书人需要额外席位；
+        // AI 说书人不在 room.players 中，若仍然 +1 会允许超额玩家进入并导致开局校验失败。
+        const hasHumanBOTCStoryteller = data.gameType === 'blood-on-the-clocktower' &&
+          gameConfig.storytellerMode !== 'ai' &&
+          !(typeof gameConfig.storytellerId === 'string' && gameConfig.storytellerId.startsWith('computer_'));
+        const maxPlayers = gamePlayerLimit + (hasHumanBOTCStoryteller ? 1 : 0);
         const room: Room = {
           id: roomIdAndName,
           name: roomIdAndName,
@@ -2273,11 +2290,20 @@ export function roomController(io: Server) {
           return;
         }
 
+        let actionType = data.actionType;
         let actionData = data.actionData;
-        if (isGameActionChatType(data.actionType)) {
-          const normalizedChat = normalizeChatActionPayload(room, actionData, socket, ack);
+        if (isGameActionChatType(actionType) || isPrivateChatActionType(actionType)) {
+          const isPrivateChat = isPrivateChatActionType(actionType);
+          const chatPayload = isPrivateChat
+            ? { ...(actionData || {}), channel: 'private' }
+            : actionData;
+          const normalizedChat = normalizeChatActionPayload(room, chatPayload, socket, ack);
           if (!normalizedChat) return;
           actionData = normalizedChat;
+          // Legacy BOTC clients used private_message, while workers process chat/chat_message.
+          // Canonicalize the action as well as its payload so validation is not followed by
+          // an "unknown action" error inside the worker.
+          if (isPrivateChat) actionType = 'chat';
         }
 
         // 更新玩家心跳和房间活跃时间
@@ -2289,7 +2315,7 @@ export function roomController(io: Server) {
           room.id,
           'game_action',
           {
-            actionType: data.actionType,
+            actionType,
             actionData
           },
           socket.id,
@@ -2305,7 +2331,7 @@ export function roomController(io: Server) {
           return;
         }
 
-        const normalizedActionType = data.actionType.toLowerCase().replace(/[_-]/g, '');
+        const normalizedActionType = actionType.toLowerCase().replace(/[_-]/g, '');
         if (room.type === 'texas-holdem' && normalizedActionType === 'cashout') {
           await finalizeSelfRemovalByWorker(room.id, player, socket);
         }

@@ -548,7 +548,8 @@ export const useBOTCGameStore = defineStore('botc', () => {
 
   // 发送私聊消息
   const sendPrivateMessage = (targetId: string, message: string) => {
-    emitGameAction(socket.value, currentRoomId.value, currentUserId.value, 'private_message', { targetId, message })
+    // 复用统一聊天通道，使私聊与公共/说书人消息经过同一套前后端校验。
+    emitChatAction(socket.value, currentRoomId.value, currentUserId.value, message, 'private', targetId)
   }
 
   // 房间管理
