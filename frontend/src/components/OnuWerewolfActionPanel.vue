@@ -474,15 +474,8 @@
           >
             投票给 {{ displayPlayerName(player) }} (座位{{ player.seat }})
           </el-button>
-          <el-button
-            @click="vote(-1)"
-            type="info"
-            size="large"
-          >
-            投票给墓地（中心牌）
-          </el-button>
           <el-alert
-            title="规则提示：可以投票给另一名玩家或墓地；墓地得票不低于玩家最高票时无人被处决。"
+            title="规则提示：每人必须投给另一名玩家；最高票只有 1 票时无人死亡，最高票至少 2 票时所有并列最高票玩家都会死亡。"
             type="info"
             :closable="false"
             show-icon
@@ -957,11 +950,11 @@ const skipSkill = () => {
 
 // C2 fix: 传递座位号而非玩家ID
 const vote = (targetSeat: number) => {
-  if (targetSeat === undefined || targetSeat === null || targetSeat < -1 || targetSeat === 0) {
+  if (targetSeat === undefined || targetSeat === null || targetSeat < 1) {
     console.error('Invalid vote target:', targetSeat);
     return;
   }
-  if (targetSeat !== -1 && targetSeat === props.mySeat) {
+  if (targetSeat === props.mySeat) {
     console.error('Invalid vote target: cannot vote for yourself');
     return;
   }

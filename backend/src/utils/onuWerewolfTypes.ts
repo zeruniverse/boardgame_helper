@@ -61,8 +61,6 @@ export const ONU_WEREWOLF_REFERENCE_ROLES: OnuWerewolfRole[] = [
   OnuWerewolfRole.Tanner
 ];
 
-export const ONU_WEREWOLF_CENTER_VOTE_TARGET = '__center__';
-
 // 团队枚举
 export enum OnuWerewolfTeam {
   Villager = 'villager',

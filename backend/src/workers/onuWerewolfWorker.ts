@@ -16,8 +16,7 @@ import {
   OnuWerewolfSelection,
   OnuWerewolfVision,
   OnuWerewolfGameResult,
-  ONU_WEREWOLF_ROLE_NAMES,
-  ONU_WEREWOLF_CENTER_VOTE_TARGET
+  ONU_WEREWOLF_ROLE_NAMES
 } from '../utils/onuWerewolfTypes';
 
 import {
@@ -249,24 +248,20 @@ class OnuWerewolfWorker extends BaseGameWorker {
   async gameAction(playerId: string, actionType: string, actionData: any): Promise<void> {
     // Validate inputs
     if (!playerId || typeof playerId !== 'string') {
-      console.warn('onuWerewolf gameAction: invalid playerId');
-      return;
+      throw new Error('无效的玩家ID');
     }
     if (!actionType || typeof actionType !== 'string') {
-      console.warn('onuWerewolf gameAction: invalid actionType');
-      return;
+      throw new Error('无效的操作类型');
     }
     if (!this.room || !this.room.players) {
-      console.warn('onuWerewolf gameAction: room not initialized');
-      return;
+      throw new Error('房间尚未初始化');
     }
     if (!this.gameState) {
-      console.warn('onuWerewolf gameAction: gameState not initialized');
-      return;
+      throw new Error('游戏状态尚未初始化');
     }
 
     const player = this.room.players.find(p => p.id === playerId);
-    if (!player) return;
+    if (!player) throw new Error('玩家不在房间中');
 
     try {
       switch (actionType) {
@@ -314,13 +309,15 @@ class OnuWerewolfWorker extends BaseGameWorker {
           await this.handleSkipDiscussion(playerId);
           break;
         default:
-          console.warn(`未知的游戏动作: ${actionType}`);
+          throw new Error(`未知的游戏动作: ${actionType}`);
       }
     } catch (error) {
       console.error(`处理游戏动作失败: ${actionType}`, error);
       this.sendToPlayer(playerId, 'onu_error', { 
         message: error instanceof Error ? error.message : '未知错误' 
       });
+      // 继续抛给任务层，使 Controller 的 acknowledgement 与私有错误事件保持一致。
+      throw error;
     }
   }
 
@@ -1184,10 +1181,22 @@ class OnuWerewolfWorker extends BaseGameWorker {
       return false;
     }
 
-    // 超时或离线不应随机/固定指向某位真实玩家，否则系统代投会直接改变处决结果。
-    // 项目已支持投向墓地（中心牌）作为弃权，因此自动操作统一投墓地。
-    this.sendToRoom('onu_system_message', { message: `${message}（自动投向墓地）` });
-    this.recordVote(player, ONU_WEREWOLF_CENTER_VOTE_TARGET);
+    // 官方流程不允许弃权或投中心牌。为保证离线房间能够结束，系统按座位顺序
+    // 投给下一名玩家；若所有未操作玩家都超时，会形成一票循环并按规则无人死亡。
+    const orderedPlayers = Object.values(this.gameState.players).sort((a, b) => a.seat - b.seat);
+    const playerIndex = orderedPlayers.findIndex(candidate => candidate.id === player.id);
+    const target = playerIndex >= 0
+      ? orderedPlayers[(playerIndex + 1) % orderedPlayers.length]
+      : undefined;
+
+    if (!target || target.id === player.id) {
+      return false;
+    }
+
+    this.sendToRoom('onu_system_message', {
+      message: `${message}（按座位顺序自动投给 ${target.name}）`
+    });
+    this.recordVote(player, target.id);
     return true;
   }
 
@@ -1203,18 +1212,12 @@ class OnuWerewolfWorker extends BaseGameWorker {
 
   private resolveVoteTargetSeat(actionData: any): number | undefined {
     const rawSeat = actionData?.target ?? actionData?.targetSeat ?? actionData?.seat;
-    if (rawSeat === 'center' || rawSeat === 'graveyard' || rawSeat === '墓地') {
-      return -1;
-    }
     if (rawSeat !== undefined && rawSeat !== null && rawSeat !== '') {
       const seat = Number(rawSeat);
       return Number.isFinite(seat) ? seat : undefined;
     }
 
     const targetId = actionData?.targetId;
-    if (targetId === ONU_WEREWOLF_CENTER_VOTE_TARGET || targetId === 'center' || targetId === 'graveyard') {
-      return -1;
-    }
     if (targetId && this.gameState.players[targetId]) {
       return this.gameState.players[targetId].seat;
     }
@@ -1236,24 +1239,20 @@ class OnuWerewolfWorker extends BaseGameWorker {
 
     const targetSeat = this.resolveVoteTargetSeat(actionData || {});
     const totalPlayers = Object.keys(this.gameState.players).length;
-    if (targetSeat === undefined || isNaN(targetSeat) || targetSeat < -1 || targetSeat === 0 || targetSeat > totalPlayers) {
+    if (targetSeat === undefined || isNaN(targetSeat) || targetSeat < 1 || targetSeat > totalPlayers) {
       throw new Error('无效的投票目标');
     }
 
-    if (targetSeat === -1) {
-      this.recordVote(player, ONU_WEREWOLF_CENTER_VOTE_TARGET);
-    } else {
-      const target = Object.values(this.gameState.players).find(p => p.seat === targetSeat);
-      if (!target) {
-        throw new Error('投票目标不存在');
-      }
-
-      if (target.id === playerId) {
-        throw new Error('不能投票给自己');
-      }
-
-      this.recordVote(player, target.id);
+    const target = Object.values(this.gameState.players).find(p => p.seat === targetSeat);
+    if (!target) {
+      throw new Error('投票目标不存在');
     }
+
+    if (target.id === playerId) {
+      throw new Error('不能投票给自己');
+    }
+
+    this.recordVote(player, target.id);
 
     if (this.hasAllPlayersVoted()) {
       await this.endVotingPhase();
@@ -1366,7 +1365,7 @@ class OnuWerewolfWorker extends BaseGameWorker {
       const target = this.gameState.players[targetId];
       return {
         source: voter.seat,
-        target: targetId === ONU_WEREWOLF_CENTER_VOTE_TARGET ? -1 : target?.seat ?? -1
+        target: target?.seat ?? -1
       };
     });
 

@@ -13,8 +13,7 @@ import {
   OnuWerewolfCenterCard, 
   OnuWerewolfVision, 
   OnuWerewolfSelection,
-  ONU_WEREWOLF_REFERENCE_ROLES,
-  ONU_WEREWOLF_CENTER_VOTE_TARGET
+  ONU_WEREWOLF_REFERENCE_ROLES
 } from './onuWerewolfTypes';
 
 /**
@@ -234,36 +233,31 @@ export function onuValidateSelection(
 
 /**
  * 计算投票结果。
- * 参考实现允许投“墓地/中心牌”（selectedPlayer = -1）：当墓地得票不低于任何玩家时，
- * 视为投墓地最高票，没有玩家被处决。否则所有最高票玩家被处决。
+ * 每名玩家只能投给另一名玩家；最高票至少为 2 时，所有并列最高票玩家被处决。
+ * 若每名玩家都只获得 0 或 1 票，则无人死亡。
  */
 export function onuCalculateVoteResult(votes: Record<string, string>, players: Record<string, OnuWerewolfPlayer>): {
   voteCounts: Record<string, number>;
-  centerVotes: number;
   lynched: string[];
   maxVotes: number;
 } {
   const voteCounts: Record<string, number> = {};
-  let centerVotes = 0;
 
   for (const target of Object.values(votes)) {
-    if (target === ONU_WEREWOLF_CENTER_VOTE_TARGET) {
-      centerVotes++;
-    } else if (players[target]) {
+    if (players[target]) {
       voteCounts[target] = (voteCounts[target] || 0) + 1;
     }
   }
 
-  const playerMaxVotes = Math.max(...Object.values(voteCounts), 0);
-  const maxVotes = Math.max(playerMaxVotes, centerVotes);
+  const maxVotes = Math.max(...Object.values(voteCounts), 0);
 
   // 一夜狼人投票必须至少有玩家获得 2 票才会有人被处决；三人循环一票互投等最高票仅 1 票场景无人死亡。
-  if (playerMaxVotes <= 1 || centerVotes >= playerMaxVotes) {
-    return { voteCounts, centerVotes, lynched: [], maxVotes };
+  if (maxVotes <= 1) {
+    return { voteCounts, lynched: [], maxVotes };
   }
 
-  const lynched = Object.keys(voteCounts).filter(playerId => voteCounts[playerId] === playerMaxVotes);
-  return { voteCounts, centerVotes, lynched, maxVotes };
+  const lynched = Object.keys(voteCounts).filter(playerId => voteCounts[playerId] === maxVotes);
+  return { voteCounts, lynched, maxVotes };
 }
 
 /**

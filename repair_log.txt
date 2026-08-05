@@ -126,3 +126,31 @@ Commit: fix(round1): 同步游戏配置并修复血染钟楼说书人容量状�
   - 血染钟楼专项测试通过：人数不足时 AI 说书人配置仍被持久化并将房间容量从 9 更新为 8；已有 9 个席位时切换 AI 会被拒绝且原配置不被污染。
   - npm ci / 完整 npm run build 未能在当前环境完成：registry.npmjs.org DNS 返回 EAI_AGAIN，依赖无法下载；失败不是源码语法或本轮 Worker 类型检查错误。
 备注: 未创建根目录 src/；所有后端源码修改均位于 backend/src/，所有前端源码修改均位于 frontend/src/。
+=== 当前请求第 2 轮修复记录 ===
+时间: 2026-08-05 UTC
+Commit: fix(round2): 修复房间线程状态回滚并校正一夜狼人投票规则
+修改/新增文件:
+  - backend/src/controllers/roomController.ts
+  - backend/src/utils/onuWerewolfTypes.ts
+  - backend/src/utils/onuWerewolfUtils.ts
+  - backend/src/workers/onuWerewolfWorker.ts
+  - frontend/src/components/OnuWerewolfActionPanel.vue
+  - doc/onu-werewolf.md
+  - repair_log.txt
+删除文件: 无
+构建测试: 部分通过
+本轮修复:
+  - Controller 合并 Worker 的 room_update 时保留 threadId/threadStatus，避免 prepare_room 使用的旧快照把已运行线程回滚为 idle，导致状态检查长期停留在“启动中”。
+  - 一夜狼人移除“投墓地/中心牌”的非标准投票分支，投票只允许选择另一名玩家；最高票仅 1 票时无人死亡，至少 2 票时并列最高票玩家全部死亡。
+  - 一夜狼人离线/超时玩家改为按座位顺序自动投给下一名玩家，避免使用已移除的中心票哨兵，同时保证房间可以完成结算。
+  - 一夜狼人非法操作会继续抛给 Worker 任务层，使 Controller acknowledgement 与玩家收到的 onu_error 保持一致。
+  - 前端移除中心牌投票按钮并同步规则提示，规则文档同步更新。
+验证:
+  - backend/src 与 frontend/src 共 81 个源码文件完成静态扫描，未创建根目录 src/。
+  - 后端在临时外部模块类型桩下完成完整 TypeScript 严格语义检查，无错误。
+  - 前端全部 TypeScript 文件与 Vue script 块完成语法检查；全部相对导入路径检查通过；CSS/style 块语法检查通过。
+  - 房间合并专项测试通过：旧 Worker 快照不会覆盖运行中的 threadId/threadStatus、Controller socket/online 状态和 cleanupTimer。
+  - 一夜狼人投票工具测试通过：一票循环无人死亡、唯一最高票处决、并列最高票共同处决、无效非玩家目标不计票。
+  - 一夜狼人 Worker 集成测试通过：中心牌投票在任务边界返回失败并发送私有错误；合法一票循环正常结算且无人死亡。
+  - 完整 npm run build 未在当前环境完成：项目依赖未安装，外部 npm registry 请求超时；因此前端 vue-tsc/Vite 生产构建仍需在依赖可用的 CI 或本地仓库执行。
+备注: 所有后端源码修改均位于 backend/src/，所有前端源码修改均位于 frontend/src/；未删除文件。

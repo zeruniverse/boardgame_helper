@@ -300,6 +300,11 @@ function mergeRoomUpdateFromWorker(existingRoom: Room | undefined, workerRoom: R
   return {
     ...existingRoom,
     ...workerRoom,
+    // Worker receives a snapshot before prepare_room completes, so its lifecycle fields can
+    // legitimately lag behind the controller. Thread ownership belongs to RoomThreadManager;
+    // never let a room_update roll a running room back to idle or discard its active thread id.
+    threadId: existingRoom.threadId,
+    threadStatus: existingRoom.threadStatus,
     // 房主转让由控制线程处理。旧 worker 快照只能在当前房主已被移除时覆盖 hostId。
     hostId: preserveControllerHost ? existingRoom.hostId : workerRoom.hostId,
     private: existingRoom.private,
