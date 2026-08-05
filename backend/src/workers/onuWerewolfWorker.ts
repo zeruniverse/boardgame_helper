@@ -829,7 +829,15 @@ class OnuWerewolfWorker extends BaseGameWorker {
     }
 
     const { skill } = currentSkillItem;
-    let selection: OnuWerewolfSelection = actionData.selection || {};
+    const rawSelection = actionData?.selection;
+    if (rawSelection !== undefined && (
+      rawSelection === null ||
+      typeof rawSelection !== 'object' ||
+      Array.isArray(rawSelection)
+    )) {
+      throw new Error('技能选择数据格式无效');
+    }
+    let selection: OnuWerewolfSelection = rawSelection || {};
 
     // 女巫参考实现是两步交互：先查看一张中心牌，再选择一名玩家交换。
     // 若旧客户端一次性提交了“中心牌+玩家”，仍兼容为一次完成。
@@ -987,17 +995,22 @@ class OnuWerewolfWorker extends BaseGameWorker {
     return true;
   }
 
-  private async handleSkipSkill(playerId: string): Promise<void> {
+  private handleSkipSkill(playerId: string): void {
     const player = this.gameState.players[playerId];
-    if (!player) return;
+    if (!player) {
+      throw new Error('玩家不存在');
+    }
 
     if (this.gameState.status !== OnuWerewolfGameStatus.NIGHT) {
-      return;
+      throw new Error('现在不是夜间阶段');
     }
 
     const currentSkillItem = this.skillQueue[this.currentSkillIndex];
     if (!currentSkillItem || currentSkillItem.player.id !== playerId) {
-      return;
+      throw new Error('现在不是你使用技能的时候');
+    }
+    if (player.skillUsed) {
+      throw new Error('你已经完成本次技能操作');
     }
 
     const autoResolved = this.tryAutoResolveMandatorySkill(player, currentSkillItem.skill);
@@ -1385,14 +1398,18 @@ class OnuWerewolfWorker extends BaseGameWorker {
 
   private async handleChatMessage(playerId: string, actionData: any): Promise<void> {
     const player = this.room.players.find(p => p.id === playerId);
-    if (!player) return;
+    if (!player) {
+      throw new Error('玩家不在房间中');
+    }
 
     if (this.gameState.status !== OnuWerewolfGameStatus.WAITING && !this.gameState.players[playerId]) {
-      return;
+      throw new Error('旁观者在游戏进行中不能发言');
     }
 
     const message = normalizeChatText(actionData?.message);
-    if (!message) return;
+    if (!message) {
+      throw new Error('消息不能为空或超过长度限制');
+    }
 
     // 等待房间、讨论投票阶段和游戏结束阶段允许公开聊天；夜晚仍禁止公聊，避免泄露秘密行动。
     if ([
@@ -1406,7 +1423,10 @@ class OnuWerewolfWorker extends BaseGameWorker {
         message,
         timestamp: Date.now()
       });
+      return;
     }
+
+    throw new Error('夜晚阶段不能发送公开消息');
   }
 
   private async handleSkipDiscussion(playerId: string): Promise<void> {

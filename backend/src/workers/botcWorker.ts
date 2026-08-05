@@ -2377,7 +2377,7 @@ export class BOTCWorker extends BaseGameWorker {
   /**
    * 处理结束白天投票
    */
-  private async handleVoteEndDay(playerId: string, data: { vote: 'agree' | 'disagree' }): Promise<void> {
+  private async handleVoteEndDay(playerId: string, data: { vote?: unknown } | null | undefined): Promise<void> {
     if (!this.endDayProposal.isActive) {
       this.sendToPlayer(playerId, 'actionError', { message: '当前没有结束白天的提议' });
       return;
@@ -2386,6 +2386,11 @@ export class BOTCWorker extends BaseGameWorker {
     const player = this.gamePlayers.get(playerId);
     if (!player || player.isDead) {
       this.sendToPlayer(playerId, 'actionError', { message: '死亡玩家不能投票' });
+      return;
+    }
+
+    if (data?.vote !== 'agree' && data?.vote !== 'disagree') {
+      this.sendToPlayer(playerId, 'actionError', { message: '结束白天投票参数无效' });
       return;
     }
 

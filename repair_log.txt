@@ -281,3 +281,31 @@ Commit: fix(round6): 加固配置与聊天输入并修复阿瓦隆和一夜狼�
   - package-lock 工作区依赖树通过 npm ls --package-lock-only --all 校验。
   - 完整 npm ci / npm run build 未在当前环境完成：node_modules 不存在，当前依赖源无法取得 TypeScript 5.8.3 等安装包；因此正式 vue-tsc/Vite 生产构建仍需在依赖可用的 CI 或本地仓库执行。源码已通过上述严格类型、语法、导入、Worker 初始化与专项运行测试。
 备注: 所有后端源码修改均位于 backend/src/，所有前端源码修改均位于 frontend/src/；未删除文件，未创建根目录 src/。
+=== 当前请求第 7 轮修复记录 ===
+时间: 2026-08-05 17:41:54 UTC
+Commit: fix(round7): 严格校验多游戏操作目标并修复错误回执
+修改/新增文件:
+  - backend/src/workers/avalonWorker.ts
+  - backend/src/workers/botcWorker.ts
+  - backend/src/workers/mafiaWorker.ts
+  - backend/src/workers/onuWerewolfWorker.ts
+  - backend/src/workers/werewolfWorker.ts
+  - repair_log.txt
+删除文件: 无
+构建测试: 部分通过
+本轮修复:
+  - 狼人杀新增统一的可选目标解析：明确区分主动放弃与无效/过期目标，避免未知玩家被静默当成弃权、跳过一次性技能或误撕警徽；狼人、预言家、女巫、守卫、猎人、放逐/警长投票及警徽继承均复用该校验。
+  - 狼人杀限制预言家不能查验自己；女巫未知或畸形操作不再被当作跳过并消耗行动；警长竞选必须提交真实布尔值，警徽只能传给其他存活玩家。
+  - 阿瓦隆对队长发言顺序、组队投票、任务结果和刺杀表决严格要求布尔参数；刺杀与湖上夫人目标严格校验字符串玩家 ID；善良方提交任务失败不再被静默改写为成功并返回成功回执。
+  - 一夜狼人的跳过技能在错误阶段、非当前操作者、重复操作或未知玩家时明确失败；夜晚公开聊天、旁观者发言、空消息均返回失败；技能 selection 必须是对象，避免畸形负载触发隐式 TypeError。
+  - 杀人游戏补齐操作数据的空值安全，并禁止警察查验自己、狙击手狙击自己。
+  - 血染钟楼结束白天投票只接受 agree/disagree，畸形值不会占用玩家投票或被隐式当作反对票。
+验证:
+  - backend/src 与 frontend/src 共 83 个源码文件完成静态复查；根目录不存在 src/，全部修改均保持在原 backend/src/ 目录结构内。
+  - 后端 33 个 TypeScript 源码在临时外部模块类型桩与真实 Node 类型定义下完成完整 strict 编译并生成测试用 CommonJS 文件，无类型错误。
+  - 前端 49 个 TypeScript/Vue/CSS 文件的 TypeScript 语法、SFC template/script/style 块配对、CSS 花括号及相对导入路径检查通过。
+  - 六个游戏 Worker 的 prepare_room/开局烟雾测试全部通过：狼人杀、杀人游戏、一夜狼人、阿瓦隆、德州扑克、血染钟楼均可初始化并进入游戏流程。
+  - 专项 Worker 测试通过：狼人杀无效击杀目标失败且可重试合法目标；阿瓦隆字符串布尔值被拒绝；一夜狼人夜晚公聊、非操作者跳过及畸形技能选择均明确失败。
+  - package-lock 工作区依赖树通过 npm ls --package-lock-only --all 校验。
+  - 完整 npm run build 未在当前环境完成：依赖安装请求未能完整结束并留下空的 @types 目录，正式 tsc 因缺少已声明依赖类型而中止；已清理这些临时 node_modules。前端 vue-tsc/Vite 生产构建仍需在依赖可用的 CI 或本地仓库执行。
+备注: 本轮未修改 frontend/src/ 文件，前端复用与样式静态检查未发现需要优先于上述规则/状态问题处理的阻断项；未删除文件，未创建根目录 src/。

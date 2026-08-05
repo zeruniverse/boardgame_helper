@@ -529,16 +529,16 @@ class MafiaWorker extends BaseGameWorker {
           await this.handleChangeConfig(playerId, actionData?.config || actionData);
           break;
         case 'inspect_suspect':
-          this.handleInspectSuspect(playerId, actionData.suspectId);
+          this.handleInspectSuspect(playerId, actionData?.suspectId);
           break;
         case 'kill_person':
-          this.handleKillPerson(playerId, actionData.targetId);
+          this.handleKillPerson(playerId, actionData?.targetId);
           break;
         case 'doctor_save':
-          this.handleDoctorSave(playerId, actionData.targetId);
+          this.handleDoctorSave(playerId, actionData?.targetId);
           break;
         case 'sniper_shoot':
-          this.handleSniperShoot(playerId, actionData.targetId);
+          this.handleSniperShoot(playerId, actionData?.targetId);
           break;
         case 'sniper_skip':
           this.handleSniperSkip(playerId);
@@ -550,7 +550,7 @@ class MafiaWorker extends BaseGameWorker {
           this.handleEndSpeak(playerId);
           break;
         case 'vote':
-          this.handleVote(playerId, actionData.targetId);
+          this.handleVote(playerId, actionData?.targetId);
           break;
         case 'confess':
           this.handleConfess(playerId);
@@ -1127,6 +1127,10 @@ class MafiaWorker extends BaseGameWorker {
       this.sendToPlayer(playerId, 'inspect_rejected', { message: '验人目标无效或已死亡' });
       return;
     }
+    if (suspectId === playerId) {
+      this.sendToPlayer(playerId, 'inspect_rejected', { message: '警察不能查验自己' });
+      return;
+    }
 
     if (playerId in gameState.inspect) {
       this.sendToPlayer(playerId, 'inspect_rejected', { message: '你已经选择过验人目标' });
@@ -1267,6 +1271,10 @@ class MafiaWorker extends BaseGameWorker {
     const target = gameState.players?.[targetId];
     if (!target || !target.alive) {
       this.sendToPlayer(playerId, 'snipe_rejected', { message: '狙击目标无效' });
+      return;
+    }
+    if (targetId === playerId) {
+      this.sendToPlayer(playerId, 'snipe_rejected', { message: '狙击手不能狙击自己' });
       return;
     }
 

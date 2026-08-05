@@ -1013,6 +1013,73 @@ class WerewolfWorker extends BaseGameWorker {
     return true;
   }
 
+  /**
+   * Resolve the optional player target used by role actions and votes.
+   *
+   * A deliberate pass is represented by a missing/null/empty/zero target.  An
+   * explicitly supplied but unknown player id/index is different: treating it
+   * as a pass can consume a one-shot action (or even destroy the sheriff badge)
+   * when the client is stale or malformed.  Keep those cases distinct so the
+   * caller can reject the action and let the player retry.
+   */
+  private resolveOptionalTarget(actionData: any): {
+    targetIndex: number;
+    target?: WerewolfPlayerState;
+    error?: string;
+  } {
+    if (actionData !== undefined && actionData !== null && typeof actionData !== 'object') {
+      return { targetIndex: 0, error: '目标数据格式无效' };
+    }
+
+    const data = actionData || {};
+    const hasTargetId = Object.prototype.hasOwnProperty.call(data, 'targetId');
+    const hasTargetIndex = Object.prototype.hasOwnProperty.call(data, 'target');
+
+    if (hasTargetId) {
+      const rawTargetId = data.targetId;
+      const emptyTargetId = rawTargetId === null || rawTargetId === undefined || rawTargetId === 0 ||
+        (typeof rawTargetId === 'string' && (rawTargetId.trim() === '' || rawTargetId.trim() === '0'));
+
+      // 兼容同时携带 targetId/target 的旧客户端：空 targetId 不应遮蔽一个有效座位号。
+      if (!emptyTargetId) {
+        if (typeof rawTargetId !== 'string' && typeof rawTargetId !== 'number') {
+          return { targetIndex: 0, error: '目标玩家ID无效' };
+        }
+
+        const targetId = String(rawTargetId).trim();
+        const target = this.gameState.players[targetId] as WerewolfPlayerState | undefined;
+        if (!target) {
+          return { targetIndex: 0, error: '目标玩家不存在' };
+        }
+        return { targetIndex: target.index, target };
+      }
+    }
+
+    if (hasTargetIndex) {
+      const rawTargetIndex = data.target;
+      if (
+        rawTargetIndex === null || rawTargetIndex === undefined || rawTargetIndex === 0 ||
+        (typeof rawTargetIndex === 'string' && (rawTargetIndex.trim() === '' || rawTargetIndex.trim() === '0'))
+      ) {
+        return { targetIndex: 0 };
+      }
+
+      const targetIndex = Number(rawTargetIndex);
+      if (!Number.isInteger(targetIndex) || targetIndex <= 0) {
+        return { targetIndex: 0, error: '目标座位号无效' };
+      }
+
+      const target = (Object.values(this.gameState.players) as WerewolfPlayerState[])
+        .find(player => player.index === targetIndex);
+      if (!target) {
+        return { targetIndex: 0, error: '目标玩家不存在' };
+      }
+      return { targetIndex, target };
+    }
+
+    return { targetIndex: 0 };
+  }
+
   // ==================== 角色行动处理 ====================
 
   private handleCharacterAction(playerId: string, actionData: any): void {
@@ -1077,23 +1144,12 @@ class WerewolfWorker extends BaseGameWorker {
       return;
     }
 
-    // 解析目标（支持targetId或target）
-    let targetIndex = 0; // 0表示放弃
-    if (actionData) {
-      if (actionData.targetId !== null && actionData.targetId !== undefined) {
-        const targetId = String(actionData.targetId);
-        const target = this.gameState.players[targetId];
-        if (target) {
-          targetIndex = target.index;
-        }
-      } else if (actionData.target !== null && actionData.target !== undefined) {
-        targetIndex = Number(actionData.target) || 0;
-      }
+    const resolvedTarget = this.resolveOptionalTarget(actionData);
+    if (resolvedTarget.error) {
+      this.sendToPlayer(playerId, 'error', { message: `狼人击杀目标无效：${resolvedTarget.error}` });
+      return;
     }
-
-    const target = targetIndex > 0
-      ? (Object.values(this.gameState.players) as WerewolfPlayerState[]).find(p => p.index === targetIndex)
-      : undefined;
+    const { targetIndex, target } = resolvedTarget;
     if (targetIndex > 0 && (!target || !target.isAlive || target.character === 'WEREWOLF')) {
       this.sendToPlayer(playerId, 'error', { message: '狼人击杀目标无效' });
       return;
@@ -1151,19 +1207,12 @@ class WerewolfWorker extends BaseGameWorker {
       return;
     }
 
-    // 解析目标
-    let targetIndex = 0;
-    if (actionData) {
-      if (actionData.targetId !== null && actionData.targetId !== undefined) {
-        const targetId = String(actionData.targetId);
-        const target = this.gameState.players[targetId];
-        if (target) {
-          targetIndex = target.index;
-        }
-      } else if (actionData.target !== null && actionData.target !== undefined) {
-        targetIndex = Number(actionData.target) || 0;
-      }
+    const resolvedTarget = this.resolveOptionalTarget(actionData);
+    if (resolvedTarget.error) {
+      this.sendToPlayer(playerId, 'error', { message: `验人目标无效：${resolvedTarget.error}` });
+      return;
     }
+    const { targetIndex, target } = resolvedTarget;
 
     if (targetIndex <= 0) {
       if (!this.claimSingleUseAction(playerId)) return;
@@ -1176,9 +1225,12 @@ class WerewolfWorker extends BaseGameWorker {
       return;
     }
 
-    const target = (Object.values(this.gameState.players) as WerewolfPlayerState[]).find(p => p.index === targetIndex);
     if (!target || !target.isAlive) {
       this.sendToPlayer(playerId, 'error', { message: '目标玩家不存在或已死亡' });
+      return;
+    }
+    if (target.id === playerId) {
+      this.sendToPlayer(playerId, 'error', { message: '预言家不能查验自己' });
       return;
     }
 
@@ -1240,7 +1292,12 @@ class WerewolfWorker extends BaseGameWorker {
     if (!this.gameState.nightActions) this.gameState.nightActions = {};
 
     // 前端发送格式: {actionType: 'antidote'|'poison'|'skip', targetId?}
-    const actionType = actionData?.actionType || actionData?.type;
+    const rawActionType = actionData?.actionType ?? actionData?.type;
+    if (typeof rawActionType !== 'string') {
+      this.sendToPlayer(playerId, 'error', { message: '请选择有效的女巫操作' });
+      return;
+    }
+    const actionType = rawActionType.trim().toLowerCase();
 
     if (actionType === 'skip' || actionType === 'pass') {
       if (!this.claimSingleUseAction(playerId)) return;
@@ -1299,24 +1356,18 @@ class WerewolfWorker extends BaseGameWorker {
         return;
       }
 
-      // 解析目标
-      let targetIndex = 0;
-      if (actionData.targetId !== null && actionData.targetId !== undefined) {
-        const targetId = String(actionData.targetId);
-        const target = this.gameState.players[targetId];
-        if (target) {
-          targetIndex = target.index;
-        }
-      } else if (actionData.target !== null && actionData.target !== undefined) {
-        targetIndex = Number(actionData.target) || 0;
+      const resolvedTarget = this.resolveOptionalTarget(actionData);
+      if (resolvedTarget.error) {
+        this.sendToPlayer(playerId, 'error', { message: `毒药目标无效：${resolvedTarget.error}` });
+        return;
       }
+      const { targetIndex, target } = resolvedTarget;
 
       if (targetIndex <= 0) {
         this.sendToPlayer(playerId, 'error', { message: '请选择毒药目标' });
         return;
       }
 
-      const target = (Object.values(this.gameState.players) as WerewolfPlayerState[]).find(p => p.index === targetIndex);
       if (!target || !target.isAlive) {
         this.sendToPlayer(playerId, 'error', { message: '目标玩家不存在或已死亡' });
         return;
@@ -1346,13 +1397,7 @@ class WerewolfWorker extends BaseGameWorker {
       return;
     }
 
-    // 未知操作类型，视为跳过
-    if (!this.claimSingleUseAction(playerId)) return;
-    this.sendToPlayer(playerId, 'system_message', { message: '未知操作，视为跳过' });
-    this.saveTimeout(() => {
-      const context = this.createContext();
-      stateHandlers[GameStatus.WITCH_ACT].endOfState(this.gameState, context);
-    }, 1000);
+    this.sendToPlayer(playerId, 'error', { message: '未知的女巫操作，请重新选择' });
   }
 
   // ==================== 守卫保护 ====================
@@ -1372,19 +1417,12 @@ class WerewolfWorker extends BaseGameWorker {
       return;
     }
 
-    // 解析目标
-    let targetIndex = 0;
-    if (actionData) {
-      if (actionData.targetId !== null && actionData.targetId !== undefined) {
-        const targetId = String(actionData.targetId);
-        const target = this.gameState.players[targetId];
-        if (target) {
-          targetIndex = target.index;
-        }
-      } else if (actionData.target !== null && actionData.target !== undefined) {
-        targetIndex = Number(actionData.target) || 0;
-      }
+    const resolvedTarget = this.resolveOptionalTarget(actionData);
+    if (resolvedTarget.error) {
+      this.sendToPlayer(playerId, 'error', { message: `保护目标无效：${resolvedTarget.error}` });
+      return;
     }
+    const { targetIndex, target } = resolvedTarget;
 
     if (targetIndex <= 0) {
       if (!this.claimSingleUseAction(playerId)) return;
@@ -1398,7 +1436,6 @@ class WerewolfWorker extends BaseGameWorker {
         return;
       }
 
-      const target = (Object.values(this.gameState.players) as WerewolfPlayerState[]).find(p => p.index === targetIndex);
       if (!target || !target.isAlive) {
         this.sendToPlayer(playerId, 'error', { message: '保护目标不存在或已死亡' });
         return;
@@ -1458,27 +1495,12 @@ class WerewolfWorker extends BaseGameWorker {
       return;
     }
 
-    // 解析目标
-    let targetIndex = 0; // 0表示不开枪
-    if (actionData) {
-      if (actionData.targetId !== null && actionData.targetId !== undefined) {
-        if (actionData.targetId === null || actionData.targetId === '' || actionData.targetId === '0') {
-          targetIndex = 0;
-        } else {
-          const targetId = String(actionData.targetId);
-          const target = this.gameState.players[targetId];
-          if (target) {
-            targetIndex = target.index;
-          }
-        }
-      } else if (actionData.target !== null && actionData.target !== undefined) {
-        targetIndex = Number(actionData.target) || 0;
-      }
+    const resolvedTarget = this.resolveOptionalTarget(actionData);
+    if (resolvedTarget.error) {
+      this.sendToPlayer(playerId, 'error', { message: `猎人开枪目标无效：${resolvedTarget.error}` });
+      return;
     }
-
-    const target = targetIndex > 0
-      ? (Object.values(this.gameState.players) as WerewolfPlayerState[]).find(p => p.index === targetIndex)
-      : undefined;
+    const { targetIndex, target } = resolvedTarget;
     if (targetIndex > 0 && (!target || !target.isAlive || target.id === playerId)) {
       this.sendToPlayer(playerId, 'error', { message: '猎人开枪目标无效' });
       return;
@@ -1530,21 +1552,15 @@ class WerewolfWorker extends BaseGameWorker {
       return;
     }
 
-    // 解析投票目标
-    let targetIndex = 0; // 0表示弃票
-    if (actionData) {
-      if (actionData.targetId !== null && actionData.targetId !== undefined && actionData.targetId !== '') {
-        const targetId = String(actionData.targetId);
-        const target = this.gameState.players[targetId];
-        if (target && !target.isAlive) {
-          this.sendToPlayer(playerId, 'error', { message: '目标玩家已经死亡，无法投票' });
-          return;
-        } else if (target) {
-          targetIndex = target.index;
-        }
-      } else if (actionData.target !== null && actionData.target !== undefined) {
-        targetIndex = Number(actionData.target) || 0;
-      }
+    const resolvedTarget = this.resolveOptionalTarget(actionData);
+    if (resolvedTarget.error) {
+      this.sendToPlayer(playerId, 'error', { message: `投票目标无效：${resolvedTarget.error}` });
+      return;
+    }
+    const { targetIndex, target: resolvedVoteTarget } = resolvedTarget;
+    if (resolvedVoteTarget && !resolvedVoteTarget.isAlive) {
+      this.sendToPlayer(playerId, 'error', { message: '目标玩家已经死亡，无法投票' });
+      return;
     }
 
     if (targetIndex > 0 && (this.gameState.status === GameStatus.EXILE_VOTE || this.gameState.status === GameStatus.SHERIFF_VOTE)) {
@@ -1657,9 +1673,12 @@ class WerewolfWorker extends BaseGameWorker {
       return;
     }
 
-    const participate = actionData?.participate !== false &&
-      actionData?.join !== false &&
-      actionData?.candidate !== false;
+    const rawParticipate = actionData?.participate ?? actionData?.join ?? actionData?.candidate;
+    if (typeof rawParticipate !== 'boolean') {
+      this.sendToPlayer(playerId, 'error', { message: '警长竞选选择无效' });
+      return;
+    }
+    const participate = rawParticipate;
 
     if (!this.gameState.sheriffElectResponses) {
       this.gameState.sheriffElectResponses = {};
@@ -1723,18 +1742,18 @@ class WerewolfWorker extends BaseGameWorker {
       return;
     }
 
-    // 解析目标
-    let targetIndex = 0;
-    if (actionData) {
-      if (actionData.targetId !== null && actionData.targetId !== undefined) {
-        const targetId = String(actionData.targetId);
-        const target = this.gameState.players[targetId];
-        if (target) {
-          targetIndex = target.index;
-        }
-      } else if (actionData.target !== null && actionData.target !== undefined) {
-        targetIndex = Number(actionData.target) || 0;
-      }
+    const resolvedTarget = this.resolveOptionalTarget(actionData);
+    if (resolvedTarget.error) {
+      this.sendToPlayer(playerId, 'error', { message: `警徽继承人无效：${resolvedTarget.error}` });
+      return;
+    }
+    const { targetIndex, target } = resolvedTarget;
+
+    // 只有明确选择“撕毁警徽”时才允许空目标；陈旧或死亡目标必须让玩家重试，
+    // 不能因为客户端状态落后一拍而不可逆地销毁警徽。
+    if (targetIndex > 0 && (!target || !target.isAlive || target.id === playerId)) {
+      this.sendToPlayer(playerId, 'error', { message: '警徽只能传给其他存活玩家' });
+      return;
     }
 
     if (!this.claimSingleUseAction(playerId)) return;
@@ -1745,18 +1764,13 @@ class WerewolfWorker extends BaseGameWorker {
     });
 
     if (targetIndex > 0) {
-      const target = (Object.values(this.gameState.players) as WerewolfPlayerState[]).find(p => p.index === targetIndex);
-      if (target && target.isAlive) {
-        target.isSheriff = true;
-        this.sendToPlayer(playerId, 'system_message', {
-          message: `你将警徽传给了 ${targetIndex}号 ${target.name}`
-        });
-        this.sendToRoom('system_message', {
-          message: `${gamePlayer.index}号警长将警徽传给了 ${targetIndex}号 ${target.name}`
-        });
-      } else {
-        this.sendToRoom('system_message', { message: '指定的继承人已死亡，警徽被销毁' });
-      }
+      target!.isSheriff = true;
+      this.sendToPlayer(playerId, 'system_message', {
+        message: `你将警徽传给了 ${targetIndex}号 ${target!.name}`
+      });
+      this.sendToRoom('system_message', {
+        message: `${gamePlayer.index}号警长将警徽传给了 ${targetIndex}号 ${target!.name}`
+      });
     } else {
       this.sendToRoom('system_message', { message: `${gamePlayer.index}号警长撕毁警徽` });
     }

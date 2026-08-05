@@ -477,31 +477,31 @@ class AvalonWorker extends BaseGameWorker {
           this.handleStartGame(playerId);
           break;
         case 'captainSpeak':
-          this.handleCaptainSpeak(playerId, actionData.speakFirst);
+          this.handleCaptainSpeak(playerId, actionData?.speakFirst);
           break;
         case 'endSpeak':
           this.handleEndSpeak(playerId);
           break;
         case 'pickTeam':
-          this.handlePickTeam(playerId, actionData.team);
+          this.handlePickTeam(playerId, actionData?.team);
           break;
         case 'vote':
-          this.handleVote(playerId, actionData.agree);
+          this.handleVote(playerId, actionData?.agree);
           break;
         case 'takeAction':
-          this.handleTakeAction(playerId, actionData.success);
+          this.handleTakeAction(playerId, actionData?.success);
           break;
         case 'requestAssassinate':
           this.handleRequestAssassinate(playerId);
           break;
         case 'approveAssassination':
-          this.handleApproveAssassination(playerId, actionData.agree);
+          this.handleApproveAssassination(playerId, actionData?.agree);
           break;
         case 'assassinate':
-          this.handleAssassinate(playerId, actionData.targetId);
+          this.handleAssassinate(playerId, actionData?.targetId);
           break;
         case 'ladyInspect':
-          this.handleLadyInspect(playerId, actionData.targetId);
+          this.handleLadyInspect(playerId, actionData?.targetId);
           break;
         case 'chat':
         case 'chat_message':
@@ -511,10 +511,10 @@ class AvalonWorker extends BaseGameWorker {
           this.handleRestartGame(playerId);
           break;
         case 'transferHost':
-          this.handleTransferHostAction(playerId, actionData.newHostId || actionData.playerId);
+          this.handleTransferHostAction(playerId, actionData?.newHostId || actionData?.playerId);
           break;
         case 'kickPlayer':
-          this.handleKickPlayerAction(playerId, actionData.playerId);
+          this.handleKickPlayerAction(playerId, actionData?.playerId);
           break;
         case 'heartbeat':
           this.handleHeartbeat(playerId);
@@ -836,11 +836,15 @@ class AvalonWorker extends BaseGameWorker {
     this.startGame();
   }
 
-  private handleCaptainSpeak(playerId: string, speakFirst: boolean): void {
+  private handleCaptainSpeak(playerId: string, speakFirst: unknown): void {
     if (!this.gameState) return;
     const state = this.gameState as AvalonGameState;
     if (state.status !== GameStatus.CAPTAIN || !state.operators.includes(playerId)) {
       this.sendToPlayer(playerId, 'game_error', { message: '当前不能选择发言顺序' });
+      return;
+    }
+    if (typeof speakFirst !== 'boolean') {
+      this.sendToPlayer(playerId, 'game_error', { message: '发言顺序参数无效' });
       return;
     }
 
@@ -954,11 +958,15 @@ class AvalonWorker extends BaseGameWorker {
     this.sendGameMessage(`队长${this.getPlayerName(playerId)}提名队伍: ${teamNames}，请所有玩家投票`);
   }
 
-  private handleVote(playerId: string, agree: boolean): void {
+  private handleVote(playerId: string, agree: unknown): void {
     if (!this.gameState || !this.room) return;
     const state = this.gameState as AvalonGameState;
     if (state.status !== GameStatus.VOTE || !state.operators.includes(playerId)) {
       this.sendToPlayer(playerId, 'game_error', { message: '当前不能进行组队投票或你已经完成投票' });
+      return;
+    }
+    if (typeof agree !== 'boolean') {
+      this.sendToPlayer(playerId, 'game_error', { message: '投票参数无效' });
       return;
     }
 
@@ -999,11 +1007,15 @@ class AvalonWorker extends BaseGameWorker {
     }
   }
 
-  private handleTakeAction(playerId: string, success: boolean): void {
+  private handleTakeAction(playerId: string, success: unknown): void {
     if (!this.gameState || !this.room) return;
     const state = this.gameState as AvalonGameState;
     if (state.status !== GameStatus.ACTION || !state.operators.includes(playerId)) {
       this.sendToPlayer(playerId, 'game_error', { message: '当前不能提交任务结果或你已经完成行动' });
+      return;
+    }
+    if (typeof success !== 'boolean') {
+      this.sendToPlayer(playerId, 'game_error', { message: '任务结果参数无效' });
       return;
     }
 
@@ -1013,10 +1025,12 @@ class AvalonWorker extends BaseGameWorker {
       return;
     }
 
-    // 只有红方可以选择失败，蓝方强制成功
+    // 只有红方可以选择失败。非法失败票不能静默改成成功票，否则客户端会
+    // 收到成功回执，却不知道 Worker 实际记录了相反的任务结果。
     const isRed = state.topSecret.red[playerId] !== undefined;
     if (!success && !isRed) {
-      success = true;
+      this.sendToPlayer(playerId, 'game_error', { message: '亚瑟方成员只能提交任务成功' });
+      return;
     }
 
     // 记录行动（简化处理，实际应该更复杂）
@@ -1079,12 +1093,16 @@ class AvalonWorker extends BaseGameWorker {
     });
   }
 
-  private handleApproveAssassination(playerId: string, agree: boolean): void {
+  private handleApproveAssassination(playerId: string, agree: unknown): void {
     const state = this.gameState as AvalonGameState;
     const info = state.assassinateInfo;
 
     if (!info.approvers.includes(playerId) || state.status === GameStatus.OVER) {
       this.sendToPlayer(playerId, 'game_error', { message: '当前不能参与刺杀表决或你已经完成表决' });
+      return;
+    }
+    if (typeof agree !== 'boolean') {
+      this.sendToPlayer(playerId, 'game_error', { message: '刺杀表决参数无效' });
       return;
     }
     if (info.approvers.length === 0) {
@@ -1102,7 +1120,7 @@ class AvalonWorker extends BaseGameWorker {
     }
   }
 
-  private handleAssassinate(playerId: string, targetId: string): void {
+  private handleAssassinate(playerId: string, targetId: unknown): void {
     if (!this.gameState) return;
     const state = this.gameState as AvalonGameState;
     if (state.status !== GameStatus.ASSASSINATE || state.topSecret.red[playerId] !== Role.ASSASSIN) {
@@ -1111,7 +1129,7 @@ class AvalonWorker extends BaseGameWorker {
     }
 
     // 刺杀本质是猜梅林；选择非梅林（包括邪恶方或自己）都应视为刺杀失败，不能让刺客重试。
-    if (!state.players || !state.players[targetId]) {
+    if (typeof targetId !== 'string' || !state.players || !state.players[targetId]) {
       this.sendToPlayer(playerId, 'game_error', {
         message: '无效的刺杀目标'
       });
@@ -1136,7 +1154,7 @@ class AvalonWorker extends BaseGameWorker {
     this.sendGameOverInfo();
   }
 
-  private handleLadyInspect(playerId: string, targetId: string): void {
+  private handleLadyInspect(playerId: string, targetId: unknown): void {
     const state = this.gameState as AvalonGameState;
     if (state.status !== GameStatus.LADY || !state.operators.includes(playerId)) {
       this.sendToPlayer(playerId, 'game_error', { message: '当前不能使用湖上夫人能力' });
@@ -1144,7 +1162,7 @@ class AvalonWorker extends BaseGameWorker {
     }
 
     // 官方湖上夫人只限制不能查自己、不能查曾经持有过湖上夫人标记的玩家。
-    if (targetId === playerId || !state.players[targetId] || state.ladys.includes(targetId)) {
+    if (typeof targetId !== 'string' || targetId === playerId || !state.players[targetId] || state.ladys.includes(targetId)) {
       this.sendToPlayer(playerId, 'game_error', {
         message: '无效的验人目标（不能查验自己或已持有过湖上夫人标记的玩家）'
       });
