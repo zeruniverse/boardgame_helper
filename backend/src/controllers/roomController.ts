@@ -346,7 +346,17 @@ function isValidRoomId(roomId: unknown): roomId is string {
 }
 
 function isValidPlayerId(playerId: unknown): playerId is string {
-  return typeof playerId === 'string' && playerId.trim().length > 0;
+  if (typeof playerId !== 'string') return false;
+  const normalized = playerId.trim();
+  // 玩家 ID 会进入 Map key、Worker 消息和本地存储。仅接受前端生成器/UUID 使用的
+  // 安全字符，限制长度并拒绝控制字符、冒号和对象隐式字符串化，避免会话键碰撞。
+  return normalized.length > 0
+    && normalized.length <= 128
+    && /^[A-Za-z0-9_-]+$/.test(normalized);
+}
+
+function normalizeRequestedPlayerId(playerId: unknown): string | undefined {
+  return isValidPlayerId(playerId) ? playerId.trim() : undefined;
 }
 
 function validateRoomExists(roomId: string, rooms: Map<string, Room>): Room | null {
@@ -372,7 +382,11 @@ function normalizeUserVisibleNickname(nickname: unknown, fallback: string): stri
 }
 
 function normalizeNickname(nickname: unknown, fallback: string): string {
-  return normalizeUserVisibleNickname(nickname, fallback) || '玩家';
+  const normalized = normalizeUserVisibleNickname(nickname, fallback) || '玩家';
+  // 昵称会广播给整个房间并渲染在多种组件中。移除控制字符并限制为 32 个 Unicode 字符，
+  // 防止超长输入放大 room_update/聊天负载或破坏移动端布局。
+  const withoutControls = normalized.replace(/[\u0000-\u001F\u007F]/g, '').trim() || '玩家';
+  return Array.from(withoutControls).slice(0, 32).join('');
 }
 
 function nicknameKey(nickname: unknown): string {
@@ -1598,7 +1612,12 @@ export function roomController(io: Server) {
         }
 
         // 创建玩家
-        const requestedPlayerId = data.gameConfig?.playerId || data.gameConfig?.userId;
+        const rawRequestedPlayerId = data.gameConfig?.playerId ?? data.gameConfig?.userId;
+        if (rawRequestedPlayerId !== undefined && !isValidPlayerId(rawRequestedPlayerId)) {
+          sendErrorResponse(socket, '无效的玩家ID', ack);
+          return;
+        }
+        const requestedPlayerId = normalizeRequestedPlayerId(rawRequestedPlayerId);
         const nickname = normalizeNickname(data.gameConfig?.nickname, `玩家${socket.id.substring(0, 6)}`);
         const player: Player = {
           id: requestedPlayerId || uuidv4(),
@@ -1766,7 +1785,12 @@ export function roomController(io: Server) {
           return;
         }
 
-        const requestedPlayerId = data.playerId || data.userId;
+        const rawRequestedPlayerId = data.playerId ?? data.userId;
+        if (rawRequestedPlayerId !== undefined && !isValidPlayerId(rawRequestedPlayerId)) {
+          sendErrorResponse(socket, '无效的玩家ID', ack);
+          return;
+        }
+        const requestedPlayerId = normalizeRequestedPlayerId(rawRequestedPlayerId);
         let player = requestedPlayerId ? room.players.find(p => p.id === requestedPlayerId) : undefined;
 
         // 已有座位只能凭该座位的会话令牌迁移。昵称会随 room_update 公开，
@@ -1931,7 +1955,12 @@ export function roomController(io: Server) {
           return;
         }
 
-        const requestedPlayerId = data.playerId || data.userId;
+        const rawRequestedPlayerId = data.playerId ?? data.userId;
+        if (rawRequestedPlayerId !== undefined && !isValidPlayerId(rawRequestedPlayerId)) {
+          sendErrorResponse(socket, '无效的玩家ID', ack);
+          return;
+        }
+        const requestedPlayerId = normalizeRequestedPlayerId(rawRequestedPlayerId);
         let player = requestedPlayerId ? room.players.find(p => p.id === requestedPlayerId) : undefined;
 
         // 直接链接接口也必须使用该座位的会话令牌，不能凭公开昵称接管座位。

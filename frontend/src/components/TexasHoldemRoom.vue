@@ -508,8 +508,16 @@ function onTake() {
       alert('Take金额不能超过奖池');
       return;
     }
-    sendTexasAction('take', { amount: val });
-    takeAmount.value = 0;
+    const sent = sendTexasAction('take', { amount: val }, (response: any) => {
+      // 仅在 Worker 确认领取成功后清空输入。奖池被其他赢家先领取等竞态下，
+      // 保留用户输入，便于按服务端最新状态调整，而不是制造“看似成功”的错觉。
+      if (response?.success) {
+        takeAmount.value = 0;
+      }
+    });
+    if (!sent) {
+      ElMessage.error('连接不可用，无法领取奖池');
+    }
   }
 }
 function onTakeAll() {

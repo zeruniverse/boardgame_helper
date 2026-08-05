@@ -57,6 +57,9 @@ export class BOTCWorker extends BaseGameWorker {
   // 只记录会直接推进当前公开阶段的计时器截止时间，供所有客户端和重连玩家统一显示。
   private phaseTimerDeadlines: Map<'day' | 'night' | 'voting', number> = new Map();
   private isProcessingNight: boolean = false;
+  // 白天计时器、说书人操作和结束白天投票都可能在相邻事件循环中触发结算。
+  // 该锁保证处决/胜负检查/进入夜晚只执行一次。
+  private endingDay: boolean = false;
   private privateChatMessages: Map<string, any[]> = new Map();
   private nightRound: number = 0;
   private previouslyPukkaTarget: string | null = null;
@@ -1920,6 +1923,23 @@ export class BOTCWorker extends BaseGameWorker {
    * 结束白天阶段
    */
   private async endDay(): Promise<void> {
+    if (this.endingDay || !this.isCurrentPhase(GamePhase.DAY)) {
+      return;
+    }
+
+    this.endingDay = true;
+    try {
+      await this.finishDay();
+    } finally {
+      this.endingDay = false;
+    }
+  }
+
+  private isCurrentPhase(phase: GamePhase): boolean {
+    return this.gameState.phase === phase;
+  }
+
+  private async finishDay(): Promise<void> {
     const activeNomination = this.getActiveNomination();
     if (activeNomination) {
       await this.endVoting(activeNomination);
@@ -2269,6 +2289,11 @@ export class BOTCWorker extends BaseGameWorker {
    * 结束投票
    */
   private async endVoting(nomination: Nomination): Promise<void> {
+    // 投票计时器与“最后一名玩家提交投票”可能同时触发；只允许首次结算。
+    if (!nomination.isOnTrial) {
+      return;
+    }
+
     this.clearPhaseTimer('voting');
     nomination.isOnTrial = false;
 

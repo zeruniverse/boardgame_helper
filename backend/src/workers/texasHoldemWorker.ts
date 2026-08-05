@@ -77,6 +77,9 @@ class TexasHoldemWorker extends BaseGameWorker {
   private config!: TexasHoldemConfig;
   private actionTimer: NodeJS.Timeout | null = null;
   private actionDeadline: number | null = null;
+  // setTimeout 回调可能已经进入事件队列，此时单纯 clearTimeout 无法保证旧回调不执行。
+  // 通过代际号和预期行动玩家双重校验，防止旧计时器在回合切换后替下一位玩家自动行动。
+  private actionTimerGeneration = 0;
   // 每个行动轮次只允许当前行动者延时一次，避免任意玩家反复刷新计时器导致牌局永久卡住。
   private actionExtendedForPlayerId: string | null = null;
   private autoStartTimer: NodeJS.Timeout | null = null;
@@ -751,6 +754,7 @@ class TexasHoldemWorker extends BaseGameWorker {
   private handleCashIn(playerId: string, data: any) {
     const player = this.room.players.find(p => p.id === playerId);
     if (!player) {
+      this.sendToPlayer(playerId, 'error', { message: '玩家不在房间中' });
       return;
     }
 
@@ -1040,11 +1044,29 @@ class TexasHoldemWorker extends BaseGameWorker {
   }
 
   private clearActionTimer() {
+    this.actionTimerGeneration += 1;
     if (this.actionTimer) {
       clearTimeout(this.actionTimer);
       this.actionTimer = null;
     }
     this.actionDeadline = null;
+  }
+
+  private startActionTimerForPlayer(playerId: string, seconds = 30): void {
+    this.clearActionTimer();
+    const generation = this.actionTimerGeneration;
+    const durationMs = Math.max(1, Math.floor(seconds * 1000));
+    this.actionDeadline = Date.now() + durationMs;
+    this.actionTimer = setTimeout(() => {
+      // 旧定时器即使已进入事件队列，也不能改写新回合的 timer/deadline。
+      if (generation !== this.actionTimerGeneration) {
+        return;
+      }
+
+      this.actionTimer = null;
+      this.actionDeadline = null;
+      this.handleTimeout(playerId);
+    }, durationMs);
   }
 
   private playerNeedsAction(player: Player | undefined): boolean {
@@ -1123,16 +1145,11 @@ class TexasHoldemWorker extends BaseGameWorker {
     this.sendToRoom('game_state', this.buildPublicGameState());
     this.sendToRoom('action_request', { playerId: currentPlayer.id, seconds: 30 });
 
-    // 清除已有定时器并立即启动新的
-    this.clearActionTimer();
-    this.actionDeadline = Date.now() + 30000;
-    this.actionTimer = setTimeout(() => {
-      this.actionDeadline = null;
-      this.handleTimeout();
-    }, 30000);
+    // 清除已有定时器并立即启动新的。计时器绑定当前玩家，旧回调不能作用于后续回合。
+    this.startActionTimerForPlayer(currentPlayer.id);
   }
 
-  private handleTimeout() {
+  private handleTimeout(expectedPlayerId?: string) {
     const gs = this.gameState as TexasHoldemGameState;
 
     // 检查游戏是否已经结束（参与者列表为空）
@@ -1153,6 +1170,13 @@ class TexasHoldemWorker extends BaseGameWorker {
     if (!player || !this.participants.includes(player.id)) {
       console.log('当前玩家已不在游戏中，尝试跳过');
       this.clearActionTimer();
+      this.requestActionForCurrentTurn();
+      return;
+    }
+
+    if (expectedPlayerId && player.id !== expectedPlayerId) {
+      console.log(`忽略过期行动计时器: expected=${expectedPlayerId}, current=${player.id}`);
+      // 当前回合已经改变但没有有效计时器时，重新发出行动请求，避免牌局停住。
       this.requestActionForCurrentTurn();
       return;
     }
@@ -1513,6 +1537,7 @@ class TexasHoldemWorker extends BaseGameWorker {
   private handleReconnect(playerId: string) {
     const player = this.room.players.find(p => p.id === playerId);
     if (!player) {
+      this.sendToPlayer(playerId, 'error', { message: '玩家不在房间中，无法恢复连接状态' });
       return;
     }
 
@@ -1538,16 +1563,19 @@ class TexasHoldemWorker extends BaseGameWorker {
     const player = this.room.players.find(p => p.id === playerId);
 
     if (this.participants.length === 0) {
+      this.sendToPlayer(playerId, 'error', { message: '当前没有可延时的牌局' });
       return;
     }
 
     // 检查发起延时的玩家是否在游戏中
     if (!this.participants.includes(playerId)) {
+      this.sendToPlayer(playerId, 'error', { message: '你不在本局参与者中' });
       return;
     }
 
     // 检查是否还有定时器在运行
     if (!this.actionTimer || !this.actionDeadline) {
+      this.sendToPlayer(playerId, 'error', { message: '当前没有可延时的行动' });
       return;
     }
 
@@ -1555,6 +1583,7 @@ class TexasHoldemWorker extends BaseGameWorker {
 
     // 安全检查：currentTurn 有效
     if (gs.currentTurn < 0 || gs.currentTurn >= this.room.players.length) {
+      this.sendToPlayer(playerId, 'error', { message: '当前行动位置无效，请等待牌局状态恢复' });
       return;
     }
 
@@ -1578,13 +1607,8 @@ class TexasHoldemWorker extends BaseGameWorker {
       this.sendToRoom('chat_broadcast', { message: `[玩家${player.nickname} 延时当前行动30s]` });
     }
 
-    // 重置超时定时器
-    this.clearActionTimer();
-    this.actionDeadline = Date.now() + 30000;
-    this.actionTimer = setTimeout(() => {
-      this.actionDeadline = null;
-      this.handleTimeout();
-    }, 30000);
+    // 重置超时定时器，并继续绑定同一行动玩家。
+    this.startActionTimerForPlayer(currentPlayer.id);
 
     // 重新发送行动请求，让前端更新倒计时
     this.sendToRoom('action_request', { playerId: this.room.players[gs.currentTurn].id, seconds: 30 });
@@ -1594,7 +1618,7 @@ class TexasHoldemWorker extends BaseGameWorker {
     const player = this.room.players.find(p => p.id === playerId);
 
     if (!player || this.room.hostId !== playerId) {
-      this.sendToRoom('chat_broadcast', { message: '只有房主可以切换自动开始功能' });
+      this.sendToPlayer(playerId, 'error', { message: '只有房主可以切换自动开始功能' });
       return;
     }
 
@@ -1655,14 +1679,16 @@ class TexasHoldemWorker extends BaseGameWorker {
   }
 
   private handleTake(playerId: string, data: any) {
-    const { amount } = data;
+    const amount = data?.amount;
 
     if (this.config.allowSystemDealing) {
+      this.sendToPlayer(playerId, 'error', { message: '线上系统发牌模式不支持手动 Take' });
       return;
     }
 
     const player = this.room.players.find(p => p.id === playerId);
     if (!player) {
+      this.sendToPlayer(playerId, 'error', { message: '玩家不在房间中' });
       return;
     }
 
@@ -1679,6 +1705,7 @@ class TexasHoldemWorker extends BaseGameWorker {
     }
 
     if (takeAmt > gs.pot) {
+      this.sendToPlayer(playerId, 'error', { message: '领取数量不能超过当前奖池' });
       return;
     }
 
@@ -1703,11 +1730,13 @@ class TexasHoldemWorker extends BaseGameWorker {
 
   private handleTakeAll(playerId: string) {
     if (this.config.allowSystemDealing) {
+      this.sendToPlayer(playerId, 'error', { message: '线上系统发牌模式不支持手动 Take' });
       return;
     }
 
     const player = this.room.players.find(p => p.id === playerId);
     if (!player) {
+      this.sendToPlayer(playerId, 'error', { message: '玩家不在房间中' });
       return;
     }
 
@@ -1718,6 +1747,7 @@ class TexasHoldemWorker extends BaseGameWorker {
     }
 
     if (gs.pot === 0) {
+      this.sendToPlayer(playerId, 'error', { message: '奖池已经分配完毕' });
       return;
     }
 
@@ -1741,7 +1771,7 @@ class TexasHoldemWorker extends BaseGameWorker {
 
   private handleResetRoom(playerId: string, data: any) {
     // 在新架构中，房间重置由主线程处理
-    return;
+    this.sendToPlayer(playerId, 'error', { message: '当前版本不支持通过游戏操作重置房间' });
   }
 
   private unlockRaiseForPlayer(playerId: string) {
@@ -1793,11 +1823,7 @@ class TexasHoldemWorker extends BaseGameWorker {
 
   private restartActionTimerForPlayer(playerId: string) {
     this.sendToRoom('action_request', { playerId, seconds: 30 });
-    this.actionDeadline = Date.now() + 30000;
-    this.actionTimer = setTimeout(() => {
-      this.actionDeadline = null;
-      this.handleTimeout();
-    }, 30000);
+    this.startActionTimerForPlayer(playerId);
   }
 
   private handleFold(playerId: string) {

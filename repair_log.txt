@@ -218,3 +218,29 @@ Commit: fix(round4): 修复聊天回执竞态与多游戏非法操作确认
   - package-lock 工作区依赖树通过 npm ls --package-lock-only --all 校验。
   - 完整 npm ci / npm run build 未能在当前环境完成：依赖目录不存在，离线安装缺少 TypeScript 5.8.3 缓存包（ENOTCACHED）；前端 vue-tsc/Vite 生产构建仍需在依赖可用的 CI 或本地仓库执行。
 备注: 所有后端源码修改均位于 backend/src/，所有前端源码修改均位于 frontend/src/；未删除文件。
+=== 当前请求第 5 轮修复记录 ===
+时间: 2026-08-05 16:36:13 UTC
+Commit: fix(round5): 加固玩家输入并修复德州与钟楼结算竞态
+修改/新增文件:
+  - backend/src/controllers/roomController.ts (115027 bytes)
+  - backend/src/workers/botcWorker.ts (174725 bytes)
+  - backend/src/workers/texasHoldemWorker.ts (85217 bytes)
+  - frontend/src/components/TexasHoldemRoom.vue (26151 bytes)
+  - repair_log.txt
+删除文件: 无
+构建测试: 部分通过
+本轮修复:
+  - Controller 对创建房间、按房间号加入和按房间名加入统一校验 playerId/userId：拒绝对象、空值、控制字符、危险分隔符和超长 ID，并在进入会话表与 Worker 前完成 trim，避免席位键/会话键碰撞和异常负载。
+  - 统一清理并限制玩家昵称为 32 个 Unicode 字符，阻止控制字符和超长昵称放大 room_update/聊天广播或破坏移动端布局。
+  - 德州扑克行动计时器增加代际号与预期行动玩家校验；即使旧 setTimeout 回调已进入事件队列，也不能在回合切换后替下一名玩家自动 Check/Fold，且异常行动指针会重新请求当前玩家操作而不会卡桌。
+  - 德州扑克的延时、自动开始、Cash In、重连、线下 Take/Take All 与废弃 resetRoom 操作补齐私有失败事件，使 Worker 拒绝与 Controller acknowledgement 保持 success=false，不再静默返回成功。
+  - 德州扑克前端 Take 输入只在 Worker acknowledgement 成功后清空；奖池被其他赢家先领取等竞态失败时保留输入，避免页面表现出虚假成功。
+  - 血染钟楼白天结算增加互斥锁，避免白天计时器、说书人操作与结束白天投票在相邻事件循环中重复处决、重复判胜或重复进入夜晚。
+  - 血染钟楼投票结算增加幂等保护，避免“最后一票提交”和投票计时器同时触发时重复广播 votingEnded 或重复改写待处决人。
+验证:
+  - backend/src 与 frontend/src 共 80 个源码文件完成静态复查；78 个 TypeScript/Vue script 单元语法检查通过，全部相对导入路径存在，根目录不存在 src/。
+  - 后端在临时外部模块类型桩与真实 Node 类型定义下完成完整 TypeScript strict 检查并成功生成 32 个测试用 CommonJS 文件，无类型错误。
+  - 专项测试通过：玩家 ID/昵称边界；德州扑克已取消计时器的迟到回调隔离、非法 Take/非房主自动开始/无牌局延时/resetRoom 的失败回执；血染钟楼投票与白天结算幂等性。
+  - package-lock 工作区依赖树通过 npm ls --package-lock-only --all 校验。
+  - 完整 npm run build 未能在当前环境完成：node_modules 不存在，后端正式 tsconfig 因缺少 express/socket.io/uuid/@types/node 等已声明依赖而中止；前端因此未进入 vue-tsc/Vite 阶段。该限制来自离线依赖环境，源码已通过上述独立语法、严格类型与专项运行测试。
+备注: 本轮继续检查六个游戏 Worker、Controller/线程状态同步和前端组件使用方式；优先修复高影响竞态与回执一致性。所有后端源码修改均位于 backend/src/，所有前端源码修改均位于 frontend/src/；未删除文件。
