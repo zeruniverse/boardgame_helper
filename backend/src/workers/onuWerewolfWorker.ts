@@ -3,6 +3,7 @@ import { BaseGameWorker } from './baseGameWorker';
 import { Room } from '../models/Room';
 import { Player } from '../models/Player';
 import { normalizeChatText } from '../utils/chat';
+import { mergeRoomGameConfig } from '../utils/roomGameConfig';
 
 import {
   OnuWerewolfRole,
@@ -121,6 +122,7 @@ class OnuWerewolfWorker extends BaseGameWorker {
     };
 
     this.gameState.config = this.config;
+    mergeRoomGameConfig(this.room, this.config);
 
     // 设置房间玩家metadata
     this.room.players.forEach(player => {
@@ -134,6 +136,7 @@ class OnuWerewolfWorker extends BaseGameWorker {
       config: this.config,
       gameInfo: this.getGameInfo()
     });
+    this.sendToRoom('room_update', this.room);
   }
 
   async changeConfig(config: Partial<OnuWerewolfConfig>): Promise<void> {
@@ -159,8 +162,10 @@ class OnuWerewolfWorker extends BaseGameWorker {
 
     this.config = { ...this.config, ...normalizedConfig };
     this.gameState.config = this.config;
+    mergeRoomGameConfig(this.room, this.config);
 
     this.sendToRoom('onu_config_changed', { config: this.config });
+    this.sendToRoom('room_update', this.room);
   }
 
   async joinRoom(player: Player): Promise<void> {

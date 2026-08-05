@@ -39,6 +39,7 @@ import {
 import { EDITIONS, getAllRoles, getEditionById, getRoleById, getRolesByTeam } from '../utils/botcData';
 import { processFirstNightInfo, processNightAction, processDeathAbility } from '../utils/botcSkills';
 import { normalizeChatChannel, normalizeChatText } from '../utils/chat';
+import { mergeRoomGameConfig } from '../utils/roomGameConfig';
 
 type DebuffType = 'Poisoned' | 'Drunk';
 type DebuffSourceMap = Record<string, Partial<Record<DebuffType, string[]>>>;
@@ -804,6 +805,100 @@ export class BOTCWorker extends BaseGameWorker {
     return Boolean(storytellerId?.startsWith('computer_'));
   }
 
+  private buildEffectiveGameConfig(config: Partial<GameConfig>, fallback?: GameConfig): GameConfig {
+    const requestedEdition = config.edition ?? fallback?.edition ?? 'tb';
+    if (!getEditionById(requestedEdition)) {
+      throw new Error(`未知剧本: ${requestedEdition}`);
+    }
+
+    const requestedMaxPlayers = Number(config.maxPlayers ?? fallback?.maxPlayers ?? 15);
+    if (!Number.isFinite(requestedMaxPlayers)) {
+      throw new Error('玩家人数上限不合法');
+    }
+    const maxPlayers = Math.max(5, Math.min(15, Math.floor(requestedMaxPlayers)));
+
+    const aiBias = config.aiBias === 'good' || config.aiBias === 'evil' || config.aiBias === 'neutral'
+      ? config.aiBias
+      : fallback?.aiBias || 'neutral';
+    const requestedMode = config.storytellerMode === 'player' || config.storytellerMode === 'ai' || config.storytellerMode === 'none'
+      ? config.storytellerMode
+      : fallback?.storytellerMode || 'player';
+    const hasExplicitStoryteller = typeof config.storytellerId === 'string' && config.storytellerId.trim().length > 0;
+    let storytellerId = hasExplicitStoryteller
+      ? config.storytellerId!.trim()
+      : fallback?.storytellerId || '';
+    let storytellerMode = requestedMode;
+
+    // 显式指定说书人 ID 时，以 ID 类型推断模式；切换模式但未给 ID 时自动选择安全默认值。
+    if (hasExplicitStoryteller && config.storytellerMode === undefined) {
+      storytellerMode = this.isComputerStoryteller(storytellerId) ? 'ai' : 'player';
+    }
+    if (storytellerMode === 'ai') {
+      if (!this.isComputerStoryteller(storytellerId) || config.aiBias !== undefined) {
+        storytellerId = `computer_${aiBias}`;
+      }
+    } else if (!storytellerId || this.isComputerStoryteller(storytellerId)) {
+      storytellerId = this.room.hostId;
+    }
+    if (this.isComputerStoryteller(storytellerId)) {
+      storytellerMode = 'ai';
+    }
+
+    return {
+      edition: requestedEdition,
+      storytellerId,
+      allowSpectators: config.allowSpectators ?? fallback?.allowSpectators ?? true,
+      isPrivate: config.isPrivate ?? fallback?.isPrivate ?? false,
+      maxPlayers,
+      enableTimers: config.enableTimers ?? fallback?.enableTimers ?? false,
+      dayTimer: config.dayTimer ?? fallback?.dayTimer ?? 300,
+      nightTimer: config.nightTimer ?? fallback?.nightTimer ?? 180,
+      votingTimer: config.votingTimer ?? fallback?.votingTimer ?? 60,
+      allowPrivateChat: config.allowPrivateChat ?? fallback?.allowPrivateChat ?? true,
+      storytellerMode,
+      aiBias
+    };
+  }
+
+  private getRoomCapacity(config: GameConfig = this.gameConfig): number {
+    return config.maxPlayers + (this.isComputerStoryteller(config.storytellerId) ? 0 : 1);
+  }
+
+  private validateStorytellerAndCapacity(config: GameConfig, requireOnline: boolean): void {
+    if (!config.storytellerId) {
+      throw new Error('请先设置说书人');
+    }
+
+    if (!this.isComputerStoryteller(config.storytellerId)) {
+      const storyteller = this.room.players.find(player => player.id === config.storytellerId);
+      if (!storyteller) {
+        throw new Error('真人说书人必须是房间成员');
+      }
+      if (requireOnline && storyteller.online === false) {
+        throw new Error('说书人必须在线才能开始游戏');
+      }
+    }
+
+    const capacity = this.getRoomCapacity(config);
+    if (this.room.players.length > capacity) {
+      throw new Error(`当前房间已有${this.room.players.length}个席位，所选说书人模式最多容纳${capacity}人，请先移出多余玩家`);
+    }
+  }
+
+  private syncConfigToRoom(): void {
+    mergeRoomGameConfig(this.room, this.gameConfig);
+    // room.maxPlayers 是房间席位数；真人说书人额外占一席，AI 说书人不占席。
+    this.room.maxPlayers = this.getRoomCapacity();
+  }
+
+  private commitGameConfig(config: GameConfig): void {
+    this.gameConfig = config;
+    this.gameState.storyteller = config.storytellerId;
+    this.syncConfigToRoom();
+    this.sendToRoom('configUpdated', { config: this.gameConfig });
+    this.sendToRoom('room_update', this.room);
+  }
+
   private shouldUseAutomaticTimers(): boolean {
     return this.gameConfig.enableTimers === true || this.isComputerStoryteller();
   }
@@ -1146,35 +1241,28 @@ export class BOTCWorker extends BaseGameWorker {
 
   async prepareRoom(room: Room, config: GameConfig): Promise<void> {
     this.room = room;
-    this.gameConfig = {
-      edition: config.edition || 'tb',
-      // 如果没有指定说书人，默认使用房主
-      storytellerId: config.storytellerId || (config.storytellerMode === 'ai' ? `computer_${config.aiBias || 'neutral'}` : room.hostId),
-      allowSpectators: config.allowSpectators !== undefined ? config.allowSpectators : true,
-      isPrivate: config.isPrivate || false,
-      maxPlayers: config.maxPlayers || 15,
-      enableTimers: config.enableTimers || false,
-      dayTimer: config.dayTimer ?? 300,
-      nightTimer: config.nightTimer ?? 180,
-      votingTimer: config.votingTimer ?? 60,
-      allowPrivateChat: config.allowPrivateChat !== undefined ? config.allowPrivateChat : true,
-      storytellerMode: config.storytellerMode || 'player',
-      aiBias: config.aiBias || 'neutral'
-    };
+    this.gameConfig = this.buildEffectiveGameConfig(config || {});
 
     this.gameState = initializeGameState(this.gameConfig.storytellerId);
     this.gameState.grimoire.startTime = Date.now();
+    this.syncConfigToRoom();
     
     this.sendToRoom('gameConfigured', {
       config: this.gameConfig,
       edition: getEditionById(this.gameConfig.edition),
       availableEditions: EDITIONS
     });
+    this.sendToRoom('room_update', this.room);
   }
 
   async changeConfig(config: Partial<GameConfig>): Promise<void> {
-    this.gameConfig = { ...this.gameConfig, ...config };
-    this.sendToRoom('configUpdated', { config: this.gameConfig });
+    if (this.gameState.phase !== GamePhase.SETUP) {
+      throw new Error('游戏已开始，无法修改配置');
+    }
+
+    const nextConfig = this.buildEffectiveGameConfig(config || {}, this.gameConfig);
+    this.validateStorytellerAndCapacity(nextConfig, false);
+    this.commitGameConfig(nextConfig);
   }
 
   async joinRoom(player: Player): Promise<void> {
@@ -1390,49 +1478,55 @@ export class BOTCWorker extends BaseGameWorker {
       return;
     }
 
-    if (isHost && config) {
-      if (config.edition) {
-        this.gameConfig.edition = config.edition;
-      }
+    let effectiveConfig = this.gameConfig;
+    if (isHost && hasConfigUpdate) {
+      const allowedUpdate: Partial<GameConfig> = {};
+      if (typeof config.edition === 'string') allowedUpdate.edition = config.edition;
+      if (typeof config.storytellerId === 'string') allowedUpdate.storytellerId = config.storytellerId;
       if (config.storytellerMode === 'player' || config.storytellerMode === 'ai' || config.storytellerMode === 'none') {
-        this.gameConfig.storytellerMode = config.storytellerMode;
+        allowedUpdate.storytellerMode = config.storytellerMode;
       }
       if (config.aiBias === 'neutral' || config.aiBias === 'good' || config.aiBias === 'evil') {
-        this.gameConfig.aiBias = config.aiBias;
-      }
-      if (config.storytellerId) {
-        this.gameConfig.storytellerId = config.storytellerId;
-        this.gameState.storyteller = config.storytellerId;
+        allowedUpdate.aiBias = config.aiBias;
       }
       if (typeof config.enableTimers === 'boolean') {
-        this.gameConfig.enableTimers = config.enableTimers;
+        allowedUpdate.enableTimers = config.enableTimers;
       }
-    }
 
-    // 验证说书人已设置
-    if (!this.gameConfig.storytellerId) {
-      this.sendToPlayer(playerId, 'actionError', { message: '请先设置说书人' });
-      return;
-    }
-
-    const isComputerStoryteller = this.isComputerStoryteller();
-    if (!isComputerStoryteller) {
-      const storyteller = this.room.players.find(p => p.id === this.gameConfig.storytellerId);
-      if (!storyteller || storyteller.online === false) {
-        this.sendToPlayer(playerId, 'actionError', { message: '说书人必须在线才能开始游戏' });
+      try {
+        effectiveConfig = this.buildEffectiveGameConfig(allowedUpdate, this.gameConfig);
+        // 先拒绝会让当前房间超员的模式切换；其余有效配置即使人数尚不足也应持久化，
+        // 这样 Controller 能立刻使用新的席位上限处理后续加入请求。
+        this.validateStorytellerAndCapacity(effectiveConfig, true);
+        this.commitGameConfig(effectiveConfig);
+      } catch (error) {
+        this.sendToPlayer(playerId, 'actionError', {
+          message: error instanceof Error ? error.message : '配置更新失败'
+        });
+        return;
+      }
+    } else {
+      try {
+        this.validateStorytellerAndCapacity(effectiveConfig, true);
+      } catch (error) {
+        this.sendToPlayer(playerId, 'actionError', {
+          message: error instanceof Error ? error.message : '说书人配置不合法'
+        });
         return;
       }
     }
 
-    // 排除说书人后计算参与游戏的玩家数
-    const gamePlayerCount = this.room.players.filter(p => p.online !== false && p.id !== this.gameConfig.storytellerId).length;
+    // 排除真人说书人后计算参与游戏的在线玩家数；AI 说书人使用虚拟 ID，不会排除真人玩家。
+    const gamePlayerCount = this.room.players.filter(
+      player => player.online !== false && player.id !== effectiveConfig.storytellerId
+    ).length;
     const minPlayers = 5;
     if (gamePlayerCount < minPlayers) {
       this.sendToPlayer(playerId, 'actionError', { message: `排除说书人后至少需要${minPlayers}名玩家才能开始游戏，当前只有${gamePlayerCount}名` });
       return;
     }
-    if (gamePlayerCount > this.gameConfig.maxPlayers) {
-      this.sendToPlayer(playerId, 'actionError', { message: `实际游戏玩家不能超过${this.gameConfig.maxPlayers}名，当前有${gamePlayerCount}名` });
+    if (gamePlayerCount > effectiveConfig.maxPlayers) {
+      this.sendToPlayer(playerId, 'actionError', { message: `实际游戏玩家不能超过${effectiveConfig.maxPlayers}名，当前有${gamePlayerCount}名` });
       return;
     }
 

@@ -137,12 +137,18 @@ export const useBOTCGameStore = defineStore('botc', () => {
 
         on('room_update', (data) => {
           room.value = data
+          // Worker 会把实际生效的配置写入房间快照；room_update 也作为 configUpdated
+          // 丢失或重连时的兜底，保证席位上限、说书人模式和权限判断使用同一份数据。
+          const persistedConfig = data?.gameMetadata?.gameConfig
+          if (persistedConfig) {
+            gameConfig.value = { ...gameConfig.value, ...persistedConfig }
+          }
           // 如果锁定了房间，更新本地状态
           if (data && data.locked !== undefined) {
             room.value.locked = data.locked
           }
-          // 更新说书人状态 - 只有被指定的说书人才有说书人权限
-          if (data && gameConfig.value) {
+          // 更新说书人状态 - 只有被指定的真人说书人才有说书人权限
+          if (gameConfig.value) {
             isStoryteller.value = currentUserId.value === gameConfig.value.storytellerId
           }
         })

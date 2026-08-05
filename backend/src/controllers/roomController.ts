@@ -709,15 +709,20 @@ export function roomController(io: Server) {
 
     const oldPrivate = existingRoom.private === true;
     const oldLocked = existingRoom.locked === true;
+    const oldMaxPlayers = existingRoom.maxPlayers;
+    const oldPlayerCount = existingRoom.players.length;
     const mergedRoom = mergeRoomUpdateFromWorker(existingRoom, payload as Room);
     rooms.set(payload.id, mergedRoom);
     threadManager.updateRoomData(payload.id, mergedRoom);
 
-    // 房间是否公开、是否锁定都会影响大厅中的可进入状态；
-    // worker 内切换锁房只会回传 room_update，需要在主线程同步刷新大厅。
-    const roomVisibilityChanged = Boolean(existingRoom) && (mergedRoom.private === true) !== oldPrivate;
-    const roomLockChanged = Boolean(existingRoom) && (mergedRoom.locked === true) !== oldLocked;
-    if (roomVisibilityChanged || roomLockChanged) {
+    // 公开性、锁定状态、席位上限和人数都会影响大厅中的可进入状态。
+    // 尤其 BOTC 在真人/AI 说书人之间切换时会动态改变 room.maxPlayers，
+    // 若不刷新大厅，其他客户端会继续使用旧容量判断并展示错误的“可加入”状态。
+    const roomVisibilityChanged = (mergedRoom.private === true) !== oldPrivate;
+    const roomLockChanged = (mergedRoom.locked === true) !== oldLocked;
+    const roomCapacityChanged = mergedRoom.maxPlayers !== oldMaxPlayers;
+    const roomPopulationChanged = mergedRoom.players.length !== oldPlayerCount;
+    if (roomVisibilityChanged || roomLockChanged || roomCapacityChanged || roomPopulationChanged) {
       broadcastLobbyUpdate();
     }
 

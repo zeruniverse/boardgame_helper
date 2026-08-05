@@ -528,11 +528,8 @@ const toggleRoomLock = () => {
 
 // 处理开始游戏
 const handleStartGame = (config: any) => {
-  // 设置游戏配置（说书人ID、剧本等）
-  if (config) {
-    store.gameConfig = { ...store.gameConfig, ...config }
-  }
-  // 后端使用 'ready' 动作来开始游戏
+  // 后端使用 ready 动作校验并持久化说书人/剧本配置。
+  // 不在客户端提前覆盖 gameConfig，避免后端拒绝模式切换后界面仍显示未生效的配置。
   store.sendGameAction('ready', config || {})
 }
 

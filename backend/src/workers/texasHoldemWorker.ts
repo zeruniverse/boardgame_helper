@@ -6,6 +6,7 @@ import { createDeck, shuffleDeck } from '../utils/deck';
 import { evaluateHand } from '../utils/handEvaluator';
 import { calculateUncalledBetReturn, splitPotSidePots, type SidePot } from '../utils/sidePot';
 import { buildChatPayload, normalizeChatText } from '../utils/chat';
+import { mergeRoomGameConfig } from '../utils/roomGameConfig';
 
 if (!parentPort) {
   throw new Error('这个文件只能在Worker线程中运行');
@@ -508,11 +509,11 @@ class TexasHoldemWorker extends BaseGameWorker {
     }
     const allowSystemDealing = this.config?.allowSystemDealing !== false;
     this.room.gameMetadata.allowSystemDealing = allowSystemDealing;
-    this.room.gameMetadata.gameConfig = {
-      ...(this.room.gameMetadata.gameConfig || {}),
+    mergeRoomGameConfig(this.room, {
+      ...this.config,
       allowSystemDealing,
       dealingMode: allowSystemDealing ? 'online' : 'offline'
-    };
+    });
   }
 
   private getMinimumFullRaiseTo(): number {

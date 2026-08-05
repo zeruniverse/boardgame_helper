@@ -94,3 +94,35 @@ Commit: fix(round9): 修复 Worker 房间同步、BOTC AI 说书人容量与私�
   - cleanupTimer 的 structured-clone 防护测试通过。
   - npm run build 未能在当前离线环境完成：项目依赖未安装，依赖注册表不可达；失败原因为缺少依赖及类型声明，不是本轮修改的语法/类型错误。
 备注: 未创建根目录 src/；所有后端修改均位于 backend/src/，所有前端修改均位于 frontend/src/。
+=== 当前请求第 1 轮修复记录 ===
+时间: 2026-08-05 14:26:10 UTC
+Commit: fix(round1): 同步游戏配置并修复血染钟楼说书人容量状态
+修改/新增文件:
+  - backend/src/controllers/roomController.ts (109034 bytes)
+  - backend/src/utils/roomGameConfig.ts (571 bytes，新增)
+  - backend/src/workers/avalonWorker.ts (65390 bytes)
+  - backend/src/workers/botcWorker.ts (173388 bytes)
+  - backend/src/workers/onuWerewolfWorker.ts (52508 bytes)
+  - backend/src/workers/texasHoldemWorker.ts (82871 bytes)
+  - backend/src/workers/werewolfWorker.ts (71313 bytes)
+  - frontend/src/components/BOTCRoom.vue (26566 bytes)
+  - frontend/src/store/botc.ts (23727 bytes)
+  - repair_log.txt
+删除文件: 无
+构建测试: 部分通过
+本轮修复:
+  - 新增统一房间游戏配置合并工具，将 Worker 实际生效的规范化配置写回 room.gameMetadata.gameConfig。
+  - 狼人杀、一夜狼人、阿瓦隆和德州扑克在准备/修改配置后同步房间快照，避免 Worker、Controller、重连客户端使用不同配置。
+  - 血染钟楼统一校验剧本、说书人和人数上限；真人说书人额外占一个房间席位，AI 说书人不占席位。
+  - 血染钟楼允许在人数尚不足时先持久化有效的说书人配置，但拒绝会让当前房间立即超员的模式切换。
+  - 血染钟楼前端不再乐观覆盖未获后端确认的配置，并以 room_update 中的持久化配置作为重连/丢事件兜底。
+  - Worker 改变房间人数或席位上限后，Controller 会刷新大厅，避免其他客户端继续显示旧的可加入状态。
+验证:
+  - backend/src 与 frontend/src 共 81 个源码文件完成静态扫描；79 个 TypeScript/Vue script 单元语法检查及相对导入检查通过。
+  - 本轮修改涉及的后端 Worker 与工具在临时外部模块类型桩下完成 TypeScript 语义检查，无错误。
+  - 六个游戏 Worker 的准备/加入/开局烟雾测试通过。
+  - 狼人杀、一夜狼人、阿瓦隆配置写回房间快照的专项测试通过。
+  - 德州扑克发牌模式切换后，盲注、初始筹码与发牌模式均保留在房间配置快照中。
+  - 血染钟楼专项测试通过：人数不足时 AI 说书人配置仍被持久化并将房间容量从 9 更新为 8；已有 9 个席位时切换 AI 会被拒绝且原配置不被污染。
+  - npm ci / 完整 npm run build 未能在当前环境完成：registry.npmjs.org DNS 返回 EAI_AGAIN，依赖无法下载；失败不是源码语法或本轮 Worker 类型检查错误。
+备注: 未创建根目录 src/；所有后端源码修改均位于 backend/src/，所有前端源码修改均位于 frontend/src/。

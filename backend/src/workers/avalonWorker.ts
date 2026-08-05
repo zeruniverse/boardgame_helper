@@ -3,6 +3,7 @@ import { BaseGameWorker } from './baseGameWorker';
 import { Room } from '../models/Room';
 import { Player } from '../models/Player';
 import { buildChatPayload, normalizeChatChannel, normalizeChatText } from '../utils/chat';
+import { mergeRoomGameConfig } from '../utils/roomGameConfig';
 
 if (!parentPort) {
   throw new Error('这个文件只能在Worker线程中运行');
@@ -216,6 +217,7 @@ class AvalonWorker extends BaseGameWorker {
   async prepareRoom(room: Room, config: AvalonRawConfig = {}): Promise<void> {
     this.room = room;
     this.config = this.normalizeConfig(config);
+    mergeRoomGameConfig(this.room, this.config);
 
     // 初始化玩家游戏元数据
     room.players.forEach(player => {
@@ -239,7 +241,11 @@ class AvalonWorker extends BaseGameWorker {
     }
 
     this.config = this.normalizeConfig(config, this.config);
+    mergeRoomGameConfig(this.room, this.config);
 
+    this.sendToRoom('config_changed', { config: this.config });
+    this.sendToRoom('room_update', this.room);
+    this.sendToRoom('game_update', this.getGameInfo());
     this.sendToRoom('chat_broadcast', {
       message: '房间配置已更新',
       type: 'system'

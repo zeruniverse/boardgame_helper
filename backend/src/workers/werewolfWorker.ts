@@ -22,6 +22,7 @@ import {
 } from '../utils/werewolfUtils';
 import { stateHandlers, clearScheduledStateTasks } from '../utils/werewolfStateHandlers';
 import { buildChatPayload, normalizeChatChannel, normalizeChatText } from '../utils/chat';
+import { mergeRoomGameConfig } from '../utils/roomGameConfig';
 
 if (!parentPort) {
   throw new Error('这个文件只能在Worker线程中运行');
@@ -108,6 +109,7 @@ class WerewolfWorker extends BaseGameWorker {
     }
 
     this.gameState.needingCharacters = this.config.characters;
+    mergeRoomGameConfig(this.room, this.config);
 
     // 设置房间玩家metadata，并初始化游戏状态中的玩家记录（游戏未开始时默认活着）
     this.room.players.forEach((player, index) => {
@@ -132,6 +134,7 @@ class WerewolfWorker extends BaseGameWorker {
       config: this.config,
       gameInfo: this.getGameInfo()
     });
+    this.sendToRoom('room_update', this.room);
   }
 
   private createWaitingPlayerState(player: Player, index: number): WerewolfPlayerState {
@@ -171,8 +174,10 @@ class WerewolfWorker extends BaseGameWorker {
       autoCharacters: hasCharacterUpdate ? false : this.config.autoCharacters
     };
     this.gameState.needingCharacters = this.config.characters;
+    mergeRoomGameConfig(this.room, this.config);
     this.sendToRoom('config_changed', { config: this.config, gameInfo: this.getGameInfo() });
     this.sendToRoom('game_prepared', { config: this.config, gameInfo: this.getGameInfo() });
+    this.sendToRoom('room_update', this.room);
   }
 
   async joinRoom(player: Player): Promise<void> {
