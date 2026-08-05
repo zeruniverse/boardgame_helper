@@ -561,6 +561,7 @@ class AvalonWorker extends BaseGameWorker {
   }
 
   protected sendToRoom(event: string, data: any): void {
+    const stampedData = this.stampRoomEvent(event, data);
     parentPort!.postMessage({
       taskId: 'emit',
       success: true,
@@ -568,7 +569,7 @@ class AvalonWorker extends BaseGameWorker {
         type: 'room_broadcast',
         roomId: this.room.id,
         event,
-        data
+        data: stampedData
       }
     });
   }

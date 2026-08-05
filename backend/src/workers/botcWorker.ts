@@ -4521,11 +4521,12 @@ export class BOTCWorker extends BaseGameWorker {
    */
   protected sendToRoom(event: string, data: any): void {
     if (parentPort) {
+      const stampedData = this.stampRoomEvent(event, data);
       parentPort.postMessage({
         type: 'room_broadcast',
         roomId: this.room.id,
         event,
-        data
+        data: stampedData
       });
     }
   }

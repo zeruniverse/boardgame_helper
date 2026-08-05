@@ -309,3 +309,35 @@ Commit: fix(round7): 严格校验多游戏操作目标并修复错误回执
   - package-lock 工作区依赖树通过 npm ls --package-lock-only --all 校验。
   - 完整 npm run build 未在当前环境完成：依赖安装请求未能完整结束并留下空的 @types 目录，正式 tsc 因缺少已声明依赖类型而中止；已清理这些临时 node_modules。前端 vue-tsc/Vite 生产构建仍需在依赖可用的 CI 或本地仓库执行。
 备注: 本轮未修改 frontend/src/ 文件，前端复用与样式静态检查未发现需要优先于上述规则/状态问题处理的阻断项；未删除文件，未创建根目录 src/。
+=== 当前请求第 8 轮修复记录 ===
+时间: 2026-08-05 18:11:45 UTC
+Commit: fix(round8): 修复 Worker 房间快照回滚竞态并统一状态版本
+修改/新增文件:
+  - backend/src/models/Room.ts (1267 bytes)
+  - backend/src/controllers/roomController.ts (118994 bytes)
+  - backend/src/workers/baseGameWorker.ts (12828 bytes)
+  - backend/src/workers/texasHoldemWorker.ts (85291 bytes)
+  - backend/src/workers/werewolfWorker.ts (72579 bytes)
+  - backend/src/workers/mafiaWorker.ts (97036 bytes)
+  - backend/src/workers/onuWerewolfWorker.ts (53644 bytes)
+  - backend/src/workers/avalonWorker.ts (69922 bytes)
+  - backend/src/workers/botcWorker.ts (174986 bytes)
+  - repair_log.txt
+删除文件: 无
+构建测试: 部分通过
+本轮修复:
+  - 为 Room 增加仅限后端使用的 workerStateVersion，并在对客户端序列化时剔除；六个游戏 Worker 的每次权威 room_update 统一递增版本。
+  - BaseGameWorker.syncRoom 改为按字段所有权合并 Controller 快照：socket/online/heartbeat/昵称/房主等连接与控制字段可更新，筹码、准备状态、座位键、角色、房间锁、游戏配置与其他 Worker 状态不再被排队中的旧快照整体覆盖。
+  - 修复 game_action 与 update_room_data 相邻入队的竞态：较早捕获的 Controller 快照即使后处理，也不能把德州扑克盲注、下注、筹码或其他游戏状态回滚；同时仍能接收最新 socket 迁移和在线状态。
+  - Controller 合并 room_update 时优先使用 Worker 版本而不是 lastActiveTime 排序；较低版本整份忽略，较高版本即使时间戳较旧也可合法提交踢人、容量、配置和游戏状态，避免心跳时间戳误判。
+  - hostId 明确保持 Controller 所有权：并发中的较新 Worker 游戏快照不能把刚完成的房主转让回滚；仅当当前房主已从 Worker 成员列表移除时接受 Worker 给出的新房主。
+  - 德州扑克 update_room_data 与其他五个 Worker 统一走 BaseGameWorker.syncRoom，消除唯一仍直接替换 this.room 的分支。
+验证:
+  - 后端 33 个 TypeScript 源码在临时外部模块类型桩与真实 Node 类型下完成完整 strict 检查，无类型错误。
+  - 六个游戏 Worker 的版本/字段所有权烟雾测试通过：每个游戏 room_update 版本从 1 递增到 2，Controller socket 更新生效，Worker 准备状态/筹码不被传入快照覆盖。
+  - 德州扑克竞态回归测试通过：startGame 与旧 update_room_data 连续排队后，小盲/大盲筹码保持 995/990，同时新 socketId 正常生效；原始版本可稳定复现筹码回滚为 1000/1000。
+  - Controller 版本合并专项测试通过：新版本成员移除可提交、旧版本整份忽略、并发房主转让保持、房主真正被移除后可重选。
+  - 前端 21 个 TypeScript、27 个 Vue SFC 与 1 个 CSS 文件完成语法、SFC 根块、style 花括号和相对/@ 导入路径检查，未发现本轮需要优先修复的样式/复用阻断项。
+  - package-lock 工作区依赖树通过 npm ls --package-lock-only --all；根目录不存在 src/，所有源码修改均位于 backend/src/。
+  - 完整 npm ci / npm run build 未在当前环境完成：内部依赖源对 typescript-5.8.3.tgz 返回 404，已清理临时 node_modules；正式 vue-tsc/Vite 与容器生产构建仍需在依赖可用的 CI 或本地仓库复验。
+备注: 本轮优先修复跨六个游戏共用、可静默破坏筹码/准备/角色/配置的 Worker-Controller 状态回滚竞态；未删除文件，未创建根目录 src/。

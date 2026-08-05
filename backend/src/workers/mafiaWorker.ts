@@ -609,13 +609,14 @@ class MafiaWorker extends BaseGameWorker {
   }
 
   protected sendToRoom(event: string, data: any): void {
+    const stampedData = this.stampRoomEvent(event, data);
     parentPort?.postMessage({
       taskId: 'emit',
       data: {
         type: 'room',
         roomId: this.room.id,
         event,
-        data
+        data: stampedData
       }
     });
   }

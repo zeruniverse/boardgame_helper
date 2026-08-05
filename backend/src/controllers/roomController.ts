@@ -173,6 +173,7 @@ function toClientRoom(room: Room): any {
     threadId: _threadId,
     threadStatus: _threadStatus,
     lastActiveTime: _lastActiveTime,
+    workerStateVersion: _workerStateVersion,
     ...safeRoom
   } = room;
   return {
@@ -266,7 +267,30 @@ function mergePlayerFromWorker(existing: Player | undefined, worker: Player): Pl
   };
 }
 
+function getWorkerStateVersion(room: Room): number {
+  const version = Number(room.workerStateVersion);
+  return Number.isSafeInteger(version) && version >= 0 ? version : 0;
+}
+
+function isOlderWorkerRevision(existingRoom: Room, workerRoom: Room): boolean {
+  const existingVersion = getWorkerStateVersion(existingRoom);
+  const workerVersion = getWorkerStateVersion(workerRoom);
+  return (existingVersion > 0 || workerVersion > 0) && workerVersion < existingVersion;
+}
+
 function isStaleWorkerSnapshot(existingRoom: Room, workerRoom: Room): boolean {
+  const existingVersion = getWorkerStateVersion(existingRoom);
+  const workerVersion = getWorkerStateVersion(workerRoom);
+
+  // Once either side has observed a versioned room_update, revisions are the
+  // primary ordering signal. Worker lastActiveTime is intentionally not bumped
+  // for every game mutation, while the controller updates it for heartbeats and
+  // socket actions; timestamp-only ordering would therefore reject a newer
+  // worker kick/config/chip update as "old".
+  if (existingVersion !== workerVersion && (existingVersion > 0 || workerVersion > 0)) {
+    return isOlderWorkerRevision(existingRoom, workerRoom);
+  }
+
   const workerUpdatedAt = Number(workerRoom.lastActiveTime || 0);
   const controllerUpdatedAt = Number(existingRoom.lastActiveTime || 0);
   return workerUpdatedAt > 0 && controllerUpdatedAt > 0 && workerUpdatedAt < controllerUpdatedAt;
@@ -287,6 +311,16 @@ function shouldPreserveControllerOnlyPlayer(existingRoom: Room, workerRoom: Room
 function mergeRoomUpdateFromWorker(existingRoom: Room | undefined, workerRoom: Room): Room {
   if (!existingRoom) return workerRoom;
 
+  // A lower revision is an out-of-date authoritative snapshot. Ignore it as a
+  // whole rather than selectively merging stale chips/roles/config back into
+  // the controller. Socket ownership already lives in existingRoom.
+  if (isOlderWorkerRevision(existingRoom, workerRoom)) {
+    console.warn(
+      `房间 ${workerRoom.id} 忽略旧 worker 房间版本 ${getWorkerStateVersion(workerRoom)}，当前版本 ${getWorkerStateVersion(existingRoom)}`
+    );
+    return existingRoom;
+  }
+
   const existingPlayers = new Map((existingRoom.players || []).map(player => [player.id, player]));
   const workerPlayers = workerRoom.players || [];
   const incomingPlayerIds = new Set(workerPlayers.map(player => player.id));
@@ -294,9 +328,11 @@ function mergeRoomUpdateFromWorker(existingRoom: Room | undefined, workerRoom: R
   const controllerOnlyPlayers = (existingRoom.players || []).filter(player =>
     shouldPreserveControllerOnlyPlayer(existingRoom, workerRoom, player, incomingPlayerIds)
   );
-  const workerHostMayBeStale =
-    Number(workerRoom.lastActiveTime || 0) <= Number(existingRoom.lastActiveTime || 0);
-  const preserveControllerHost = workerHostMayBeStale && incomingPlayerIds.has(existingRoom.hostId);
+  // hostId is controller-owned. A worker update may have been emitted before
+  // a queued transfer-host snapshot reached the worker, even when its game
+  // revision is newer. Keep the controller host while that player still
+  // exists; only accept the worker host when the current host was removed.
+  const preserveControllerHost = incomingPlayerIds.has(existingRoom.hostId);
 
   if (controllerOnlyPlayers.length > 0) {
     console.warn(
@@ -723,8 +759,9 @@ export function roomController(io: Server) {
       }));
     if (removedPlayers.length === 0) return;
 
-    // 如果worker回传的是比主线程更新前更旧的房间快照，不能据此清理新加入玩家的socket订阅。
-    if ((workerRoom.lastActiveTime || 0) < (existingRoom.lastActiveTime || 0)) {
+    // 如果worker回传的是比主线程已落地状态更旧的房间快照，不能据此清理
+    // 新加入玩家的socket订阅。优先比较 workerStateVersion；时间戳仅用于旧快照兼容。
+    if (isStaleWorkerSnapshot(existingRoom, workerRoom)) {
       console.warn(`房间 ${workerRoom.id} 收到较旧的worker成员快照，跳过socket移除同步`);
       return;
     }

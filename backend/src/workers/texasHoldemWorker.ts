@@ -147,7 +147,7 @@ class TexasHoldemWorker extends BaseGameWorker {
       case 'join_room':
         return await this.joinRoom(task.data.player);
       case 'update_room_data':
-        this.room = task.data.room;
+        this.syncRoom(task.data.room);
         return;
       case 'player_online':
         return await this.playerOnline((task.playerId || task.data.playerId)!);
@@ -460,6 +460,7 @@ class TexasHoldemWorker extends BaseGameWorker {
 
   // 重写父类的发送消息方法
   protected sendToRoom(event: string, data: any): void {
+    const stampedData = this.stampRoomEvent(event, data);
     parentPort!.postMessage({
       taskId: 'emit',
       success: true,
@@ -467,7 +468,7 @@ class TexasHoldemWorker extends BaseGameWorker {
         type: 'emit',
         event,
         roomId: this.room.id,
-        data
+        data: stampedData
       }
     });
   }

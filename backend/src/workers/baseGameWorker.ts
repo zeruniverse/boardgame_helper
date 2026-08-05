@@ -9,6 +9,7 @@ export abstract class BaseGameWorker {
   protected room!: Room; // 将在prepareRoom中初始化
   protected gameState: any; // 储存游戏状态
   protected participants: any; // 储存游戏参与者
+  private roomStateVersion = 0;
   private activeActionContext: {
     playerId: string;
     error?: string;
@@ -161,7 +162,115 @@ export abstract class BaseGameWorker {
    * 获取当前房间引用
    */
   public syncRoom(room: Room): void {
-    this.room = room;
+    if (!this.room) {
+      this.room = room;
+      this.roomStateVersion = Math.max(0, Number(room.workerStateVersion) || 0);
+      return;
+    }
+
+    const currentRoom = this.room;
+    const currentVersion = Math.max(
+      this.roomStateVersion,
+      Number(currentRoom.workerStateVersion) || 0
+    );
+    const incomingVersion = Math.max(0, Number(room.workerStateVersion) || 0);
+    const incomingIsStale = incomingVersion < currentVersion;
+
+    const currentPlayers = new Map((currentRoom.players || []).map(player => [player.id, player]));
+    const incomingPlayers = new Map((room.players || []).map(player => [player.id, player]));
+
+    // A stale controller snapshot can still contain the newest socket/online
+    // ownership (for example a disconnect that raced a bet), but it must not
+    // restore an older member list.  A current snapshot is authoritative for
+    // membership; this is how controller-side leave/kick operations are
+    // committed after their worker task has completed.
+    const memberIds = incomingIsStale
+      ? Array.from(currentPlayers.keys())
+      : Array.from(incomingPlayers.keys());
+
+    const mergedPlayers: Player[] = memberIds.flatMap(playerId => {
+      const currentPlayer = currentPlayers.get(playerId);
+      const incomingPlayer = incomingPlayers.get(playerId);
+
+      if (!currentPlayer) {
+        return incomingPlayer ? [incomingPlayer] : [];
+      }
+      if (!incomingPlayer) {
+        return [currentPlayer];
+      }
+
+      const mergedMetadata = {
+        ...(currentPlayer.gameMetadata || {})
+      };
+      // inGame is the only gameMetadata field currently owned by the
+      // controller (it is set while migrating/reconnecting a Texas Hold'em
+      // seat).  Chips, ready flags, seat keys and all other game fields remain
+      // worker-owned and must never be overwritten by a queued old snapshot.
+      if (Object.prototype.hasOwnProperty.call(incomingPlayer.gameMetadata || {}, 'inGame')) {
+        mergedMetadata.inGame = incomingPlayer.gameMetadata.inGame;
+      }
+
+      return [{
+        ...currentPlayer,
+        socketId: incomingPlayer.socketId,
+        nickname: incomingPlayer.nickname || currentPlayer.nickname,
+        name: incomingPlayer.name || incomingPlayer.nickname || currentPlayer.name,
+        online: incomingPlayer.online,
+        lastHeartbeat: incomingPlayer.lastHeartbeat ?? currentPlayer.lastHeartbeat,
+        gameMetadata: mergedMetadata
+      }];
+    });
+
+    this.room = {
+      ...currentRoom,
+      // Controller-owned or immutable room fields.
+      id: room.id || currentRoom.id,
+      name: room.name || currentRoom.name,
+      type: room.type || currentRoom.type,
+      private: room.private === true,
+      hostId: room.hostId,
+      threadId: room.threadId,
+      threadStatus: room.threadStatus,
+      lastActiveTime: Math.max(
+        Number(currentRoom.lastActiveTime) || 0,
+        Number(room.lastActiveTime) || 0
+      ),
+      players: mergedPlayers,
+      // Worker-owned room fields.  The controller snapshot already receives
+      // these through room_update, but preserving the live worker values here
+      // closes the action/update_room_data race even when the snapshot was
+      // captured before that room_update reached the controller.
+      maxPlayers: currentRoom.maxPlayers,
+      locked: currentRoom.locked,
+      gameMetadata: currentRoom.gameMetadata,
+      workerStateVersion: currentVersion
+    };
+    this.roomStateVersion = currentVersion;
+  }
+
+  /**
+   * Stamp authoritative room updates with a monotonically increasing worker
+   * revision.  Concrete workers call this immediately before posting an event
+   * to the controller.
+   */
+  protected stampRoomEvent(event: string, data: any): any {
+    if (event !== 'room_update' || !data || typeof data !== 'object') {
+      return data;
+    }
+
+    const currentVersion = Math.max(
+      this.roomStateVersion,
+      Number(this.room?.workerStateVersion) || 0,
+      Number(data.workerStateVersion) || 0
+    );
+    const nextVersion = currentVersion + 1;
+    this.roomStateVersion = nextVersion;
+
+    if (this.room) {
+      this.room.workerStateVersion = nextVersion;
+    }
+    data.workerStateVersion = nextVersion;
+    return data;
   }
 
   protected getRoom(): Room {
