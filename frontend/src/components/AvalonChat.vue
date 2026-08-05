@@ -24,6 +24,7 @@
           v-model="input" 
           @keyup.enter="send" 
           :placeholder="getInputPlaceholder()"
+          :maxlength="MAX_CHAT_LENGTH"
           style="flex:1; margin-right:8px;" 
         />
         <el-button type="primary" @click="send" :disabled="!canSend">发送</el-button>
@@ -34,6 +35,7 @@
 
 <script lang="ts" setup>
 import { ref, nextTick, watch, computed } from 'vue';
+import { MAX_CHAT_LENGTH } from '../utils/messages';
 import { safeHtml } from '../utils/html';
 import { formatPlayerNameById } from '../utils/playerName';
 

@@ -1102,6 +1102,10 @@ class OnuWerewolfWorker extends BaseGameWorker {
   }
 
   private async endNightPhase(): Promise<void> {
+    // 夜间兜底计时器与最后一个技能完成后的短延迟可能几乎同时到达。
+    // 状态守卫使阶段切换幂等，避免重复清空技能队列并重复广播白天开始。
+    if (this.gameState.status !== OnuWerewolfGameStatus.NIGHT) return;
+
     this.clearTimer();
     // 清理技能超时定时器
     if (this.skillTimeout) {

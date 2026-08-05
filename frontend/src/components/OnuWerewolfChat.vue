@@ -36,7 +36,7 @@
         placeholder="输入消息..."
         @keyup.enter="sendMessage"
         :disabled="!canSendMessage"
-        maxlength="200"
+        :maxlength="MAX_CHAT_LENGTH"
       >
         <template #append>
           <el-button 
@@ -62,6 +62,7 @@
 
 <script setup lang="ts">
 import { ref, computed, nextTick, watch } from 'vue';
+import { MAX_CHAT_LENGTH } from '../utils/messages';
 import type { Socket } from 'socket.io-client';
 import { formatPlayerNameById } from '../utils/playerName';
 import { OnuWerewolfGameStatus } from '../store/onuWerewolf';

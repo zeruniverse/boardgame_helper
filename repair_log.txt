@@ -244,3 +244,40 @@ Commit: fix(round5): 加固玩家输入并修复德州与钟楼结算竞态
   - package-lock 工作区依赖树通过 npm ls --package-lock-only --all 校验。
   - 完整 npm run build 未能在当前环境完成：node_modules 不存在，后端正式 tsconfig 因缺少 express/socket.io/uuid/@types/node 等已声明依赖而中止；前端因此未进入 vue-tsc/Vite 阶段。该限制来自离线依赖环境，源码已通过上述独立语法、严格类型与专项运行测试。
 备注: 本轮继续检查六个游戏 Worker、Controller/线程状态同步和前端组件使用方式；优先修复高影响竞态与回执一致性。所有后端源码修改均位于 backend/src/，所有前端源码修改均位于 frontend/src/；未删除文件。
+=== 当前请求第 6 轮修复记录 ===
+时间: 2026-08-05 17:01:53 UTC
+Commit: fix(round6): 加固配置与聊天输入并修复阿瓦隆和一夜狼人流程
+修改/新增文件:
+  - backend/src/controllers/roomController.ts (117128 bytes)
+  - backend/src/utils/chat.ts (1843 bytes)
+  - backend/src/utils/gameConfigInput.ts (5482 bytes，新增)
+  - backend/src/workers/avalonWorker.ts (68952 bytes)
+  - backend/src/workers/onuWerewolfWorker.ts (52863 bytes)
+  - frontend/src/components/AvalonChat.vue (9165 bytes)
+  - frontend/src/components/BOTCChat.vue (11041 bytes)
+  - frontend/src/components/MafiaChat.vue (7208 bytes)
+  - frontend/src/components/OnuWerewolfChat.vue (7617 bytes)
+  - frontend/src/components/TexasHoldemChat.vue (6482 bytes)
+  - frontend/src/components/WerewolfChat.vue (8340 bytes)
+  - frontend/src/utils/messages.ts (1892 bytes)
+  - repair_log.txt
+删除文件: 无
+构建测试: 部分通过
+本轮修复:
+  - 新增统一的游戏配置输入清洗：创建房间时不再把 nickname/playerId/userId/sessionToken 等身份或传输字段写入 gameMetadata.gameConfig 并广播给全房间；拒绝数组、字符串、循环引用、非有限数字、危险原型键、过深/过大配置，避免对象展开和 Worker structured clone 被异常负载放大。
+  - game_action 与旧版 chat_message 增加 64 KiB JSON 负载上限；所有 change/update config 入口在进入 Worker 前复用同一清洗逻辑，降低线程间克隆、状态持久化和广播的内存放大风险。
+  - Controller 与六个 Worker 统一聊天规范化语义：控制字符清理后为空的消息明确返回失败，超过 500 个 Unicode 字符的消息明确拒绝，不再先确认成功后被 Worker 静默丢弃或截断；emoji 不会在 UTF-16 代理对中间被截断。
+  - 六个聊天组件统一复用 MAX_CHAT_LENGTH=500，移除一夜狼人单独 200 字限制，前端输入约束与后端保持一致。
+  - 阿瓦隆修复 questDiscussionTime=null 被错误回退为 60 秒的问题，null/0 现在保持“不限时”语义；同时真正执行 speakRound 配置，多轮发言完成后才进入选队阶段，并限制异常计时与轮数配置。
+  - 一夜狼人夜晚结束增加状态幂等守卫，夜间总时限与最后技能完成的延迟回调相邻触发时不会重复清队列、重复进入投票阶段或重复广播天亮事件。
+验证:
+  - backend/src 与 frontend/src 共 81 个 TypeScript/Vue 源码文件完成静态复查；根目录不存在 src/。
+  - 后端在临时外部模块类型桩与真实 Node 类型定义下完成完整 TypeScript strict 检查，并成功生成 33 个测试用 CommonJS 文件，无类型错误。
+  - 前端 48 个 TypeScript/Vue 文件的 script 语法、SFC template/script/style 块配对与 127 个相对导入路径检查通过。
+  - 配置/聊天专项断言通过：身份字段不会进入持久化配置，非对象/超长/超大负载被拒绝，控制字符消息与 Unicode 500 字限制行为一致。
+  - 六个游戏 Worker 的 prepare_room 烟雾测试全部通过：狼人杀、杀人游戏、一夜狼人、阿瓦隆、德州扑克、血染钟楼均能初始化并返回成功。
+  - 阿瓦隆集成断言通过：null 计时保持 0，speakRound=2 时五人第一轮发言后仍停留在发言阶段，第二轮完成后进入选队。
+  - 一夜狼人阶段切换烟雾测试通过：无技能队列的夜晚仅广播一次 onu_night_ended；德州扑克牌型/边池、狼人杀投票/胜负及一夜狼人投票/胜负核心工具断言通过。
+  - package-lock 工作区依赖树通过 npm ls --package-lock-only --all 校验。
+  - 完整 npm ci / npm run build 未在当前环境完成：node_modules 不存在，当前依赖源无法取得 TypeScript 5.8.3 等安装包；因此正式 vue-tsc/Vite 生产构建仍需在依赖可用的 CI 或本地仓库执行。源码已通过上述严格类型、语法、导入、Worker 初始化与专项运行测试。
+备注: 所有后端源码修改均位于 backend/src/，所有前端源码修改均位于 frontend/src/；未删除文件，未创建根目录 src/。

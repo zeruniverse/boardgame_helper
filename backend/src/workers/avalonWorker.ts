@@ -205,11 +205,30 @@ class AvalonWorker extends BaseGameWorker {
 
   private normalizeConfig(config: AvalonRawConfig = {}, fallback?: AvalonConfig): AvalonConfig {
     const questDiscussionTime = config.questDiscussionTime;
+    const normalizeTimer = (value: unknown, fallbackValue: number): number => {
+      // 兼容旧配置中用 null/0 表示不限时；此前 null 会被 ?? 当成“未提供”并错误恢复为 60 秒。
+      if (value === null) return 0;
+      const numeric = Number(value);
+      if (!Number.isFinite(numeric) || numeric < 0) return fallbackValue;
+      return Math.min(3600, Math.floor(numeric));
+    };
+    const requestedSpeakTime = config.speakTime !== undefined ? config.speakTime : questDiscussionTime;
+    const requestedActionTime = config.actionTime !== undefined ? config.actionTime : questDiscussionTime;
+    const fallbackSpeakTime = fallback?.speakTime ?? 60;
+    const fallbackActionTime = fallback?.actionTime ?? 60;
+    const requestedSpeakRound = config.speakRound ?? fallback?.speakRound ?? 1;
+    const speakRound = Number.isFinite(Number(requestedSpeakRound))
+      ? Math.min(10, Math.max(1, Math.floor(Number(requestedSpeakRound))))
+      : (fallback?.speakRound ?? 1);
 
     return {
-      speakTime: config.speakTime ?? questDiscussionTime ?? fallback?.speakTime ?? 60,
-      actionTime: config.actionTime ?? questDiscussionTime ?? fallback?.actionTime ?? 60,
-      speakRound: config.speakRound ?? fallback?.speakRound ?? 1,
+      speakTime: requestedSpeakTime === undefined
+        ? fallbackSpeakTime
+        : normalizeTimer(requestedSpeakTime, fallbackSpeakTime),
+      actionTime: requestedActionTime === undefined
+        ? fallbackActionTime
+        : normalizeTimer(requestedActionTime, fallbackActionTime),
+      speakRound,
       lakeLady: config.lakeLady ?? config.enableLady ?? fallback?.lakeLady ?? false
     };
   }
@@ -851,8 +870,9 @@ class AvalonWorker extends BaseGameWorker {
 
     const newSpeakedCount = state.speakedCount + 1;
     const totalPlayers = Object.keys(state.players).length;
+    const requiredSpeaks = totalPlayers * this.config.speakRound;
 
-    if (newSpeakedCount >= totalPlayers) {
+    if (newSpeakedCount >= requiredSpeaks) {
       // 所有人都发言完毕，进入选队阶段
       const teamSize = state.scoreBoard[state.mission - 1][0];
       this.updateGameState({
@@ -876,7 +896,9 @@ class AvalonWorker extends BaseGameWorker {
       });
 
       this.setTimer(this.config.speakTime);
-      this.sendGameMessage(`请${this.getPlayerName(nextSpeaker)}发言`);
+      const nextRound = Math.floor(newSpeakedCount / totalPlayers) + 1;
+      const roundLabel = this.config.speakRound > 1 ? `（第${nextRound}/${this.config.speakRound}轮）` : '';
+      this.sendGameMessage(`请${this.getPlayerName(nextSpeaker)}发言${roundLabel}`);
     }
   }
 

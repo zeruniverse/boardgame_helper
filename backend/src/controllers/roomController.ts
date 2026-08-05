@@ -9,6 +9,8 @@ import { WerewolfCharacter } from '../utils/werewolfTypes';
 import { OnuWerewolfRole } from '../utils/onuWerewolfTypes';
 import { getRecommendedRoles } from '../utils/onuWerewolfPresets';
 import { getRequiredHostKickVotes, pruneHostKickVoters } from '../utils/hostKickVote';
+import { CHAT_MAX_LENGTH, normalizeChatText } from '../utils/chat';
+import { sanitizeIncomingGameConfig, validateGameActionPayloadSize } from '../utils/gameConfigInput';
 
 const rooms: Map<string, Room> = new Map();
 let threadManager: RoomThreadManager;
@@ -518,6 +520,11 @@ function isPrivateChatActionType(actionType: string): boolean {
   return actionType === 'private_message' || actionType === 'privateMessage';
 }
 
+function isConfigChangeActionType(actionType: string): boolean {
+  const normalized = actionType.toLowerCase().replace(/[_-]/g, '');
+  return normalized === 'changeconfig' || normalized === 'updateconfig' || normalized === 'setdealingmode';
+}
+
 function normalizeChatActionPayload(
   room: Room,
   actionData: any,
@@ -526,12 +533,24 @@ function normalizeChatActionPayload(
   ack?: (response: any) => void
 ): NormalizedChatAction | null {
   const rawMessage = typeof actionData === 'string' ? actionData : actionData?.message;
-  if (typeof rawMessage !== 'string' || !rawMessage.trim()) {
+  if (typeof rawMessage !== 'string') {
     sendErrorResponse(socket, '无效的消息内容', ack);
     return null;
   }
 
-  const message = rawMessage.trim();
+  // 在 Controller 层与 Worker 使用同一套规范化规则，避免控制字符消息被确认成功后
+  // 又在 Worker 中静默丢弃；超长消息直接拒绝，不再让不同游戏悄悄截断成不同结果。
+  const normalizedFullMessage = normalizeChatText(rawMessage, Number.MAX_SAFE_INTEGER);
+  if (!normalizedFullMessage) {
+    sendErrorResponse(socket, '无效的消息内容', ack);
+    return null;
+  }
+  if (Array.from(normalizedFullMessage).length > CHAT_MAX_LENGTH) {
+    sendErrorResponse(socket, `消息不能超过${CHAT_MAX_LENGTH}个字符`, ack);
+    return null;
+  }
+
+  const message = normalizedFullMessage;
   const rawChannel = typeof actionData?.channel === 'string' && actionData.channel.trim()
     ? actionData.channel.trim()
     : 'all';
@@ -1611,7 +1630,13 @@ export function roomController(io: Server) {
           return;
         }
 
-        // 创建玩家
+        const sanitizedConfigResult = sanitizeIncomingGameConfig(data.gameConfig);
+        if (!sanitizedConfigResult.success) {
+          sendErrorResponse(socket, sanitizedConfigResult.error, ack);
+          return;
+        }
+
+        // 创建玩家。身份字段只用于建立座位，不进入会广播并持久化的游戏配置。
         const rawRequestedPlayerId = data.gameConfig?.playerId ?? data.gameConfig?.userId;
         if (rawRequestedPlayerId !== undefined && !isValidPlayerId(rawRequestedPlayerId)) {
           sendErrorResponse(socket, '无效的玩家ID', ack);
@@ -1631,7 +1656,7 @@ export function roomController(io: Server) {
 
         // 创建房间，房间ID和名称使用相同的6位随机字符
         const roomIdAndName = generateUniqueRoomIdAndName();
-        const gameConfig = buildGameConfig(data.gameType, data.gameConfig);
+        const gameConfig = buildGameConfig(data.gameType, sanitizedConfigResult.config);
         const configuredMaxPlayers = Number(gameConfig.maxPlayers || gameConfig.playerCount || config.games[data.gameType].maxPlayers);
         const gamePlayerLimit = Math.max(1, Math.min(configuredMaxPlayers || config.games[data.gameType].maxPlayers, config.games[data.gameType].maxPlayers));
         // 血染钟楼的配置人数是实际参与游戏的人数。只有真人说书人需要额外席位；
@@ -2341,6 +2366,12 @@ export function roomController(io: Server) {
           return;
         }
 
+        const payloadSizeResult = validateGameActionPayloadSize(data.actionData);
+        if (!payloadSizeResult.valid) {
+          sendErrorResponse(socket, payloadSizeResult.error, ack);
+          return;
+        }
+
         if (data.actionType === 'transfer_host' || data.actionType === 'transferHost') {
           const targetId = data.actionData?.newHostId || data.actionData?.targetId || data.actionData?.playerId;
           if (!isValidPlayerId(targetId)) {
@@ -2365,6 +2396,14 @@ export function roomController(io: Server) {
 
         let actionType = data.actionType;
         let actionData = data.actionData;
+        if (isConfigChangeActionType(actionType)) {
+          const sanitizedConfigResult = sanitizeIncomingGameConfig(actionData);
+          if (!sanitizedConfigResult.success) {
+            sendErrorResponse(socket, sanitizedConfigResult.error, ack);
+            return;
+          }
+          actionData = sanitizedConfigResult.config;
+        }
         if (isGameActionChatType(actionType) || isPrivateChatActionType(actionType)) {
           const isPrivateChat = isPrivateChatActionType(actionType);
           const chatPayload = isPrivateChat
@@ -2463,6 +2502,12 @@ export function roomController(io: Server) {
         if (!room) { sendErrorResponse(socket, '房间不存在', ack); return; }
         const player = room.players.find(p => p.socketId === socket.id);
         if (!player) { sendErrorResponse(socket, '您不在此房间中', ack); return; }
+
+        const payloadSizeResult = validateGameActionPayloadSize(data);
+        if (!payloadSizeResult.valid) {
+          sendErrorResponse(socket, payloadSizeResult.error, ack);
+          return;
+        }
 
         const actionData = normalizeChatActionPayload(room, data, socket, player, ack);
         if (!actionData) return;

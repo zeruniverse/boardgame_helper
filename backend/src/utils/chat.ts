@@ -8,11 +8,13 @@ export const CHAT_MAX_LENGTH = 500;
 export function normalizeChatText(value: unknown, maxLength = CHAT_MAX_LENGTH): string {
   if (typeof value !== 'string') return '';
 
-  return value
+  const normalized = value
     .replace(/\u0000/g, '')
     .replace(/[\u0001-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '')
-    .trim()
-    .slice(0, maxLength);
+    .trim();
+
+  // 按 Unicode 字符而不是 UTF-16 code unit 截取，避免在 emoji/扩展字符中间切断代理对。
+  return Array.from(normalized).slice(0, Math.max(0, Math.floor(maxLength))).join('');
 }
 
 export function normalizeChatChannel(value: unknown, allowed: readonly string[], fallback = 'all'): string {

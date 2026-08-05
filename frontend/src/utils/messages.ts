@@ -1,4 +1,5 @@
 export const MAX_CHAT_MESSAGES = 500;
+export const MAX_CHAT_LENGTH = 500;
 
 export function appendLimitedMessage<T>(messages: T[], message: T, limit = MAX_CHAT_MESSAGES): T[] {
   const next = [...messages, message];
