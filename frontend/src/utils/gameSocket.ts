@@ -38,11 +38,19 @@ export function emitChatAction(
   playerId: string | undefined,
   message: string,
   channel = 'all',
-  targetId?: string
+  targetId?: string,
+  ack?: (response: any) => void
 ): boolean {
   const trimmed = message.trim();
   if (!trimmed) return false;
-  return emitGameAction(socket, roomId, playerId, 'chat_message', { message: trimmed, channel, targetId });
+  return emitGameAction(
+    socket,
+    roomId,
+    playerId,
+    'chat_message',
+    { message: trimmed, channel, targetId },
+    ack
+  );
 }
 
 /**

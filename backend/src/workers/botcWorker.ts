@@ -3919,10 +3919,20 @@ export class BOTCWorker extends BaseGameWorker {
     const sender = this.room.players.find(p => p.id === playerId);
     const target = this.room.players.find(p => p.id === data.targetId);
     const message = normalizeChatText(data?.message);
-    if (!sender || !target || !message) return;
+    if (!sender || !target) {
+      this.sendToPlayer(playerId, 'actionError', { message: '私聊对象不存在' });
+      return;
+    }
+    if (!message) {
+      this.sendToPlayer(playerId, 'actionError', { message: '消息内容不能为空' });
+      return;
+    }
 
     // 验证不能发给自己
-    if (playerId === data.targetId) return;
+    if (playerId === data.targetId) {
+      this.sendToPlayer(playerId, 'actionError', { message: '不能给自己发送私聊消息' });
+      return;
+    }
     // 检查是否允许私聊（仅在游戏进行中时检查）
     if (this.gameState.phase !== GamePhase.SETUP && this.gameConfig.allowPrivateChat === false) {
       this.sendToPlayer(playerId, 'actionError', { message: '当前房间不允许私聊' });
@@ -3933,7 +3943,10 @@ export class BOTCWorker extends BaseGameWorker {
     if (this.gameState.phase !== GamePhase.SETUP) {
       const isSenderValid = this.gamePlayers.has(playerId) || playerId === this.gameConfig.storytellerId;
       const isTargetValid = this.gamePlayers.has(data.targetId) || data.targetId === this.gameConfig.storytellerId;
-      if (!isSenderValid || !isTargetValid) return;
+      if (!isSenderValid || !isTargetValid) {
+        this.sendToPlayer(playerId, 'actionError', { message: '私聊双方必须是本局玩家或说书人' });
+        return;
+      }
     }
 
     // 发送给目标玩家

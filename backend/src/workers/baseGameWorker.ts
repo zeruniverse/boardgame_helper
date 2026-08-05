@@ -20,7 +20,14 @@ export abstract class BaseGameWorker {
     'gameError',
     'action_error',
     'actionError',
-    'onu_error'
+    'onu_error',
+    // 杀人游戏保留了细分拒绝事件供前端展示；这些事件同样表示本次
+    // game_action 没有生效，必须同步反映到 Socket acknowledgement。
+    'inspect_rejected',
+    'save_rejected',
+    'snipe_rejected',
+    'kill_rejected',
+    'vote_rejected'
   ]);
 
   constructor() {

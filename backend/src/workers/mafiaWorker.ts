@@ -916,7 +916,11 @@ class MafiaWorker extends BaseGameWorker {
   }
 
   private handleReady(playerId: string): void {
-    if (!this.room?.players) return;
+    const gameState = this.gameState as MafiaGameState;
+    if (gameState.status !== GameStatus.WAITING) {
+      this.sendToPlayer(playerId, 'game_error', { message: '游戏已开始，无法准备' });
+      return;
+    }
     const player = this.room.players.find(p => p.id === playerId);
     if (player) {
       player.gameMetadata.ready = true;
@@ -931,7 +935,11 @@ class MafiaWorker extends BaseGameWorker {
   }
 
   private handleUnready(playerId: string): void {
-    if (!this.room?.players) return;
+    const gameState = this.gameState as MafiaGameState;
+    if (gameState.status !== GameStatus.WAITING) {
+      this.sendToPlayer(playerId, 'game_error', { message: '游戏已开始，无法取消准备' });
+      return;
+    }
     const player = this.room.players.find(p => p.id === playerId);
     if (player) {
       player.gameMetadata.ready = false;
@@ -951,11 +959,13 @@ class MafiaWorker extends BaseGameWorker {
 
     // 检查是否为房主
     if (playerId !== this.room.hostId) {
+      this.sendToPlayer(playerId, 'game_error', { message: '只有房主可以开始游戏' });
       return;
     }
 
     // 检查游戏状态
     if (gameState.status !== GameStatus.WAITING) {
+      this.sendToPlayer(playerId, 'game_error', { message: '游戏已经开始' });
       return;
     }
 
@@ -1108,6 +1118,7 @@ class MafiaWorker extends BaseGameWorker {
         !gameState.copActionLock ||
         !gameState.topSecret?.cop?.includes(playerId) ||
         !gameState.players?.[playerId]?.alive) {
+      this.sendToPlayer(playerId, 'inspect_rejected', { message: '当前不能执行验人操作' });
       return;
     }
 
@@ -1118,7 +1129,7 @@ class MafiaWorker extends BaseGameWorker {
     }
 
     if (playerId in gameState.inspect) {
-      this.sendToPlayer(playerId, 'inspect_pending', { message: '你已经选择过验人目标' });
+      this.sendToPlayer(playerId, 'inspect_rejected', { message: '你已经选择过验人目标' });
       return;
     }
 
@@ -1169,6 +1180,7 @@ class MafiaWorker extends BaseGameWorker {
         !gameState.doctorActionLock ||
         !gameState.topSecret?.doctor?.includes(playerId) ||
         !gameState.players?.[playerId]?.alive) {
+      this.sendToPlayer(playerId, 'save_rejected', { message: '当前不能执行救人操作' });
       return;
     }
 
@@ -1179,7 +1191,7 @@ class MafiaWorker extends BaseGameWorker {
     }
 
     if (playerId in gameState.wantToSave) {
-      this.sendToPlayer(playerId, 'save_pending', { message: '你已经选择过救人目标' });
+      this.sendToPlayer(playerId, 'save_rejected', { message: '你已经选择过救人目标' });
       return;
     }
 
@@ -1248,6 +1260,7 @@ class MafiaWorker extends BaseGameWorker {
         !gameState.sniperActionLock ||
         !gameState.topSecret?.sniper?.includes(playerId) ||
         !gameState.players?.[playerId]?.alive) {
+      this.sendToPlayer(playerId, 'snipe_rejected', { message: '当前不能执行狙击操作' });
       return;
     }
 
@@ -1290,6 +1303,7 @@ class MafiaWorker extends BaseGameWorker {
         !gameState.sniperActionLock ||
         !gameState.topSecret?.sniper?.includes(playerId) ||
         !gameState.players?.[playerId]?.alive) {
+      this.sendToPlayer(playerId, 'snipe_rejected', { message: '当前不能跳过狙击操作' });
       return;
     }
 
@@ -1322,6 +1336,7 @@ class MafiaWorker extends BaseGameWorker {
         !gameState.killerActionLock ||
         !gameState.topSecret?.killer?.includes(playerId) ||
         !gameState.players?.[playerId]?.alive) {
+      this.sendToPlayer(playerId, 'kill_rejected', { message: '当前不能执行杀人操作' });
       return;
     }
 
@@ -1378,6 +1393,7 @@ class MafiaWorker extends BaseGameWorker {
 
     if (!gameState.operators?.includes(playerId) ||
         ![GameStatus.LAST_WORD, GameStatus.LAST_WORD_DAYTIME].includes(gameState.status)) {
+      this.sendToPlayer(playerId, 'game_error', { message: '当前不能结束遗言' });
       return;
     }
 
@@ -1455,6 +1471,7 @@ class MafiaWorker extends BaseGameWorker {
 
     if (!gameState.operators?.includes(playerId) ||
         ![GameStatus.SPEAK, GameStatus.PK].includes(gameState.status)) {
+      this.sendToPlayer(playerId, 'game_error', { message: '当前不能结束发言' });
       return;
     }
 
@@ -1532,6 +1549,7 @@ class MafiaWorker extends BaseGameWorker {
     const gameState = this.gameState as MafiaGameState;
 
     if (!gameState.operators?.includes(playerId) || gameState.status !== GameStatus.VOTE) {
+      this.sendToPlayer(playerId, 'vote_rejected', { message: '当前不能投票或你已经完成投票' });
       return;
     }
 
@@ -1549,6 +1567,7 @@ class MafiaWorker extends BaseGameWorker {
       : (gameState.pkPlayers.includes(targetId) || targetId === 'give_up');
 
     if (!validTarget) {
+      this.sendToPlayer(playerId, 'vote_rejected', { message: '投票目标无效' });
       return;
     }
 
@@ -1581,6 +1600,7 @@ class MafiaWorker extends BaseGameWorker {
     const canConfess = statusIsValid;
 
     if (!playerIsValid || !statusIsValid || !canConfess) {
+      this.sendToPlayer(playerId, 'game_error', { message: '当前不能自爆' });
       return;
     }
 
@@ -2468,11 +2488,13 @@ class MafiaWorker extends BaseGameWorker {
   private handleRestartGame(playerId: string): void {
     // 只有房主可以重新开始
     if (playerId !== this.room.hostId) {
+      this.sendToPlayer(playerId, 'game_error', { message: '只有房主可以重新开始游戏' });
       return;
     }
     
     const gameState = this.gameState as MafiaGameState;
     if (gameState.status !== GameStatus.OVER) {
+      this.sendToPlayer(playerId, 'game_error', { message: '只有游戏结束后才能重新开始' });
       return;
     }
     

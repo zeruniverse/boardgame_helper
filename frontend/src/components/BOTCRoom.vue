@@ -182,7 +182,6 @@
           :game-state="store.gameState"
           :is-storyteller="store.isStoryteller"
           :players="store.room?.players || []"
-          @private-message="handlePrivateMessage"
         />
       </el-aside>
     </el-container>
@@ -515,11 +514,6 @@ const handleStartPrivateChat = (targetId: string) => {
   if (chatComponentRef.value?.startPrivateChat) {
     chatComponentRef.value.startPrivateChat(targetId)
   }
-}
-
-// 处理私聊消息
-const handlePrivateMessage = (data: any) => {
-  store.sendPrivateMessage(data.targetId, data.message)
 }
 
 const toggleRoomLock = () => {

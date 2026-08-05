@@ -787,7 +787,10 @@ class AvalonWorker extends BaseGameWorker {
 
   private handleStartGame(playerId: string): void {
     if (!this.room || !this.gameState) return;
-    if (playerId !== this.room.hostId) return;
+    if (playerId !== this.room.hostId) {
+      this.sendToPlayer(playerId, 'game_error', { message: '只有房主可以开始游戏' });
+      return;
+    }
 
     const state = this.gameState as AvalonGameState;
     if (state.status !== GameStatus.WAITING) {
@@ -817,7 +820,10 @@ class AvalonWorker extends BaseGameWorker {
   private handleCaptainSpeak(playerId: string, speakFirst: boolean): void {
     if (!this.gameState) return;
     const state = this.gameState as AvalonGameState;
-    if (state.status !== GameStatus.CAPTAIN || !state.operators.includes(playerId)) return;
+    if (state.status !== GameStatus.CAPTAIN || !state.operators.includes(playerId)) {
+      this.sendToPlayer(playerId, 'game_error', { message: '当前不能选择发言顺序' });
+      return;
+    }
 
     const nextSpeaker = speakFirst ? playerId : this.getNextPlayer(playerId);
     const message = speakFirst
@@ -838,7 +844,10 @@ class AvalonWorker extends BaseGameWorker {
   private handleEndSpeak(playerId: string): void {
     if (!this.gameState) return;
     const state = this.gameState as AvalonGameState;
-    if (state.status !== GameStatus.SPEAK || !state.operators.includes(playerId)) return;
+    if (state.status !== GameStatus.SPEAK || !state.operators.includes(playerId)) {
+      this.sendToPlayer(playerId, 'game_error', { message: '当前不能结束发言' });
+      return;
+    }
 
     const newSpeakedCount = state.speakedCount + 1;
     const totalPlayers = Object.keys(state.players).length;
@@ -874,7 +883,15 @@ class AvalonWorker extends BaseGameWorker {
   private handlePickTeam(playerId: string, team: string[]): void {
     if (!this.gameState || !this.room) return;
     const state = this.gameState as AvalonGameState;
-    if (state.status !== GameStatus.PICK || !state.operators.includes(playerId)) return;
+    if (state.status !== GameStatus.PICK || !state.operators.includes(playerId)) {
+      this.sendToPlayer(playerId, 'game_error', { message: '当前不能选择任务队伍' });
+      return;
+    }
+
+    if (!Array.isArray(team)) {
+      this.sendToPlayer(playerId, 'game_error', { message: '任务队伍数据无效' });
+      return;
+    }
 
     const teamSize = state.scoreBoard[state.mission - 1][0];
     if (team.length !== teamSize) {
@@ -918,10 +935,14 @@ class AvalonWorker extends BaseGameWorker {
   private handleVote(playerId: string, agree: boolean): void {
     if (!this.gameState || !this.room) return;
     const state = this.gameState as AvalonGameState;
-    if (state.status !== GameStatus.VOTE || !state.operators.includes(playerId)) return;
+    if (state.status !== GameStatus.VOTE || !state.operators.includes(playerId)) {
+      this.sendToPlayer(playerId, 'game_error', { message: '当前不能进行组队投票或你已经完成投票' });
+      return;
+    }
 
     // 检查是否已经投过票
     if (state.voteResult.true.includes(playerId) || state.voteResult.false.includes(playerId)) {
+      this.sendToPlayer(playerId, 'game_error', { message: '你已经完成投票' });
       return;
     }
 
@@ -959,10 +980,16 @@ class AvalonWorker extends BaseGameWorker {
   private handleTakeAction(playerId: string, success: boolean): void {
     if (!this.gameState || !this.room) return;
     const state = this.gameState as AvalonGameState;
-    if (state.status !== GameStatus.ACTION || !state.operators.includes(playerId)) return;
+    if (state.status !== GameStatus.ACTION || !state.operators.includes(playerId)) {
+      this.sendToPlayer(playerId, 'game_error', { message: '当前不能提交任务结果或你已经完成行动' });
+      return;
+    }
 
     // 检查玩家是否在执行任务队伍中
-    if (!state.team.includes(playerId)) { return; }
+    if (!state.team.includes(playerId)) {
+      this.sendToPlayer(playerId, 'game_error', { message: '你不在本次任务队伍中' });
+      return;
+    }
 
     // 只有红方可以选择失败，蓝方强制成功
     const isRed = state.topSecret.red[playerId] !== undefined;
@@ -989,6 +1016,7 @@ class AvalonWorker extends BaseGameWorker {
   private handleRequestAssassinate(playerId: string): void {
     const state = this.gameState as AvalonGameState;
     if (state.topSecret.red[playerId] !== Role.ASSASSIN || state.status !== GameStatus.ASSASSINATE) {
+      this.sendToPlayer(playerId, 'game_error', { message: '当前不能发起刺杀请求' });
       return;
     }
 
@@ -1034,9 +1062,11 @@ class AvalonWorker extends BaseGameWorker {
     const info = state.assassinateInfo;
 
     if (!info.approvers.includes(playerId) || state.status === GameStatus.OVER) {
+      this.sendToPlayer(playerId, 'game_error', { message: '当前不能参与刺杀表决或你已经完成表决' });
       return;
     }
     if (info.approvers.length === 0) {
+      this.sendToPlayer(playerId, 'game_error', { message: '刺杀表决已经结束' });
       return;
     }
 
@@ -1054,6 +1084,7 @@ class AvalonWorker extends BaseGameWorker {
     if (!this.gameState) return;
     const state = this.gameState as AvalonGameState;
     if (state.status !== GameStatus.ASSASSINATE || state.topSecret.red[playerId] !== Role.ASSASSIN) {
+      this.sendToPlayer(playerId, 'game_error', { message: '当前不能执行刺杀' });
       return;
     }
 
@@ -1086,6 +1117,7 @@ class AvalonWorker extends BaseGameWorker {
   private handleLadyInspect(playerId: string, targetId: string): void {
     const state = this.gameState as AvalonGameState;
     if (state.status !== GameStatus.LADY || !state.operators.includes(playerId)) {
+      this.sendToPlayer(playerId, 'game_error', { message: '当前不能使用湖上夫人能力' });
       return;
     }
 
@@ -1163,10 +1195,16 @@ class AvalonWorker extends BaseGameWorker {
   }
 
   private handleRestartGame(playerId: string): void {
-    if (playerId !== this.room.hostId) return;
+    if (playerId !== this.room.hostId) {
+      this.sendToPlayer(playerId, 'game_error', { message: '只有房主可以重新开始游戏' });
+      return;
+    }
 
     const state = this.gameState as AvalonGameState;
-    if (state.status !== GameStatus.OVER) return;
+    if (state.status !== GameStatus.OVER) {
+      this.sendToPlayer(playerId, 'game_error', { message: '只有游戏结束后才能重新开始' });
+      return;
+    }
 
     if (this.actionTimer) {
       clearTimeout(this.actionTimer);

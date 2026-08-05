@@ -1007,9 +1007,7 @@ class TexasHoldemWorker extends BaseGameWorker {
 
     // 检查游戏是否已在进行中
     if (this.participants.length > 0) {
-      this.sendToRoom('chat_broadcast', {
-        message: '游戏已在进行中'
-      });
+      this.sendToPlayer(playerId, 'error', { message: '游戏已在进行中' });
       return;
     }
 
@@ -1019,7 +1017,7 @@ class TexasHoldemWorker extends BaseGameWorker {
     }).map(p => p.id);
 
     if (participants.length < 2) {
-      this.sendToRoom('chat_broadcast', {
+      this.sendToPlayer(playerId, 'error', {
         message: '至少需要2名在线且有筹码的玩家才能开始游戏'
       });
       return;
@@ -1033,7 +1031,7 @@ class TexasHoldemWorker extends BaseGameWorker {
 
     // 安全过滤：确保参与的玩家都在房间中
     if (participatingPlayers.length === 0) {
-      this.sendToRoom('chat_broadcast', { message: '没有有效的参与者，游戏无法开始' });
+      this.sendToPlayer(playerId, 'error', { message: '没有有效的参与者，游戏无法开始' });
       return;
     }
 

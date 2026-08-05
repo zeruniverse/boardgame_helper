@@ -508,6 +508,7 @@ function normalizeChatActionPayload(
   room: Room,
   actionData: any,
   socket: Socket,
+  sender: Player,
   ack?: (response: any) => void
 ): NormalizedChatAction | null {
   const rawMessage = typeof actionData === 'string' ? actionData : actionData?.message;
@@ -537,12 +538,35 @@ function normalizeChatActionPayload(
     sendErrorResponse(socket, '请选择私聊对象', ack);
     return null;
   }
-  if (!room.players.some(player => player.id === targetId)) {
+  const target = room.players.find(player => player.id === targetId);
+  if (!target) {
     sendErrorResponse(socket, '私聊对象不存在', ack);
+    return null;
+  }
+  if (targetId === sender.id) {
+    sendErrorResponse(socket, '不能给自己发送私聊消息', ack);
+    return null;
+  }
+  if (target.online === false || !target.socketId) {
+    sendErrorResponse(socket, '私聊对象当前不在线', ack);
     return null;
   }
 
   return { message, channel, targetId };
+}
+
+function readGameActionFailure(taskResponse: any): { success: false; error: string } | null {
+  const actionResult = taskResponse?.data;
+  if (!actionResult || actionResult.success !== false) {
+    return null;
+  }
+
+  return {
+    success: false,
+    error: typeof actionResult.error === 'string' && actionResult.error.trim()
+      ? actionResult.error.trim()
+      : '操作未被游戏接受'
+  };
 }
 
 
@@ -2317,7 +2341,7 @@ export function roomController(io: Server) {
           const chatPayload = isPrivateChat
             ? { ...(actionData || {}), channel: 'private' }
             : actionData;
-          const normalizedChat = normalizeChatActionPayload(room, chatPayload, socket, ack);
+          const normalizedChat = normalizeChatActionPayload(room, chatPayload, socket, player, ack);
           if (!normalizedChat) return;
           actionData = normalizedChat;
           // Legacy BOTC clients used private_message, while workers process chat/chat_message.
@@ -2342,12 +2366,9 @@ export function roomController(io: Server) {
           player.id
         );
 
-        const actionResult = taskResponse?.data;
-        if (actionResult && actionResult.success === false) {
-          ack?.({
-            success: false,
-            error: typeof actionResult.error === 'string' ? actionResult.error : '操作未被游戏接受'
-          });
+        const actionFailure = readGameActionFailure(taskResponse);
+        if (actionFailure) {
+          ack?.(actionFailure);
           return;
         }
 
@@ -2414,10 +2435,24 @@ export function roomController(io: Server) {
         const player = room.players.find(p => p.socketId === socket.id);
         if (!player) { sendErrorResponse(socket, '您不在此房间中', ack); return; }
 
-        const actionData = normalizeChatActionPayload(room, data, socket, ack);
+        const actionData = normalizeChatActionPayload(room, data, socket, player, ack);
         if (!actionData) return;
 
-        await sendTaskToRoom(room.id, 'game_action', { actionType: 'chat_message', actionData }, socket.id, player.id);
+        player.lastHeartbeat = Date.now();
+        room.lastActiveTime = Date.now();
+
+        const taskResponse = await sendTaskToRoom(
+          room.id,
+          'game_action',
+          { actionType: 'chat_message', actionData },
+          socket.id,
+          player.id
+        );
+        const actionFailure = readGameActionFailure(taskResponse);
+        if (actionFailure) {
+          ack?.(actionFailure);
+          return;
+        }
         ack?.({ success: true });
       } catch (error) {
         console.error('处理聊天消息失败:', error);

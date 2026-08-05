@@ -185,3 +185,36 @@ Commit: fix(round3): 修复游戏操作回执一致性与踢房主投票竞态
   - 根目录不存在 src/；本轮所有后端源码均位于 backend/src/，未修改 frontend/src/ 目录结构。
   - 完整 npm run build 未在当前环境完成：项目依赖未安装且 npm registry 连接不可用；前端 vue-tsc/Vite 生产构建仍需在依赖可用的 CI 或本地仓库执行。
 备注: 本轮优先修复跨六个游戏共用的操作确认一致性和 Controller 投票竞态；未删除文件。
+=== 当前请求第 4 轮修复记录 ===
+时间: 2026-08-05 16:05:04 UTC
+Commit: fix(round4): 修复聊天回执竞态与多游戏非法操作确认
+修改/新增文件:
+  - backend/src/controllers/roomController.ts (113352 bytes)
+  - backend/src/workers/avalonWorker.ts (67621 bytes)
+  - backend/src/workers/baseGameWorker.ts (8593 bytes)
+  - backend/src/workers/botcWorker.ts (173993 bytes)
+  - backend/src/workers/mafiaWorker.ts (96660 bytes)
+  - backend/src/workers/texasHoldemWorker.ts (82973 bytes)
+  - frontend/src/components/BOTCChat.vue (10949 bytes)
+  - frontend/src/components/BOTCRoom.vue (26389 bytes)
+  - frontend/src/store/botc.ts (23397 bytes)
+  - frontend/src/utils/gameSocket.ts (1992 bytes)
+  - repair_log.txt
+删除文件: 无
+构建测试: 部分通过
+本轮修复:
+  - Controller 的统一 game_action 与旧版 chat_message 入口现在都会读取 Worker 的嵌套操作结果；Worker 已拒绝的聊天不再被错误确认成 success=true。
+  - 私聊在进入 Worker 前统一拒绝自己、已离房、离线或没有有效 socket 的目标，避免消息被投递层静默丢弃而发送端误以为成功。
+  - BaseGameWorker 将杀人游戏的 inspect/save/snipe/kill/vote 细分拒绝事件纳入统一失败回执；杀人游戏补齐准备、开局、夜间职业操作、发言、投票、自爆和重开等非法状态的明确错误。
+  - 阿瓦隆补齐非房主开局、越阶段发言/选队/投票/任务、刺杀、湖上夫人及非法重开的失败回执，防止过期页面或重复点击与 Worker 状态分叉。
+  - 德州扑克在牌局已开始或有效参局人数不足时改为向操作者返回私有错误，不再只广播提示后仍把操作确认成成功。
+  - 血染钟楼 Worker 对无效私聊对象、空消息、自聊及非本局参与者私聊返回 actionError；前端统一复用 emitChatAction，不再维护重复的私聊事件和 store 方法。
+  - 血染钟楼聊天输入只在服务端 acknowledgement 成功后清空，失败或超时保留原消息；离线玩家不会出现在私聊目标中，并用发送代次隔离迟到 acknowledgement，避免旧回执解除新请求 loading 或误删新输入。
+验证:
+  - backend/src 与 frontend/src 共 80 个 TypeScript/Vue 源码文件完成静态复查；未创建根目录 src/。
+  - 后端在临时外部模块类型桩及真实 Node 类型定义下完成完整 TypeScript strict 编译，并成功生成测试用 CommonJS 文件。
+  - 前端 48 个 TypeScript/Vue 文件的 script 语法、SFC 块配对和相对导入路径检查通过。
+  - Worker 专项烟雾测试通过：杀人游戏非法投票/非房主开局、阿瓦隆非房主开局/越阶段投票、德州扑克人数不足开局均返回 success=false；血染钟楼自聊返回失败且合法私聊成功。
+  - package-lock 工作区依赖树通过 npm ls --package-lock-only --all 校验。
+  - 完整 npm ci / npm run build 未能在当前环境完成：依赖目录不存在，离线安装缺少 TypeScript 5.8.3 缓存包（ENOTCACHED）；前端 vue-tsc/Vite 生产构建仍需在依赖可用的 CI 或本地仓库执行。
+备注: 所有后端源码修改均位于 backend/src/，所有前端源码修改均位于 frontend/src/；未删除文件。
