@@ -9,6 +9,19 @@ export abstract class BaseGameWorker {
   protected room!: Room; // 将在prepareRoom中初始化
   protected gameState: any; // 储存游戏状态
   protected participants: any; // 储存游戏参与者
+  private activeActionContext: {
+    playerId: string;
+    error?: string;
+  } | null = null;
+
+  private static readonly ACTION_ERROR_EVENTS = new Set([
+    'error',
+    'game_error',
+    'gameError',
+    'action_error',
+    'actionError',
+    'onu_error'
+  ]);
 
   constructor() {
     this.gameState = {};
@@ -56,7 +69,79 @@ export abstract class BaseGameWorker {
    * @param actionType 行动类型
    * @param actionData 行动数据字典
    */
-  abstract gameAction(playerId: string, actionType: string, actionData: any): Promise<void>;
+  abstract gameAction(playerId: string, actionType: string, actionData: any): Promise<any>;
+
+  /**
+   * 统一执行一个游戏操作并把 Worker 私有错误事件转换为任务返回值。
+   *
+   * 旧的游戏 Worker 大多在非法操作时只向玩家发送 error/actionError，随后正常
+   * resolve game_action 任务。Controller 因此会向 Socket.IO acknowledgement 返回
+   * success=true，造成前端乐观状态与 Worker 实际状态不一致。房间任务本身已经串行，
+   * 可以在单次操作上下文中安全记录发给当前操作者的错误，并统一返回失败结果。
+   */
+  public async executeGameAction(
+    playerId: string,
+    actionType: string,
+    actionData: any
+  ): Promise<{ success: boolean; error?: string }> {
+    if (this.activeActionContext) {
+      throw new Error('检测到重入的游戏操作');
+    }
+
+    this.activeActionContext = { playerId };
+    try {
+      const result = await this.gameAction(playerId, actionType, actionData);
+
+      if (result && typeof result === 'object' && result.success === false) {
+        return {
+          success: false,
+          error: typeof result.error === 'string' && result.error
+            ? result.error
+            : this.activeActionContext.error || '操作未被游戏接受'
+        };
+      }
+
+      if (this.activeActionContext.error) {
+        return { success: false, error: this.activeActionContext.error };
+      }
+
+      return { success: true };
+    } catch (error) {
+      return {
+        success: false,
+        error: this.activeActionContext?.error || (
+          error instanceof Error && error.message
+            ? error.message
+            : '操作处理失败'
+        )
+      };
+    } finally {
+      this.activeActionContext = null;
+    }
+  }
+
+  /**
+   * 各 Worker 的 sendToPlayer 在投递前调用此方法。只记录当前操作玩家收到的错误，
+   * 不会把计时器或其他玩家的异步消息误当成该操作的 acknowledgement。
+   */
+  protected captureActionPlayerMessage(playerId: string, event: string, data: any): void {
+    const context = this.activeActionContext;
+    if (!context || context.playerId !== playerId || !BaseGameWorker.ACTION_ERROR_EVENTS.has(event)) {
+      return;
+    }
+
+    const message = typeof data === 'string'
+      ? data.trim()
+      : typeof data?.message === 'string'
+        ? data.message.trim()
+        : typeof data?.error === 'string'
+          ? data.error.trim()
+          : '';
+
+    if (!context.error) {
+      context.error = message || '操作未被游戏接受';
+    }
+  }
 
   /**
    * 踢出玩家

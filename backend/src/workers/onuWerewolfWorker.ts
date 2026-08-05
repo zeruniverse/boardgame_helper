@@ -351,6 +351,7 @@ class OnuWerewolfWorker extends BaseGameWorker {
   }
 
   protected sendToPlayer(playerId: string, event: string, data: any): void {
+    this.captureActionPlayerMessage(playerId, event, data);
     if (parentPort) {
       parentPort.postMessage({
         type: 'player_message',
@@ -1600,7 +1601,11 @@ parentPort?.on('message', (task: GameTask) => {
         await worker.playerOffline(task.playerId || task.data.playerId);
         break;
       case 'game_action':
-        await worker.gameAction(task.playerId || task.data.playerId, task.data.actionType, task.data.actionData);
+        response.data = await worker.executeGameAction(
+          task.playerId || task.data.playerId,
+          task.data.actionType,
+          task.data.actionData
+        );
         break;
       case 'kick_player':
       case 'kick_out_player':

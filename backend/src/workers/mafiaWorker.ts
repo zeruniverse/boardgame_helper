@@ -495,20 +495,19 @@ class MafiaWorker extends BaseGameWorker {
     try {
       // Validate inputs
       if (!playerId || typeof playerId !== 'string') {
-        console.warn('mafia gameAction: invalid playerId');
-        return;
+        throw new Error('无效的玩家ID');
       }
       if (!actionType || typeof actionType !== 'string') {
-        console.warn('mafia gameAction: invalid actionType');
-        return;
+        throw new Error('无效的操作类型');
       }
       if (!this.room || !this.room.players) {
-        console.warn('mafia gameAction: room not initialized');
-        return;
+        throw new Error('房间尚未初始化');
       }
       if (!this.gameState) {
-        console.warn('mafia gameAction: gameState not initialized');
-        return;
+        throw new Error('游戏状态尚未初始化');
+      }
+      if (!this.room.players.some(player => player.id === playerId)) {
+        throw new Error('玩家不在当前房间中');
       }
 
       switch (actionType) {
@@ -573,10 +572,17 @@ class MafiaWorker extends BaseGameWorker {
           this.handleKickPlayer(playerId, actionData?.targetId);
           break;
         default:
-          console.warn(`未知的游戏行动: ${actionType}`);
+          throw new Error(`未知的游戏行动: ${actionType}`);
       }
     } catch (error) {
       console.error(`处理游戏行动失败: ${actionType}`, error);
+      if (typeof playerId === 'string' && this.room?.players?.some(player => player.id === playerId)) {
+        this.sendToPlayer(playerId, 'game_error', {
+          message: error instanceof Error ? error.message : '操作处理失败'
+        });
+        return;
+      }
+      throw error;
     }
   }
 
@@ -615,6 +621,7 @@ class MafiaWorker extends BaseGameWorker {
   }
 
   protected sendToPlayer(playerId: string, event: string, data: any): void {
+    this.captureActionPlayerMessage(playerId, event, data);
     const player = this.room.players.find(p => p.id === playerId);
     if (player) {
       parentPort?.postMessage({
@@ -2590,8 +2597,15 @@ parentPort.on('message', (task: GameTask) => {
         response = { taskId: task.id, success: true };
         break;
       case 'game_action':
-        await worker.gameAction((task.playerId || task.data.playerId)!, task.data.actionType, task.data.actionData);
-        response = { taskId: task.id, success: true };
+        response = {
+          taskId: task.id,
+          success: true,
+          data: await worker.executeGameAction(
+            (task.playerId || task.data.playerId)!,
+            task.data.actionType,
+            task.data.actionData
+          )
+        };
         break;
       case 'kick_player':
       case 'kick_out_player': {

@@ -154,3 +154,34 @@ Commit: fix(round2): 修复房间线程状态回滚并校正一夜狼人投票�
   - 一夜狼人 Worker 集成测试通过：中心牌投票在任务边界返回失败并发送私有错误；合法一票循环正常结算且无人死亡。
   - 完整 npm run build 未在当前环境完成：项目依赖未安装，外部 npm registry 请求超时；因此前端 vue-tsc/Vite 生产构建仍需在依赖可用的 CI 或本地仓库执行。
 备注: 所有后端源码修改均位于 backend/src/，所有前端源码修改均位于 frontend/src/；未删除文件。
+=== 当前请求第 3 轮修复记录 ===
+时间: 2026-08-05 15:26:28 UTC
+Commit: fix(round3): 修复游戏操作回执一致性与踢房主投票竞态
+修改/新增文件:
+  - backend/src/controllers/roomController.ts (112451 bytes)
+  - backend/src/utils/hostKickVote.ts (1083 bytes，新增)
+  - backend/src/workers/baseGameWorker.ts (8307 bytes)
+  - backend/src/workers/avalonWorker.ts (65850 bytes)
+  - backend/src/workers/mafiaWorker.ts (94931 bytes)
+  - backend/src/workers/werewolfWorker.ts (71760 bytes)
+  - backend/src/workers/onuWerewolfWorker.ts (52589 bytes)
+  - backend/src/workers/texasHoldemWorker.ts (82978 bytes)
+  - backend/src/workers/botcWorker.ts (173526 bytes)
+  - repair_log.txt
+删除文件: 无
+构建测试: 部分通过
+本轮修复:
+  - 在 BaseGameWorker 增加统一的 executeGameAction 操作边界，把各 Worker 发给当前操作者的 error/game_error/actionError/onu_error 等私有失败事件转换为明确的 { success: false, error } 任务结果。
+  - 六个游戏 Worker 的 game_action 主循环统一经过该操作边界；Controller 不再把 Worker 已拒绝的操作错误确认成 success=true，避免前端乐观状态与后端真实状态分叉。
+  - 阿瓦隆、杀人游戏和狼人杀补齐无效玩家、未初始化状态、未知操作及尚未进入本局时的失败回执，避免静默 return 被当成操作成功。
+  - 踢出房主投票绑定具体 targetHostId；房主变化后旧投票立即失效，不会继承给新房主。
+  - 计票前清除已离线、已离房及不再具备投票资格的旧票，避免在线人数下降后旧票与降低的门槛组合而错误通过。
+  - 投票达到门槛后保留 resolving 状态直到 Worker 与 Controller 都完成踢人，阻止 await 期间重复开票或并发转让房主；超时计时器增加实例校验，不能误删后续新投票。
+验证:
+  - backend/src 与 frontend/src 共 82 个源码文件完成静态语法扫描；80 个 TypeScript/Vue script 单元解析通过，全部相对导入路径存在。
+  - 后端在临时外部模块类型桩及真实 Node 类型定义下完成完整 TypeScript strict 编译并成功生成测试用 JS，无类型错误。
+  - 六个游戏 Worker 的非法操作回执烟雾测试通过：任务通道保持可用，操作结果均为 success=false 且带错误信息。
+  - 踢房主投票专项测试通过：在线人数变化后，离线玩家的旧票会先被移除，再计算当前严格多数门槛。
+  - 根目录不存在 src/；本轮所有后端源码均位于 backend/src/，未修改 frontend/src/ 目录结构。
+  - 完整 npm run build 未在当前环境完成：项目依赖未安装且 npm registry 连接不可用；前端 vue-tsc/Vite 生产构建仍需在依赖可用的 CI 或本地仓库执行。
+备注: 本轮优先修复跨六个游戏共用的操作确认一致性和 Controller 投票竞态；未删除文件。

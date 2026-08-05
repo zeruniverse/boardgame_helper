@@ -4491,6 +4491,7 @@ export class BOTCWorker extends BaseGameWorker {
    * 发送消息到特定玩家
    */
   protected sendToPlayer(playerId: string, event: string, data: any): void {
+    this.captureActionPlayerMessage(playerId, event, data);
     if (parentPort) {
       parentPort.postMessage({
         type: 'player_message',
@@ -4538,7 +4539,11 @@ if (parentPort) {
             break;
           case 'game_action':
           case 'gameAction':
-            await worker.gameAction(task.playerId || task.data?.playerId, task.data?.actionType || task.actionType, task.data?.actionData || task.actionData);
+            responseData = await worker.executeGameAction(
+              task.playerId || task.data?.playerId,
+              task.data?.actionType || task.actionType,
+              task.data?.actionData || task.actionData
+            );
             break;
           case 'kick_player':
           case 'kick_out_player':

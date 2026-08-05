@@ -8,15 +8,20 @@ import { setResetServerFunction } from '../services/resetService';
 import { WerewolfCharacter } from '../utils/werewolfTypes';
 import { OnuWerewolfRole } from '../utils/onuWerewolfTypes';
 import { getRecommendedRoles } from '../utils/onuWerewolfPresets';
+import { getRequiredHostKickVotes, pruneHostKickVoters } from '../utils/hostKickVote';
 
 const rooms: Map<string, Room> = new Map();
 let threadManager: RoomThreadManager;
 
 // 踢出房主的投票数据
-const hostKickVotes: Map<string, {
+interface HostKickVoteData {
+  targetHostId: string;
   voters: Set<string>;
   timer: NodeJS.Timeout;
-}> = new Map();
+  resolving: boolean;
+}
+
+const hostKickVotes: Map<string, HostKickVoteData> = new Map();
 
 // 房主临时断线时保留一个很短的重连窗口；超过该时间仍离线，则把房主交给
 // 当前在线玩家，避免锁房、开局、重开和配置入口永久卡在离线房主手中。
@@ -1425,11 +1430,16 @@ export function roomController(io: Server) {
     const newHost = room.players.find(p => p.id === newHostId);
     if (!newHost) return { success: false, error: '目标玩家不存在' };
     if (!newHost.online) return { success: false, error: '不能转让给离线玩家' };
+
+    const pendingVote = hostKickVotes.get(room.id);
+    if (pendingVote?.resolving) {
+      return { success: false, error: '踢出房主投票正在结算，请稍候' };
+    }
+
     room.hostId = newHost.id;
     room.lastActiveTime = Date.now();
 
     // 针对旧房主的踢出投票不能继承到新房主。
-    const pendingVote = hostKickVotes.get(room.id);
     if (pendingVote) {
       clearTimeout(pendingVote.timer);
       hostKickVotes.delete(room.id);
@@ -2468,11 +2478,37 @@ export function roomController(io: Server) {
           // 投票踢出房主
           let voteData = hostKickVotes.get(room.id);
 
+          // 房主已经变化时，旧投票无论是否仍在计时都不能继承给新房主。
+          if (voteData && voteData.targetHostId !== room.hostId) {
+            clearTimeout(voteData.timer);
+            hostKickVotes.delete(room.id);
+            voteData = undefined;
+          }
+
+          if (voteData?.resolving) {
+            sendErrorResponse(socket, '踢出房主投票正在结算，请稍候', ack);
+            return;
+          }
+
+          if (voteData) {
+            // 只保留当前仍在线且仍在房间中的非房主票。否则在线人数下降后，
+            // 已离线玩家的旧票可能与更低的门槛组合，错误地通过投票。
+            pruneHostKickVoters(room, voteData.voters, voteData.targetHostId);
+          }
+
           if (!voteData) {
             // 创建新的投票
-            voteData = {
+            let createdVote!: HostKickVoteData;
+            createdVote = {
+              targetHostId: room.hostId,
               voters: new Set([player.id]),
+              resolving: false,
               timer: setTimeout(() => {
+                // 旧计时器不能删除同一房间后来创建的新投票；结算中的投票也由
+                // 结算路径负责清理，避免在 Worker 回复前重新开启第二轮投票。
+                if (hostKickVotes.get(room.id) !== createdVote || createdVote.resolving) {
+                  return;
+                }
                 hostKickVotes.delete(room.id);
                 io.to(room.id).emit('chat_broadcast', {
                   message: '踢出房主投票超时，投票已重置',
@@ -2480,10 +2516,12 @@ export function roomController(io: Server) {
                 });
               }, 15000) // 15秒超时
             };
-            hostKickVotes.set(room.id, voteData);
+            voteData = createdVote;
+            hostKickVotes.set(room.id, createdVote);
 
+            const requiredVotes = getRequiredHostKickVotes(room);
             io.to(room.id).emit('chat_broadcast', {
-              message: `${player.nickname} 发起踢出房主投票，需要${Math.floor(room.players.filter(p => p.online).length / 2) + 1}票`,
+              message: `${player.nickname} 发起踢出房主投票，需要${requiredVotes}票`,
               type: 'system'
             });
           } else {
@@ -2497,36 +2535,67 @@ export function roomController(io: Server) {
             voteData.voters.add(player.id);
           }
 
-          const onlinePlayerCount = room.players.filter(p => p.online).length;
-          const requiredVotes = Math.floor(onlinePlayerCount / 2) + 1;
+          // 计票前再次读取权威房间快照并清理失效票，防止同一轮事件中发生
+          // 离房/断线后仍按旧 room 引用统计。
+          const latestRoom = rooms.get(room.id);
+          if (!latestRoom || latestRoom.hostId !== voteData.targetHostId) {
+            clearTimeout(voteData.timer);
+            if (hostKickVotes.get(room.id) === voteData) {
+              hostKickVotes.delete(room.id);
+            }
+            sendErrorResponse(socket, '房主已变更，投票已取消', ack);
+            return;
+          }
+
+          pruneHostKickVoters(latestRoom, voteData.voters, voteData.targetHostId);
+          const requiredVotes = getRequiredHostKickVotes(latestRoom);
 
           if (voteData.voters.size >= requiredVotes) {
-            // 投票通过，踢出房主
+            // 投票通过后保留 resolving 占位，直到 Worker 和 Controller 都完成踢人。
+            // 这能阻止并发 Socket 事件在 await 期间重新创建投票或转让房主。
+            voteData.resolving = true;
             clearTimeout(voteData.timer);
-            hostKickVotes.delete(room.id);
 
-            const oldHost = targetPlayer;
-            const kickResponse = await sendTaskToRoom(room.id, 'kick_out_player', { targetId: oldHost.id });
-            const kickResult = readKickResult(kickResponse);
-            if (!kickResult.kicked) {
-              io.to(room.id).emit('chat_broadcast', {
-                message: kickResult.reason || '当前状态不允许踢出房主',
-                type: 'system'
-              });
-              ack?.({ success: false, error: kickResult.reason || '当前状态不允许踢出房主' });
+            const oldHost = latestRoom.players.find(candidate => candidate.id === voteData.targetHostId);
+            if (!oldHost) {
+              if (hostKickVotes.get(room.id) === voteData) {
+                hostKickVotes.delete(room.id);
+              }
+              sendErrorResponse(socket, '房主已离开，投票已取消', ack);
               return;
             }
 
-            await finalizeKickedPlayer(room.id, oldHost, '您被投票踢出房间');
-            ack?.({ success: true });
+            try {
+              const kickResponse = await sendTaskToRoom(room.id, 'kick_out_player', { targetId: oldHost.id });
+              const kickResult = readKickResult(kickResponse);
+              if (!kickResult.kicked) {
+                if (hostKickVotes.get(room.id) === voteData) {
+                  hostKickVotes.delete(room.id);
+                }
+                io.to(room.id).emit('chat_broadcast', {
+                  message: kickResult.reason || '当前状态不允许踢出房主',
+                  type: 'system'
+                });
+                ack?.({ success: false, error: kickResult.reason || '当前状态不允许踢出房主' });
+                return;
+              }
 
-            io.to(room.id).emit('chat_broadcast', {
-              message: `房主 ${oldHost.nickname} 被投票踢出房间`,
-              type: 'system'
-            });
+              await finalizeKickedPlayer(room.id, oldHost, '您被投票踢出房间');
+              ack?.({ success: true });
 
-            console.log(`房主 ${oldHost.nickname} 被投票踢出`);
-            return;
+              io.to(room.id).emit('chat_broadcast', {
+                message: `房主 ${oldHost.nickname} 被投票踢出房间`,
+                type: 'system'
+              });
+
+              console.log(`房主 ${oldHost.nickname} 被投票踢出`);
+              return;
+            } catch (error) {
+              if (hostKickVotes.get(room.id) === voteData) {
+                hostKickVotes.delete(room.id);
+              }
+              throw error;
+            }
           } else {
             ack?.({ success: true, message: `投票已记录，当前投票数: ${voteData.voters.size}/${requiredVotes}` });
             io.to(room.id).emit('chat_broadcast', {

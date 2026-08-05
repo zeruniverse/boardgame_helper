@@ -153,7 +153,11 @@ class TexasHoldemWorker extends BaseGameWorker {
       case 'player_offline':
         return await this.playerOffline((task.playerId || task.data.playerId)!);
       case 'game_action':
-        return await this.gameAction((task.playerId || task.data.playerId)!, task.data.actionType, task.data.actionData);
+        return await this.executeGameAction(
+          (task.playerId || task.data.playerId)!,
+          task.data.actionType,
+          task.data.actionData
+        );
       case 'kick_player':
       case 'kick_out_player':
         return await this.kickOutPlayer(task.data.targetId);
@@ -466,6 +470,7 @@ class TexasHoldemWorker extends BaseGameWorker {
   }
 
   protected sendToPlayer(playerId: string, event: string, data: any): void {
+    this.captureActionPlayerMessage(playerId, event, data);
     const player = this.room.players.find(p => p.id === playerId);
     if (player) {
       parentPort!.postMessage({

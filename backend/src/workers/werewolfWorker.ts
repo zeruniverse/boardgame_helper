@@ -387,6 +387,7 @@ class WerewolfWorker extends BaseGameWorker {
   }
 
   protected sendToPlayer(playerId: string, event: string, data: any): void {
+    this.captureActionPlayerMessage(playerId, event, data);
     const player = this.room.players.find(p => p.id === playerId);
     if (player && parentPort) {
       parentPort.postMessage({
@@ -626,7 +627,13 @@ class WerewolfWorker extends BaseGameWorker {
 
   async gameAction(playerId: string, actionType: string, actionData: any): Promise<void> {
     const player = this.room.players.find(p => p.id === playerId);
-    if (!player) return;
+    if (!player) {
+      throw new Error('玩家不在当前房间中');
+    }
+    if (!actionType || typeof actionType !== 'string') {
+      this.sendToPlayer(playerId, 'error', { message: '无效的操作类型' });
+      return;
+    }
 
     const normalizedActionType = this.normalizeActionType(actionType);
 
@@ -663,7 +670,10 @@ class WerewolfWorker extends BaseGameWorker {
     if (normalizedActionType === 'heartbeat') { this.handleHeartbeat(playerId); return; }
 
     const gamePlayer = this.gameState.players[playerId];
-    if (!gamePlayer) return;
+    if (!gamePlayer) {
+      this.sendToPlayer(playerId, 'error', { message: '游戏尚未开始或玩家不在本局中' });
+      return;
+    }
 
     try {
       switch (normalizedActionType) {
@@ -1973,12 +1983,15 @@ if (parentPort) {
           break;
 
         case 'game_action':
-          await worker.gameAction(
-            (task.playerId || task.data.playerId)!,
-            task.data.actionType,
-            task.data.actionData
-          );
-          response = { taskId: task.id, success: true };
+          response = {
+            taskId: task.id,
+            success: true,
+            data: await worker.executeGameAction(
+              (task.playerId || task.data.playerId)!,
+              task.data.actionType,
+              task.data.actionData
+            )
+          };
           break;
 
         case 'kick_player':
