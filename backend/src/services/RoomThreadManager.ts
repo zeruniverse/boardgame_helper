@@ -28,6 +28,10 @@ export class RoomThreadManager {
   private roomData: Map<string, Room> = new Map();
   private startingPromises: Map<string, Promise<Room | null>> = new Map();
   private stoppingPromises: Map<string, Promise<boolean>> = new Map();
+  // A worker is quarantined as soon as it is failing or intentionally stopping.
+  // Keep the exact Worker instance so delayed events from an old thread cannot poison
+  // a replacement thread for the same room.
+  private quarantinedWorkers: Map<string, Worker> = new Map();
   private cleanupInterval: NodeJS.Timeout | null;
   private onMessage?: (data: any) => void | Promise<void>;
   private shuttingDown = false;
@@ -118,7 +122,13 @@ export class RoomThreadManager {
       return this.startingPromises.get(room.id)!;
     }
 
-    if (this.workers.has(room.id)) {
+    const existingWorker = this.workers.get(room.id);
+    if (existingWorker) {
+      if (this.quarantinedWorkers.get(room.id) === existingWorker) {
+        console.error(`房间 ${room.id} 的线程已被隔离，拒绝把它重新标记为可运行`);
+        return null;
+      }
+
       console.log(`房间 ${room.id} 的线程已存在`);
       // 如果已存在，也认为成功，并返回更新后的房间对象
       const existingRoom = this.roomData.get(room.id);
@@ -175,7 +185,11 @@ export class RoomThreadManager {
       worker.on('message', (message: any) => {
         messageChain = messageChain.then(async () => {
           // 已被替换或停止的旧 Worker 可能仍有排队消息；绝不能让它覆盖新线程的状态。
-          if (this.workers.get(room.id) !== worker) {
+          if (
+            this.shuttingDown ||
+            this.workers.get(room.id) !== worker ||
+            this.quarantinedWorkers.get(room.id) === worker
+          ) {
             return;
           }
           // 各个游戏 worker 早期实现的消息格式不完全一致，这里统一兼容。
@@ -217,12 +231,13 @@ export class RoomThreadManager {
         }).catch(error => {
           console.error(`房间 ${room.id} 处理Worker消息时出错:`, error);
           const cause = error instanceof Error ? error : new Error(String(error));
-          // Worker 通常会先发送 room_update/私有事件，再发送 task_response。若控制层
-          // 应用事件失败却仍解析后续成功响应，调用方会收到“成功”，而权威房间状态仍是旧值。
-          // 事件没有稳定的 taskId 可用于精确归因，因此拒绝该房间当前所有待处理任务，
-          // 让客户端明确重试，而不是在 Worker/Controller 已经分叉时继续提交新操作。
-          this.rejectPendingTasksForRoom(
+          // Worker 通常会先发送 room_update/私有事件，再发送 task_response。控制层一旦
+          // 无法落地事件，就已经无法判断该 Worker 后续状态是否仍与权威房间一致。
+          // 仅拒绝当前 Promise 不够：迟到任务仍可能继续改写 Worker，并在之后看似成功。
+          // 因此立即隔离这个精确 Worker、拒绝该房间全部待处理任务并异步终止线程。
+          this.quarantineWorker(
             room.id,
+            worker!,
             new Error(`房间 ${room.id} Worker事件处理失败: ${cause.message}`)
           );
         });
@@ -245,10 +260,11 @@ export class RoomThreadManager {
             // 某些 Worker 错误对象没有可用的原始值，保留兜底信息。
           }
         }
-        this.rejectPendingTasksForRoom(room.id, new Error(`房间 ${room.id} 线程出错: ${errorMessage}`));
-        void this.stopRoomThread(room.id).catch(stopError => {
-          console.error(`房间 ${room.id} 出错后停止线程失败:`, stopError);
-        });
+        this.quarantineWorker(
+          room.id,
+          worker!,
+          new Error(`房间 ${room.id} 线程出错: ${errorMessage}`)
+        );
       });
 
       worker.on('exit', (code) => {
@@ -317,7 +333,16 @@ export class RoomThreadManager {
       // 即使worker不存在，也要清理该房间的pending tasks和残留快照。
       this.rejectPendingTasksForRoom(roomId, new Error(`房间 ${roomId} 线程已停止`));
       this.roomData.delete(roomId);
+      this.quarantinedWorkers.delete(roomId);
       return true;
+    }
+
+    // terminate() 与 exit 之间仍可能到达排队消息。任何主动停止都要先隔离精确
+    // Worker，确保清房、重置和关闭期间不会再把迟到 room_update 写回控制层。
+    this.quarantinedWorkers.set(roomId, worker);
+    const room = this.roomData.get(roomId);
+    if (room) {
+      room.threadStatus = 'stopping';
     }
 
     const stopPromise = this.doStopRoomThread(roomId, worker);
@@ -347,7 +372,9 @@ export class RoomThreadManager {
       return true;
     } catch (error) {
       if (this.workers.get(roomId) === worker && roomData) {
-        roomData.threadStatus = 'running';
+        roomData.threadStatus = this.quarantinedWorkers.get(roomId) === worker
+          ? 'stopping'
+          : 'running';
       }
       console.error(`停止房间 ${roomId} 线程失败:`, error);
       return false;
@@ -366,7 +393,39 @@ export class RoomThreadManager {
     }
     this.workers.delete(roomId);
     this.roomData.delete(roomId);
+    if (this.quarantinedWorkers.get(roomId) === worker) {
+      this.quarantinedWorkers.delete(roomId);
+    }
     return true;
+  }
+
+  /**
+   * Fail closed when a Worker can no longer be trusted. Message handlers and
+   * sendTask both consult this exact instance marker, so a late response cannot
+   * be mistaken for success while terminate() is still in flight.
+   */
+  private quarantineWorker(roomId: string, worker: Worker, reason: Error): void {
+    if (this.workers.get(roomId) !== worker) {
+      return;
+    }
+    if (this.quarantinedWorkers.get(roomId) === worker) {
+      return;
+    }
+
+    this.quarantinedWorkers.set(roomId, worker);
+    const room = this.roomData.get(roomId);
+    if (room) {
+      room.threadStatus = 'stopping';
+    }
+    this.rejectPendingTasksForRoom(roomId, reason);
+
+    void this.stopRoomThread(roomId).then(stopped => {
+      if (!stopped && this.workers.get(roomId) === worker) {
+        console.error(`房间 ${roomId} 的隔离Worker终止失败，继续拒绝新任务`);
+      }
+    }).catch(stopError => {
+      console.error(`房间 ${roomId} 的隔离Worker终止异常:`, stopError);
+    });
   }
 
   // 拒绝指定房间的所有pending tasks
@@ -397,6 +456,9 @@ export class RoomThreadManager {
     if (!worker) {
       throw new Error(`房间 ${roomId} 线程不存在`);
     }
+    if (this.quarantinedWorkers.get(roomId) === worker) {
+      throw new Error(`房间 ${roomId} 线程已被隔离，正在终止`);
+    }
 
     const taskId = uuidv4();
     const taskData = task.data?.room
@@ -416,6 +478,18 @@ export class RoomThreadManager {
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
         console.error(`任务超时: ${taskId}, 房间: ${roomId}, 类型: ${task.type}`);
+        const timeoutError = new Error(
+          `任务 ${taskId} 超时；房间线程已隔离并终止，避免迟到任务继续修改游戏状态`
+        );
+
+        // postMessage 没有可靠的逐任务取消机制。只拒绝这个 Promise 会让已排队或仍在
+        // 执行的任务稍后继续改写 Worker，客户端却已经按失败重试，最终产生重复行动。
+        // 对当前精确 Worker 采取 fail-closed；若线程已被替换，则只清理这个迟到任务。
+        if (this.workers.get(roomId) === worker) {
+          this.quarantineWorker(roomId, worker, timeoutError);
+          return;
+        }
+
         this.tasks.delete(taskId);
         const roomTaskSet = this.roomTasks.get(roomId);
         if (roomTaskSet) {
@@ -424,7 +498,7 @@ export class RoomThreadManager {
             this.roomTasks.delete(roomId);
           }
         }
-        reject(new Error(`任务 ${taskId} 超时`));
+        reject(timeoutError);
       }, 10000); // 10秒超时
 
       this.tasks.set(taskId, { resolve, reject, timeout, roomId });
@@ -482,7 +556,9 @@ export class RoomThreadManager {
   // 获取房间线程状态
   getRoomThreadStatus(roomId: string): 'idle' | 'running' | 'stopping' | 'not_found' {
     if (this.stoppingPromises.has(roomId)) return 'stopping';
-    if (!this.workers.has(roomId)) return 'not_found';
+    const worker = this.workers.get(roomId);
+    if (!worker) return 'not_found';
+    if (this.quarantinedWorkers.get(roomId) === worker) return 'stopping';
     const room = this.roomData.get(roomId);
     return room?.threadStatus || 'idle';
   }

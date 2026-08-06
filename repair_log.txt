@@ -459,3 +459,27 @@ Commit: fix(round10): 修复房间容量同步、Worker回执一致性与直接�
   - package-lock 工作区依赖树通过 npm ls --package-lock-only --all；差异空白检查通过；根目录不存在 src/，所有源码修改均位于 backend/src/ 或 frontend/src/。
   - 当前容器内完整 npm run build 未完成：依赖安装使用的内部源无法取得 TypeScript 5.8.3，失败安装仅留下空的依赖目录，正式 tsc 因缺失声明文件中止，前端 vue-tsc/Vite 未进入执行。临时依赖目录与生成的 backend/dist 已清理；需在依赖可用的本地或 CI 环境执行 npm ci && npm run build 做最终生产构建确认。
 备注: 本轮优先修复跨六个游戏共用的容量/回执/房主接替状态一致性，以及大厅重复监听与直接部署路径；未删除文件，未创建根目录 src/。
+
+=== 本次请求第 11 轮修复记录 ===
+时间: 2026-08-06 17:08:25 UTC
+Commit: fix(round11): 隔离异常Worker并修复重连回滚竞态
+修改/新增文件:
+  - backend/src/controllers/roomController.ts (122817 bytes)
+  - backend/src/services/RoomThreadManager.ts (25595 bytes)
+  - repair_log.txt
+删除文件: 无
+构建测试: 部分通过
+本轮修复:
+  - RoomThreadManager 对事件落地失败、Worker error 和任务超时统一采用 fail-closed 隔离：立即拒绝房间内全部待处理任务、拒绝新任务并终止精确 Worker，避免客户端已收到失败后迟到任务继续修改角色、票型、筹码、准备状态或配置。
+  - 主动清房、服务器重置和关闭线程时先隔离 Worker，再调用 terminate；停止窗口与 shutdown 期间的迟到 room_update、私有身份/手牌事件和 task_response 均被忽略，避免已删除房间被旧线程回写或旧线程污染同 roomId 的替代线程。
+  - 被隔离且终止失败的 Worker 不再被 startRoomThread 重新标记为 running；线程状态保持 stopping，后续 sendTask 明确失败，防止把不可信线程重新投入使用。
+  - 已有座位迁移在旧连接被踢出、离房或旧 socketId 已失效后若提交失败，不再恢复一个不存在的 online 旧连接；保留玩家身份和原游戏元数据并降为离线，允许持有旧会话令牌的玩家再次重连。
+  - 重连失败回滚只修改仍由当前失败 socket 占用的座位；等待期间若发生新接管、踢人或座位移除，不再用旧快照覆盖新的控制层状态。
+验证:
+  - 后端 33 个 TypeScript 源码在临时外部模块类型桩与真实 Node 类型定义下完成完整 strict 编译，无类型错误。
+  - RoomThreadManager 专项运行测试通过：Controller 事件处理失败会拒绝任务并只终止一次；10 秒任务超时会隔离线程且迟到成功响应无效；主动 stop 与 terminate 之间的迟到 room_update 不会进入 Controller；终止完成后 Worker 映射被清除。
+  - 六个实际游戏 Worker 的 prepare_room 烟雾测试全部通过：德州扑克、狼人杀、杀人游戏、一夜狼人、阿瓦隆、血染钟楼均可加载当前源码、接收配置并返回成功。
+  - backend/src 与 frontend/src 共 82 个 TypeScript/Vue/CSS 源码文件完成静态复查；78 个 TypeScript/Vue script 单元、27 个 Vue SFC 块配对及 211 个相对或 @ 导入路径检查通过。
+  - package-lock 工作区依赖树通过 npm ls --package-lock-only --all；git diff --check 通过；根目录不存在 src/。
+  - 当前容器内完整 npm run build 未完成：此前失败安装留下的 node_modules 仅包含部分/空依赖目录，正式后端 tsc 因缺少 body-parser、express、node、uuid 等声明文件中止，前端构建未进入执行。源码已通过上述 strict 编译、静态检查和六游戏 Worker 运行测试；仍需在依赖完整的本地或 CI 环境执行 npm ci && npm run build 做最终生产构建确认。
+备注: 本轮优先修复跨六个游戏共用的 Worker 超时/停止一致性与重连座位回滚竞态；未修改 frontend/src/ 文件，未删除文件，未创建根目录 src/。

@@ -1085,20 +1085,22 @@ export function roomController(io: Server) {
     previousSocketId: string | undefined,
     nextSocket: Socket,
     message = '该座位已在其他连接重新进入房间'
-  ): Promise<void> {
+  ): Promise<boolean> {
     if (!previousSocketId || previousSocketId === nextSocket.id) {
-      return;
+      return false;
     }
 
     const previousSocket = io.sockets.sockets.get(previousSocketId);
-    if (!previousSocket) {
-      return;
+    if (previousSocket) {
+      previousSocket.emit('kicked_out', { message, clearSession: false });
+      previousSocket.emit('room_left', { roomId });
+      // 新连接已经完成 worker 同步，不能因为旧连接离房失败把新连接回滚成半连接状态。
+      await leaveSocketRoomSafely(previousSocket, roomId, '移除座位旧连接');
     }
 
-    previousSocket.emit('kicked_out', { message, clearSession: false });
-    previousSocket.emit('room_left', { roomId });
-    // 新连接已经完成 worker 同步，不能因为旧连接离房失败把新连接回滚成半连接状态。
-    await leaveSocketRoomSafely(previousSocket, roomId, '移除座位旧连接');
+    // 即使旧 socket 已不在 Socket.IO 映射中，旧 socketId 也已经不可恢复。
+    // 返回 true 表示旧绑定已失效，而不仅仅表示本次实际调用过 socket.leave()。
+    return true;
   }
 
   interface PlayerConnectionSnapshot {
@@ -1156,8 +1158,8 @@ export function roomController(io: Server) {
   }
 
   /**
-   * 把已有座位迁移到新 socket。整个过程以 worker 同步成功为提交点：
-   * 失败时恢复旧座位绑定、在线状态、昵称和游戏元数据，且旧连接不会被提前踢出。
+   * 把已有座位迁移到新 socket。旧连接只会在 worker 确认新连接后被移除；
+   * 提交前失败会恢复旧绑定，旧绑定已经失效后的失败则保留座位并明确降为离线。
    */
   async function connectExistingPlayerSeat(
     room: Room,
@@ -1216,6 +1218,7 @@ export function roomController(io: Server) {
 
     let playerSnapshot: PlayerConnectionSnapshot | undefined;
     let previousSocketId: string | undefined;
+    let previousSocketInvalidated = false;
     const previousLastActiveTime = room.lastActiveTime;
     const hadCleanupTimer = Boolean(room.cleanupTimer);
     const socketWasInRoom = socket.rooms.has(room.id);
@@ -1279,7 +1282,12 @@ export function roomController(io: Server) {
 
       // 只有控制层和 worker 都确认新连接后，才移除旧连接。离房会让出事件循环，
       // 因此轮换令牌前还要再次确认房间没有被清理、座位也没有被踢出。
-      await detachSeatSocketById(latestRoom.id, previousSocketId, socket, previousSocketMessage);
+      previousSocketInvalidated = await detachSeatSocketById(
+        latestRoom.id,
+        previousSocketId,
+        socket,
+        previousSocketMessage
+      );
       latestRoom = rooms.get(transactionRoom.id);
       latestPlayer = latestRoom?.players.find(p => p.id === transactionPlayer.id);
       if (!latestRoom || !latestPlayer || latestPlayer.socketId !== socket.id || latestPlayer.online === false) {
@@ -1311,8 +1319,23 @@ export function roomController(io: Server) {
       const rollbackPlayer = playerSnapshot
         ? rollbackRoom.players.find(player => player.id === playerSnapshot!.id)
         : undefined;
-      if (rollbackPlayer && playerSnapshot) {
+      const seatStillOwnedByFailedConnection = Boolean(
+        rollbackPlayer &&
+        rollbackPlayer.socketId === socket.id &&
+        rollbackPlayer.online !== false
+      );
+      // 旧连接一旦被移除，或旧 socketId 已经不在 Socket.IO 映射中，就不能再把旧
+      // socketId 和 online=true 恢复回来，否则会制造已退订/不存在却仍在线的幽灵座位。
+      // 同时只回滚仍由本失败事务占用的座位，避免覆盖等待期间已经发生的新接管/踢人。
+      if (rollbackPlayer && playerSnapshot && seatStillOwnedByFailedConnection) {
         restorePlayerConnection(rollbackPlayer, playerSnapshot);
+        if (previousSocketInvalidated) {
+          // 此时旧连接已经不能恢复，而新连接也会按失败路径离开房间。保留玩家身份与
+          // 原游戏元数据，但把座位明确降为离线，旧会话令牌仍可用于再次安全重连。
+          rollbackPlayer.socketId = '';
+          rollbackPlayer.online = false;
+          rollbackPlayer.lastHeartbeat = Date.now();
+        }
       }
       // 使用新的时间戳标记回滚结果，避免稍晚到达的失败事务快照覆盖旧座位绑定。
       rollbackRoom.lastActiveTime = Math.max(previousLastActiveTime || 0, Date.now());
