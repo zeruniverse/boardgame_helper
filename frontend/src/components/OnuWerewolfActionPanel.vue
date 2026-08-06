@@ -443,12 +443,12 @@
     <!-- 投票阶段 -->
     <div v-else-if="gameState?.status === 3" class="voting-phase">
       <div class="phase-header">
-        <h3>投票阶段</h3>
-        <p>讨论并投票选出狼人</p>
+        <h3>{{ isDiscussionPhase ? '讨论阶段' : '投票阶段' }}</h3>
+        <p>{{ isDiscussionPhase ? '讨论场上身份，讨论结束后统一投票' : '投票选出最可疑的狼人' }}</p>
       </div>
 
       <!-- 跳过讨论按钮 -->
-      <div class="discussion-control">
+      <div v-if="isDiscussionPhase" class="discussion-control">
         <el-button 
           type="warning"
           @click="skipDiscussion"
@@ -724,6 +724,7 @@ const mandatoryNightRoles = new Set<OnuWerewolfRole>([
   OnuWerewolfRole.Drunk
 ]);
 const canSkipSkill = computed(() => Boolean(activeRole.value) && !mandatoryNightRoles.has(activeRole.value!));
+const isDiscussionPhase = computed(() => props.gameState?.currentPhase === '讨论阶段');
 
 const getCenterCardLabel = (position: number) => {
   return position === 3 ? '头狼中心狼人牌' : `中心卡 ${position + 1}`;
@@ -1035,6 +1036,10 @@ const watchRole = watch(() => activeRole.value, () => {
   skillResult.value = '';
 });
 
+const watchDiscussionPhase = watch(isDiscussionPhase, (isOpen) => {
+  if (isOpen) hasSkippedDiscussion.value = false;
+});
+
 const watchSeerChoice = watch(() => seerChoice.value, () => {
   selectedPlayer.value = undefined;
   seerCenterCards.value = [];
@@ -1044,6 +1049,7 @@ onUnmounted(() => {
   watchConfig();
   watchRole();
   watchSeerChoice();
+  watchDiscussionPhase();
 });
 </script>
 

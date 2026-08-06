@@ -229,7 +229,7 @@
             <p><strong>角色介绍：</strong></p>
             <ul>
               <li><strong>普通狼人：</strong>互相认识，如果只有一只狼人可以查看中心卡牌</li>
-              <li><strong>头狼：</strong>选择一名玩家变成普通狼人</li>
+              <li><strong>头狼：</strong>将额外的中心狼人牌与一名非狼人玩家的角色牌交换</li>
               <li><strong>狼先知：</strong>查看狼人同伴后，可查看一名其他玩家的角色</li>
               <li><strong>爪牙：</strong>知道初始狼人身份，与狼人同一阵营</li>
               <li><strong>预言家：</strong>可以查看一名其他玩家的角色</li>
@@ -242,12 +242,12 @@
               <li><strong>失眠者：</strong>在夜晚结束时查看自己的最终角色</li>
               <li><strong>守夜人：</strong>必须配置为0个或2个；夜晚查看是否有其他守夜人</li>
               <li><strong>村民：</strong>没有特殊能力，属于好人阵营</li>
-              <li><strong>皮匠：</strong>只有自己成为唯一得票最多并被处决时获胜</li>
+              <li><strong>皮匠：</strong>只要自己被处决就单独获胜</li>
             </ul>
             <p><strong>游戏流程：</strong></p>
             <ol>
               <li><strong>夜晚阶段：</strong>按顺序执行各角色技能</li>
-              <li><strong>白天阶段：</strong>讨论后投票给另一名玩家或墓地（中心牌）</li>
+              <li><strong>白天阶段：</strong>先讨论，再投票给另一名玩家；不能投自己、弃权或投中心牌</li>
               <li><strong>结算：</strong>根据被处决者的身份判断胜负</li>
             </ol>
           </div>

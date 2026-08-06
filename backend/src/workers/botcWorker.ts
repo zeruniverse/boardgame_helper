@@ -2058,14 +2058,24 @@ export class BOTCWorker extends BaseGameWorker {
   /**
    * 处理提名
    */
-  private async handleNomination(playerId: string, data: { nomineeId: string }): Promise<void> {
+  private async handleNomination(
+    playerId: string,
+    data: { nomineeId?: unknown } | null | undefined
+  ): Promise<void> {
     if (this.gameState.phase !== GamePhase.DAY) {
       this.sendToPlayer(playerId, 'actionError', { message: '现在不是白天阶段' });
       return;
     }
 
+    if (typeof data?.nomineeId !== 'string' || !data.nomineeId) {
+      this.sendToPlayer(playerId, 'actionError', { message: '提名目标无效' });
+      return;
+    }
+
+    const nomineeId = data.nomineeId;
+
     const nominator = this.gamePlayers.get(playerId);
-    const nominee = this.gamePlayers.get(data.nomineeId);
+    const nominee = this.gamePlayers.get(nomineeId);
 
     if (!nominator || !nominee) {
       this.sendToPlayer(playerId, 'actionError', { message: '玩家不存在' });
@@ -2084,7 +2094,7 @@ export class BOTCWorker extends BaseGameWorker {
     }
 
     // 被提名者可以是死亡或存活，但每天只能被提名一次
-    const alreadyNominated = this.gameState.nominations.some(n => n.nominee === data.nomineeId);
+    const alreadyNominated = this.gameState.nominations.some(n => n.nominee === nomineeId);
     if (alreadyNominated) {
       this.sendToPlayer(playerId, 'actionError', { message: '该玩家今天已经被提名过' });
       return;
@@ -2104,7 +2114,7 @@ export class BOTCWorker extends BaseGameWorker {
       nominee.reminders.push('No ability');
       if (virginAbilityWorks && nominator.role?.team === Team.TOWNSFOLK) {
         // 提名者是镇民，Virgin能力成功触发
-        await this.executePlayer(playerId, data.nomineeId);
+        await this.executePlayer(playerId, nomineeId);
         this.sendToRoom('gameMessage', {
           message: `${this.getPlayerName(playerId)} 提名了处女，被立即处决！`,
           type: 'warning'
@@ -2144,7 +2154,7 @@ export class BOTCWorker extends BaseGameWorker {
     // 创建提名
     const nomination: Nomination = {
       nominator: playerId,
-      nominee: data.nomineeId,
+      nominee: nomineeId,
       votes: [],
       votesFor: 0,
       votesAgainst: 0,
@@ -2162,8 +2172,8 @@ export class BOTCWorker extends BaseGameWorker {
           name: this.getPlayerName(playerId)
         },
         nominee: {
-          id: data.nomineeId,
-          name: this.getPlayerName(data.nomineeId)
+          id: nomineeId,
+          name: this.getPlayerName(nomineeId)
         }
       }
     });
@@ -2216,7 +2226,10 @@ export class BOTCWorker extends BaseGameWorker {
   /**
    * 处理投票
    */
-  private async handleVote(playerId: string, data: { vote: 'for' | 'against' | 'abstain' }): Promise<void> {
+  private async handleVote(
+    playerId: string,
+    data: { vote?: unknown } | null | undefined
+  ): Promise<void> {
     const activeNomination = this.getActiveNomination();
     if (!activeNomination) {
       this.sendToPlayer(playerId, 'actionError', { message: '当前没有进行中的投票' });
@@ -2228,6 +2241,13 @@ export class BOTCWorker extends BaseGameWorker {
       this.sendToPlayer(playerId, 'actionError', { message: '玩家不存在' });
       return;
     }
+
+    if (data?.vote !== 'for' && data?.vote !== 'against' && data?.vote !== 'abstain') {
+      this.sendToPlayer(playerId, 'actionError', { message: '投票参数无效' });
+      return;
+    }
+
+    const voteValue = data.vote;
 
     // BOTC规则：存活玩家每天可对任意数量的提名投票；死亡玩家只有一次赞成票。
     if (voter.isDead && !voter.canVote) {
@@ -2244,21 +2264,21 @@ export class BOTCWorker extends BaseGameWorker {
     // 记录投票
     const vote: Vote = {
       playerId,
-      vote: data.vote,
+      vote: voteValue,
       timestamp: Date.now()
     };
 
     activeNomination.votes.push(vote);
     
-    if (data.vote === 'for') {
+    if (voteValue === 'for') {
       activeNomination.votesFor++;
-    } else if (data.vote === 'against') {
+    } else if (voteValue === 'against') {
       activeNomination.votesAgainst++;
     }
 
     if (!voter.isDead) {
       voter.votesUsed++;
-    } else if (data.vote === 'for') {
+    } else if (voteValue === 'for') {
       // 死亡玩家的遗言票只有在实际投赞成票时消耗；反对/弃权等同于未举手。
       voter.votesUsed++;
       voter.canVote = false;
@@ -2267,7 +2287,7 @@ export class BOTCWorker extends BaseGameWorker {
     this.sendToRoom('voteSubmitted', {
       playerId,
       playerName: this.getPlayerName(playerId),
-      vote: data.vote,
+      vote: voteValue,
       currentVotes: {
         for: activeNomination.votesFor,
         against: activeNomination.votesAgainst,
@@ -2281,7 +2301,7 @@ export class BOTCWorker extends BaseGameWorker {
     });
     
     if (activeNomination.votes.length >= eligibleVoters.length) {
-      this.endVoting(activeNomination);
+      await this.endVoting(activeNomination);
     }
   }
 

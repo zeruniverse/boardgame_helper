@@ -375,3 +375,30 @@ Commit: fix(round2): 修复离房竞态、BOTC状态泄漏与线下德州派彩
   - package-lock 工作区依赖树通过 npm ls --package-lock-only --all 校验；根目录不存在 src/，临时 node_modules 已清理。
   - 完整 npm run build 在当前容器未完成：依赖未安装，正式后端 tsc 因缺少 package.json 已声明的 express/socket.io/uuid/@types/node 等模块而中止，前端 vue-tsc/Vite 未进入执行阶段。依赖安装此前受当前依赖源无法取得 TypeScript 安装包限制；需在依赖可用的本地或 CI 环境执行 npm ci && npm run build 做最终生产构建确认。
 备注: 本轮优先处理跨游戏离房竞态/连接泄漏、BOTC 私密状态残留和德州扑克唯一赢家结算规则；所有后端修改均位于 backend/src/，所有前端修改均位于 frontend/src/，未删除文件，未创建根目录 src/。
+
+=== 本次请求第 4 轮修复记录 ===
+时间: 2026-08-06 15:23:15 UTC
+Commit: fix(round4): 拆分一夜狼人讨论投票并加固钟楼投票校验
+修改/新增文件:
+  - backend/src/workers/botcWorker.ts (175444 bytes)
+  - backend/src/workers/onuWerewolfWorker.ts (56148 bytes)
+  - frontend/src/components/Lobby.vue (61055 bytes)
+  - frontend/src/components/OnuWerewolfActionPanel.vue (44381 bytes)
+  - frontend/src/store/onuWerewolf.ts (28113 bytes)
+  - repair_log.txt
+删除文件: 无
+构建测试: 部分通过
+本轮修复:
+  - 一夜狼人将“讨论阶段”和“投票阶段”拆成两个真实的后端状态：天亮后先进入不可投票的讨论阶段，讨论计时结束或所有在线玩家选择跳过后才广播 onu_voting_started 并开放投票；修复讨论期间提前投票、断线玩家被自动投票及“跳过讨论”只改计时却未切阶段的问题。
+  - 一夜狼人前端 Store 与操作面板同步新的阶段事件和 canVote 状态，分别展示讨论/投票提示；新一轮讨论会重置本地跳过状态，组件卸载时清理 watcher，避免跨房间残留。
+  - 一夜狼人统一清洗行动、讨论和投票时长配置：null/0 保持不限时，负数、NaN 和非有限值回退默认值，秒数向下取整并限制为最多 3600 秒，同时兼容旧字段别名，避免异常配置创建超大或立即触发的定时器。
+  - 血染钟楼提名与投票入口增加空值安全和严格枚举校验；无效 nomineeId 或 vote 值不会写入投票状态、推进计票或消耗玩家投票资格，最后一票会等待结算完成后再回执。
+  - 大厅规则说明修正：阿尔法狼按规则与额外中心狼人牌交换非狼人玩家身份；皮匠在被处决时获胜；一夜狼人明确先讨论再投票，且不能自投、弃权或投中心牌。
+验证:
+  - backend/src 与 frontend/src 共 83 个源码文件完成静态复查；81 个 TypeScript/Vue script 单元完成语法和相对导入检查，无错误；根目录不存在 src/。
+  - 后端 33 个 TypeScript 源码在临时外部模块类型桩与真实 Node 类型定义下完成完整 strict 编译，并生成 33 个测试用 CommonJS 文件，无类型错误。
+  - 一夜狼人实际 Worker 集成测试通过：异常计时配置被规范化，天亮后 canVote=false，讨论中投票明确失败，投票阶段事件触发后投票成功。
+  - 血染钟楼实际 Worker 集成测试通过：畸形提名失败后仍可正常提名，畸形投票不会占用投票资格，同一玩家随后提交合法投票成功。
+  - package-lock 工作区依赖树通过 npm ls --package-lock-only --all 校验；git diff --check 通过。
+  - 完整 npm ci / npm run build 未在当前环境完成：内部依赖源对 typescript-5.8.3.tgz 返回 404，已清理临时 node_modules；前端正式 vue-tsc/Vite 生产构建仍需在依赖可用的本地或 CI 环境复验。
+备注: 本轮优先修复一夜狼人阶段规则/状态同步和血染钟楼畸形操作污染；所有后端源码修改均位于 backend/src/，所有前端源码修改均位于 frontend/src/，未删除文件，未创建根目录 src/。

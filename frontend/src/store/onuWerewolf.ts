@@ -424,21 +424,35 @@ export const useOnuWerewolfStore = defineStore('onuWerewolf', {
         }
       });
 
-      // onu_night_ended replaces onu_voting_started (C7 fix)
+      // 夜晚结束先进入讨论；投票由独立 onu_voting_started 事件开放。
       on('onu_night_ended', (data: any) => {
         applyIncomingGame(data);
         if (this.gameState) {
           this.gameState.status = OnuWerewolfGameStatus.VOTING;
-          this.gameState.currentPhase = data.message || '投票阶段';
+          this.gameState.currentPhase = data.gameInfo?.currentPhase || data.message || '讨论阶段';
           this.gameState.timeLeft = data.timeLeft || 0;
           this.updateTimer();
         }
         if (this.playerSecret) {
           this.playerSecret.canUseSkill = false;
-          this.playerSecret.canVote = true;
+          this.playerSecret.canVote = data.canVote === true;
         }
         this.skipDiscussionCount = 0;
         this.skipDiscussionTotal = this.room?.players.length || 0;
+      });
+
+      on('onu_voting_started', (data: any) => {
+        applyIncomingGame(data);
+        if (this.gameState) {
+          this.gameState.status = OnuWerewolfGameStatus.VOTING;
+          this.gameState.currentPhase = data.gameInfo?.currentPhase || data.message || '投票阶段';
+          this.gameState.timeLeft = data.timeLeft || 0;
+          this.updateTimer();
+        }
+        if (!this.playerSecret) this.playerSecret = {};
+        this.playerSecret.canUseSkill = false;
+        this.playerSecret.canVote = data.canVote !== false;
+        if (data.message) this.addSystemMessage(data.message);
       });
 
       // Role assignment notification (C4 fix)
@@ -634,13 +648,13 @@ export const useOnuWerewolfStore = defineStore('onuWerewolf', {
         applyIncomingGame(data);
         if (this.gameState) {
           this.gameState.status = OnuWerewolfGameStatus.VOTING;
-          this.gameState.currentPhase = data.message || '讨论投票阶段';
+          this.gameState.currentPhase = data.gameInfo?.currentPhase || data.message || '讨论阶段';
           this.gameState.timeLeft = data.timeLeft || 0;
           this.updateTimer();
         }
         if (this.playerSecret) {
           this.playerSecret.canUseSkill = false;
-          this.playerSecret.canVote = true;
+          this.playerSecret.canVote = data.canVote === true;
         }
       };
       on('onu_day_started', handleDayPhaseStarted);

@@ -62,6 +62,20 @@ interface GameTaskResponse {
 }
 
 const OFFLINE_TIMER_RETRY_MS = 1000;
+const MAX_PHASE_DURATION_SECONDS = 3600;
+
+function normalizePhaseDurationSeconds(value: unknown, fallback: number): number {
+  if (value === null) return 0;
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric < 0) return fallback;
+  return Math.min(MAX_PHASE_DURATION_SECONDS, Math.floor(numeric));
+}
+
+function getConfigValue(config: Record<string, unknown>, primaryKey: string, aliasKey: string): unknown {
+  if (Object.prototype.hasOwnProperty.call(config, primaryKey)) return config[primaryKey];
+  if (Object.prototype.hasOwnProperty.call(config, aliasKey)) return config[aliasKey];
+  return undefined;
+}
 
 class OnuWerewolfWorker extends BaseGameWorker {
   private config!: OnuWerewolfConfig;
@@ -71,6 +85,8 @@ class OnuWerewolfWorker extends BaseGameWorker {
   private currentSkillIndex = 0;
   private skillTimeout: NodeJS.Timeout | null = null;
   private nightQueuePausedForNoOnlinePlayers = false;
+  private discussionOpen = false;
+  private votingOpen = false;
 
   constructor() {
     super();
@@ -103,6 +119,7 @@ class OnuWerewolfWorker extends BaseGameWorker {
 
   async prepareRoom(room: Room, config: OnuWerewolfConfig): Promise<void> {
     this.room = room;
+    const rawConfig = (config || {}) as unknown as Record<string, unknown>;
     
     // 验证配置
     const validation = onuValidateGameConfig(config.roles);
@@ -114,9 +131,9 @@ class OnuWerewolfWorker extends BaseGameWorker {
       roles: config.roles,
       random: config.random !== false,
       loneWolf: config.loneWolf === true,
-      nightTime: config.nightTime ?? (config as any).actionTime ?? 300,
-      votingTime: config.votingTime ?? (config as any).voteTime ?? 300,
-      discussTime: config.discussTime ?? (config as any).discussionTime ?? 180,
+      nightTime: normalizePhaseDurationSeconds(getConfigValue(rawConfig, 'nightTime', 'actionTime'), 300),
+      votingTime: normalizePhaseDurationSeconds(getConfigValue(rawConfig, 'votingTime', 'voteTime'), 300),
+      discussTime: normalizePhaseDurationSeconds(getConfigValue(rawConfig, 'discussTime', 'discussionTime'), 180),
       autoRoles: config.autoRoles === true
     };
 
@@ -151,11 +168,21 @@ class OnuWerewolfWorker extends BaseGameWorker {
       }
     }
 
+    const rawConfig = (config || {}) as unknown as Record<string, unknown>;
+    const requestedNightTime = getConfigValue(rawConfig, 'nightTime', 'actionTime');
+    const requestedVotingTime = getConfigValue(rawConfig, 'votingTime', 'voteTime');
+    const requestedDiscussTime = getConfigValue(rawConfig, 'discussTime', 'discussionTime');
     const normalizedConfig = {
       ...config,
-      nightTime: config.nightTime ?? (config as any).actionTime ?? this.config.nightTime,
-      votingTime: config.votingTime ?? (config as any).voteTime ?? this.config.votingTime,
-      discussTime: config.discussTime ?? (config as any).discussionTime ?? this.config.discussTime,
+      nightTime: requestedNightTime === undefined
+        ? this.config.nightTime
+        : normalizePhaseDurationSeconds(requestedNightTime, this.config.nightTime),
+      votingTime: requestedVotingTime === undefined
+        ? this.config.votingTime
+        : normalizePhaseDurationSeconds(requestedVotingTime, this.config.votingTime),
+      discussTime: requestedDiscussTime === undefined
+        ? this.config.discussTime
+        : normalizePhaseDurationSeconds(requestedDiscussTime, this.config.discussTime),
       autoRoles: Array.isArray(config.roles) ? false : this.config.autoRoles
     };
 
@@ -226,7 +253,7 @@ class OnuWerewolfWorker extends BaseGameWorker {
       return;
     }
 
-    if (this.gameState.status !== OnuWerewolfGameStatus.VOTING) {
+    if (this.gameState.status !== OnuWerewolfGameStatus.VOTING || !this.votingOpen) {
       return;
     }
 
@@ -425,7 +452,7 @@ class OnuWerewolfWorker extends BaseGameWorker {
       result.skillUsed = player.skillUsed;
       result.skillData = player.skillData;
     } else if (this.gameState.status === OnuWerewolfGameStatus.VOTING) {
-      result.canVote = !player.voted;
+      result.canVote = this.votingOpen && !player.voted;
       result.myVote = player.lynchTarget;
     } else if (this.gameState.status === OnuWerewolfGameStatus.COMPLETED) {
       result.finalRole = player.actualRole;
@@ -543,6 +570,8 @@ class OnuWerewolfWorker extends BaseGameWorker {
   }
 
   private async startGame(): Promise<void> {
+    this.discussionOpen = false;
+    this.votingOpen = false;
     this.gameState.status = OnuWerewolfGameStatus.PREPARING;
     this.gameState.currentPhase = '分发角色';
 
@@ -1139,12 +1168,15 @@ class OnuWerewolfWorker extends BaseGameWorker {
     }
 
     this.gameState.status = OnuWerewolfGameStatus.VOTING;
-    this.gameState.currentPhase = '讨论投票阶段';
-    this.gameState.timeLeft = this.config.discussTime + this.config.votingTime;
+    this.discussionOpen = this.config.discussTime > 0;
+    this.votingOpen = false;
+    this.gameState.currentPhase = this.discussionOpen ? '讨论阶段' : '投票阶段';
+    this.gameState.timeLeft = this.discussionOpen ? this.config.discussTime : this.config.votingTime;
 
     const dayPhasePayload = {
-      message: '天亮了！开始讨论和投票',
+      message: this.discussionOpen ? '天亮了！开始讨论' : '天亮了！开始投票',
       timeLeft: this.gameState.timeLeft,
+      canVote: false,
       gameInfo: this.getGameInfo()
     };
 
@@ -1153,8 +1185,32 @@ class OnuWerewolfWorker extends BaseGameWorker {
     this.sendToRoom('onu_day_started', dayPhasePayload);
     this.sendToRoom('onu_discussion_started', dayPhasePayload);
 
-    // 设置投票阶段计时器
-    this.setTimer((this.config.discussTime + this.config.votingTime) * 1000, () => this.endVotingPhase());
+    if (this.discussionOpen) {
+      this.setTimer(this.config.discussTime * 1000, () => this.startVotingPhase());
+    } else {
+      this.startVotingPhase();
+    }
+  }
+
+  private startVotingPhase(): void {
+    if (this.gameState.status !== OnuWerewolfGameStatus.VOTING || this.votingOpen) {
+      return;
+    }
+
+    this.clearTimer();
+    this.discussionOpen = false;
+    this.votingOpen = true;
+    this.gameState.currentPhase = '投票阶段';
+    this.gameState.timeLeft = this.config.votingTime;
+
+    this.sendToRoom('onu_voting_started', {
+      message: '讨论结束，现在开始投票',
+      timeLeft: this.gameState.timeLeft,
+      canVote: true,
+      gameInfo: this.getGameInfo()
+    });
+
+    this.setTimer(this.config.votingTime * 1000, () => this.endVotingPhase());
     if (!this.gameTimer) {
       void this.autoVoteOfflinePlayersWithoutTimer();
     }
@@ -1248,8 +1304,8 @@ class OnuWerewolfWorker extends BaseGameWorker {
     const player = this.gameState.players[playerId];
     if (!player) throw new Error('玩家不存在');
 
-    if (this.gameState.status !== OnuWerewolfGameStatus.VOTING) {
-      throw new Error('现在不是投票阶段');
+    if (this.gameState.status !== OnuWerewolfGameStatus.VOTING || !this.votingOpen) {
+      throw new Error(this.discussionOpen ? '讨论尚未结束，暂时不能投票' : '现在不是投票阶段');
     }
 
     if (player.voted) {
@@ -1317,11 +1373,13 @@ class OnuWerewolfWorker extends BaseGameWorker {
   }
 
   private async endVotingPhase(): Promise<void> {
-    if (this.gameState.status !== OnuWerewolfGameStatus.VOTING) {
+    if (this.gameState.status !== OnuWerewolfGameStatus.VOTING || !this.votingOpen) {
       return;
     }
 
     this.clearTimer();
+    this.discussionOpen = false;
+    this.votingOpen = false;
 
     this.autoVotePendingPlayers(player => `${player.name} 未在投票截止前完成投票，系统自动完成其投票`);
 
@@ -1431,8 +1489,8 @@ class OnuWerewolfWorker extends BaseGameWorker {
   }
 
   private async handleSkipDiscussion(playerId: string): Promise<void> {
-    if (this.gameState.status !== OnuWerewolfGameStatus.VOTING) {
-      throw new Error('只能在讨论/投票阶段跳过讨论');
+    if (this.gameState.status !== OnuWerewolfGameStatus.VOTING || !this.discussionOpen) {
+      throw new Error('当前不在讨论阶段');
     }
 
     if (!this.gameState.players[playerId]) {
@@ -1457,12 +1515,10 @@ class OnuWerewolfWorker extends BaseGameWorker {
 
     // 如果所有玩家都同意跳过讨论，立即进入投票
     if (skipCount === totalPlayers) {
-      this.clearTimer();
       this.sendToRoom('onu_discussion_skipped', {
         message: '所有玩家都同意跳过讨论，现在开始投票！'
       });
-      // 重新设置只有投票时间的定时器
-      this.setTimer(this.config.votingTime * 1000, () => this.endVotingPhase());
+      this.startVotingPhase();
     }
   }
 
@@ -1568,6 +1624,8 @@ class OnuWerewolfWorker extends BaseGameWorker {
     }
     this.initializeGameState();
     this.nightQueuePausedForNoOnlinePlayers = false;
+    this.discussionOpen = false;
+    this.votingOpen = false;
     this.gameState.config = this.config;
     
     // 重置房间玩家状态
