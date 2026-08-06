@@ -184,6 +184,7 @@ function toClientRoom(room: Room): any {
     threadStatus: _threadStatus,
     lastActiveTime: _lastActiveTime,
     workerStateVersion: _workerStateVersion,
+    hostStateVersion: _hostStateVersion,
     ...safeRoom
   } = room;
   return {
@@ -277,6 +278,22 @@ function mergePlayerFromWorker(existing: Player | undefined, worker: Player): Pl
   };
 }
 
+function getHostStateVersion(room: Room): number {
+  const version = Number(room.hostStateVersion);
+  return Number.isSafeInteger(version) && version >= 0 ? version : 0;
+}
+
+/** Commit a controller-owned host transition and advance its dedicated revision. */
+function setRoomHost(room: Room, hostId: string): boolean {
+  if (room.hostId === hostId) {
+    return false;
+  }
+
+  room.hostId = hostId;
+  room.hostStateVersion = getHostStateVersion(room) + 1;
+  return true;
+}
+
 function getWorkerStateVersion(room: Room): number {
   const version = Number(room.workerStateVersion);
   return Number.isSafeInteger(version) && version >= 0 ? version : 0;
@@ -319,7 +336,12 @@ function shouldPreserveControllerOnlyPlayer(existingRoom: Room, workerRoom: Room
 }
 
 function mergeRoomUpdateFromWorker(existingRoom: Room | undefined, workerRoom: Room): Room {
-  if (!existingRoom) return workerRoom;
+  if (!existingRoom) {
+    return {
+      ...workerRoom,
+      hostStateVersion: Math.max(1, getHostStateVersion(workerRoom))
+    };
+  }
 
   // A lower revision is an out-of-date authoritative snapshot. Ignore it as a
   // whole rather than selectively merging stale chips/roles/config back into
@@ -343,6 +365,15 @@ function mergeRoomUpdateFromWorker(existingRoom: Room | undefined, workerRoom: R
   // revision is newer. Keep the controller host while that player still
   // exists; only accept the worker host when the current host was removed.
   const preserveControllerHost = incomingPlayerIds.has(existingRoom.hostId);
+  const workerHostExists = incomingPlayerIds.has(workerRoom.hostId);
+  const nextHostId = preserveControllerHost
+    ? existingRoom.hostId
+    : workerHostExists
+      ? workerRoom.hostId
+      : (mergedPlayers.find(player => player.online !== false)?.id || mergedPlayers[0]?.id || '');
+  const nextHostVersion = nextHostId !== existingRoom.hostId
+    ? getHostStateVersion(existingRoom) + 1
+    : getHostStateVersion(existingRoom);
 
   if (controllerOnlyPlayers.length > 0) {
     console.warn(
@@ -359,7 +390,8 @@ function mergeRoomUpdateFromWorker(existingRoom: Room | undefined, workerRoom: R
     threadId: existingRoom.threadId,
     threadStatus: existingRoom.threadStatus,
     // 房主转让由控制线程处理。旧 worker 快照只能在当前房主已被移除时覆盖 hostId。
-    hostId: preserveControllerHost ? existingRoom.hostId : workerRoom.hostId,
+    hostId: nextHostId,
+    hostStateVersion: nextHostVersion,
     private: existingRoom.private,
     cleanupTimer: existingRoom.cleanupTimer,
     gameMetadata: {
@@ -939,7 +971,7 @@ export function roomController(io: Server) {
     if (latestRoom.hostId === targetPlayer.id) {
       clearOfflineHostFailoverTimer(roomId);
       const nextHost = latestRoom.players.find(p => p.online) || latestRoom.players[0];
-      latestRoom.hostId = nextHost?.id || '';
+      setRoomHost(latestRoom, nextHost?.id || '');
       const pendingVote = hostKickVotes.get(roomId);
       if (pendingVote) {
         clearTimeout(pendingVote.timer);
@@ -1017,7 +1049,7 @@ export function roomController(io: Server) {
       return latestRoom;
     }
 
-    latestRoom.hostId = nextHost.id;
+    setRoomHost(latestRoom, nextHost.id);
     latestRoom.lastActiveTime = Math.max(Date.now(), Number(latestRoom.lastActiveTime || 0) + 1);
 
     const pendingVote = hostKickVotes.get(roomId);
@@ -1601,7 +1633,7 @@ export function roomController(io: Server) {
     }
 
     clearOfflineHostFailoverTimer(room.id);
-    room.hostId = newHost.id;
+    setRoomHost(room, newHost.id);
     room.lastActiveTime = Date.now();
 
     // 针对旧房主的踢出投票不能继承到新房主。
@@ -1779,6 +1811,7 @@ export function roomController(io: Server) {
           maxPlayers,
           players: [player],
           hostId: player.id,
+          hostStateVersion: 1,
           type: data.gameType as any,
           private: data.isPrivate || false,
           threadStatus: 'idle',
@@ -2422,7 +2455,7 @@ export function roomController(io: Server) {
         if (committedRoom.hostId === player.id) {
           clearOfflineHostFailoverTimer(committedRoom.id);
           const nextHost = committedRoom.players.find(p => p.online) || committedRoom.players[0];
-          committedRoom.hostId = nextHost?.id || '';
+          setRoomHost(committedRoom, nextHost?.id || '');
           const pendingVote = hostKickVotes.get(committedRoom.id);
           if (pendingVote) {
             clearTimeout(pendingVote.timer);

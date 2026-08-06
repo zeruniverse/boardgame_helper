@@ -483,3 +483,31 @@ Commit: fix(round11): 隔离异常Worker并修复重连回滚竞态
   - package-lock 工作区依赖树通过 npm ls --package-lock-only --all；git diff --check 通过；根目录不存在 src/。
   - 当前容器内完整 npm run build 未完成：此前失败安装留下的 node_modules 仅包含部分/空依赖目录，正式后端 tsc 因缺少 body-parser、express、node、uuid 等声明文件中止，前端构建未进入执行。源码已通过上述 strict 编译、静态检查和六游戏 Worker 运行测试；仍需在依赖完整的本地或 CI 环境执行 npm ci && npm run build 做最终生产构建确认。
 备注: 本轮优先修复跨六个游戏共用的 Worker 超时/停止一致性与重连座位回滚竞态；未修改 frontend/src/ 文件，未删除文件，未创建根目录 src/。
+
+=== 本次请求第 12 轮修复记录 ===
+时间: 2026-08-06 17:35:57 UTC
+Commit: fix(round12): 防止房主转让回滚并加固德州重连开局
+修改/新增文件:
+  - backend/src/controllers/roomController.ts
+  - backend/src/models/Room.ts
+  - backend/src/workers/baseGameWorker.ts
+  - backend/src/workers/texasHoldemWorker.ts
+  - repair_log.txt
+删除文件: 无
+构建测试: 部分通过
+本轮修复:
+  - 为 Room 增加仅限后端使用的 hostStateVersion，并在客户端房间序列化时剔除；房间创建、主动转让、离线房主接替、离房及踢人后的所有 Controller 房主变更统一递增独立版本。
+  - BaseGameWorker.syncRoom 不再仅凭 workerStateVersion 接受 hostId。排队中的旧 update_room_data 即使携带更高的游戏状态版本，也只有在 hostStateVersion 真正前进时才能替换仍在房间内的当前房主，修复新房主在 Controller 已生效、Worker 却被旧快照恢复为旧房主后无法开局/配置的竞态。
+  - Controller 合并 Worker room_update 时为已移除房主选择仍存在的 Worker 房主或在线候选人，并同步推进 hostStateVersion；当前房主仍在成员列表时继续保持 Controller 所有权，避免游戏状态更新倒灌房主。
+  - 德州扑克玩家重连后新增权威 room_update 广播；除给重连者发送私有牌局状态外，桌内其他客户端也会立即看到该席位重新在线并恢复下一手参局资格。
+  - 德州扑克开局改为先验证有效参与者和牌组容量，再清空/切换牌局状态、扣盲和发牌；异常前置条件不会留下 stage=playing 的半开局状态，手动开局失败会向 acknowledgement 返回明确错误，自动开局也不会误发“已开始”。
+验证:
+  - 后端 33 个 TypeScript 源码在临时外部模块类型桩与真实 Node 类型定义下完成完整 strict 编译，并生成测试用 CommonJS 文件，无类型错误。
+  - 房主版本实际 Worker 回归测试通过：先提交新房主版本，再提交携带更高 workerStateVersion 的旧房主快照，新房主仍可成功开始德州扑克；同一测试在本轮修改前的基线源码上稳定失败并返回“只有房主可以开始游戏”。
+  - Controller 房主合并专项测试通过：旧房主快照不能回滚转让；当前房主被 Worker 移除后会选择有效新房主并递增版本；相同房主不会重复递增；hostStateVersion/workerStateVersion 均不会泄漏给客户端。
+  - 德州扑克实际 Worker 专项测试通过：离线后重连会发布新的权威 room_update 并恢复 inGame/socket；27 人异常牌组容量场景开局明确失败且不发送 game_started，正常两人开局仍成功。
+  - 六个实际游戏 Worker 的 prepare_room 烟雾测试全部通过：狼人杀、杀人游戏、血染钟楼、一夜狼人、阿瓦隆、德州扑克均能加载当前编译源码并成功初始化。
+  - backend/src 与 frontend/src 共 82 个 TypeScript/Vue/CSS 源码文件完成静态复查；81 个 TypeScript/Vue script 单元、27 个 Vue SFC 块配对、CSS 花括号及 211 个相对/@ 导入路径检查通过；根目录不存在 src/。
+  - package-lock 工作区依赖树通过 npm ls --package-lock-only --all；git diff --check 通过。
+  - 完整 npm ci / npm run build 未在当前环境完成：内部依赖源仍对 typescript-5.8.3.tgz 返回 404，安装阶段即中止，因此正式 vue-tsc/Vite 生产构建仍需在依赖可用的本地或 CI 环境复验。源码已通过上述 strict 编译、静态检查和实际 Worker 测试。
+备注: 本轮优先修复跨六个游戏共用的 Controller-Worker 房主回滚竞态，以及德州扑克重连可见性和半开局原子性；未修改 frontend/src/ 文件，未删除文件，未创建根目录 src/。

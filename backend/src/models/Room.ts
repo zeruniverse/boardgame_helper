@@ -24,6 +24,17 @@ export interface Room {
    * This is an internal synchronization field and is stripped from clients.
    */
   workerStateVersion?: number;
+  /**
+   * Controller-owned host revision.
+   *
+   * Host changes are handled in the controller, while game tasks and
+   * update_room_data snapshots are processed asynchronously by a Worker.  A
+   * snapshot captured before a transfer can therefore arrive after the new
+   * host was committed and otherwise restore the old host inside the Worker.
+   * This revision lets both sides distinguish a real host transition from a
+   * delayed snapshot.  It is internal state and is stripped from clients.
+   */
+  hostStateVersion?: number;
   gameMetadata?: any; // 游戏相关的元数据，如自动开始等
   cleanupTimer?: NodeJS.Timeout; // 用于清理空房间的定时器
 }

@@ -221,6 +221,34 @@ export abstract class BaseGameWorker {
       }];
     });
 
+    const normalizeHostVersion = (value: unknown): number => {
+      const version = Number(value);
+      return Number.isSafeInteger(version) && version >= 0 ? version : 0;
+    };
+    const currentHostVersion = normalizeHostVersion(currentRoom.hostStateVersion);
+    const incomingHostVersion = normalizeHostVersion(room.hostStateVersion);
+    const mergedPlayerIds = new Set(mergedPlayers.map(player => player.id));
+    const currentHostStillExists = mergedPlayerIds.has(currentRoom.hostId);
+    const incomingHostExists = mergedPlayerIds.has(room.hostId);
+
+    // Host ownership belongs to the controller.  Worker game revisions cannot
+    // order controller-only changes: a queued old update_room_data may carry a
+    // newer workerStateVersion yet still contain the previous host.  Accept a
+    // host replacement only when its dedicated controller revision advances.
+    // The fallback covers a Worker-initiated member removal before the
+    // controller has echoed its newly selected host revision back.
+    let nextHostId = currentRoom.hostId;
+    let nextHostVersion = currentHostVersion;
+    if (incomingHostVersion > currentHostVersion && incomingHostExists) {
+      nextHostId = room.hostId;
+      nextHostVersion = incomingHostVersion;
+    } else if (!currentHostStillExists) {
+      nextHostId = incomingHostExists
+        ? room.hostId
+        : (mergedPlayers.find(player => player.online !== false)?.id || mergedPlayers[0]?.id || '');
+      nextHostVersion = Math.max(currentHostVersion, incomingHostVersion);
+    }
+
     this.room = {
       ...currentRoom,
       // Controller-owned or immutable room fields.
@@ -228,7 +256,8 @@ export abstract class BaseGameWorker {
       name: room.name || currentRoom.name,
       type: room.type || currentRoom.type,
       private: room.private === true,
-      hostId: room.hostId,
+      hostId: nextHostId,
+      hostStateVersion: nextHostVersion,
       threadId: room.threadId,
       threadStatus: room.threadStatus,
       lastActiveTime: Math.max(

@@ -275,6 +275,12 @@ class TexasHoldemWorker extends BaseGameWorker {
         });
       }
 
+      // The private state sync below only reaches the reconnecting socket.  Publish
+      // the restored seat eligibility as an authoritative room update as well,
+      // so every table client immediately sees this player online and eligible
+      // for the next hand.
+      this.sendToRoom('room_update', this.room);
+
       // 同步游戏状态
       this.syncGameStateToPlayer(player.socketId, playerId);
     }
@@ -892,9 +898,31 @@ class TexasHoldemWorker extends BaseGameWorker {
   }
 
   // 开始游戏
-  private startGame() {
+  private startGame(): { success: true } | { success: false; error: string } {
     this.clearAutoStartTimer();
     const gs = this.gameState as TexasHoldemGameState;
+
+    // Validate every start precondition before touching the previous idle hand
+    // state.  The manual and auto-start paths both populate participants before
+    // entering this method; an unexpected room update must not leave the table
+    // stuck in stage=playing with no actionable players.
+    const participatingPlayers = this.room.players.filter(p => this.participants.includes(p.id));
+    if (participatingPlayers.length < 2) {
+      const error = '参与游戏的玩家不足，无法开始';
+      this.participants = [];
+      this.sendToRoom('chat_broadcast', { message: error });
+      return { success: false, error };
+    }
+
+    const preparedDeck = this.config.allowSystemDealing ? shuffleDeck(createDeck()) : [];
+    const totalCardsNeeded = participatingPlayers.length * 2;
+    if (this.config.allowSystemDealing && preparedDeck.length < totalCardsNeeded) {
+      const error = '牌组不足，无法发牌';
+      this.participants = [];
+      this.sendToRoom('chat_broadcast', { message: error, type: 'system' });
+      return { success: false, error };
+    }
+
     // 重置游戏状态
     gs.communityCards = [];
     gs.pot = 0;
@@ -912,24 +940,11 @@ class TexasHoldemWorker extends BaseGameWorker {
     gs.stage = 'playing';
     gs.winners = [];
 
-    // 获取参与游戏的玩家列表
-    const participatingPlayers = this.room.players.filter(p => this.participants.includes(p.id));
-
-    if (participatingPlayers.length < 2) {
-      this.sendToRoom('chat_broadcast', { message: '参与游戏的玩家不足，无法开始' });
-      return;
-    }
-
     const dealtHands: Array<{ playerId: string; hand: string[] }> = [];
 
     // 如果允许系统发牌，洗牌并发牌；否则不发牌
     if (this.config.allowSystemDealing) {
-      gs.deck = shuffleDeck(createDeck());
-      const totalCardsNeeded = participatingPlayers.length * 2;
-      if (gs.deck.length < totalCardsNeeded) {
-        this.sendToRoom('chat_broadcast', { message: '牌组不足，无法发牌', type: 'system' });
-        return;
-      }
+      gs.deck = preparedDeck;
       participatingPlayers.forEach(p => {
         const card1 = gs.deck.pop()!;
         const card2 = gs.deck.pop()!;
@@ -999,6 +1014,7 @@ class TexasHoldemWorker extends BaseGameWorker {
       this.sendToPlayer(playerId, 'deal_hand', { hand });
     });
     this.requestActionForCurrentTurn();
+    return { success: true };
   }
 
   private handleStartGame(playerId: string, data: any) {
@@ -1038,8 +1054,12 @@ class TexasHoldemWorker extends BaseGameWorker {
       return;
     }
 
+    const startResult = this.startGame();
+    if (!startResult.success) {
+      this.sendToPlayer(playerId, 'error', { message: startResult.error });
+      return;
+    }
     this.sendToRoom('chat_broadcast', { message: '游戏已开始' });
-    this.startGame();
   }
 
   private clearActionTimer() {
@@ -1331,8 +1351,10 @@ class TexasHoldemWorker extends BaseGameWorker {
       this.participants = eligiblePlayers.map(p => p.id);
       this.room.lastActiveTime = Date.now();
 
-      this.sendToRoom('chat_broadcast', { message: '自动开始新一局游戏', type: 'system' });
-      this.startGame();
+      const startResult = this.startGame();
+      if (startResult.success) {
+        this.sendToRoom('chat_broadcast', { message: '自动开始新一局游戏', type: 'system' });
+      }
     }
   }
 
