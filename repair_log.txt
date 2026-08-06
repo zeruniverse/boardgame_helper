@@ -431,3 +431,31 @@ Commit: fix(round7): 修复离线重连卡死并校正一夜狼人讨论流程
   - package-lock工作区依赖树通过 npm ls --package-lock-only --all；git diff --check通过；根目录不存在src/。
   - 完整 npm ci / npm run build 未在当前环境完成：内部依赖源对 typescript-5.8.3.tgz 返回404；临时改用已收录的TypeScript版本探测时又对 yn-3.1.1.tgz 返回404。正式vue-tsc/Vite生产构建仍需在依赖可用的本地或CI环境执行。源码已通过上述strict编译、前端静态校验和六游戏Worker运行测试。
 备注: 本轮未修改frontend/src/文件；所有后端源码修改均位于backend/src/，未删除文件，未创建根目录src/。
+
+=== 本次请求第 10 轮修复记录 ===
+时间: 2026-08-06 16:38:17 UTC
+Commit: fix(round10): 修复房间容量同步、Worker回执一致性与直接部署
+修改/新增文件:
+  - backend/src/controllers/roomController.ts (121508 bytes)
+  - backend/src/server.ts (4276 bytes)
+  - backend/src/services/RoomThreadManager.ts (22597 bytes)
+  - frontend/src/components/Lobby.vue (59282 bytes)
+  - frontend/src/store/index.ts (6449 bytes)
+  - repair_log.txt
+删除文件: 无
+构建测试: 部分通过
+本轮修复:
+  - 大厅房间人数改为与后端容量校验一致的“已占用座位数”，另行返回在线人数；离线保留座位不再被误显示为空位。前端对新加入同时校验锁房与满员，持有原房间会话的玩家仍可在满员或锁房时重连。
+  - 移除 Lobby 中与 MainStore 重复的 connect/room_joined 监听器，并删除 getLobbyData 每次调用创建的 100ms 轮询定时器；首连、重连、路由跳转统一由 Store 的单一监听链处理，避免重复请求、重复跳转和短生命周期定时器堆积。
+  - RoomThreadManager 支持异步 Controller 事件处理，并在 room_update/私有事件落地失败时拒绝该房间全部待处理任务；Controller 不再吞掉异常，避免 Worker 随后的成功 task_response 让客户端误以为操作已提交、实际权威状态却仍是旧值。
+  - 离线房主自动接替改为每房间唯一、可替换、可清理的定时器；房主重连、主动转让、离房、被踢、房间删除、重置或关闭时均清理旧定时器，避免多个过期回调竞态接管新房主。
+  - 杀人游戏建房人数范围由 8-16 修正为后端支持的 6-20，狼人杀由 6-16 修正为 6-18；重复人数选项改为共享数组循环渲染，帮助文案同步当前自动角色配置逻辑。
+  - 后端启动时检测 frontend/dist：存在时直接托管静态资源并提供 SPA 回退，不存在时保留原 API 状态页；根目录完成 npm run build 后可由 npm start 使用同一进程直接部署前后端。
+验证:
+  - 后端 33 个 TypeScript 源码在临时外部模块类型桩与真实 Node 类型定义下完成完整 strict 编译，无类型错误。
+  - 六个实际游戏 Worker 的 prepare_room 烟雾测试全部通过：德州扑克、狼人杀、杀人游戏、一夜狼人、阿瓦隆、血染钟楼均可初始化并返回预期事件。
+  - RoomThreadManager 注入 Controller 落地异常的专项测试通过：prepare_room 不再错误返回成功，待处理任务被拒绝，失败 Worker 被停止并移除。
+  - 前端 21 个 TypeScript 文件与 27 个 Vue SFC（27 个 script 块）完成 TypeScript/SFC 语法检查；前后端合计 81 个脚本单元、211 个相对或 @ 导入路径检查通过。
+  - package-lock 工作区依赖树通过 npm ls --package-lock-only --all；差异空白检查通过；根目录不存在 src/，所有源码修改均位于 backend/src/ 或 frontend/src/。
+  - 当前容器内完整 npm run build 未完成：依赖安装使用的内部源无法取得 TypeScript 5.8.3，失败安装仅留下空的依赖目录，正式 tsc 因缺失声明文件中止，前端 vue-tsc/Vite 未进入执行。临时依赖目录与生成的 backend/dist 已清理；需在依赖可用的本地或 CI 环境执行 npm ci && npm run build 做最终生产构建确认。
+备注: 本轮优先修复跨六个游戏共用的容量/回执/房主接替状态一致性，以及大厅重复监听与直接部署路径；未删除文件，未创建根目录 src/。

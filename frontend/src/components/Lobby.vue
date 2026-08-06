@@ -13,7 +13,13 @@
         <el-col v-for="room in rooms" :key="room.id" :xs="24" :sm="24" :md="8">
           <el-card class="room-card app-panel">
             <h3>{{ room.name }}</h3>
-            <p>人数: {{ room.playerCount }} / {{ room.maxPlayers }}{{ room.locked ? ' 🔒' : '' }}</p>
+            <p>
+              人数: {{ room.playerCount }} / {{ room.maxPlayers }}
+              <span v-if="room.onlinePlayerCount !== undefined && room.onlinePlayerCount !== room.playerCount">
+                （{{ room.onlinePlayerCount }} 在线）
+              </span>
+              {{ room.locked ? ' 🔒' : '' }}
+            </p>
             <p>类型: {{ room.displayName }}</p>
             <el-button :type="canEnterRoom(room) ? 'primary' : 'info'" :disabled="!canEnterRoom(room)" @click="enter(room.id)">
               {{ getRoomActionText(room) }}
@@ -161,7 +167,7 @@
 
           <div class="game-help-section">
             <h4>🔫 杀人游戏 (Mafia)</h4>
-            <p><strong>人数：</strong>8-16人</p>
+            <p><strong>人数：</strong>6-20人</p>
             <p><strong>游戏目标：</strong>杀手消灭所有好人，或好人找出所有杀手。</p>
             <p><strong>角色介绍：</strong></p>
             <ul>
@@ -176,19 +182,12 @@
               <li><strong>投票阶段：</strong>投票处决一名玩家</li>
               <li>重复直到一方获胜</li>
             </ol>
-            <p><strong>人数配置：</strong></p>
-            <ul>
-              <li>8人：2杀手，2警察，4平民</li>
-              <li>9人：2杀手，2警察，5平民</li>
-              <li>10人：2杀手，2警察，6平民</li>
-              <li>11人：3杀手，3警察，5平民</li>
-              <li>12人：3杀手，3警察，6平民</li>
-            </ul>
+            <p><strong>人数配置：</strong>系统会按实际开局人数自动配置杀手、警察、医生、狙击手和平民；房主也可在房间内调整允许的角色数量。</p>
           </div>
 
           <div class="game-help-section">
             <h4>🐺 狼人杀 (Werewolf)</h4>
-            <p><strong>人数：</strong>6-16人</p>
+            <p><strong>人数：</strong>6-18人</p>
             <p><strong>游戏目标：</strong>狼人消灭所有村民，或村民找出所有狼人。</p>
             <p><strong>角色介绍：</strong></p>
             <ul>
@@ -622,15 +621,12 @@
               <el-divider content-position="left">杀人游戏设置</el-divider>
               <el-form-item label="最大人数">
                 <el-select v-model="createRoomForm.maxPlayers" placeholder="选择最大人数">
-                  <el-option label="8人" :value="8" />
-                  <el-option label="9人" :value="9" />
-                  <el-option label="10人" :value="10" />
-                  <el-option label="11人" :value="11" />
-                  <el-option label="12人" :value="12" />
-                  <el-option label="13人" :value="13" />
-                  <el-option label="14人" :value="14" />
-                  <el-option label="15人" :value="15" />
-                  <el-option label="16人" :value="16" />
+                  <el-option
+                    v-for="count in mafiaPlayerOptions"
+                    :key="count"
+                    :label="`${count}人`"
+                    :value="count"
+                  />
                 </el-select>
               </el-form-item>
               <el-form-item label="发言时间">
@@ -656,17 +652,12 @@
               <el-divider content-position="left">狼人杀设置</el-divider>
               <el-form-item label="最大人数">
                 <el-select v-model="createRoomForm.maxPlayers" placeholder="选择最大人数">
-                  <el-option label="6人" :value="6" />
-                  <el-option label="7人" :value="7" />
-                  <el-option label="8人" :value="8" />
-                  <el-option label="9人" :value="9" />
-                  <el-option label="10人" :value="10" />
-                  <el-option label="11人" :value="11" />
-                  <el-option label="12人" :value="12" />
-                  <el-option label="13人" :value="13" />
-                  <el-option label="14人" :value="14" />
-                  <el-option label="15人" :value="15" />
-                  <el-option label="16人" :value="16" />
+                  <el-option
+                    v-for="count in werewolfPlayerOptions"
+                    :key="count"
+                    :label="`${count}人`"
+                    :value="count"
+                  />
                 </el-select>
               </el-form-item>
               <el-form-item label="发言时间">
@@ -807,14 +798,15 @@
 </template>
 
 <script lang="ts" setup>
-import { onMounted, onUnmounted, ref } from 'vue';
+import { onMounted, ref } from 'vue';
 import { useMainStore, useTexasHoldemStore } from '../store';
+import type { RoomInfo } from '../store';
 import { storeToRefs } from 'pinia';
 import { useRoute, useRouter } from 'vue-router';
 import { ElMessage } from 'element-plus';
 import { SOCKET_URL } from '../config';
-import { GAME_META, GAME_ROUTES } from '../utils/gameMeta';
-import { ensureGameSession, getStoredSessionToken, hasStoredRoomSession, rememberGameSession } from '../utils/gameSession';
+import { GAME_META } from '../utils/gameMeta';
+import { ensureGameSession, getStoredSessionToken, hasStoredRoomSession } from '../utils/gameSession';
 
 const store = useMainStore();
 const { rooms } = storeToRefs(store);
@@ -855,8 +847,9 @@ const createRoomForm = ref({
 });
 const createRoomStep = ref(0);
 const creatingRoom = ref(false);
+const mafiaPlayerOptions = Array.from({ length: 15 }, (_, index) => index + 6);
+const werewolfPlayerOptions = Array.from({ length: 13 }, (_, index) => index + 6);
 
-const gameRoutes = GAME_ROUTES;
 
 function ensureLocalSession(gameType: string, nickname: string, roomId?: string) {
   return ensureGameSession(gameType, nickname, roomId);
@@ -871,7 +864,7 @@ interface StoredRoomSession {
   sessionToken?: string;
 }
 
-function hasReconnectSession(room: any): boolean {
+function hasReconnectSession(room: RoomInfo): boolean {
   return Boolean(room?.type && hasStoredRoomSession(room.type, room.id));
 }
 
@@ -897,19 +890,19 @@ function findStoredSessionForHiddenRoom(roomId: string, nickname: string): Store
   return undefined;
 }
 
-function canEnterRoom(room: any): boolean {
-  // 锁房后只允许持有该房间会话令牌的原座位重连。
-  return Boolean(room?.id) && (!room.locked || hasReconnectSession(room));
+function canEnterRoom(room: RoomInfo): boolean {
+  if (!room?.id) return false;
+  // 原座位重连不受锁房或满员限制；新玩家必须同时满足未锁且有空位。
+  if (hasReconnectSession(room)) return true;
+  return room.locked !== true && room.playerCount < room.maxPlayers;
 }
 
-function getRoomActionText(room: any): string {
-  if (!room?.locked) return '进入';
-  return hasReconnectSession(room) ? '重连' : '已锁定';
+function getRoomActionText(room: RoomInfo): string {
+  if (hasReconnectSession(room)) return '重连';
+  if (room.locked) return '已锁定';
+  if (room.playerCount >= room.maxPlayers) return '已满';
+  return '进入';
 }
-
-// Bug L1+L2: 使用作用域变量存储处理器引用，便于在onUnmounted中清理
-let handleConnect: (() => void) | null = null;
-let handleRoomJoined: ((data: { room: any; player: any; isHost: boolean; sessionToken?: string }) => void) | null = null;
 
 onMounted(() => {
   // 确保socket已初始化
@@ -917,31 +910,8 @@ onMounted(() => {
     store.initSocket();
   }
   
-  // Bug L1: 立即请求大厅数据（如果未连接，socket.io会自动排队）
+  // 已连接时立即刷新；仍在连接时由 MainStore 的唯一 connect 监听器统一刷新。
   store.getLobbyData();
-  
-  // Bug L1: 监听连接成功事件，重连后自动刷新大厅数据
-  handleConnect = () => {
-    store.getLobbyData();
-  };
-  store.socket?.on('connect', handleConnect);
-
-  // Bug L2: 监听房间创建/加入成功事件，注册到作用域变量以便清理
-  handleRoomJoined = (data: { room: any; player: any; isHost: boolean; sessionToken?: string }) => {
-    console.log('大厅收到room_joined事件', data);
-    
-    rememberGameSession(data.room, data.player, data.sessionToken);
-    ensureLocalPlayer(data.room.type, data.player?.nickname || data.player?.name || '', data.room.id);
-    const routeName = gameRoutes[data.room.type];
-    if (routeName) {
-      router.push({ name: routeName, params: { id: data.room.id } });
-    } else {
-      console.warn('未知的游戏类型:', data.room.type);
-    }
-  };
-  if (store.socket) {
-    store.socket.on('room_joined', handleRoomJoined);
-  }
 
   // 兼容旧房间链接以及路由守卫转回大厅的直接房间链接。
   // 保留房间号并打开加入对话框，否则 redirect/room 查询参数会被静默丢弃。
@@ -966,15 +936,6 @@ onMounted(() => {
   }
 });
 
-onUnmounted(() => {
-  // Bug L2: 清理所有socket事件监听器，防止重复注册和内存泄漏
-  if (handleConnect) {
-    store.socket?.off('connect', handleConnect);
-  }
-  if (handleRoomJoined) {
-    store.socket?.off('room_joined', handleRoomJoined);
-  }
-});
 
 function enter(roomId: string) {
   const nickname = prompt('请输入昵称');

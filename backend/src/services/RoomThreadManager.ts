@@ -29,10 +29,10 @@ export class RoomThreadManager {
   private startingPromises: Map<string, Promise<Room | null>> = new Map();
   private stoppingPromises: Map<string, Promise<boolean>> = new Map();
   private cleanupInterval: NodeJS.Timeout | null;
-  private onMessage?: (data: any) => void;
+  private onMessage?: (data: any) => void | Promise<void>;
   private shuttingDown = false;
 
-  constructor(eventHandler?: (data: any) => void) {
+  constructor(eventHandler?: (data: any) => void | Promise<void>) {
     this.onMessage = eventHandler;
 
     // 定期检查并清理空闲线程。控制层会负责按房间保留时间删除离线房间；
@@ -216,6 +216,15 @@ export class RoomThreadManager {
           }
         }).catch(error => {
           console.error(`房间 ${room.id} 处理Worker消息时出错:`, error);
+          const cause = error instanceof Error ? error : new Error(String(error));
+          // Worker 通常会先发送 room_update/私有事件，再发送 task_response。若控制层
+          // 应用事件失败却仍解析后续成功响应，调用方会收到“成功”，而权威房间状态仍是旧值。
+          // 事件没有稳定的 taskId 可用于精确归因，因此拒绝该房间当前所有待处理任务，
+          // 让客户端明确重试，而不是在 Worker/Controller 已经分叉时继续提交新操作。
+          this.rejectPendingTasksForRoom(
+            room.id,
+            new Error(`房间 ${room.id} Worker事件处理失败: ${cause.message}`)
+          );
         });
       });
 

@@ -13,12 +13,13 @@ export { useTexasHoldemStore } from './texas_holdem';
 export { useAvalonStore } from './avalon';
 export { useBOTCGameStore } from './botc';
 
-interface RoomInfo {
+export interface RoomInfo {
   id: string;
   name: string;
   type: string;
   displayName: string;
   playerCount: number;
+  onlinePlayerCount?: number;
   maxPlayers: number;
   private: boolean;
   locked?: boolean;
@@ -176,19 +177,11 @@ export const useMainStore = defineStore('main', {
 
     // 获取大厅数据
     getLobbyData() {
-      if (this.socket && this.connected) {
+      if (this.socket?.connected) {
         this.socket.emit('get_lobby');
-      } else if (this.socket && !this.connected) {
-        // Bug S3: 未连接时等待连接后自动发送
-        const checkInterval = setInterval(() => {
-          if (this.connected) {
-            this.socket?.emit('get_lobby');
-            clearInterval(checkInterval);
-          }
-        }, 100);
-        // 5秒后超时清理
-        setTimeout(() => clearInterval(checkInterval), 5000);
       }
+      // 正在连接时不再为每次调用创建轮询定时器；initSocket 的 connect 监听器
+      // 会统一获取大厅数据，避免首连时重复发送 get_lobby 和遗留短生命周期定时器。
     }
   }
 });

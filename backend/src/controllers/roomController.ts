@@ -23,7 +23,14 @@ interface HostKickVoteData {
   resolving: boolean;
 }
 
+interface OfflineHostFailoverTimerData {
+  timer: NodeJS.Timeout;
+  hostId: string;
+  offlineAt: number;
+}
+
 const hostKickVotes: Map<string, HostKickVoteData> = new Map();
+const offlineHostFailoverTimers: Map<string, OfflineHostFailoverTimerData> = new Map();
 
 // 房主临时断线时保留一个很短的重连窗口；超过该时间仍离线，则把房主交给
 // 当前在线玩家，避免锁房、开局、重开和配置入口永久卡在离线房主手中。
@@ -141,7 +148,10 @@ function getPublicRooms() {
       name: room.name,
       type: room.type,
       displayName: config.games[room.type]?.displayName || room.type,
-      playerCount: room.players.filter(p => p.online).length,
+      // 离线座位在重连保留窗口内仍占用容量；大厅必须按总座位数判断
+      // 是否已满，同时单独展示在线人数，避免显示“有空位”但加入必然被后端拒绝。
+      playerCount: room.players.length,
+      onlinePlayerCount: room.players.filter(p => p.online).length,
       maxPlayers: room.maxPlayers,
       private: room.private === true,
       locked: room.locked === true
@@ -657,6 +667,11 @@ export function roomController(io: Server) {
     for (const voteData of hostKickVotes.values()) {
       clearTimeout(voteData.timer);
     }
+
+    for (const failoverData of offlineHostFailoverTimers.values()) {
+      clearTimeout(failoverData.timer);
+    }
+    offlineHostFailoverTimers.clear();
   }
 
   // 重置服务器函数
@@ -856,6 +871,9 @@ export function roomController(io: Server) {
       }
     } catch (error) {
       console.error('处理线程消息失败:', error);
+      // 让 RoomThreadManager 感知事件落地失败。否则同一消息队列中紧随其后的
+      // task_response 仍会被解析为成功，造成 Worker 与 Controller 状态悄然分叉。
+      throw error;
     }
   }
 
@@ -919,6 +937,7 @@ export function roomController(io: Server) {
     clearPlayerSessionToken(latestRoom.id, targetPlayer.id);
 
     if (latestRoom.hostId === targetPlayer.id) {
+      clearOfflineHostFailoverTimer(roomId);
       const nextHost = latestRoom.players.find(p => p.online) || latestRoom.players[0];
       latestRoom.hostId = nextHost?.id || '';
       const pendingVote = hostKickVotes.get(roomId);
@@ -967,12 +986,22 @@ export function roomController(io: Server) {
     return committedRoom;
   }
 
+  function clearOfflineHostFailoverTimer(roomId: string): void {
+    const pending = offlineHostFailoverTimers.get(roomId);
+    if (!pending) return;
+
+    clearTimeout(pending.timer);
+    offlineHostFailoverTimers.delete(roomId);
+  }
+
   async function reassignOfflineHost(
     roomId: string,
     expectedHostId: string,
     expectedOfflineAt: number,
     reason: 'disconnect' | 'leave'
   ): Promise<Room | undefined> {
+    clearOfflineHostFailoverTimer(roomId);
+
     const latestRoom = rooms.get(roomId);
     if (!latestRoom || latestRoom.hostId !== expectedHostId) {
       return latestRoom;
@@ -1023,17 +1052,31 @@ export function roomController(io: Server) {
   function scheduleOfflineHostFailoverIfNeeded(room: Room): void {
     const host = room.players.find(player => player.id === room.hostId);
     if (!host || host.online !== false || !room.players.some(player => player.id !== host.id && player.online)) {
+      clearOfflineHostFailoverTimer(room.id);
       return;
     }
 
     const offlineAt = Number(host.lastHeartbeat || 0);
+    const existing = offlineHostFailoverTimers.get(room.id);
+    if (existing && existing.hostId === host.id && existing.offlineAt === offlineAt) {
+      return;
+    }
+    clearOfflineHostFailoverTimer(room.id);
+
     const elapsed = Math.max(0, Date.now() - offlineAt);
     const delay = Math.max(0, HOST_DISCONNECT_FAILOVER_GRACE_MS - elapsed);
-    setTimeout(() => {
+    const timer = setTimeout(() => {
+      const pending = offlineHostFailoverTimers.get(room.id);
+      if (!pending || pending.timer !== timer) {
+        return;
+      }
+      offlineHostFailoverTimers.delete(room.id);
       reassignOfflineHost(room.id, host.id, offlineAt, 'disconnect').catch(error => {
         console.error(`房间 ${room.id} 自动接替离线房主失败:`, error);
       });
     }, delay);
+
+    offlineHostFailoverTimers.set(room.id, { timer, hostId: host.id, offlineAt });
   }
 
 
@@ -1342,6 +1385,7 @@ export function roomController(io: Server) {
       return false;
     }
 
+    clearOfflineHostFailoverTimer(roomId);
     rooms.delete(roomId);
     hostKickVotes.delete(roomId);
     clearRoomSessionTokens(roomId);
@@ -1388,6 +1432,7 @@ export function roomController(io: Server) {
       console.error(`回滚创建失败的房间时停止线程失败: ${roomId}`, error);
     }
 
+    clearOfflineHostFailoverTimer(roomId);
     rooms.delete(roomId);
     hostKickVotes.delete(roomId);
     clearRoomSessionTokens(roomId);
@@ -1438,6 +1483,7 @@ export function roomController(io: Server) {
         return;
       }
       if (roomAfterStop.players.length === 0) {
+        clearOfflineHostFailoverTimer(roomId);
         rooms.delete(roomId);
         hostKickVotes.delete(roomId);
         clearRoomSessionTokens(roomId);
@@ -1503,6 +1549,7 @@ export function roomController(io: Server) {
       }
       // 停止线程期间可能已有新玩家加入；只删除仍为空的当前房间。
       if (committedRoom.players.length === 0) {
+        clearOfflineHostFailoverTimer(roomId);
         rooms.delete(roomId);
         hostKickVotes.delete(roomId);
         clearRoomSessionTokens(roomId);
@@ -1530,6 +1577,7 @@ export function roomController(io: Server) {
       return { success: false, error: '踢出房主投票正在结算，请稍候' };
     }
 
+    clearOfflineHostFailoverTimer(room.id);
     room.hostId = newHost.id;
     room.lastActiveTime = Date.now();
 
@@ -2334,6 +2382,7 @@ export function roomController(io: Server) {
             return;
           }
           if (committedRoom.players.length === 0) {
+            clearOfflineHostFailoverTimer(committedRoom.id);
             rooms.delete(committedRoom.id);
             hostKickVotes.delete(committedRoom.id);
             clearRoomSessionTokens(committedRoom.id);
@@ -2348,6 +2397,7 @@ export function roomController(io: Server) {
 
         // 如果离开的是房主，优先指定在线玩家为新房主。旧房主投票不得沿用。
         if (committedRoom.hostId === player.id) {
+          clearOfflineHostFailoverTimer(committedRoom.id);
           const nextHost = committedRoom.players.find(p => p.online) || committedRoom.players[0];
           committedRoom.hostId = nextHost?.id || '';
           const pendingVote = hostKickVotes.get(committedRoom.id);

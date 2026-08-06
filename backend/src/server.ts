@@ -1,5 +1,7 @@
 import express, { Request, Response } from 'express';
 import http from 'http';
+import fs from 'fs';
+import path from 'path';
 import { timingSafeEqual } from 'crypto';
 import cors from 'cors';
 import { Server as SocketIOServer } from 'socket.io';
@@ -23,10 +25,6 @@ const io = new SocketIOServer(httpServer, {
 const roomControllerHandle = roomController(io);
 
 // 健康检查接口
-app.get('/', (_req: Request, res: Response) => {
-  res.send('Boardgame Helper Server running');
-});
-
 app.get('/health', (_req: Request, res: Response) => {
   res.json({
     status: 'healthy',
@@ -92,6 +90,21 @@ app.post('/api/reset-server', async (req: Request, res: Response) => {
     });
   }
 });
+
+// 根目录执行 npm run build && npm start 时，前后端由同一进程直接部署。
+// backend-only 部署（例如现有后端 Dockerfile）没有 frontend/dist 时仍保留 API 状态页。
+const frontendDistPath = path.resolve(__dirname, '../../frontend/dist');
+const frontendIndexPath = path.join(frontendDistPath, 'index.html');
+if (fs.existsSync(frontendIndexPath)) {
+  app.use(express.static(frontendDistPath));
+  app.get(/^(?!\/(?:api|health|socket\.io)(?:\/|$)).*/, (_req: Request, res: Response) => {
+    res.sendFile(frontendIndexPath);
+  });
+} else {
+  app.get('/', (_req: Request, res: Response) => {
+    res.send('Boardgame Helper Server running');
+  });
+}
 
 const PORT = process.env.PORT || 3000;
 httpServer.listen(PORT, () => {
