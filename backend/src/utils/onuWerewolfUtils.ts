@@ -103,8 +103,9 @@ export function onuValidateGameConfig(roles: OnuWerewolfRole[]): {
     return { valid: false, error: '至少需要6个角色（3张中心卡牌 + 3个玩家）' };
   }
 
-  if (roles.length > 20) {
-    return { valid: false, error: '角色数量过多（最多20个）' };
+  // 当前房间配置与官方支持人数上限均为10名玩家，另加3张中心牌。
+  if (roles.length > 13) {
+    return { valid: false, error: '角色数量过多（最多13个：10名玩家 + 3张中心牌）' };
   }
 
   const allowedRoles = new Set(ONU_WEREWOLF_REFERENCE_ROLES);

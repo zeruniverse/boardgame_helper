@@ -394,6 +394,15 @@ class MafiaWorker extends BaseGameWorker {
       
       // 发送游戏状态给重连玩家
       this.syncGameStateToPlayer(player.socketId, playerId);
+
+      const gameState = this.gameState as MafiaGameState;
+      if (gameState.status === GameStatus.NIGHT) {
+        // 全员离线时最后一个离线事件会冻结夜晚；重连后重新只保留在线角色的待办。
+        this.refreshNightLocksForOnlinePlayers();
+        this.endNightIfNoPendingActions();
+      } else {
+        this.skipOfflineOperators();
+      }
     }
   }
 

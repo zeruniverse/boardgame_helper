@@ -314,6 +314,9 @@ class AvalonWorker extends BaseGameWorker {
 
       // 同步游戏状态
       this.syncGameStateToPlayer(player.socketId, playerId);
+
+      // 全员离线时当前阶段被冻结；首名玩家重连后要重新跳过仍离线的操作者。
+      this.skipOfflineOperators();
     }
   }
 

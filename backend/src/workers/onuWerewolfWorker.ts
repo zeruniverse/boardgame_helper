@@ -219,9 +219,26 @@ class OnuWerewolfWorker extends BaseGameWorker {
       this.sendGameStateToPlayer(playerId);
 
       // 如果全员离线发生在两个夜间技能之间，队列不会留下 skillTimeout。
-      // 首名玩家回来后从当前索引继续，而不是等待全局夜间超时直接吞掉余下技能。
-      if (this.gameState.status === OnuWerewolfGameStatus.NIGHT && this.nightQueuePausedForNoOnlinePlayers) {
+      // nightTime=0 时当前离线操作者也没有定时器可唤醒，因此首名玩家回来后要主动续跑。
+      const currentSkillPlayerId = this.skillQueue[this.currentSkillIndex]?.player.id;
+      const currentSkillPlayerOffline = currentSkillPlayerId
+        ? this.room.players.find(roomPlayer => roomPlayer.id === currentSkillPlayerId)?.online === false
+        : false;
+      if (this.gameState.status === OnuWerewolfGameStatus.NIGHT &&
+          (this.nightQueuePausedForNoOnlinePlayers || currentSkillPlayerOffline)) {
         this.processNextSkill();
+        return;
+      }
+
+      // 全员离线时最后一个离线事件会冻结流程。首名玩家重连后重新核对当前阶段，
+      // 否则不限时讨论/投票可能一直等待仍离线的玩家。
+      if (this.gameState.status === OnuWerewolfGameStatus.VOTING && this.discussionOpen) {
+        this.tryStartVotingAfterDiscussionSkips();
+        return;
+      }
+
+      if (this.gameState.status === OnuWerewolfGameStatus.VOTING && this.votingOpen) {
+        await this.autoVoteOfflinePlayers();
       }
     }
   }
@@ -250,6 +267,11 @@ class OnuWerewolfWorker extends BaseGameWorker {
       if (currentSkillItem?.player.id === playerId && !currentSkillItem.player.skillUsed) {
         await this.skipOfflineNightSkill(playerId);
       }
+      return;
+    }
+
+    if (this.gameState.status === OnuWerewolfGameStatus.VOTING && this.discussionOpen) {
+      this.tryStartVotingAfterDiscussionSkips();
       return;
     }
 
@@ -1212,12 +1234,12 @@ class OnuWerewolfWorker extends BaseGameWorker {
 
     this.setTimer(this.config.votingTime * 1000, () => this.endVotingPhase());
     if (!this.gameTimer) {
-      void this.autoVoteOfflinePlayersWithoutTimer();
+      void this.autoVoteOfflinePlayers();
     }
   }
 
-  private async autoVoteOfflinePlayersWithoutTimer(): Promise<void> {
-    if (this.gameState.status !== OnuWerewolfGameStatus.VOTING) {
+  private async autoVoteOfflinePlayers(): Promise<void> {
+    if (this.gameState.status !== OnuWerewolfGameStatus.VOTING || !this.votingOpen) {
       return;
     }
 
@@ -1488,6 +1510,37 @@ class OnuWerewolfWorker extends BaseGameWorker {
     throw new Error('夜晚阶段不能发送公开消息');
   }
 
+  private getOnlineGamePlayerIds(): string[] {
+    return Object.keys(this.gameState.players).filter(playerId =>
+      this.room.players.find(player => player.id === playerId)?.online !== false
+    );
+  }
+
+  private tryStartVotingAfterDiscussionSkips(): boolean {
+    if (this.gameState.status !== OnuWerewolfGameStatus.VOTING || !this.discussionOpen) {
+      return false;
+    }
+
+    const onlinePlayerIds = this.getOnlineGamePlayerIds();
+    if (onlinePlayerIds.length === 0) {
+      return false;
+    }
+
+    const skippedOnlineCount = onlinePlayerIds.filter(playerId =>
+      this.gameState.skipDiscussion?.has(playerId)
+    ).length;
+
+    if (skippedOnlineCount < onlinePlayerIds.length) {
+      return false;
+    }
+
+    this.sendToRoom('onu_discussion_skipped', {
+      message: '所有在线玩家都同意跳过讨论，现在开始投票！'
+    });
+    this.startVotingPhase();
+    return true;
+  }
+
   private async handleSkipDiscussion(playerId: string): Promise<void> {
     if (this.gameState.status !== OnuWerewolfGameStatus.VOTING || !this.discussionOpen) {
       throw new Error('当前不在讨论阶段');
@@ -1503,8 +1556,12 @@ class OnuWerewolfWorker extends BaseGameWorker {
     }
     this.gameState.skipDiscussion.add(playerId);
 
-    const totalPlayers = Object.keys(this.gameState.players).length;
-    const skipCount = this.gameState.skipDiscussion.size;
+    const onlinePlayerIds = this.getOnlineGamePlayerIds();
+    const onlinePlayerIdSet = new Set(onlinePlayerIds);
+    const skipCount = Array.from(this.gameState.skipDiscussion)
+      .filter(skippedPlayerId => onlinePlayerIdSet.has(skippedPlayerId))
+      .length;
+    const totalPlayers = onlinePlayerIds.length;
 
     this.sendToRoom('onu_skip_discussion', {
       playerId,
@@ -1513,13 +1570,8 @@ class OnuWerewolfWorker extends BaseGameWorker {
       message: `${this.room.players.find(p => p.id === playerId)?.nickname} 选择跳过讨论 (${skipCount}/${totalPlayers})`
     });
 
-    // 如果所有玩家都同意跳过讨论，立即进入投票
-    if (skipCount === totalPlayers) {
-      this.sendToRoom('onu_discussion_skipped', {
-        message: '所有玩家都同意跳过讨论，现在开始投票！'
-      });
-      this.startVotingPhase();
-    }
+    // 离线玩家不应阻止在线玩家一致结束讨论；全员离线时则保持冻结，等待重连。
+    this.tryStartVotingAfterDiscussionSkips();
   }
 
   private setTimer(ms: number, callback: () => void): void {

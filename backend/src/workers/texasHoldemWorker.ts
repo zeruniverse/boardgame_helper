@@ -1517,10 +1517,14 @@ class TexasHoldemWorker extends BaseGameWorker {
 
   private handleChatMessage(playerId: string, data: any) {
     const player = this.room.players.find(p => p.id === playerId);
-    if (!player) return;
+    if (!player) {
+      throw new Error('玩家不在房间中');
+    }
 
     const message = normalizeChatText(data?.message);
-    if (!message) return;
+    if (!message) {
+      throw new Error('消息不能为空或超过长度限制');
+    }
 
     this.sendToRoom('chat_broadcast', buildChatPayload(player, message, 'all', { type: 'chat' }));
   }

@@ -211,6 +211,9 @@ class WerewolfWorker extends BaseGameWorker {
 
       // 发送游戏状态给重连的玩家
       this.syncGameStateToPlayer(player.socketId!, playerId);
+
+      // 全员离线时阶段会暂停；首名玩家重连后重新处理仍离线的当前操作者。
+      this.skipOfflineOperators();
     }
   }
 

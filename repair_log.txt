@@ -402,3 +402,32 @@ Commit: fix(round4): 拆分一夜狼人讨论投票并加固钟楼投票校验
   - package-lock 工作区依赖树通过 npm ls --package-lock-only --all 校验；git diff --check 通过。
   - 完整 npm ci / npm run build 未在当前环境完成：内部依赖源对 typescript-5.8.3.tgz 返回 404，已清理临时 node_modules；前端正式 vue-tsc/Vite 生产构建仍需在依赖可用的本地或 CI 环境复验。
 备注: 本轮优先修复一夜狼人阶段规则/状态同步和血染钟楼畸形操作污染；所有后端源码修改均位于 backend/src/，所有前端源码修改均位于 frontend/src/，未删除文件，未创建根目录 src/。
+
+=== 本次请求第 7 轮修复记录 ===
+时间: 2026-08-06 15:58:51 UTC
+Commit: fix(round7): 修复离线重连卡死并校正一夜狼人讨论流程
+修改/新增文件:
+  - backend/src/utils/onuWerewolfUtils.ts (13244 bytes)
+  - backend/src/workers/avalonWorker.ts (70067 bytes)
+  - backend/src/workers/mafiaWorker.ts (97416 bytes)
+  - backend/src/workers/onuWerewolfWorker.ts (58114 bytes)
+  - backend/src/workers/texasHoldemWorker.ts (85481 bytes)
+  - backend/src/workers/werewolfWorker.ts (72721 bytes)
+  - repair_log.txt
+删除文件: 无
+构建测试: 部分通过
+本轮修复:
+  - 一夜狼人“跳过讨论”改为只统计当前在线且属于本局的玩家；离线玩家不再永久阻塞讨论结束，全员离线时仍冻结流程，避免无人在线却自动推进。
+  - 一夜狼人补齐全员离线后的重连恢复：不限时夜晚会继续处理仍离线的当前技能操作者，讨论阶段重新核对在线跳过共识，投票阶段为仍离线玩家自动投票并在条件满足时正常结算。
+  - 一夜狼人角色配置上限从20张收紧为13张，对齐房间最多10名玩家加3张中心牌，避免创建出项目容量无法承载的17人配置。
+  - 阿瓦隆、狼人杀在首名玩家重连时重新运行离线操作者跳过逻辑，修复全员离线冻结后当前操作者仍离线、且不限时阶段无法自行恢复的问题。
+  - 杀人游戏在首名玩家重连时按当前阶段恢复：夜晚重新计算仅在线角色的行动锁并尝试结算，公开阶段继续跳过仍离线操作者。
+  - 德州扑克聊天对不存在玩家、清洗后为空或超长的消息明确抛错，使 game_action acknowledgement 与是否实际广播保持一致，不再静默返回成功。
+验证:
+  - 后端33个TypeScript源码在临时外部模块类型桩与真实Node类型定义下完成完整strict编译并生成33个测试用CommonJS文件，无类型错误。
+  - 实际Worker专项集成测试全部通过：一夜狼人在线玩家跳过讨论、全员离线投票冻结及重连结算；阿瓦隆/杀人游戏/狼人杀全员离线后的首名玩家重连恢复；血染钟楼5人AI说书人开局；德州扑克无效聊天失败回执与合法聊天成功回执。
+  - 一夜狼人配置边界断言通过：13张角色牌对应10名玩家有效，14张被拒绝。
+  - 前端21个TypeScript、27个Vue SFC与1个CSS文件完成script语法、SFC块配对、CSS花括号及相对/@导入路径检查，未发现需要优先于本轮状态问题处理的样式或复用阻断项。
+  - package-lock工作区依赖树通过 npm ls --package-lock-only --all；git diff --check通过；根目录不存在src/。
+  - 完整 npm ci / npm run build 未在当前环境完成：内部依赖源对 typescript-5.8.3.tgz 返回404；临时改用已收录的TypeScript版本探测时又对 yn-3.1.1.tgz 返回404。正式vue-tsc/Vite生产构建仍需在依赖可用的本地或CI环境执行。源码已通过上述strict编译、前端静态校验和六游戏Worker运行测试。
+备注: 本轮未修改frontend/src/文件；所有后端源码修改均位于backend/src/，未删除文件，未创建根目录src/。
