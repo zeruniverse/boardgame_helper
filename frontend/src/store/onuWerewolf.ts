@@ -2,7 +2,7 @@ import { defineStore } from 'pinia';
 import { io, Socket } from 'socket.io-client';
 import { SOCKET_URL } from '../config';
 import { clearGameSession, ensureGameSession, rememberGameSession } from '../utils/gameSession';
-import { emitChatAction, emitGameAction, emitRoomReconnect } from '../utils/gameSocket';
+import { emitChatAction, emitGameAction, emitRoomReconnect, leaveRoomAndDisconnect } from '../utils/gameSocket';
 import { appendLimitedMessage, createSystemMessage, normalizeErrorMessage, normalizeIncomingMessage, normalizeSystemMessage } from '../utils/messages';
 import { getForcedExitMessage, redirectToLobbyAfterForcedExit, shouldClearSessionOnForcedExit } from '../utils/forcedExit';
 
@@ -721,16 +721,15 @@ export const useOnuWerewolfStore = defineStore('onuWerewolf', {
     },
 
     disconnectFromRoom() {
-      if (this.socket && this.currentRoomId) {
-        this.socket.emit('leave_room', {
-          roomId: this.currentRoomId,
-          playerId: this.currentUserId
-        });
-      }
-      this.cleanup();
+      const departingSocket = this.socket;
+      const departingRoomId = this.currentRoomId;
+      this.cleanup(false);
+      this.socket = null;
+      this.connected = false;
+      leaveRoomAndDisconnect(departingSocket, departingRoomId);
     },
 
-    cleanup() {
+    cleanup(disconnectSocket: boolean = true) {
       this.clearTimer();
       if (this.socket) {
         // 遍历移除所有追踪的监听器
@@ -738,8 +737,10 @@ export const useOnuWerewolfStore = defineStore('onuWerewolf', {
           this.socket.off(event, handler);
         }
         this.socketListeners = [];
-        this.socket.disconnect();
-        this.socket = null;
+        if (disconnectSocket) {
+          this.socket.disconnect();
+          this.socket = null;
+        }
       }
       this.connected = false;
       this.currentRoomId = '';

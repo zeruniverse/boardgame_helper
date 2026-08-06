@@ -4,7 +4,7 @@ import { io, Socket } from 'socket.io-client'
 import { ElMessage } from 'element-plus'
 import { SOCKET_URL } from '../config'
 import { clearGameSession, ensureGameSession, rememberGameSession } from '../utils/gameSession'
-import { emitChatAction, emitGameAction, emitRoomReconnect } from '../utils/gameSocket'
+import { emitChatAction, emitGameAction, emitRoomReconnect, leaveRoomAndDisconnect } from '../utils/gameSocket'
 import { appendLimitedMessage, normalizeErrorMessage, normalizeIncomingMessage } from '../utils/messages'
 import { getForcedExitMessage, redirectToLobbyAfterForcedExit, shouldClearSessionOnForcedExit } from '../utils/forcedExit'
 
@@ -32,6 +32,21 @@ export const useBOTCGameStore = defineStore('botc', () => {
   const chatMessages = ref<any[]>([])
   const timeLeft = ref<number>(0)
   const socketListeners = ref<Array<[string, (...args: any[]) => void]>>([])
+
+  const resetRoomState = () => {
+    currentUserId.value = ''
+    currentRoomId.value = ''
+    room.value = null
+    gameState.value = null
+    gameConfig.value = null
+    playerRole.value = null
+    nightInfo.value = null
+    isStoryteller.value = false
+    storytellerQuestion.value = null
+    aiStorytellerMessages.value = []
+    chatMessages.value = []
+    timeLeft.value = 0
+  }
 
   // 辅助函数：追踪监听器
   const on = (event: string, handler: (...args: any[]) => void) => {
@@ -120,10 +135,7 @@ export const useBOTCGameStore = defineStore('botc', () => {
 
         on('room_left', () => {
           console.log('血染钟楼: 离开房间')
-          room.value = null
-          currentRoomId.value = ''
-          gameState.value = null
-          playerRole.value = null
+          resetRoomState()
         })
 
         on('kicked_out', (data: { message?: string; clearSession?: boolean }) => {
@@ -476,24 +488,18 @@ export const useBOTCGameStore = defineStore('botc', () => {
 
   // 断开连接
   const disconnect = () => {
-    if (socket.value) {
+    const currentSocket = socket.value
+    if (currentSocket) {
       // 遍历移除所有追踪的监听器
       for (const [event, handler] of socketListeners.value) {
-        socket.value.off(event, handler)
+        currentSocket.off(event, handler)
       }
-      socketListeners.value = []
-      socket.value.disconnect()
-      socket.value = null
-      connected.value = false
-      currentUserId.value = ''
-      currentRoomId.value = ''
-      room.value = null
-      gameState.value = null
-      playerRole.value = null
-      storytellerQuestion.value = null
-      aiStorytellerMessages.value = []
-      chatMessages.value = []
+      currentSocket.disconnect()
     }
+    socketListeners.value = []
+    socket.value = null
+    connected.value = false
+    resetRoomState()
   }
 
   // 连接到房间
@@ -519,22 +525,20 @@ export const useBOTCGameStore = defineStore('botc', () => {
     }
   }
 
-  // 离开房间 - 移除监听器并清理状态，但保留socket连接以便重连
+  // 离开房间：等待后端提交离房状态后关闭本游戏的专用 Socket。
   const leaveRoom = () => {
-    if (socket.value && currentRoomId.value) {
-      socket.value.emit('leave_room', { roomId: currentRoomId.value })
-    }
-    // 移除所有socket监听器
+    const departingSocket = socket.value
+    const departingRoomId = currentRoomId.value
+
     for (const [event, handler] of socketListeners.value) {
-      socket.value?.off(event, handler)
+      departingSocket?.off(event, handler)
     }
     socketListeners.value = []
-    // 清理房间状态
-    room.value = null
-    currentRoomId.value = ''
-    gameState.value = null
-    playerRole.value = null
-    chatMessages.value = []
+    socket.value = null
+    connected.value = false
+    resetRoomState()
+
+    leaveRoomAndDisconnect(departingSocket, departingRoomId)
   }
 
   // 断开房间连接

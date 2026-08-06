@@ -202,6 +202,7 @@ const gameHistory = ref<any[]>([])
 // 房间准备状态 - 修改为只要连接成功就不显示loading
 const roomPreparing = ref(true)
 let statusCheckInterval: ReturnType<typeof setInterval> | null = null
+let initialCheckTimeout: ReturnType<typeof setTimeout> | null = null
 let loadingTimeout: ReturnType<typeof setTimeout> | null = null
 
 // 获取状态消息
@@ -333,11 +334,7 @@ onMounted(() => {
   }, 3000)
 
   // 立即检查一次
-  const initialCheckTimeout = setTimeout(checkRoomStatus, 500)
-  // 清理函数
-  return () => {
-    clearTimeout(initialCheckTimeout)
-  }
+  initialCheckTimeout = setTimeout(checkRoomStatus, 500)
 })
 
 onUnmounted(() => {
@@ -345,6 +342,10 @@ onUnmounted(() => {
   if (statusCheckInterval) {
     clearInterval(statusCheckInterval)
     statusCheckInterval = null
+  }
+  if (initialCheckTimeout) {
+    clearTimeout(initialCheckTimeout)
+    initialCheckTimeout = null
   }
   if (loadingTimeout) {
     clearTimeout(loadingTimeout)

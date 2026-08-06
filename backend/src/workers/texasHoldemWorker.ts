@@ -641,11 +641,9 @@ class TexasHoldemWorker extends BaseGameWorker {
       if (!winner) {
         return false;
       }
-      if (this.isManualDealing()) {
-        this.enterManualDistribution(activeIds, `${winner.nickname} 是最后未弃牌玩家。线下发牌模式不自动派彩，请确认后手动 Take。`);
-        return true;
-      }
-
+      // 无论系统发牌还是线下发牌，只剩一名未弃牌玩家时赢家已经唯一确定，
+      // 应按德州扑克规则直接获得底池。让线下模式继续手动 Take 会制造可避免的
+      // 结算竞态，也允许玩家在离线前留下永远无法领取的底池。
       const won = this.awardCurrentPotToPlayer(winner);
       this.sendToRoom('chat_broadcast', { message: `${winner.nickname} 赢得底池 ${won}` });
       this.sendToRoom('room_update', this.room);

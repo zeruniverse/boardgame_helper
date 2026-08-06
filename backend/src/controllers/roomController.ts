@@ -2172,10 +2172,15 @@ export function roomController(io: Server) {
     });
 
     // 离开房间
-    socket.on('leave_room', async (data: { roomId: string }) => {
+    socket.on('leave_room', async (
+      data: { roomId: string },
+      ack?: (response: { success: boolean; error?: string }) => void
+    ) => {
+      let ackResponse: { success: boolean; error?: string } = { success: true };
       try {
         if (!data || !isValidRoomId(data.roomId)) {
           console.warn(`leave_room: invalid roomId from socket ${socket.id}`);
+          ackResponse = { success: false, error: '无效的房间ID' };
           return;
         }
         const room = rooms.get(data.roomId);
@@ -2371,6 +2376,14 @@ export function roomController(io: Server) {
         console.log(`玩家 ${player.nickname} 离开了房间 ${room.name}`);
       } catch (error) {
         console.error('离开房间失败:', error);
+        ackResponse = {
+          success: false,
+          error: error instanceof Error ? error.message : '离开房间失败'
+        };
+      } finally {
+        if (typeof ack === 'function') {
+          ack(ackResponse);
+        }
       }
     });
 

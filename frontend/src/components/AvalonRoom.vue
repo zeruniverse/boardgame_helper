@@ -211,6 +211,7 @@ let timerInterval: ReturnType<typeof setInterval> | null = null
 
 // 房间状态检查定时器
 let statusCheckInterval: ReturnType<typeof setInterval> | null = null
+let initialCheckTimeout: ReturnType<typeof setTimeout> | null = null
 
 // 检查房间状态的函数
 const checkRoomStatus = () => {
@@ -249,7 +250,7 @@ onMounted(() => {
 
   // 开始定时检查房间状态
   statusCheckInterval = setInterval(checkRoomStatus, 3000)
-  setTimeout(checkRoomStatus, 500)
+  initialCheckTimeout = setTimeout(checkRoomStatus, 500)
 
   // 启动计时器
   startTimer()
@@ -263,6 +264,10 @@ onUnmounted(() => {
   if (statusCheckInterval) {
     clearInterval(statusCheckInterval)
     statusCheckInterval = null
+  }
+  if (initialCheckTimeout) {
+    clearTimeout(initialCheckTimeout)
+    initialCheckTimeout = null
   }
   // 清理socket事件监听器，防止内存泄漏
   store.socket?.off('room_ready', onRoomReady)

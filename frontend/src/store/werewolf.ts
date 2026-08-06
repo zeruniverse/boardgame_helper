@@ -2,7 +2,7 @@ import { defineStore } from 'pinia';
 import { io, Socket } from 'socket.io-client';
 import { SOCKET_URL } from '../config';
 import { clearGameSession, ensureGameSession, rememberGameSession } from '../utils/gameSession';
-import { emitChatAction, emitGameAction, emitRoomReconnect } from '../utils/gameSocket';
+import { emitChatAction, emitGameAction, emitRoomReconnect, leaveRoomAndDisconnect } from '../utils/gameSocket';
 import { appendLimitedMessage, createSystemMessage, normalizeIncomingMessage } from '../utils/messages';
 import { getForcedExitMessage, redirectToLobbyAfterForcedExit, shouldClearSessionOnForcedExit } from '../utils/forcedExit';
 
@@ -534,11 +534,12 @@ export const useWerewolfStore = defineStore('werewolf', {
     },
 
     disconnectFromRoom() {
-      if (this.socket && this.currentRoomId) {
-        this.socket.emit('leave_room', { roomId: this.currentRoomId });
-      }
-      // 只清理房间相关状态和监听器，不断开socket连接
+      const departingSocket = this.socket;
+      const departingRoomId = this.currentRoomId;
       this.cleanup(false);
+      this.socket = null;
+      this.connected = false;
+      leaveRoomAndDisconnect(departingSocket, departingRoomId);
     },
 
     cleanup(disconnectSocket: boolean = true) {

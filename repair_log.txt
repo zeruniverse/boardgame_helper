@@ -341,3 +341,37 @@ Commit: fix(round8): 修复 Worker 房间快照回滚竞态并统一状态版本
   - package-lock 工作区依赖树通过 npm ls --package-lock-only --all；根目录不存在 src/，所有源码修改均位于 backend/src/。
   - 完整 npm ci / npm run build 未在当前环境完成：内部依赖源对 typescript-5.8.3.tgz 返回 404，已清理临时 node_modules；正式 vue-tsc/Vite 与容器生产构建仍需在依赖可用的 CI 或本地仓库复验。
 备注: 本轮优先修复跨六个游戏共用、可静默破坏筹码/准备/角色/配置的 Worker-Controller 状态回滚竞态；未删除文件，未创建根目录 src/。
+
+=== 本次请求第 2 轮修复记录 ===
+时间: 2026-08-06 14:48:34 UTC
+Commit: fix(round2): 修复离房竞态、BOTC状态泄漏与线下德州派彩
+修改/新增文件:
+  - backend/src/controllers/roomController.ts (119466 bytes)
+  - backend/src/workers/texasHoldemWorker.ts (85367 bytes)
+  - frontend/src/components/AvalonRoom.vue (18710 bytes)
+  - frontend/src/components/WerewolfRoom.vue (20873 bytes)
+  - frontend/src/store/avalon.ts (15969 bytes)
+  - frontend/src/store/botc.ts (23417 bytes)
+  - frontend/src/store/mafia.ts (21761 bytes)
+  - frontend/src/store/onuWerewolf.ts (27384 bytes)
+  - frontend/src/store/werewolf.ts (24983 bytes)
+  - frontend/src/utils/gameSocket.ts (3140 bytes)
+  - repair_log.txt
+删除文件: 无
+构建测试: 部分通过
+本轮修复:
+  - Controller 的 leave_room 增加 Socket.IO acknowledgement，并在完整处理 Worker 离线/移除、房主转让、房间订阅和状态广播后回执；无效房间号返回明确失败，重复/幂等离房仍可安全完成。
+  - 狼人杀、杀人游戏、一夜狼人、阿瓦隆和血染钟楼的专用游戏 Socket 统一改为“等待离房回执后断开”，并提供 12 秒超时兜底；修复 emit 后立即断开导致 disconnect 抢先处理的竞态，也修复只移除监听器但保留连接造成的僵尸 Socket 泄漏。
+  - 血染钟楼新增统一房间私有状态重置，离房或硬断开时同时清除角色、夜间信息、说书人权限/提问、AI 说书人消息、聊天和计时，避免进入下一房间后残留私密信息或错误权限。
+  - 德州扑克在线发牌与线下发牌统一遵循“仅剩一名未弃牌玩家立即赢得底池”；在线下模式中不再进入手动 Take，避免确定赢家仍卡在派彩阶段或赢家离线后留下无法领取的底池。
+  - WerewolfRoom 与 AvalonRoom 保存并在 onUnmounted 中清理首次房间状态检查 timeout；修复 Vue 不会执行 onMounted 返回值所造成的卸载后回调和潜在状态污染。
+验证:
+  - 后端 33 个 TypeScript 源码在临时外部模块类型桩与真实 Node 类型定义下完成完整 strict 编译，并成功生成 33 个测试用 CommonJS 文件，无类型错误。
+  - 前端 49 个 TypeScript/Vue/CSS 文件、45 个 script 单元和 127 个相对/@ 导入完成语法、SFC 块配对与路径检查，无失败项。
+  - 离房辅助函数专项测试通过：回执前不提前断开、回执幂等、无房间/已断开快速路径、超时兜底、迟到回执和 emit 异常均只断开一次。
+  - 血染钟楼 Store 状态重置专项测试通过，leaveRoom/disconnect 均清除全部房间私有状态并使用原 Socket 与原 roomId 完成离房。
+  - 德州扑克实际 Worker 集成测试通过：线下发牌两人桌在一人弃牌后自动退还未跟注额、将底池派给唯一未弃牌玩家，筹码为 995/1005、底池归零且不进入 distribution_start。
+  - 六个游戏实际 Worker 的 prepare_room 烟雾测试全部通过：狼人杀、杀人游戏、一夜狼人、阿瓦隆、德州扑克、血染钟楼均能初始化并返回成功。
+  - package-lock 工作区依赖树通过 npm ls --package-lock-only --all 校验；根目录不存在 src/，临时 node_modules 已清理。
+  - 完整 npm run build 在当前容器未完成：依赖未安装，正式后端 tsc 因缺少 package.json 已声明的 express/socket.io/uuid/@types/node 等模块而中止，前端 vue-tsc/Vite 未进入执行阶段。依赖安装此前受当前依赖源无法取得 TypeScript 安装包限制；需在依赖可用的本地或 CI 环境执行 npm ci && npm run build 做最终生产构建确认。
+备注: 本轮优先处理跨游戏离房竞态/连接泄漏、BOTC 私密状态残留和德州扑克唯一赢家结算规则；所有后端修改均位于 backend/src/，所有前端修改均位于 frontend/src/，未删除文件，未创建根目录 src/。
