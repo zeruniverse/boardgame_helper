@@ -595,3 +595,33 @@ Commit: fix(round7): 修复德州桌面状态同步与房间隐私解析
   - package-lock 工作区依赖树通过 npm ls --package-lock-only --all；差异空白检查无新增问题；根目录不存在 src/，全部源码修改位于 backend/src/ 或 frontend/src/。
   - 完整 npm ci / npm run build 未在当前容器完成：内部依赖源对锁定的 typescript-5.8.3.tgz 返回 404，安装中止；随后正式构建因缺少 Node、Express、Socket.IO、UUID 等依赖声明而失败。需在依赖可用的本地或 CI 环境执行 npm ci && npm run build 做最终生产构建确认。
 备注: 本轮未删除文件，未创建根目录 src/；修复包只包含本轮修改文件，可直接按相对路径覆盖。
+
+=== 本次请求第 8 轮修复记录 ===
+时间: 2026-08-07 16:47:34 UTC
+Commit: fix(round8): 防止钟楼阶段跳跃并同步德州赢家状态
+修改/新增文件:
+  - backend/src/workers/botcWorker.ts (180564 bytes)
+  - backend/src/workers/texasHoldemWorker.ts (89542 bytes)
+  - frontend/src/components/BOTCActionPanel.vue (49718 bytes)
+  - frontend/src/components/TexasHoldemPlayerList.vue (5400 bytes)
+  - frontend/src/store/texas_holdem.ts (18217 bytes)
+  - repair_log.txt
+删除文件: 无
+构建测试: 部分通过
+本轮修复:
+  - 血染钟楼所有公开阶段计时器新增“当前登记计时器身份”校验；已被清理但恰好进入事件队列的旧回调不会删除新阶段计时器或再次推进流程。
+  - 新增绑定当前 phase 与 nightRound 的夜晚延迟任务调度器，统一保护无夜间行动自动进白天、全部行动提交后的夜间结算、结算后进白天及 AI 说书人任务；旧夜晚回调无法在下一夜误结算行动或重复增加天数。
+  - startDay 仅允许从 FIRST_NIGHT/NIGHT 进入，重复调用或白天旧回调不再把同一天重置并连续增加 day。
+  - 说书人“下一阶段”操作由前端携带点击时看到的 phase 与活动提名 timestamp；后端拒绝过期快照，修复双击可能先结束提名投票又立即结束白天，以及重复/重放请求跨过夜晚的问题。
+  - 德州扑克将“线下分池候选人”“实际领取者”和“本局最终赢家”拆分为独立状态，避免候选人被误当成最终赢家，同时支持多个玩家分领底池。
+  - 德州扑克最终 game_state 与 game_over 保留并发布赢家 ID；弃牌直接获胜、系统摊牌、线下 Take/Take All 均能在终局与重连后恢复赢家信息，新一局开始时再清空。
+  - 德州扑克前端 Store 同步/保留 winners，桌面表格与移动端玩家卡片复用同一状态映射，在牌局结束后显示“赢家”标记。
+验证:
+  - 后端 34 个 TypeScript 源码使用 TypeScript strict 模式、真实 Node 类型与临时外部模块声明完成完整编译并生成测试用 CommonJS 文件，无类型错误。
+  - 六个实际游戏 Worker 的 prepare_room 烟雾测试全部通过：狼人杀、杀人游戏、一夜狼人、阿瓦隆、血染钟楼、德州扑克均可加载本轮源码并完成初始化。
+  - 血染钟楼专项回归通过：活动提名后的重复 nextPhase 请求被识别为过期快照；重复 startDay 不会再次增加天数。
+  - 德州扑克实际 Worker 专项回归通过：两人局当前行动者弃牌后，最终 game_state(stage=idle) 与 game_over 均发布唯一赢家 ID。
+  - backend/src 与 frontend/src 共 84 个文件完成静态复查；79 个 TypeScript/Vue script 单元、27 个 Vue SFC 块配对、CSS 花括号及 211 个相对导入路径检查通过。
+  - package-lock 工作区依赖树通过 npm ls --package-lock-only --all；根目录不存在 src/，全部源码修改位于 backend/src/ 或 frontend/src/。
+  - 完整 npm run build 已再次尝试但未在当前容器完成：附件中残留的 node_modules 只有不完整/空依赖目录，后端正式 tsc 因缺少 body-parser、express、node、uuid 等声明文件中止，前端 vue-tsc/Vite 未进入执行。需在依赖完整的本地或 CI 环境执行 npm ci && npm run build 做最终生产构建确认；本轮源码已通过上述 strict 编译、静态检查与实际 Worker 测试。
+备注: 本轮未删除文件，未创建根目录 src/；修复包只包含本轮修改/新增文件，可按相对路径直接覆盖。

@@ -48,7 +48,7 @@ import { computed } from 'vue';
 import { useTexasHoldemStore } from '../store';
 import { formatPlayerName } from '../utils/playerName';
 
-type PlayerStatusKind = 'turn' | 'folded' | 'all-in' | 'playing' | 'online' | 'offline';
+type PlayerStatusKind = 'winner' | 'turn' | 'folded' | 'all-in' | 'playing' | 'online' | 'offline';
 
 interface PlayerInfo {
   id: string;
@@ -67,6 +67,9 @@ const getPlayerStatus = (player: any, chips: number): { text: string; kind: Play
   const isInGame = store.participants.includes(player.id);
   const isOnline = player.online === true;
 
+  if (store.stage === 'idle' && store.winners.includes(player.id)) {
+    return { text: isOnline ? '赢家' : '离线·赢家', kind: 'winner' };
+  }
   if (!isInGame) {
     return isOnline
       ? { text: '在线', kind: 'online' }
@@ -147,6 +150,7 @@ const mappedPlayers = computed<PlayerInfo[]>(() => {
 }
 
 .status-chip--turn,
+.status-chip--winner,
 .status-chip--all-in {
   font-weight: 600;
 }

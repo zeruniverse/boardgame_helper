@@ -1011,7 +1011,12 @@ const respondToStorytellerQuestion = (answer: string) => {
 const nextPhase = () => {
   emit('game-action', {
     type: 'storytellerAction',
-    data: { actionType: 'nextPhase' }
+    data: {
+      actionType: 'nextPhase',
+      // 服务端用这份快照拒绝重复点击或网络重放导致的跨阶段操作。
+      expectedPhase: props.gameState?.phase,
+      expectedNominationTimestamp: currentNomination.value?.timestamp ?? null
+    }
   })
 }
 

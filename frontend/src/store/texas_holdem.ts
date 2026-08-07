@@ -22,6 +22,7 @@ export const useTexasHoldemStore = defineStore('texas_holdem', {
     currentTurn: '' as string,
     dealerPlayerId: '' as string,
     folded: [] as string[],
+    winners: [] as string[],
     players: [] as any[],
     participants: [] as string[],
     round: 0,
@@ -130,6 +131,7 @@ export const useTexasHoldemStore = defineStore('texas_holdem', {
         currentTurn: number | string;
         dealerPlayerId?: string;
         folded?: string[];
+        winners?: string[];
         stage?: 'idle' | 'playing' | 'distribution';
         allowSystemDealing?: boolean;
       }) => {
@@ -148,6 +150,9 @@ export const useTexasHoldemStore = defineStore('texas_holdem', {
         this.dealerPlayerId = typeof data.dealerPlayerId === 'string' ? data.dealerPlayerId : '';
         this.folded = Array.isArray(data.folded)
           ? data.folded.filter((playerId): playerId is string => typeof playerId === 'string')
+          : [];
+        this.winners = Array.isArray(data.winners)
+          ? data.winners.filter((playerId): playerId is string => typeof playerId === 'string')
           : [];
         // game_state 是重连和普通推进共用的权威阶段快照。同步派生标志，避免
         // 线下分池重连后 stage 正确但 gameActive/distributionActive 仍是旧值。
@@ -190,6 +195,7 @@ export const useTexasHoldemStore = defineStore('texas_holdem', {
         this.currentTurn = '';
         this.dealerPlayerId = '';
         this.folded = [];
+        this.winners = [];
         this.round = 0;
         this.currentBet = 0;
         this.lastRaiseAmount = 0;
@@ -213,7 +219,10 @@ export const useTexasHoldemStore = defineStore('texas_holdem', {
       });
 
       // 游戏结束
-      on('game_over', () => {
+      on('game_over', (data?: { winners?: string[] }) => {
+        if (Array.isArray(data?.winners)) {
+          this.winners = data.winners.filter((playerId): playerId is string => typeof playerId === 'string');
+        }
         this.gameActive = false;
         this.timeLeft = 0;
         if (this.timerId) {
@@ -422,6 +431,7 @@ export const useTexasHoldemStore = defineStore('texas_holdem', {
       this.currentTurn = '';
       this.dealerPlayerId = '';
       this.folded = [];
+      this.winners = [];
       this.players = [];
       this.participants = [];
       this.round = 0;

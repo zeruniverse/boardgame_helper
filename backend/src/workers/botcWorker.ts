@@ -980,6 +980,11 @@ export class BOTCWorker extends BaseGameWorker {
     this.phaseTimerDeadlines.set(key, Date.now() + durationSeconds * 1000);
 
     const timer = setTimeout(() => {
+      // clearTimeout 无法撤回已经进入事件队列的回调。只有当前仍登记的同一个
+      // 计时器才允许结算，避免旧阶段的回调删掉新阶段计时器并推进新一轮流程。
+      if (this.dayTimers.get(key) !== timer) {
+        return;
+      }
       this.dayTimers.delete(key);
       this.phaseTimerDeadlines.delete(key);
       try {
@@ -1001,6 +1006,53 @@ export class BOTCWorker extends BaseGameWorker {
       this.dayTimers.delete(key);
     }
     this.phaseTimerDeadlines.delete(key);
+  }
+
+  private isNightPhase(phase: GamePhase = this.gameState.phase): boolean {
+    return phase === GamePhase.FIRST_NIGHT || phase === GamePhase.NIGHT;
+  }
+
+  /**
+   * 安排只属于当前夜晚轮次的延迟任务。
+   *
+   * 夜晚结束、手动推进和下一夜开始之间可能恰好有旧 setTimeout 回调已经排队。
+   * 除了 clearTimeout，还必须核对计时器身份、阶段与 nightRound，防止旧回调在
+   * 下一夜错误地处理行动或再次增加天数。
+   */
+  private scheduleNightTask(
+    key: string,
+    delayMs: number,
+    callback: () => void | Promise<void>
+  ): void {
+    const existingTimer = this.dayTimers.get(key);
+    if (existingTimer) {
+      clearTimeout(existingTimer);
+      this.dayTimers.delete(key);
+    }
+
+    const scheduledPhase = this.gameState.phase;
+    const scheduledNightRound = this.nightRound;
+    const timer = setTimeout(() => {
+      if (
+        this.dayTimers.get(key) !== timer ||
+        this.gameState.phase !== scheduledPhase ||
+        this.nightRound !== scheduledNightRound ||
+        !this.isNightPhase()
+      ) {
+        return;
+      }
+
+      this.dayTimers.delete(key);
+      try {
+        void Promise.resolve(callback()).catch(error => {
+          console.error(`血染钟楼夜晚任务 ${key} 处理失败:`, error);
+        });
+      } catch (error) {
+        console.error(`血染钟楼夜晚任务 ${key} 处理失败:`, error);
+      }
+    }, Math.max(0, Number(delayMs) || 0));
+
+    this.dayTimers.set(key, timer);
   }
 
   private getActivePhaseEndTime(): number | undefined {
@@ -1741,8 +1793,7 @@ export class BOTCWorker extends BaseGameWorker {
 
     // 如果没有夜晚行动，直接进入白天
     if (this.gameState.nightOrder.length === 0) {
-      const timer = setTimeout(() => this.startDay(), 2000);
-      this.dayTimers.set('nightToDay', timer);
+      this.scheduleNightTask('nightToDay', 2000, () => this.startDay());
     } else {
       // 人类说书人模式此前完全没有使用 nightTimer：只要一名夜间角色掉线或不行动，
       // 自动计时流程就会永久停在夜晚。超时后跳过未提交的能力并按已提交行动结算。
@@ -1952,6 +2003,12 @@ export class BOTCWorker extends BaseGameWorker {
    * 开始白天阶段
    */
   private async startDay(): Promise<void> {
+    // 旧计时器或重复说书人操作不得在白天再次调用 startDay，否则会把同一天
+    // 重置并将 day 连续加一。只有当前夜晚可以进入白天。
+    if (!this.isNightPhase()) {
+      return;
+    }
+
     // 任何进入白天的路径都必须清理上一阶段计时器，避免旧的夜晚/转阶段计时器继续触发。
     this.clearTimers();
     this.isProcessingNight = false;
@@ -2824,8 +2881,7 @@ export class BOTCWorker extends BaseGameWorker {
     });
 
     if (pendingPlayers.length === 0) {
-      const timer = setTimeout(() => this.processNightActions(), 2000);
-      this.dayTimers.set('pendingNightActions', timer);
+      this.scheduleNightTask('pendingNightActions', 2000, () => this.processNightActions());
     }
   }
 
@@ -2899,6 +2955,10 @@ export class BOTCWorker extends BaseGameWorker {
         await this.processNightActions();
         break;
       case 'startDay':
+        if (!this.isNightPhase()) {
+          this.sendToPlayer(playerId, 'actionError', { message: '当前阶段不能进入白天' });
+          return;
+        }
         await this.startDay();
         break;
       case 'endVoting': {
@@ -2911,6 +2971,18 @@ export class BOTCWorker extends BaseGameWorker {
         break;
       }
       case 'nextPhase':
+        // 客户端提交它点击时看到的阶段和活动提名。重复点击、网络重放或投票
+        // 刚被计时器结算后，快照会失效，必须拒绝旧操作；否则同一个双击可能
+        // 先结束投票再直接结束白天，或跨过整个夜晚。
+        if (
+          data?.expectedPhase !== this.gameState.phase ||
+          (data?.expectedNominationTimestamp ?? null) !== (this.getActiveNomination()?.timestamp ?? null)
+        ) {
+          this.sendToPlayer(playerId, 'actionError', {
+            message: '阶段或投票状态已更新，请按当前页面重试'
+          });
+          return;
+        }
         // 白天若仍有提名投票在进行，先由说书人结算当前投票；再次点击才进入夜晚。
         if (this.gameState.phase === GamePhase.DAY) {
           const activeNomination = this.getActiveNomination();
@@ -3263,8 +3335,7 @@ export class BOTCWorker extends BaseGameWorker {
     }
 
       // 进入白天
-      const timer = setTimeout(() => this.startDay(), 3000);
-      this.dayTimers.set('processNightToDay', timer);
+      this.scheduleNightTask('processNightToDay', 3000, () => this.startDay());
     } catch (error) {
       // 未完成结算时允许说书人重试，避免一次异常把房间永久锁死。
       this.isProcessingNight = false;
@@ -4105,7 +4176,7 @@ export class BOTCWorker extends BaseGameWorker {
 
     const delay = 3000 + Math.random() * 3000; // 3-6秒随机延迟
 
-    const timer = setTimeout(async () => {
+    this.scheduleNightTask('autoStoryteller', delay, async () => {
       // 如果游戏不在夜晚阶段，不处理
       if (this.gameState.phase !== GamePhase.FIRST_NIGHT && 
           this.gameState.phase !== GamePhase.NIGHT) return;
@@ -4139,8 +4210,7 @@ export class BOTCWorker extends BaseGameWorker {
         this.dayTimers.delete('pendingNightActions');
       }
       await this.processNightActions();
-    }, delay);
-    this.dayTimers.set('autoStoryteller', timer);
+    });
   }
 
   /**

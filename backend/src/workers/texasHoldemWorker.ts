@@ -37,7 +37,11 @@ interface TexasHoldemGameState {
   // 记录玩家最近一次完成行动时面对的桌面最高下注额，用于正确处理连续短码全下是否重新开放加注。
   actedAtBet: Record<string, number>;
   stage: 'idle' | 'playing' | 'distribution';
+  // 本局最终实际获得底池的玩家，用于终局状态同步与重连复盘。
   winners: string[];
+  // 线下发牌分池阶段允许领取底池的候选人，不等同于最终实际领取者。
+  eligibleWinners: string[];
+  claimedWinners: string[];
 }
 
 // 德州扑克配置接口
@@ -112,7 +116,9 @@ class TexasHoldemWorker extends BaseGameWorker {
       acted: [],
       actedAtBet: {},
       stage: 'idle',
-      winners: []
+      winners: [],
+      eligibleWinners: [],
+      claimedWinners: []
     } as TexasHoldemGameState;
     this.participants = [];
 
@@ -599,6 +605,7 @@ class TexasHoldemWorker extends BaseGameWorker {
       lastRaiseAmount: gs.lastRaiseAmount,
       minRaiseTo: this.getMinimumFullRaiseTo(),
       stage: gs.stage,
+      winners: [...gs.winners],
       allowSystemDealing: !this.isManualDealing()
     };
   }
@@ -639,7 +646,9 @@ class TexasHoldemWorker extends BaseGameWorker {
     gs.currentBet = 0;
     gs.lastFullBet = 0;
     gs.raiseLocked = [];
-    gs.winners = normalizedEligible;
+    gs.winners = [];
+    gs.eligibleWinners = normalizedEligible;
+    gs.claimedWinners = [];
 
     if (!this.room.gameMetadata) {
       this.room.gameMetadata = {};
@@ -697,6 +706,7 @@ class TexasHoldemWorker extends BaseGameWorker {
       // 应按德州扑克规则直接获得底池。让线下模式继续手动 Take 会制造可避免的
       // 结算竞态，也允许玩家在离线前留下永远无法领取的底池。
       const won = this.awardCurrentPotToPlayer(winner);
+      gs.winners = [winner.id];
       this.sendToRoom('chat_broadcast', { message: `${winner.nickname} 赢得底池 ${won}` });
       this.sendToRoom('room_update', this.room);
       this.handleGameOver();
@@ -985,6 +995,8 @@ class TexasHoldemWorker extends BaseGameWorker {
     gs.playerHands = {};
     gs.stage = 'playing';
     gs.winners = [];
+    gs.eligibleWinners = [];
+    gs.claimedWinners = [];
 
     const dealtHands: Array<{ playerId: string; hand: string[] }> = [];
 
@@ -1349,7 +1361,8 @@ class TexasHoldemWorker extends BaseGameWorker {
     this.gameState.raiseLocked = [];
     this.gameState.stage = 'idle';
     this.gameState.totalBets = {};
-    this.gameState.winners = [];
+    this.gameState.eligibleWinners = [];
+    this.gameState.claimedWinners = [];
 
     // 同步最终的游戏状态（包括完整的公共牌）
     const gs = this.gameState as TexasHoldemGameState;
@@ -1362,7 +1375,7 @@ class TexasHoldemWorker extends BaseGameWorker {
 
     // 立即同步房间状态
     this.sendToRoom('room_update', this.room);
-    this.sendToRoom('game_over', {});
+    this.sendToRoom('game_over', { winners: [...gs.winners] });
 
     // 游戏结束时检查并踢出离线玩家
     this.checkAndKickOfflinePlayers();
@@ -1781,7 +1794,7 @@ class TexasHoldemWorker extends BaseGameWorker {
     }
 
     // 验证只有赢家可以拿筹码
-    if (gs.winners.length > 0 && !gs.winners.includes(playerId)) {
+    if (gs.eligibleWinners.length > 0 && !gs.eligibleWinners.includes(playerId)) {
       this.sendToPlayer(playerId, 'error', { message: '你不是赢家，无法领取筹码' });
       return;
     }
@@ -1789,12 +1802,16 @@ class TexasHoldemWorker extends BaseGameWorker {
     player.gameMetadata = player.gameMetadata || {};
     player.gameMetadata.chips = (Number(player.gameMetadata.chips) || 0) + takeAmt;
     gs.pot -= takeAmt;
+    if (!gs.claimedWinners.includes(playerId)) {
+      gs.claimedWinners.push(playerId);
+    }
 
     this.sendToRoom('chat_broadcast', { message: `[玩家${player.nickname} take ${takeAmt}]` });
     this.sendToRoom('room_update', this.room);
     this.sendToRoom('game_state', this.buildPublicGameState());
 
     if (gs.pot === 0) {
+      gs.winners = [...gs.claimedWinners];
       this.handleGameOver();
     }
   }
@@ -1823,7 +1840,7 @@ class TexasHoldemWorker extends BaseGameWorker {
     }
 
     // 验证只有赢家可以拿筹码
-    if (gs.winners.length > 0 && !gs.winners.includes(playerId)) {
+    if (gs.eligibleWinners.length > 0 && !gs.eligibleWinners.includes(playerId)) {
       this.sendToPlayer(playerId, 'error', { message: '你不是赢家，无法领取筹码' });
       return;
     }
@@ -1832,6 +1849,10 @@ class TexasHoldemWorker extends BaseGameWorker {
     player.gameMetadata = player.gameMetadata || {};
     player.gameMetadata.chips = (Number(player.gameMetadata.chips) || 0) + takeAmt;
     gs.pot = 0;
+    if (!gs.claimedWinners.includes(playerId)) {
+      gs.claimedWinners.push(playerId);
+    }
+    gs.winners = [...gs.claimedWinners];
 
     this.sendToRoom('chat_broadcast', { message: `[玩家${player.nickname} take all ${takeAmt}]` });
     this.sendToRoom('room_update', this.room);
