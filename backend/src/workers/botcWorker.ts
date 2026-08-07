@@ -847,20 +847,80 @@ export class BOTCWorker extends BaseGameWorker {
       storytellerMode = 'ai';
     }
 
+    const normalizeBoolean = (
+      value: unknown,
+      fallbackValue: boolean | undefined,
+      defaultValue: boolean,
+      label: string
+    ): boolean => {
+      if (value === undefined) {
+        return typeof fallbackValue === 'boolean' ? fallbackValue : defaultValue;
+      }
+      if (typeof value !== 'boolean') {
+        throw new Error(`${label}必须是布尔值`);
+      }
+      return value;
+    };
+
+    const normalizeTimer = (
+      value: unknown,
+      fallbackValue: number | undefined,
+      defaultValue: number,
+      label: string
+    ): number => {
+      const candidate = value === undefined ? fallbackValue ?? defaultValue : value;
+      // 与其他游戏保持一致：null/0 表示不限时；显式的负数、NaN 或无穷值应拒绝，
+      // 否则 Node 对超大 setTimeout 会钳制为约 1ms，导致阶段几乎立即被自动推进。
+      if (candidate === null || candidate === 0) return 0;
+      if (typeof candidate !== 'number' || !Number.isFinite(candidate) || candidate < 0) {
+        throw new Error(`${label}不合法`);
+      }
+      return Math.min(3600, Math.floor(candidate));
+    };
+
     return {
       edition: requestedEdition,
       storytellerId,
-      allowSpectators: config.allowSpectators ?? fallback?.allowSpectators ?? true,
-      isPrivate: config.isPrivate ?? fallback?.isPrivate ?? false,
+      allowSpectators: normalizeBoolean(config.allowSpectators, fallback?.allowSpectators, true, '旁观设置'),
+      isPrivate: normalizeBoolean(config.isPrivate, fallback?.isPrivate, false, '私密房间设置'),
       maxPlayers,
-      enableTimers: config.enableTimers ?? fallback?.enableTimers ?? false,
-      dayTimer: config.dayTimer ?? fallback?.dayTimer ?? 300,
-      nightTimer: config.nightTimer ?? fallback?.nightTimer ?? 180,
-      votingTimer: config.votingTimer ?? fallback?.votingTimer ?? 60,
-      allowPrivateChat: config.allowPrivateChat ?? fallback?.allowPrivateChat ?? true,
+      enableTimers: normalizeBoolean(config.enableTimers, fallback?.enableTimers, false, '计时器设置'),
+      dayTimer: normalizeTimer(config.dayTimer, fallback?.dayTimer, 300, '白天计时'),
+      nightTimer: normalizeTimer(config.nightTimer, fallback?.nightTimer, 180, '夜晚计时'),
+      votingTimer: normalizeTimer(config.votingTimer, fallback?.votingTimer, 60, '投票计时'),
+      allowPrivateChat: normalizeBoolean(config.allowPrivateChat, fallback?.allowPrivateChat, true, '私聊设置'),
       storytellerMode,
       aiBias
     };
+  }
+
+  private resetRuntimeStateForSetup(): void {
+    this.clearTimers();
+    this.gamePlayers.clear();
+    this.nightActions = [];
+    this.isProcessingNight = false;
+    this.endingDay = false;
+    this.privateChatMessages.clear();
+    this.nightRound = 0;
+    this.previouslyPukkaTarget = null;
+    this.noExecutionToday = true;
+    this.deathsToday = [];
+    this.firstNightInfoPlayerIds.clear();
+    this.gameState = initializeGameState(this.gameConfig.storytellerId);
+    this.gameState.grimoire.startTime = Date.now();
+  }
+
+  private clearPrivateRoleState(): void {
+    for (const roomPlayer of this.room.players) {
+      this.sendToPlayer(roomPlayer.id, 'roleAssigned', {
+        role: null,
+        seat: -1,
+        isEvil: false,
+        nightInfo: null,
+        abilityState: {},
+        knownIdentities: []
+      });
+    }
   }
 
   private getRoomCapacity(config: GameConfig = this.gameConfig): number {
@@ -1449,7 +1509,11 @@ export class BOTCWorker extends BaseGameWorker {
       }
     } catch (error) {
       console.error(`gameAction处理失败 (${actionType}):`, error);
-      this.sendToPlayer(playerId, 'actionError', { message: '操作处理失败，请重试' });
+      this.sendToPlayer(playerId, 'actionError', {
+        message: error instanceof Error && error.message
+          ? error.message
+          : '操作处理失败，请重试'
+      });
     }
   }
 
@@ -1541,6 +1605,9 @@ export class BOTCWorker extends BaseGameWorker {
    */
   private async startGame(): Promise<void> {
     try {
+      // 开局可能由客户端重试。先确保没有上一次失败开局留下的角色、行动或计时器。
+      this.resetRuntimeStateForSetup();
+
       // 分配角色 - 排除说书人（说书人作为观察者/主持人，不参与游戏）
       const storytellerId = this.gameConfig.storytellerId;
       const playerIds = this.room.players
@@ -1549,12 +1616,10 @@ export class BOTCWorker extends BaseGameWorker {
       
       const minPlayers = 5;
       if (playerIds.length < minPlayers) {
-        this.sendToRoom('gameError', { message: `需要至少${minPlayers}名非说书人玩家才能开始游戏，当前只有${playerIds.length}名` });
-        return;
+        throw new Error(`需要至少${minPlayers}名非说书人玩家才能开始游戏，当前只有${playerIds.length}名`);
       }
       if (playerIds.length > this.gameConfig.maxPlayers) {
-        this.sendToRoom('gameError', { message: `实际游戏玩家不能超过${this.gameConfig.maxPlayers}名，当前有${playerIds.length}名` });
-        return;
+        throw new Error(`实际游戏玩家不能超过${this.gameConfig.maxPlayers}名，当前有${playerIds.length}名`);
       }
       
       const excludedRoleIds = this.isComputerStoryteller()
@@ -1589,6 +1654,8 @@ export class BOTCWorker extends BaseGameWorker {
 
       // 更新游戏状态
       this.gameState.phase = GamePhase.FIRST_NIGHT;
+      // 游戏时长应从真正开局而不是创建房间/配置完成时开始计算。
+      this.gameState.grimoire.startTime = Date.now();
       this.gameState.livingPlayers = this.gamePlayers.size;
       this.refreshAlignmentLists();
 
@@ -1610,7 +1677,17 @@ export class BOTCWorker extends BaseGameWorker {
       await this.startNight(true);
 
     } catch (error) {
-      this.sendToRoom('gameError', { message: '游戏启动失败: ' + error });
+      const message = error instanceof Error && error.message
+        ? error.message
+        : String(error);
+
+      // startGame 在角色分配、私密信息发送和首夜初始化之间包含多步操作。任一步失败
+      // 都必须回到干净的 SETUP 状态，否则下一次重试会继承半局角色、夜间行动或计时器。
+      this.resetRuntimeStateForSetup();
+      this.clearPrivateRoleState();
+      this.sendToRoom('gameError', { message: `游戏启动失败: ${message}` });
+      this.broadcastGameState();
+      throw error instanceof Error ? error : new Error(message);
     }
   }
 
@@ -4365,31 +4442,10 @@ export class BOTCWorker extends BaseGameWorker {
       return;
     }
 
-    this.clearTimers();
-    this.gamePlayers.clear();
-    this.nightActions = [];
-    this.isProcessingNight = false;
-    this.privateChatMessages.clear();
-    this.nightRound = 0;
-    this.previouslyPukkaTarget = null;
-    this.noExecutionToday = true;
-    this.deathsToday = [];
-    this.firstNightInfoPlayerIds.clear();
-
-    this.gameState = initializeGameState(this.gameConfig.storytellerId);
-    this.gameState.grimoire.startTime = Date.now();
+    this.resetRuntimeStateForSetup();
 
     // 所有客户端必须立即丢弃上一局私有身份/夜间信息；仅广播公开状态不足以清理这些本地字段。
-    for (const roomPlayer of this.room.players) {
-      this.sendToPlayer(roomPlayer.id, 'roleAssigned', {
-        role: null,
-        seat: -1,
-        isEvil: false,
-        nightInfo: null,
-        abilityState: {},
-        knownIdentities: []
-      });
-    }
+    this.clearPrivateRoleState();
 
     this.sendToRoom('gameReset', {
       message: '游戏已重置，请重新配置并开始新一局',

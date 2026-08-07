@@ -1,3 +1,4 @@
+import { randomInt } from 'crypto';
 import { Server, Socket } from 'socket.io';
 import { Room } from '../models/Room';
 import { Player } from '../models/Player';
@@ -125,7 +126,9 @@ function generateRoomName(): string {
   const chars = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ';
   let result = '';
   for (let i = 0; i < 6; i++) {
-    result += chars.charAt(Math.floor(Math.random() * chars.length));
+    // 私密房间依赖房间码作为入场凭据。Math.random() 的输出可预测，不能用于
+    // 生成访问码；使用系统加密随机源，同时保留原有 6 位格式。
+    result += chars.charAt(randomInt(chars.length));
   }
   return result;
 }

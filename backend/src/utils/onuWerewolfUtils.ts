@@ -354,7 +354,12 @@ export function onuProcessHunterRevenge(
   const result = [...lynched];
   const resultSet = new Set(result);
 
-  for (const playerId of lynched) {
+  // 复仇死亡同样会触发该玩家自己的“死亡时”能力。配置允许出现多名猎人，
+  // 因此 A 猎人带走 B 猎人时，B 也必须继续带走自己投票的目标。旧实现只遍历
+  // 最初的处决列表，会漏掉后续加入结果的猎人。使用可增长队列，并以 Set 防止
+  // 猎人互投形成循环。
+  for (let cursor = 0; cursor < result.length; cursor++) {
+    const playerId = result[cursor];
     const player = players[playerId];
     if (player && player.actualRole === OnuWerewolfRole.Hunter) {
       // 猎人被处决，其投票目标也一同死亡

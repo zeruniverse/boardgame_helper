@@ -511,3 +511,29 @@ Commit: fix(round12): 防止房主转让回滚并加固德州重连开局
   - package-lock 工作区依赖树通过 npm ls --package-lock-only --all；git diff --check 通过。
   - 完整 npm ci / npm run build 未在当前环境完成：内部依赖源仍对 typescript-5.8.3.tgz 返回 404，安装阶段即中止，因此正式 vue-tsc/Vite 生产构建仍需在依赖可用的本地或 CI 环境复验。源码已通过上述 strict 编译、静态检查和实际 Worker 测试。
 备注: 本轮优先修复跨六个游戏共用的 Controller-Worker 房主回滚竞态，以及德州扑克重连可见性和半开局原子性；未修改 frontend/src/ 文件，未删除文件，未创建根目录 src/。
+
+=== 本次请求第 1 轮修复记录 ===
+时间: 2026-08-07 14:44:33 UTC
+Commit: fix(round1): 修复钟楼开局原子性、一夜狼人猎人连锁与房间码随机性
+修改/新增文件:
+  - backend/src/controllers/roomController.ts (124107 bytes)
+  - backend/src/utils/onuWerewolfUtils.ts (13662 bytes)
+  - backend/src/workers/botcWorker.ts (177837 bytes)
+  - repair_log.txt
+删除文件: 无
+构建测试: 部分通过
+本轮修复:
+  - 私密房间的 6 位房间码改用 Node 加密随机源 randomInt 生成，保留原有格式与唯一性重试逻辑，避免 Math.random 可预测导致房间访问码更容易被猜测。
+  - 一夜狼人处决结算改为可增长队列：被猎人带走的另一名猎人也会继续触发自己的死亡能力；使用 Set 去重，猎人互投不会形成无限循环。
+  - 血染钟楼统一规范布尔与计时配置：布尔字段只接受真实 boolean；计时仅接受有限非负 number，null/0 保持不限时，秒数向下取整并限制为最多 3600，避免布尔值/字符串被隐式转换，以及超大 setTimeout 被 Node 钳制后导致阶段近乎立即推进。
+  - 血染钟楼开局前统一清理上一轮失败残留的角色、夜间行动、阶段锁、私聊、临时效果和计时器；实际开局时间在成功进入首夜时重新记录。
+  - 血染钟楼开局任一步骤失败时回滚到干净 SETUP 状态，清除所有客户端私有角色/夜间信息，广播回滚后的公开状态，并把真实错误传递到 game_action acknowledgement；修复失败开局仍被回执成功及下次重试继承半局状态的问题。
+  - 血染钟楼重开复用同一套运行态和私有状态清理逻辑，避免开局失败与手动重开走两套不一致的重置路径。
+验证:
+  - 后端 33 个 TypeScript 源码在临时外部模块类型桩与真实 Node 类型定义下完成完整 strict 编译，并成功生成 33 个测试用 CommonJS 文件，无类型错误。
+  - 六个实际游戏 Worker 的 prepare_room 烟雾测试全部通过：狼人杀、杀人游戏、一夜狼人、阿瓦隆、德州扑克、血染钟楼均可加载当前源码并完成初始化。
+  - 专项回归测试通过：一夜狼人多猎人连锁死亡及互投去重；血染钟楼超大/不限时计时规范化、畸形布尔与计时类型拒绝；模拟首夜初始化失败后 action acknowledgement 返回失败，阶段、玩家、夜间行动和计时器均回到干净 SETUP。
+  - backend/src 与 frontend/src 共 82 个 TypeScript/Vue/CSS 源码文件完成静态复查；TypeScript/Vue script 语法、27 个 Vue SFC 块配对、CSS 花括号和 211 个相对导入路径检查通过。
+  - package-lock 工作区依赖树通过 npm ls --package-lock-only --all；git diff --check 通过；根目录不存在 src/。
+  - 完整 npm run build 已尝试但未在当前容器完成：此前依赖安装只留下部分/空 node_modules，正式后端 tsc 因缺少 body-parser、express、node、uuid 等已声明类型而中止，前端 vue-tsc/Vite 未进入执行；内部依赖源此前无法取得锁定的 TypeScript 包。仍需在依赖完整的本地或 CI 环境执行 npm ci && npm run build 做最终生产构建确认。
+备注: 本轮优先处理会导致私密房间访问码可预测、规则结算错误、血染钟楼阶段瞬间推进及失败开局污染状态的高影响问题；未修改 frontend/src/ 文件，未删除文件，未创建根目录 src/。
