@@ -480,12 +480,10 @@ export const useAvalonStore = defineStore('avalon', {
     },
 
     startTimer() {
-      if (this.timerInterval) {
-        clearInterval(this.timerInterval);
-      }
-
-      if (this.timeLeft <= 0) {
-        this.timerInterval = null;
+      // Store 是倒计时的唯一所有者。状态同步只更新 deadline/timeLeft，已有
+      // interval 会读取最新值继续运行；不要每次 game_update 都清除并重建，
+      // 避免多个计时来源互相重置并制造不必要的 interval 抖动。
+      if (this.timerInterval || this.timeLeft <= 0) {
         return;
       }
 

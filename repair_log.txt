@@ -625,3 +625,29 @@ Commit: fix(round8): 防止钟楼阶段跳跃并同步德州赢家状态
   - package-lock 工作区依赖树通过 npm ls --package-lock-only --all；根目录不存在 src/，全部源码修改位于 backend/src/ 或 frontend/src/。
   - 完整 npm run build 已再次尝试但未在当前容器完成：附件中残留的 node_modules 只有不完整/空依赖目录，后端正式 tsc 因缺少 body-parser、express、node、uuid 等声明文件中止，前端 vue-tsc/Vite 未进入执行。需在依赖完整的本地或 CI 环境执行 npm ci && npm run build 做最终生产构建确认；本轮源码已通过上述 strict 编译、静态检查与实际 Worker 测试。
 备注: 本轮未删除文件，未创建根目录 src/；修复包只包含本轮修改/新增文件，可按相对路径直接覆盖。
+
+=== 本次请求第 10 轮修复记录 ===
+时间: 2026-08-07 17:15:18 UTC
+Commit: fix(round10): 同步德州离线弃牌并统一阿瓦隆倒计时
+修改/新增文件:
+  - backend/src/workers/texasHoldemWorker.ts (90208 bytes)
+  - frontend/src/components/AvalonRoom.vue (18420 bytes)
+  - frontend/src/store/avalon.ts (16153 bytes)
+  - repair_log.txt
+删除文件: 无
+构建测试: 部分通过
+本轮修复:
+  - 德州扑克修复非当前行动者掉线自动弃牌后的状态同步：该分支现在立即广播权威 game_state，folded 列表不再只能等到下一名玩家行动后才出现在其他客户端。
+  - 德州扑克离线自动弃牌与正常 handleFold 对齐，清理 actedAtBet 并解除 raiseLocked，避免短码全下等场景留下过期的本轮行动/加注锁定状态。
+  - 阿瓦隆移除房间组件自行维护的第二套每秒倒计时，改由 Pinia Store 独占 interval，避免组件计时器与 Store 计时器同时递减或反复重建。
+  - 阿瓦隆 Store 的 startTimer 改为幂等：已有 interval 时只接收最新 deadline/timeLeft，不再因每次 game_update 清除并重启计时器，降低状态同步抖动和倒计时漂移风险。
+  - 继续复查狼人杀、杀人游戏、血染钟楼、一夜狼人、阿瓦隆与德州扑克的 Worker 初始化、状态同步和关键规则分支；本轮优先落地上述两个可稳定复现、影响客户端权威状态与竞态一致性的问题。
+验证:
+  - 后端全部 34 个 TypeScript 文件使用 TypeScript 5.8.3、真实 Node 类型与临时外部模块声明桩完成 strict 编译并生成测试用 CommonJS 文件，无类型错误。
+  - 六个实际 Worker 的 prepare_room 烟雾测试全部通过：狼人杀、杀人游戏、一夜狼人、阿瓦隆、德州扑克、血染钟楼均可加载并初始化。
+  - 德州扑克实际 Worker 专项回归通过：三人局中非当前行动者离线后立即发布包含其 folded 状态的 game_state，当前行动者不被错误推进。
+  - 阿瓦隆计时专项回归通过：组件不再创建计时 interval，Store 连续调用 startTimer 只保留一个 interval。
+  - backend/src 与 frontend/src 共 83 个源码文件完成语法、Vue SFC 块、CSS 花括号及 216 个相对/@导入路径静态检查，无错误；git diff --check 通过。
+  - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts 校验；根目录不存在 src/。
+  - 完整 npm run build 已再次尝试但未在当前容器完成：附件内依赖未完整安装，后端正式 tsc 因缺少 Node、Express、Socket.IO、UUID 等项目依赖/类型声明中止，前端构建未进入执行。此前 npm ci 也因当前内部依赖源无法取得锁定的 TypeScript 包而中止；需在依赖源可用的本地或 CI 环境执行 npm ci && npm run build 做最终生产构建确认。
+备注: 所有后端源码修改均位于 backend/src/，所有前端源码修改均位于 frontend/src/；本轮未删除文件，未创建根目录 src/；修复包只包含本轮修改文件，可按相对路径覆盖。

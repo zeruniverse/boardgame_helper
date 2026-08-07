@@ -207,8 +207,6 @@ const nickname = computed(() => {
   return player?.name || currentUserId.value
 })
 
-let timerInterval: ReturnType<typeof setInterval> | null = null
-
 // 房间状态检查定时器
 let statusCheckInterval: ReturnType<typeof setInterval> | null = null
 let initialCheckTimeout: ReturnType<typeof setTimeout> | null = null
@@ -251,16 +249,9 @@ onMounted(() => {
   // 开始定时检查房间状态
   statusCheckInterval = setInterval(checkRoomStatus, 3000)
   initialCheckTimeout = setTimeout(checkRoomStatus, 500)
-
-  // 启动计时器
-  startTimer()
 })
 
 onUnmounted(() => {
-  if (timerInterval) {
-    clearInterval(timerInterval)
-    timerInterval = null
-  }
   if (statusCheckInterval) {
     clearInterval(statusCheckInterval)
     statusCheckInterval = null
@@ -274,12 +265,6 @@ onUnmounted(() => {
   store.socket?.off('game_state_sync', onGameStateSync)
   store.disconnectFromRoom()
 })
-
-const startTimer = () => {
-  timerInterval = setInterval(() => {
-    store.updateTimer()
-  }, 1000)
-}
 
 const getStatusMessage = (): string => {
   if (!gameState.value) return '等待开始'

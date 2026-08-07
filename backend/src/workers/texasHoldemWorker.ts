@@ -385,6 +385,10 @@ class TexasHoldemWorker extends BaseGameWorker {
             if (!gs.acted.includes(playerId)) {
               gs.acted.push(playerId);
             }
+            // 与正常 handleFold 保持同一套行动权清理。否则短码全下形成的
+            // actedAtBet/raiseLocked 可能在该玩家离线弃牌后残留到本轮结束。
+            delete gs.actedAtBet[playerId];
+            this.unlockRaiseForPlayer(playerId);
             this.sendToRoom('chat_broadcast', { message: `${player.nickname} 离线自动弃牌`, type: 'system' });
             // 检查是否只剩一个活跃玩家
             const activeIds = this.getActiveParticipantIds();
@@ -400,6 +404,11 @@ class TexasHoldemWorker extends BaseGameWorker {
               console.log('playerOffline: currentTurn 越界，尝试恢复');
               this.checkRoundEnd();
             }
+
+            // 非当前行动者不会经过 handleFold/continueToNextPlayer，因此必须在这里
+            // 主动发布公开牌局状态。仅发送 room_update 无法同步 folded，其他客户端会
+            // 一直把离线玩家显示为仍在牌局中，直到下一次有人行动。
+            this.sendToRoom('game_state', this.buildPublicGameState());
           }
         }
       }
