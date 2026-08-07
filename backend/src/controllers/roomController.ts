@@ -11,7 +11,11 @@ import { OnuWerewolfRole } from '../utils/onuWerewolfTypes';
 import { getRecommendedRoles } from '../utils/onuWerewolfPresets';
 import { getRequiredHostKickVotes, pruneHostKickVoters } from '../utils/hostKickVote';
 import { CHAT_MAX_LENGTH, normalizeChatText } from '../utils/chat';
-import { sanitizeIncomingGameConfig, validateGameActionPayloadSize } from '../utils/gameConfigInput';
+import {
+  normalizeGameActionType,
+  sanitizeIncomingGameConfig,
+  validateGameActionPayloadSize
+} from '../utils/gameConfigInput';
 import {
   getOwnConfigValue,
   normalizeBoolean,
@@ -172,7 +176,12 @@ function toClientPlayer(player: Player): any {
   const { seatKey: _seatKey, ...publicMetadata } = metadata;
   const nickname = normalizeUserVisibleNickname(player.nickname || player.name, '玩家');
   const name = normalizeUserVisibleNickname(player.name || player.nickname, nickname);
-  const { socketId: _socketId, lastHeartbeat: _lastHeartbeat, ...publicPlayer } = player;
+  const {
+    socketId: _socketId,
+    lastHeartbeat: _lastHeartbeat,
+    connectionStateVersion: _connectionStateVersion,
+    ...publicPlayer
+  } = player;
   return {
     ...publicPlayer,
     nickname,
@@ -248,13 +257,34 @@ function serializeEventData(event: string, data: any, roomId?: string): any {
   return data;
 }
 
+function getPlayerConnectionStateVersion(player: Pick<Player, 'connectionStateVersion'>): number {
+  const version = Number(player.connectionStateVersion);
+  return Number.isSafeInteger(version) && version >= 0 ? version : 0;
+}
+
+/** Advance a player's activity timestamp even when multiple events share one millisecond. */
+function advancePlayerHeartbeat(player: Player, now = Date.now()): number {
+  const previous = Number(player.lastHeartbeat) || 0;
+  const candidate = Number.isFinite(now) ? Math.floor(now) : Date.now();
+  player.lastHeartbeat = Math.max(candidate, previous + 1);
+  return player.lastHeartbeat;
+}
+
+/** Commit a controller-owned socket/online transition. */
+function advancePlayerConnectionState(player: Player): number {
+  const nextVersion = getPlayerConnectionStateVersion(player) + 1;
+  player.connectionStateVersion = nextVersion;
+  return nextVersion;
+}
+
 function markPlayerOnlineForController(room: Room, player: Player, socketId: string, nickname?: string): void {
   player.socketId = socketId;
   const nextNickname = normalizeNickname(nickname ?? player.nickname ?? player.name, '玩家');
   player.nickname = nextNickname;
   player.name = nextNickname;
   player.online = true;
-  player.lastHeartbeat = Date.now();
+  advancePlayerHeartbeat(player);
+  advancePlayerConnectionState(player);
 
   // 德州扑克 worker 会在玩家离线自动弃牌时把 inGame 置为 false。
   // 玩家成功重连/按原 playerId 重新进入时，主线程快照也要先恢复，
@@ -270,6 +300,24 @@ function markPlayerOnlineForController(room: Room, player: Player, socketId: str
 function mergePlayerFromWorker(existing: Player | undefined, worker: Player): Player {
   if (!existing) return worker;
 
+  const existingConnectionVersion = getPlayerConnectionStateVersion(existing);
+  const workerConnectionVersion = getPlayerConnectionStateVersion(worker);
+  const hasConnectionRevision = existingConnectionVersion > 0 || workerConnectionVersion > 0;
+  const workerHasCurrentConnection = hasConnectionRevision
+    ? workerConnectionVersion >= existingConnectionVersion
+    : Number(worker.lastHeartbeat || 0) >= Number(existing.lastHeartbeat || 0);
+  const workerMetadata = {
+    ...(worker.gameMetadata || {})
+  };
+
+  // inGame is normally Worker-owned, but the controller temporarily restores
+  // it while moving a Texas Hold'em seat to a newer connection generation.
+  // A delayed room_update from the previous generation must not undo that
+  // reconnect before update_room_data reaches the Worker.
+  if (!workerHasCurrentConnection && Object.prototype.hasOwnProperty.call(existing.gameMetadata || {}, 'inGame')) {
+    workerMetadata.inGame = existing.gameMetadata.inGame;
+  }
+
   return {
     ...worker,
     // socket/online/heartbeat are owned by the controller thread; worker room snapshots can be stale.
@@ -278,11 +326,12 @@ function mergePlayerFromWorker(existing: Player | undefined, worker: Player): Pl
     socketId: existing.socketId,
     online: existing.online,
     lastHeartbeat: existing.lastHeartbeat ?? worker.lastHeartbeat,
-    name: worker.name || worker.nickname || existing.name,
-    nickname: worker.nickname || existing.nickname,
+    connectionStateVersion: existingConnectionVersion,
+    name: existing.name || existing.nickname || worker.name || worker.nickname,
+    nickname: existing.nickname || worker.nickname,
     gameMetadata: {
       ...(existing.gameMetadata || {}),
-      ...(worker.gameMetadata || {})
+      ...workerMetadata
     }
   };
 }
@@ -431,7 +480,13 @@ function defaultOnuRoles(playerCount: number): OnuWerewolfRole[] {
 
 // Input validation helpers
 function isValidRoomId(roomId: unknown): roomId is string {
-  return typeof roomId === 'string' && roomId.trim().length > 0;
+  if (typeof roomId !== 'string') return false;
+  // Server-generated room ids are six uppercase alphanumeric characters. Keep
+  // a small compatibility allowance for legacy ids while rejecting control
+  // characters and unbounded Map/log keys from Socket.IO payloads.
+  return roomId.length > 0
+    && roomId.length <= 128
+    && /^[A-Za-z0-9_-]+$/.test(roomId);
 }
 
 function isValidPlayerId(playerId: unknown): playerId is string {
@@ -1166,6 +1221,7 @@ export function roomController(io: Server) {
     name: string;
     online: boolean;
     lastHeartbeat: number;
+    connectionStateVersion: number;
     hadInGame: boolean;
     inGame: unknown;
   }
@@ -1179,6 +1235,7 @@ export function roomController(io: Server) {
       name: player.name,
       online: player.online,
       lastHeartbeat: player.lastHeartbeat,
+      connectionStateVersion: getPlayerConnectionStateVersion(player),
       hadInGame: Object.prototype.hasOwnProperty.call(metadata, 'inGame'),
       inGame: metadata.inGame
     };
@@ -1190,6 +1247,7 @@ export function roomController(io: Server) {
     player.name = snapshot.name;
     player.online = snapshot.online;
     player.lastHeartbeat = snapshot.lastHeartbeat;
+    player.connectionStateVersion = snapshot.connectionStateVersion;
 
     // 座位迁移只会额外修改德州扑克的 inGame。回滚时不能把整份
     // gameMetadata 恢复成 await 之前的旧副本，否则并发牌局更新会丢失筹码/准备状态。
@@ -1199,6 +1257,32 @@ export function roomController(io: Server) {
     } else {
       delete player.gameMetadata.inGame;
     }
+  }
+
+  function rollbackPlayerConnectionAfterFailedMigration(
+    player: Player,
+    snapshot: PlayerConnectionSnapshot,
+    previousSocketInvalidated: boolean
+  ): void {
+    const failedHeartbeat = Number(player.lastHeartbeat) || 0;
+    const failedConnectionVersion = getPlayerConnectionStateVersion(player);
+    restorePlayerConnection(player, snapshot);
+
+    // 回滚本身也是一次新的连接所有权提交。不能把 revision/heartbeat 降回
+    // 事务开始前的值，否则已经见过失败迁移快照的 Worker 会把回滚误判为旧状态。
+    player.connectionStateVersion = Math.max(
+      failedConnectionVersion,
+      snapshot.connectionStateVersion
+    );
+    advancePlayerHeartbeat(player, Math.max(Date.now(), failedHeartbeat + 1));
+
+    if (previousSocketInvalidated) {
+      // 旧连接已不可恢复，而失败的新连接也会离开房间。保留玩家身份与游戏元数据，
+      // 但明确把座位降为离线，旧会话令牌仍可用于之后的安全重连。
+      player.socketId = '';
+      player.online = false;
+    }
+    advancePlayerConnectionState(player);
   }
 
   interface ExistingSeatConnectionResult {
@@ -1384,14 +1468,11 @@ export function roomController(io: Server) {
       // socketId 和 online=true 恢复回来，否则会制造已退订/不存在却仍在线的幽灵座位。
       // 同时只回滚仍由本失败事务占用的座位，避免覆盖等待期间已经发生的新接管/踢人。
       if (rollbackPlayer && playerSnapshot && seatStillOwnedByFailedConnection) {
-        restorePlayerConnection(rollbackPlayer, playerSnapshot);
-        if (previousSocketInvalidated) {
-          // 此时旧连接已经不能恢复，而新连接也会按失败路径离开房间。保留玩家身份与
-          // 原游戏元数据，但把座位明确降为离线，旧会话令牌仍可用于再次安全重连。
-          rollbackPlayer.socketId = '';
-          rollbackPlayer.online = false;
-          rollbackPlayer.lastHeartbeat = Date.now();
-        }
+        rollbackPlayerConnectionAfterFailedMigration(
+          rollbackPlayer,
+          playerSnapshot,
+          previousSocketInvalidated
+        );
       }
       // 使用新的时间戳标记回滚结果，避免稍晚到达的失败事务快照覆盖旧座位绑定。
       rollbackRoom.lastActiveTime = Math.max(previousLastActiveTime || 0, Date.now());
@@ -1814,6 +1895,7 @@ export function roomController(io: Server) {
           name: nickname, // 默认使用nickname作为显示名称
           socketId: socket.id,
           lastHeartbeat: Date.now(),
+          connectionStateVersion: 1,
           online: true,
           gameMetadata: {}
         };
@@ -2054,6 +2136,7 @@ export function roomController(io: Server) {
           name: nickname,
           socketId: socket.id,
           lastHeartbeat: Date.now(),
+          connectionStateVersion: 1,
           online: true,
           gameMetadata: {}
         };
@@ -2223,6 +2306,7 @@ export function roomController(io: Server) {
           name: nickname, // 默认使用nickname作为显示名称
           socketId: socket.id,
           lastHeartbeat: Date.now(),
+          connectionStateVersion: 1,
           online: true,
           gameMetadata: {}
         };
@@ -2328,10 +2412,10 @@ export function roomController(io: Server) {
         // 先将玩家标记为离线并通知 worker；多数游戏需要在玩家仍存在于房间时
         // 处理自动弃牌、死亡/托管、阶段推进等逻辑。主动离房的 socket 仍保持连接，
         // 需要清空旧 socketId，避免后续私有身份/行动消息继续发到已离开的页面。
-        const offlineAt = Math.max(Date.now(), Number(player.lastHeartbeat || 0) + 1);
+        const offlineAt = advancePlayerHeartbeat(player);
         player.online = false;
         player.socketId = '';
-        player.lastHeartbeat = offlineAt;
+        advancePlayerConnectionState(player);
         room.lastActiveTime = Date.now();
         rooms.set(room.id, room);
         threadManager.updateRoomData(room.id, room);
@@ -2529,10 +2613,12 @@ export function roomController(io: Server) {
           sendErrorResponse(socket, '无效的房间ID', ack);
           return;
         }
-        if (!data.actionType || typeof data.actionType !== 'string') {
-          sendErrorResponse(socket, '无效的操作类型', ack);
+        const actionTypeResult = normalizeGameActionType(data.actionType);
+        if (!actionTypeResult.valid) {
+          sendErrorResponse(socket, actionTypeResult.error, ack);
           return;
         }
+        const requestedActionType = actionTypeResult.actionType;
 
         const room = rooms.get(data.roomId);
         if (!room) {
@@ -2552,7 +2638,7 @@ export function roomController(io: Server) {
           return;
         }
 
-        if (data.actionType === 'transfer_host' || data.actionType === 'transferHost') {
+        if (requestedActionType === 'transfer_host' || requestedActionType === 'transferHost') {
           const targetId = data.actionData?.newHostId || data.actionData?.targetId || data.actionData?.playerId;
           if (!isValidPlayerId(targetId)) {
             sendErrorResponse(socket, '无效的目标玩家ID', ack);
@@ -2563,7 +2649,7 @@ export function roomController(io: Server) {
           return;
         }
 
-        if (data.actionType === 'kick_player' || data.actionType === 'kickPlayer') {
+        if (requestedActionType === 'kick_player' || requestedActionType === 'kickPlayer') {
           const targetId = data.actionData?.targetId || data.actionData?.playerId;
           if (!isValidPlayerId(targetId)) {
             sendErrorResponse(socket, '无效的目标玩家ID', ack);
@@ -2574,7 +2660,7 @@ export function roomController(io: Server) {
           return;
         }
 
-        let actionType = data.actionType;
+        let actionType = requestedActionType;
         let actionData = data.actionData;
         if (isConfigChangeActionType(actionType)) {
           const sanitizedConfigResult = sanitizeIncomingGameConfig(actionData);
@@ -2599,7 +2685,7 @@ export function roomController(io: Server) {
         }
 
         // 更新玩家心跳和房间活跃时间
-        player.lastHeartbeat = Date.now();
+        advancePlayerHeartbeat(player);
         room.lastActiveTime = Date.now();
 
         // 发送游戏行动到房间线程
@@ -2692,7 +2778,7 @@ export function roomController(io: Server) {
         const actionData = normalizeChatActionPayload(room, data, socket, player, ack);
         if (!actionData) return;
 
-        player.lastHeartbeat = Date.now();
+        advancePlayerHeartbeat(player);
         room.lastActiveTime = Date.now();
 
         const taskResponse = await sendTaskToRoom(
@@ -2931,10 +3017,10 @@ export function roomController(io: Server) {
         console.log(`玩家 ${player.nickname} (${player.id}) 从房间 ${roomId} 断开连接`);
 
         // 将玩家标记为离线
-        const offlineAt = Math.max(Date.now(), Number(player.lastHeartbeat || 0) + 1);
+        const offlineAt = advancePlayerHeartbeat(player);
         player.online = false;
         player.socketId = '';
-        player.lastHeartbeat = offlineAt;
+        advancePlayerConnectionState(player);
         // 断线也算最近活动，避免空闲清理轮询抢在重连宽限/房间清理定时器之前删除长期房间。
         currentRoom.lastActiveTime = Date.now();
 
@@ -3002,7 +3088,7 @@ export function roomController(io: Server) {
         for (const room of rooms.values()) {
           const player = room.players.find(p => p.socketId === socket.id);
           if (player) {
-            player.lastHeartbeat = heartbeatAt;
+            advancePlayerHeartbeat(player, heartbeatAt);
           }
         }
       } catch (error) {

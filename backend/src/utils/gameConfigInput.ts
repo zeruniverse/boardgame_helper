@@ -1,5 +1,6 @@
 const MAX_GAME_CONFIG_BYTES = 64 * 1024;
 const MAX_GAME_ACTION_BYTES = 64 * 1024;
+const MAX_GAME_ACTION_TYPE_LENGTH = 64;
 const MAX_CONFIG_DEPTH = 8;
 const MAX_CONFIG_ENTRIES = 1024;
 const MAX_CONFIG_ARRAY_LENGTH = 128;
@@ -25,6 +26,10 @@ type SanitizedJsonValue = JsonPrimitive | SanitizedJsonValue[] | { [key: string]
 export type SanitizedGameConfigResult =
   | { success: true; config: Record<string, SanitizedJsonValue> }
   | { success: false; error: string };
+
+export type NormalizedGameActionTypeResult =
+  | { valid: true; actionType: string }
+  | { valid: false; error: string };
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
@@ -53,6 +58,28 @@ export function validateGameActionPayloadSize(value: unknown): { valid: true } |
     return { valid: false, error: '操作数据过大' };
   }
   return { valid: true };
+}
+
+/**
+ * Normalize the small routing key that selects a Worker action. The payload
+ * size limit does not include actionType, so it needs its own bound before the
+ * value is logged, copied into a worker_threads task and interpolated into
+ * error messages.
+ */
+export function normalizeGameActionType(value: unknown): NormalizedGameActionTypeResult {
+  if (typeof value !== 'string') {
+    return { valid: false, error: '无效的操作类型' };
+  }
+
+  const actionType = value.trim();
+  if (!actionType || /[\u0000-\u001F\u007F]/.test(actionType)) {
+    return { valid: false, error: '无效的操作类型' };
+  }
+  if (Array.from(actionType).length > MAX_GAME_ACTION_TYPE_LENGTH) {
+    return { valid: false, error: '操作类型过长' };
+  }
+
+  return { valid: true, actionType };
 }
 
 /**

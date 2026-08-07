@@ -178,6 +178,10 @@ export abstract class BaseGameWorker {
 
     const currentPlayers = new Map((currentRoom.players || []).map(player => [player.id, player]));
     const incomingPlayers = new Map((room.players || []).map(player => [player.id, player]));
+    const normalizeConnectionVersion = (value: unknown): number => {
+      const version = Number(value);
+      return Number.isSafeInteger(version) && version >= 0 ? version : 0;
+    };
 
     // A stale controller snapshot can still contain the newest socket/online
     // ownership (for example a disconnect that raced a bet), but it must not
@@ -199,24 +203,42 @@ export abstract class BaseGameWorker {
         return [currentPlayer];
       }
 
+      const currentConnectionVersion = normalizeConnectionVersion(currentPlayer.connectionStateVersion);
+      const incomingConnectionVersion = normalizeConnectionVersion(incomingPlayer.connectionStateVersion);
+      const currentHeartbeat = Number(currentPlayer.lastHeartbeat) || 0;
+      const incomingHeartbeat = Number(incomingPlayer.lastHeartbeat) || 0;
+      const hasConnectionRevision = currentConnectionVersion > 0 || incomingConnectionVersion > 0;
+      const incomingConnectionIsCurrent = hasConnectionRevision
+        ? incomingConnectionVersion >= currentConnectionVersion
+        : incomingHeartbeat >= currentHeartbeat;
+      const incomingConnectionIsNewer = hasConnectionRevision
+        ? incomingConnectionVersion > currentConnectionVersion
+        : incomingHeartbeat > currentHeartbeat;
+      const connectionPlayer = incomingConnectionIsCurrent ? incomingPlayer : currentPlayer;
+
       const mergedMetadata = {
         ...(currentPlayer.gameMetadata || {})
       };
-      // inGame is the only gameMetadata field currently owned by the
-      // controller (it is set while migrating/reconnecting a Texas Hold'em
-      // seat).  Chips, ready flags, seat keys and all other game fields remain
-      // worker-owned and must never be overwritten by a queued old snapshot.
-      if (Object.prototype.hasOwnProperty.call(incomingPlayer.gameMetadata || {}, 'inGame')) {
+      const currentHasInGame = Object.prototype.hasOwnProperty.call(currentPlayer.gameMetadata || {}, 'inGame');
+      // The controller temporarily owns inGame while migrating/reconnecting a
+      // Texas Hold'em seat. Only a newer connection generation may replace the
+      // Worker's current value; equal-generation snapshots can be stale with
+      // respect to chips, ready state and gameplay-driven inGame changes.
+      if (
+        Object.prototype.hasOwnProperty.call(incomingPlayer.gameMetadata || {}, 'inGame') &&
+        (incomingConnectionIsNewer || !currentHasInGame)
+      ) {
         mergedMetadata.inGame = incomingPlayer.gameMetadata.inGame;
       }
 
       return [{
         ...currentPlayer,
-        socketId: incomingPlayer.socketId,
-        nickname: incomingPlayer.nickname || currentPlayer.nickname,
-        name: incomingPlayer.name || incomingPlayer.nickname || currentPlayer.name,
-        online: incomingPlayer.online,
-        lastHeartbeat: incomingPlayer.lastHeartbeat ?? currentPlayer.lastHeartbeat,
+        socketId: connectionPlayer.socketId,
+        nickname: connectionPlayer.nickname || currentPlayer.nickname,
+        name: connectionPlayer.name || connectionPlayer.nickname || currentPlayer.name,
+        online: connectionPlayer.online,
+        lastHeartbeat: Math.max(currentHeartbeat, incomingHeartbeat),
+        connectionStateVersion: Math.max(currentConnectionVersion, incomingConnectionVersion),
         gameMetadata: mergedMetadata
       }];
     });
@@ -336,11 +358,26 @@ export abstract class BaseGameWorker {
       roomPlayer = player;
       this.room.players.push(roomPlayer);
     } else {
-      roomPlayer.socketId = player.socketId;
-      roomPlayer.nickname = player.nickname || roomPlayer.nickname;
-      roomPlayer.name = player.name || player.nickname || roomPlayer.name;
-      roomPlayer.online = true;
-      roomPlayer.lastHeartbeat = player.lastHeartbeat || Date.now();
+      const currentConnectionVersion = Number.isSafeInteger(Number(roomPlayer.connectionStateVersion))
+        ? Math.max(0, Number(roomPlayer.connectionStateVersion))
+        : 0;
+      const incomingConnectionVersion = Number.isSafeInteger(Number(player.connectionStateVersion))
+        ? Math.max(0, Number(player.connectionStateVersion))
+        : 0;
+      const currentHeartbeat = Number(roomPlayer.lastHeartbeat) || 0;
+      const incomingHeartbeat = Number(player.lastHeartbeat) || 0;
+      const incomingConnectionIsCurrent = currentConnectionVersion > 0 || incomingConnectionVersion > 0
+        ? incomingConnectionVersion >= currentConnectionVersion
+        : incomingHeartbeat >= currentHeartbeat;
+
+      if (incomingConnectionIsCurrent) {
+        roomPlayer.socketId = player.socketId;
+        roomPlayer.nickname = player.nickname || roomPlayer.nickname;
+        roomPlayer.name = player.name || player.nickname || roomPlayer.name;
+        roomPlayer.online = player.online !== false;
+      }
+      roomPlayer.lastHeartbeat = Math.max(currentHeartbeat, incomingHeartbeat, Date.now());
+      roomPlayer.connectionStateVersion = Math.max(currentConnectionVersion, incomingConnectionVersion);
     }
     if (!roomPlayer.gameMetadata) {
       roomPlayer.gameMetadata = {};

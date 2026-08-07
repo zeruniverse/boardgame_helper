@@ -113,10 +113,12 @@ export const useTexasHoldemStore = defineStore('texas_holdem', {
           return;
         }
         this.hand = data.hand;
-        // 游戏开始
-        this.gameActive = true;
-        // 新一局开始，重置分池阶段
-        this.distributionActive = false;
+        // 终局重连也会补发手牌用于复盘。stage/game_state 才是牌局是否
+        // 进行中的权威来源，不能让迟到的 deal_hand 把 idle 状态重新置为 active。
+        if (this.stage === 'playing') {
+          this.gameActive = true;
+          this.distributionActive = false;
+        }
       });
 
       // 接收公共游戏状态
@@ -411,7 +413,10 @@ export const useTexasHoldemStore = defineStore('texas_holdem', {
       if (this.timerId) clearInterval(this.timerId);
       this.timerId = setInterval(() => {
         if (this.timeLeft > 0) this.timeLeft--;
-        else if (this.timerId) clearInterval(this.timerId);
+        else if (this.timerId) {
+          clearInterval(this.timerId);
+          this.timerId = null;
+        }
       }, 1000);
     },
 

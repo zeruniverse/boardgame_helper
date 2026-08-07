@@ -706,3 +706,32 @@ Commit: fix(round12): 保留终局弃牌并统一权威倒计时
   - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts 校验。
   - 完整 npm run build 已再次尝试但未在当前容器完成：附件没有完整 node_modules，正式后端 tsc 因缺少 Node、Express、Socket.IO、UUID、CORS 等已声明依赖/类型而中止，前端 vue-tsc/Vite 未进入执行。源码已通过上述 strict 编译、静态检查及实际 Worker 回归；仍需在依赖可用的本地或 CI 环境执行 npm ci && npm run build 做最终生产构建确认。
 备注: 本轮未删除文件，未创建根目录 src/；修复包只包含本轮修改文件，可按相对路径直接覆盖。
+
+=== 本次请求第 14 轮修复记录 ===
+时间: 2026-08-07 18:56:23 UTC
+Commit: fix(round14): 防止连接快照回滚并修正德州终局重连状态
+修改/新增文件:
+  - backend/src/controllers/roomController.ts
+  - backend/src/models/Player.ts
+  - backend/src/utils/gameConfigInput.ts
+  - backend/src/workers/baseGameWorker.ts
+  - frontend/src/store/texas_holdem.ts
+  - repair_log.txt
+删除文件: 无
+构建测试: 部分通过
+本轮修复:
+  - 为玩家连接状态新增由 Controller 独占推进的 connectionStateVersion。已有座位迁移、重连、主动离房和断线都会推进连接代次，心跳时间也保证严格单调，避免同一毫秒事件或排队中的旧 update_room_data 把新 socket、online 状态和昵称回滚。
+  - BaseGameWorker 的房间同步和玩家 upsert 改为按连接代次接收 socket/online 状态；只有更高连接代次才可覆盖德州扑克重连时由 Controller 临时恢复的 inGame，筹码、准备状态、座位密钥等游戏字段继续由 Worker 保持权威。
+  - Controller 合并 Worker room_update 时始终保留当前连接所有权，并在旧 Worker 代次到达时保留德州扑克重连后的 inGame；已有座位迁移失败的回滚现在会提交新的连接代次，防止见过失败迁移快照的 Worker 拒绝回滚状态。
+  - 内部 connectionStateVersion 不会出现在发给客户端的 Player/Room 数据中；新建玩家统一从连接代次 1 开始。
+  - game_action 的 actionType 新增独立规范化：去除首尾空白，拒绝空值、控制字符和超过 64 个 Unicode 字符的路由键；房间 ID 限制为最长 128 字符的安全字母数字/下划线/连字符，避免超长键进入 Map、日志和 worker_threads 消息。
+  - 德州扑克前端不再让终局重连补发的 deal_hand 把权威 stage=idle 重新改成 gameActive=true；只有 stage=playing 时手牌事件才激活牌局。倒计时结束后同时清空 interval 句柄，避免 Store 保留失效 timerId。
+  - 继续复查狼人杀、杀人游戏、血染钟楼、一夜狼人、阿瓦隆和德州扑克的 Worker、Controller、状态同步、规则关键分支与前端目录。本轮优先处理跨全部游戏的连接快照竞态和可稳定复现的德州终局重连错误，未改变原有目录结构或新增重复组件。
+验证:
+  - backend/src 全部 34 个 TypeScript 源码使用 TypeScript strict 模式、真实 Node 类型和临时外部模块声明桩完成编译，并成功生成测试用 CommonJS 文件，无类型错误。
+  - 六个实际游戏 Worker 的 prepare_room 烟雾测试全部通过：狼人杀、杀人游戏、一夜狼人、阿瓦隆、血染钟楼和德州扑克均能加载本轮编译源码并完成初始化。
+  - 后端专项回归通过：低连接代次快照即使携带更高心跳也不能覆盖新 socket/online/inGame；更高代次离线快照可以提交且不覆盖 Worker 筹码；同代次旧快照不能回滚游戏态 inGame；Controller 不泄露连接代次；actionType 规范化按预期拒绝畸形输入。
+  - 德州扑克前端专项回归通过：stage=idle 时补发手牌只恢复复盘数据而不会重新激活牌局，stage=playing 时仍正常激活；倒计时归零后 timerId 被清空。
+  - 前端 48 个 TypeScript/Vue script 单元、128 个相对导入及 Vue SFC 基本结构完成静态检查，无错误；package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts；差异空白检查未报告新增问题；根目录不存在 src/。
+  - 完整 npm run build 已再次执行，但附件内 node_modules 仍是不完整的空目录集合，正式后端 tsc 因缺少 body-parser、connect、express、node、uuid 等已声明类型文件中止，前端 vue-tsc/Vite 未进入执行。源码已通过上述 strict 编译、实际 Worker、专项回归和前端静态检查；仍需在依赖完整的本地或 CI 环境执行 npm ci && npm run build 做最终生产构建确认。
+备注: 所有后端源码修改均位于 backend/src/，所有前端源码修改均位于 frontend/src/；本轮未删除文件，未创建根目录 src/；修复包只包含本轮修改文件，可按相对路径直接覆盖。
