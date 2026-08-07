@@ -750,12 +750,11 @@ class TexasHoldemWorker extends BaseGameWorker {
       }
     });
 
-    // 如果游戏状态不存在，不需要同步
-    if (this.gameState.stage === 'idle') {
-      return;
-    }
-
     const gs = this.gameState as TexasHoldemGameState;
+
+    // idle 也可能代表一手牌刚刚结束。此时 winners、公共牌和最终底池状态仍然
+    // 是重连复盘所需的权威快照，不能因为没有活动参与者就提前返回。等待开局的
+    // 空闲状态同样可以安全发送；只有 game_started / action_request 受进行中条件约束。
 
     // 如果游戏正在进行中，发送游戏开始事件
     if (this.participants.length > 0) {

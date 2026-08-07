@@ -44,6 +44,23 @@ import { mergeRoomGameConfig } from '../utils/roomGameConfig';
 type DebuffType = 'Poisoned' | 'Drunk';
 type DebuffSourceMap = Record<string, Partial<Record<DebuffType, string[]>>>;
 
+interface BOTCGameResultPlayer {
+  id: string;
+  name: string;
+  role: Role | null;
+  isDead: boolean;
+  deathCause?: string;
+  team?: Team;
+  isWinner: boolean;
+}
+
+interface BOTCGameResult {
+  winner: 'good' | 'evil';
+  reason: string;
+  duration: number;
+  players: BOTCGameResultPlayer[];
+}
+
 /**
  * 血染钟楼游戏 Worker
  * 处理血染钟楼游戏的所有逻辑
@@ -66,6 +83,9 @@ export class BOTCWorker extends BaseGameWorker {
   private noExecutionToday: boolean = true;
   private deathsToday: Array<{ playerId: string; roleId?: string; team?: Team; cause: string }> = [];
   private firstNightInfoPlayerIds: Set<string> = new Set();
+  // 终局结果必须保留在 Worker 权威状态中。仅广播一次 gameEnded 会导致刷新/重连
+  // 玩家拿到 phase=ended 却丢失胜方和角色揭晓。
+  private lastGameResult: BOTCGameResult | null = null;
   private endDayProposal: {
     isActive: boolean;
     proposerId: string;
@@ -906,6 +926,7 @@ export class BOTCWorker extends BaseGameWorker {
     this.noExecutionToday = true;
     this.deathsToday = [];
     this.firstNightInfoPlayerIds.clear();
+    this.lastGameResult = null;
     this.gameState = initializeGameState(this.gameConfig.storytellerId);
     this.gameState.grimoire.startTime = Date.now();
   }
@@ -4529,11 +4550,17 @@ export class BOTCWorker extends BaseGameWorker {
    * 结束游戏
    */
   private async endGame(winner: 'good' | 'evil', reason: string): Promise<void> {
+    // 夜间结算、阶段计时器和说书人操作可能在相邻事件循环中同时发现终局。
+    // 第一份终局裁定必须成为唯一权威结果，后到的回调不能覆盖胜方或重复揭晓。
+    if (this.gameState.phase === GamePhase.ENDED) {
+      return;
+    }
+
     this.gameState.phase = GamePhase.ENDED;
     this.isProcessingNight = false;
     this.clearTimers();
 
-    const gameResult = {
+    const gameResult: BOTCGameResult = {
       winner,
       reason,
       duration: Date.now() - (this.gameState.grimoire.startTime || Date.now()),
@@ -4547,6 +4574,7 @@ export class BOTCWorker extends BaseGameWorker {
         isWinner: (winner === 'good' && !isEvilPlayer(p)) || (winner === 'evil' && isEvilPlayer(p))
       }))
     };
+    this.lastGameResult = gameResult;
 
     this.broadcastGameState();
     this.sendToRoom('gameEnded', gameResult);
@@ -4593,8 +4621,18 @@ export class BOTCWorker extends BaseGameWorker {
   private getPublicGameState(viewerId?: string): any {
     const allPlayers = Array.from(this.gamePlayers.values());
     const viewerNightOrder = viewerId && this.gameState.nightOrder.includes(viewerId) ? [viewerId] : [];
+    const terminalState = this.gameState.phase === GamePhase.ENDED && this.lastGameResult
+      ? {
+          winner: this.lastGameResult.winner,
+          reason: this.lastGameResult.reason,
+          endReason: this.lastGameResult.reason,
+          duration: this.lastGameResult.duration,
+          finalPlayers: this.lastGameResult.players
+        }
+      : {};
 
     return {
+      ...terminalState,
       phase: this.gameState.phase,
       day: this.gameState.day,
       isFirstDay: this.gameState.isFirstDay,
