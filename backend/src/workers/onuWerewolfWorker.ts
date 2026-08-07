@@ -72,6 +72,9 @@ class OnuWerewolfWorker extends BaseGameWorker {
   private config!: OnuWerewolfConfig;
   protected gameState!: OnuWerewolfGameState;
   private gameTimer: NodeJS.Timeout | null = null;
+  private gameTimerDeadline: number | null = null;
+  private gameTimerDurationMs = 0;
+  private gameTimerPausedForNoOnlinePlayers = false;
   private skillQueue: Array<{ player: OnuWerewolfPlayer; skill: OnuBaseSkill }> = [];
   private currentSkillIndex = 0;
   private skillTimeout: NodeJS.Timeout | null = null;
@@ -455,7 +458,7 @@ class OnuWerewolfWorker extends BaseGameWorker {
     return {
       status: this.gameState.status,
       currentPhase: this.gameState.currentPhase,
-      timeLeft: this.gameState.timeLeft,
+      timeLeft: this.getRemainingGameTime(),
       playerCount,
       readyCount,
       day: this.gameState.day,
@@ -853,7 +856,7 @@ class OnuWerewolfWorker extends BaseGameWorker {
       message: '轮到你使用技能了',
       role: skillRole,
       roleName: ONU_WEREWOLF_ROLE_NAMES[skillRole] || '未知角色',
-      timeLeft: this.gameState.timeLeft
+      timeLeft: this.getRemainingGameTime()
     });
 
     // 设置技能超时（清理上一个定时器）
@@ -934,7 +937,7 @@ class OnuWerewolfWorker extends BaseGameWorker {
           message: '女巫请选择一名玩家，将已查看的中心卡交给他',
           role: OnuWerewolfRole.Witch,
           roleName: ONU_WEREWOLF_ROLE_NAMES[OnuWerewolfRole.Witch],
-          timeLeft: this.gameState.timeLeft,
+          timeLeft: this.getRemainingGameTime(),
           skillData: { witchCardPosition: position }
         });
         return;
@@ -1423,6 +1426,7 @@ class OnuWerewolfWorker extends BaseGameWorker {
 
     this.gameState.status = OnuWerewolfGameStatus.REVEALING;
     this.gameState.currentPhase = '揭示结果';
+    this.gameState.timeLeft = 3;
 
     // 计算投票结果与胜负：以当前身份为准，支持平票处决、猎人连带出局与皮匠/狼人同时死亡结算。
     const voteResult = onuCalculateVoteResult(this.gameState.votes, this.gameState.players);
@@ -1435,7 +1439,9 @@ class OnuWerewolfWorker extends BaseGameWorker {
     this.sendToRoom('onu_voting_ended', {
       message: '投票结束，正在计算结果...',
       voteResult: { ...voteResult, lynched: lynchResults },
-      winner
+      winner,
+      timeLeft: this.gameState.timeLeft,
+      gameInfo: this.getGameInfo()
     });
 
     // 显示最终结果
@@ -1443,8 +1449,13 @@ class OnuWerewolfWorker extends BaseGameWorker {
   }
 
   private async showFinalResult(): Promise<void> {
+    if (this.gameState.status !== OnuWerewolfGameStatus.REVEALING) {
+      return;
+    }
+
     this.gameState.status = OnuWerewolfGameStatus.COMPLETED;
     this.gameState.currentPhase = '游戏结束';
+    this.gameState.timeLeft = 0;
 
     const gameResult = this.getGameResult();
 
@@ -1458,8 +1469,12 @@ class OnuWerewolfWorker extends BaseGameWorker {
     // 历史测试与部分客户端使用 onu_game_over 命名，保留别名避免游戏已结束但监听方收不到结束事件。
     this.sendToRoom('onu_game_over', completionPayload);
 
-    // 5分钟后重置游戏
-    this.gameTimer = setTimeout(() => this.resetGame(), 5 * 60 * 1000);
+    // 5分钟后重置游戏。复用带身份校验的统一计时器，避免已清理的旧回调重置新状态。
+    this.setTimer(5 * 60 * 1000, () => {
+      if (this.gameState.status === OnuWerewolfGameStatus.COMPLETED) {
+        this.resetGame();
+      }
+    });
   }
 
   private getGameResult(): OnuWerewolfGameResult {
@@ -1590,6 +1605,27 @@ class OnuWerewolfWorker extends BaseGameWorker {
     this.tryStartVotingAfterDiscussionSkips();
   }
 
+  private getRemainingGameTime(): number {
+    if ([
+      OnuWerewolfGameStatus.WAITING,
+      OnuWerewolfGameStatus.COMPLETED
+    ].includes(this.gameState.status)) {
+      return 0;
+    }
+
+    if (this.gameTimerPausedForNoOnlinePlayers && this.gameTimerDurationMs > 0) {
+      // 阶段定时器在全员离线后会等待首名玩家回来并重新给予完整阶段时间。
+      // 此时内部每秒轮询的 retry timer 不是用户可见倒计时，不能把 1 秒误报给重连客户端。
+      return Math.ceil(this.gameTimerDurationMs / 1000);
+    }
+
+    if (this.gameTimer && this.gameTimerDeadline !== null) {
+      return Math.max(0, Math.ceil((this.gameTimerDeadline - Date.now()) / 1000));
+    }
+
+    return Math.max(0, Number(this.gameState.timeLeft) || 0);
+  }
+
   private setTimer(ms: number, callback: () => void): void {
     this.clearTimer();
 
@@ -1600,10 +1636,13 @@ class OnuWerewolfWorker extends BaseGameWorker {
 
     let timer: NodeJS.Timeout;
     let pausedForNoOnlinePlayers = false;
+    this.gameTimerDurationMs = ms;
+    this.gameTimerPausedForNoOnlinePlayers = false;
 
     const schedule = (delay: number): void => {
       timer = setTimeout(run, delay);
       this.gameTimer = timer;
+      this.gameTimerDeadline = Date.now() + delay;
     };
 
     const run = (): void => {
@@ -1611,6 +1650,7 @@ class OnuWerewolfWorker extends BaseGameWorker {
         return;
       }
       this.gameTimer = null;
+      this.gameTimerDeadline = null;
 
       const isActive = ![
         OnuWerewolfGameStatus.WAITING,
@@ -1619,12 +1659,14 @@ class OnuWerewolfWorker extends BaseGameWorker {
 
       if (isActive && !this.hasOnlineGamePlayers()) {
         pausedForNoOnlinePlayers = true;
+        this.gameTimerPausedForNoOnlinePlayers = true;
         schedule(OFFLINE_TIMER_RETRY_MS);
         return;
       }
 
       if (pausedForNoOnlinePlayers && isActive) {
         pausedForNoOnlinePlayers = false;
+        this.gameTimerPausedForNoOnlinePlayers = false;
         schedule(ms);
         return;
       }
@@ -1682,6 +1724,9 @@ class OnuWerewolfWorker extends BaseGameWorker {
       clearTimeout(this.gameTimer);
       this.gameTimer = null;
     }
+    this.gameTimerDeadline = null;
+    this.gameTimerDurationMs = 0;
+    this.gameTimerPausedForNoOnlinePlayers = false;
   }
 
   private resetGame(): void {

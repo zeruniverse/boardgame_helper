@@ -232,7 +232,7 @@ export const useTexasHoldemStore = defineStore('texas_holdem', {
         this.distributionActive = false;
         this.stage = 'idle';
         this.currentTurn = '';
-        this.folded = [];
+        // 最终 game_state 已携带本手 folded；保留到下一次 game_started，便于终局复盘。
         if (!this.allowSystemDealing) {
           this.hand = [];
           this.communityCards = [];

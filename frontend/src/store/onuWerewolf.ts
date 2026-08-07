@@ -412,6 +412,7 @@ export const useOnuWerewolfStore = defineStore('onuWerewolf', {
           if (!this.playerSecret) this.playerSecret = {};
           Object.assign(this.playerSecret, data);
         }
+        this.updateTimer();
       });
 
       on('onu_night_started', (data: any) => {
@@ -467,6 +468,10 @@ export const useOnuWerewolfStore = defineStore('onuWerewolf', {
       // Skill ready notification (C4 fix)
       on('onu_skill_ready', (data: any) => {
         if (!this.playerSecret) this.playerSecret = {};
+        if (data.timeLeft !== undefined && this.gameState) {
+          this.gameState.timeLeft = Math.max(0, Number(data.timeLeft) || 0);
+          this.updateTimer();
+        }
         if (data.role !== undefined) {
           this.playerSecret.activeSkillRole = data.role;
         }
@@ -522,9 +527,12 @@ export const useOnuWerewolfStore = defineStore('onuWerewolf', {
       });
 
       on('onu_voting_ended', (data: any) => {
+        applyIncomingGame(data);
         if (this.gameState) {
           this.gameState.status = OnuWerewolfGameStatus.REVEALING;
           this.gameState.currentPhase = '揭示结果';
+          this.gameState.timeLeft = Math.max(0, Number(data.timeLeft ?? this.gameState.timeLeft) || 0);
+          this.updateTimer();
         }
         if (this.playerSecret) {
           this.playerSecret.canVote = false;
@@ -532,16 +540,18 @@ export const useOnuWerewolfStore = defineStore('onuWerewolf', {
       });
 
       const handleGameCompleted = (data: any) => {
+        this.timeLeft = 0;
+        this.clearTimer();
         if (this.gameState) {
           this.gameState.status = OnuWerewolfGameStatus.COMPLETED;
           this.gameState.currentPhase = '游戏结束';
+          this.gameState.timeLeft = 0;
         }
-        if (this.playerSecret) {
-          this.playerSecret.vision = data.vision;
-          this.playerSecret.gameResult = data.gameResult;
-          this.playerSecret.canUseSkill = false;
-          this.playerSecret.canVote = false;
-        }
+        if (!this.playerSecret) this.playerSecret = {};
+        this.playerSecret.vision = data.vision;
+        this.playerSecret.gameResult = data.gameResult;
+        this.playerSecret.canUseSkill = false;
+        this.playerSecret.canVote = false;
       };
 
       on('onu_game_completed', handleGameCompleted);
@@ -549,6 +559,8 @@ export const useOnuWerewolfStore = defineStore('onuWerewolf', {
 
       on('onu_game_reset', (data: any) => {
         const resetGameInfo = data?.gameInfo as OnuWerewolfGameState | undefined;
+        this.clearTimer();
+        this.timeLeft = 0;
         this.playerSecret = null;
         this.skipDiscussionCount = 0;
         this.skipDiscussionTotal = 0;
@@ -565,6 +577,7 @@ export const useOnuWerewolfStore = defineStore('onuWerewolf', {
         }
         this.gameState = resetGameInfo || null;
         syncWaitingRoomState(this.room, resetGameInfo?.config);
+        this.updateTimer();
         this.addSystemMessage(data.message || '游戏已重置，可以开始新的游戏');
       });
 

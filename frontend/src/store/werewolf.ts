@@ -105,7 +105,6 @@ export const useWerewolfStore = defineStore('werewolf', {
     errorMessage: '',
     timeLeft: 0,
     timerInterval: null as ReturnType<typeof setInterval> | null,
-    autoActionTimer: null as ReturnType<typeof setTimeout> | null,
     socketListeners: [] as Array<[string, (...args: any[]) => void]>,
   }),
 
@@ -316,12 +315,12 @@ export const useWerewolfStore = defineStore('werewolf', {
           // 直接更新状态
           if (this.gameState) {
             this.gameState.status = data.status;
-            this.gameState.day = data.day || this.gameState.day;
+            this.gameState.day = data.day !== undefined ? data.day : this.gameState.day;
           }
         }
-        this.timeLeft = data.timeout || 0;
+        const timeout = data.timeout ?? data.gameInfo?.timeLeft ?? 0;
+        this.timeLeft = Math.max(0, Number(timeout) || 0);
         this.startTimer();
-        this.handleAutoAction();
       });
 
       // game_info - 游戏信息更新
@@ -342,7 +341,6 @@ export const useWerewolfStore = defineStore('werewolf', {
           this.gameState.status = 'finished';
         }
         this.addSystemMessage(`游戏结束：${data.winner === 'werewolf' ? '狼人阵营胜利' : '村民阵营胜利'} - ${data.reason || ''}`);
-        this.clearAutoActionTimer();
         this.clearTimer();
       });
 
@@ -351,7 +349,6 @@ export const useWerewolfStore = defineStore('werewolf', {
         // 使客户端继续停留在 finished 面板，无法重新准备。
         this.playerSecret = null;
         this.gameState = null;
-        this.clearAutoActionTimer();
         this.clearTimer();
         if (data.gameInfo) {
           this.updateGameStateFromGameInfo(data.gameInfo);
@@ -485,17 +482,18 @@ export const useWerewolfStore = defineStore('werewolf', {
           winner: gameInfo.winner
         };
       } else {
-        this.gameState.status = gameInfo.status || this.gameState.status;
-        this.gameState.day = gameInfo.day !== undefined ? gameInfo.day : this.gameState.day;
-        if (gameInfo.players || gameInfo.playersById) this.gameState.players = normalizePlayersRecord(gameInfo);
-        if (gameInfo.operators) this.gameState.operators = gameInfo.operators;
-        if (gameInfo.votes) this.gameState.votes = gameInfo.votes;
-        if (gameInfo.publicKnownRoles) this.gameState.publicKnownRoles = gameInfo.publicKnownRoles;
-        this.gameState.currentSpeaker = gameInfo.currentSpeaker;
-        if (gameInfo.config) this.gameState.config = gameInfo.config;
-        if (gameInfo.needingCharacters) this.gameState.needingCharacters = gameInfo.needingCharacters;
-        if (gameInfo.statusMessage) this.gameState.statusMessage = gameInfo.statusMessage;
-        if (gameInfo.winner) this.gameState.winner = gameInfo.winner;
+        const hasOwn = (key: string) => Object.prototype.hasOwnProperty.call(gameInfo, key);
+        if (hasOwn('status') && gameInfo.status) this.gameState.status = gameInfo.status;
+        if (hasOwn('day')) this.gameState.day = gameInfo.day;
+        if (hasOwn('players') || hasOwn('playersById')) this.gameState.players = normalizePlayersRecord(gameInfo);
+        if (hasOwn('operators')) this.gameState.operators = gameInfo.operators || [];
+        if (hasOwn('votes')) this.gameState.votes = gameInfo.votes || {};
+        if (hasOwn('publicKnownRoles')) this.gameState.publicKnownRoles = gameInfo.publicKnownRoles || {};
+        if (hasOwn('currentSpeaker')) this.gameState.currentSpeaker = gameInfo.currentSpeaker;
+        if (hasOwn('config')) this.gameState.config = gameInfo.config;
+        if (hasOwn('needingCharacters')) this.gameState.needingCharacters = gameInfo.needingCharacters || [];
+        if (hasOwn('statusMessage')) this.gameState.statusMessage = gameInfo.statusMessage;
+        if (hasOwn('winner')) this.gameState.winner = gameInfo.winner;
       }
 
       if (gameInfo.timeLeft !== undefined) {
@@ -551,7 +549,6 @@ export const useWerewolfStore = defineStore('werewolf', {
       this.timeLeft = 0;
       this.currentRoomId = '';
       this.clearTimer();
-      this.clearAutoActionTimer();
       if (this.socket) {
         // 遍历移除所有追踪的监听器
         for (const [event, handler] of this.socketListeners) {
@@ -686,62 +683,8 @@ export const useWerewolfStore = defineStore('werewolf', {
       }
     },
 
-    // 自动行动处理
-    handleAutoAction() {
-      if (!this.gameState || !this.playerSecret) return;
-
-      // 清除之前的自动行动定时器
-      this.clearAutoActionTimer();
-
-      const nightPhases = ['WOLF_KILL', 'SEER_CHECK', 'WITCH_ACT', 'GUARD_PROTECT'];
-      const isMyTurn = this.canOperate;
-      const shouldAct = nightPhases.includes(this.gameState.status);
-
-      if (shouldAct && !isMyTurn) {
-        // 不是当前行动角色，随机等待模拟操作（防暴露）
-        const delay = Math.random() * 5000 + 2000; // 2-7秒
-        this.autoActionTimer = setTimeout(() => {
-          // 不发送实际动作，只是模拟延迟
-        }, delay);
-      } else if (shouldAct && isMyTurn && this.timeLeft && this.timeLeft <= 1) {
-        // 时间到自动跳过/弃权
-        setTimeout(() => {
-          this.handleTimeoutAction();
-        }, 1000);
-      }
-    },
-
-    // 处理超时行动
-    handleTimeoutAction() {
-      if (!this.gameState || !this.canOperate) return;
-
-      switch (this.gameState.status) {
-        case 'WOLF_KILL':
-          this.wolfKill(null);
-          break;
-        case 'SEER_CHECK':
-          this.seerCheck(null);
-          break;
-        case 'WITCH_ACT':
-          this.witchSkip();
-          break;
-        case 'GUARD_PROTECT':
-          this.guardProtect(null);
-          break;
-        case 'EXILE_VOTE':
-          this.skipVote();
-          break;
-        case 'DAY_DISCUSS':
-          this.endSpeak();
-          break;
-        case 'HUNTER_SHOOT':
-          this.hunterShoot(null);
-          break;
-        case 'SHERIFF_ASSIGN':
-          this.sheriffAssign(null);
-          break;
-      }
-    },
+    // 阶段超时由后端 Worker 的权威计时器统一处理。客户端只显示倒计时，
+    // 不再在同一截止时刻额外发送跳过动作，避免网络延迟下与服务端推进发生重复行动竞态。
 
     addSystemMessage(message: string) {
       this.messages = appendLimitedMessage(this.messages, createSystemMessage(message));
@@ -765,12 +708,5 @@ export const useWerewolfStore = defineStore('werewolf', {
         this.timerInterval = null;
       }
     },
-
-    clearAutoActionTimer() {
-      if (this.autoActionTimer) {
-        clearTimeout(this.autoActionTimer);
-        this.autoActionTimer = null;
-      }
-    }
   }
 });

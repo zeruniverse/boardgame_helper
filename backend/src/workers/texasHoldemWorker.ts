@@ -1365,7 +1365,7 @@ class TexasHoldemWorker extends BaseGameWorker {
     this.gameState.currentTurn = -1;
     this.gameState.acted = [];
     this.gameState.actedAtBet = {};
-    this.gameState.folded = [];
+    // 保留本手最终弃牌列表用于终局复盘和重连；下一局 startGame 会统一清空。
     this.gameState.raiseLocked = [];
     this.gameState.stage = 'idle';
     this.gameState.totalBets = {};
