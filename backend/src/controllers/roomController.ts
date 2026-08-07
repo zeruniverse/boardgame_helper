@@ -1837,7 +1837,7 @@ export function roomController(io: Server) {
           hostId: player.id,
           hostStateVersion: 1,
           type: data.gameType as any,
-          private: data.isPrivate || false,
+          private: normalizeBoolean(data.isPrivate, false),
           threadStatus: 'idle',
           lastActiveTime: Date.now(),
           gameMetadata: { gameConfig }

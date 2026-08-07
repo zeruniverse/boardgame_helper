@@ -569,3 +569,29 @@ Commit: fix(round6): 加固多游戏配置同步并修正阿瓦隆刺杀目标
   - package-lock 工作区依赖树通过 npm ls --package-lock-only --all 校验。
   - 完整 npm ci / npm run build 已尝试但未在当前容器完成：内部依赖源对锁定的 typescript-5.8.3.tgz 返回 404，失败安装只留下空/不完整依赖目录；正式后端 tsc 因缺少已声明类型包中止，前端 vue-tsc/Vite 未进入执行。需在依赖可用的本地或 CI 环境执行 npm ci && npm run build 做最终生产构建确认。
 备注: 所有后端源码修改均位于 backend/src/，所有前端源码修改均位于 frontend/src/；未删除文件，未创建根目录 src/。
+
+=== 本次请求第 7 轮修复记录 ===
+时间: 2026-08-07 16:05:12 UTC
+Commit: fix(round7): 修复德州桌面状态同步与房间隐私解析
+修改/新增文件:
+  - backend/src/controllers/roomController.ts (124754 bytes)
+  - backend/src/workers/texasHoldemWorker.ts (88685 bytes)
+  - frontend/src/store/texas_holdem.ts (17752 bytes)
+  - frontend/src/components/TexasHoldemPlayerList.vue (5217 bytes)
+  - repair_log.txt
+删除文件: 无
+构建测试: 部分通过
+本轮修复:
+  - 创建房间时只接受真实 boolean 作为 isPrivate；字符串 "false"、对象等畸形 Socket 负载不再因 JavaScript truthy 规则被错误创建为私密房间。
+  - 德州扑克公开 game_state 新增稳定的 dealerPlayerId 与 folded 玩家ID列表；不再让客户端把参与者数组下标 dealerIndex 错当成 room.players 下标，旁观/零筹码座位存在时仍可正确显示庄位。
+  - 弃牌状态通过普通推进与重连状态同步统一发布，修复已弃牌玩家直到本手结束仍被前端显示为“游戏中”的问题。
+  - 德州扑克前端 Store 从权威 stage 同步 gameActive、distributionActive、currentTurn 和计时器；修复线下分池阶段刷新/重连后阶段字段正确、派生状态却仍停留在旧牌局的问题。
+  - 玩家列表统一在桌面表格和移动卡片展示庄家 D 标识、行动中、已弃牌、全下、在线/离线状态，并复用同一映射逻辑与现有主题变量。
+  - 对狼人杀、杀人游戏、血染钟楼、一夜狼人、阿瓦隆和德州扑克的 Worker/Controller/前端状态路径及规则关键分支继续复查；本轮未发现优先级高于上述公开状态与输入解析问题、且适合在当前批次安全修改的其他阻断项。
+验证:
+  - 后端 34 个 TypeScript 源码在 TypeScript 5.8.3、真实 Node 类型和临时外部模块声明桩下完成 strict 编译并生成测试用 CommonJS 文件，无类型错误。
+  - 六个实际游戏 Worker 的 prepare_room 烟雾测试全部通过；德州扑克专项回归覆盖“房主零筹码不参局导致 dealerIndex 与 room.players 下标不同”、弃牌公开状态及重连状态一致性。
+  - 前端 48 个 TypeScript/Vue script 单元、27 个 Vue SFC、CSS 花括号和 133 个相对/@导入完成静态检查，无语法、SFC块配对或导入路径错误。
+  - package-lock 工作区依赖树通过 npm ls --package-lock-only --all；差异空白检查无新增问题；根目录不存在 src/，全部源码修改位于 backend/src/ 或 frontend/src/。
+  - 完整 npm ci / npm run build 未在当前容器完成：内部依赖源对锁定的 typescript-5.8.3.tgz 返回 404，安装中止；随后正式构建因缺少 Node、Express、Socket.IO、UUID 等依赖声明而失败。需在依赖可用的本地或 CI 环境执行 npm ci && npm run build 做最终生产构建确认。
+备注: 本轮未删除文件，未创建根目录 src/；修复包只包含本轮修改文件，可直接按相对路径覆盖。

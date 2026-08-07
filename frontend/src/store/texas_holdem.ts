@@ -20,6 +20,8 @@ export const useTexasHoldemStore = defineStore('texas_holdem', {
     pot: 0,
     bets: {} as Record<string, number>,
     currentTurn: '' as string,
+    dealerPlayerId: '' as string,
+    folded: [] as string[],
     players: [] as any[],
     participants: [] as string[],
     round: 0,
@@ -125,7 +127,9 @@ export const useTexasHoldemStore = defineStore('texas_holdem', {
         currentBet: number; 
         lastRaiseAmount?: number;
         minRaiseTo?: number;
-        currentTurn: number | string; 
+        currentTurn: number | string;
+        dealerPlayerId?: string;
+        folded?: string[];
         stage?: 'idle' | 'playing' | 'distribution';
         allowSystemDealing?: boolean;
       }) => {
@@ -141,9 +145,24 @@ export const useTexasHoldemStore = defineStore('texas_holdem', {
         this.currentBet = data.currentBet;
         this.lastRaiseAmount = data.lastRaiseAmount ?? this.lastRaiseAmount;
         this.minRaiseTo = data.minRaiseTo ?? (this.currentBet + this.lastRaiseAmount);
-        // 同步stage状态
+        this.dealerPlayerId = typeof data.dealerPlayerId === 'string' ? data.dealerPlayerId : '';
+        this.folded = Array.isArray(data.folded)
+          ? data.folded.filter((playerId): playerId is string => typeof playerId === 'string')
+          : [];
+        // game_state 是重连和普通推进共用的权威阶段快照。同步派生标志，避免
+        // 线下分池重连后 stage 正确但 gameActive/distributionActive 仍是旧值。
         if (data.stage !== undefined) {
           this.stage = data.stage;
+          this.gameActive = data.stage === 'playing';
+          this.distributionActive = data.stage === 'distribution';
+          if (data.stage !== 'playing') {
+            this.currentTurn = '';
+            this.timeLeft = 0;
+            if (this.timerId) {
+              clearInterval(this.timerId);
+              this.timerId = null;
+            }
+          }
         }
         // 修复：currentTurn可能是number(索引)或string(playerId)
         // 如果是number类型（来自后端worker的内部索引），需要忽略，等待action_request获取正确的playerId
@@ -169,6 +188,8 @@ export const useTexasHoldemStore = defineStore('texas_holdem', {
         this.hand = [];
         this.bets = {};
         this.currentTurn = '';
+        this.dealerPlayerId = '';
+        this.folded = [];
         this.round = 0;
         this.currentBet = 0;
         this.lastRaiseAmount = 0;
@@ -185,6 +206,7 @@ export const useTexasHoldemStore = defineStore('texas_holdem', {
           clearInterval(this.timerId);
           this.timerId = null;
         }
+        this.gameActive = false;
         this.distributionActive = true;
         this.stage = 'distribution';
         this.currentTurn = '';
@@ -200,6 +222,8 @@ export const useTexasHoldemStore = defineStore('texas_holdem', {
         }
         this.distributionActive = false;
         this.stage = 'idle';
+        this.currentTurn = '';
+        this.folded = [];
         if (!this.allowSystemDealing) {
           this.hand = [];
           this.communityCards = [];
@@ -396,6 +420,8 @@ export const useTexasHoldemStore = defineStore('texas_holdem', {
       this.pot = 0;
       this.bets = {};
       this.currentTurn = '';
+      this.dealerPlayerId = '';
+      this.folded = [];
       this.players = [];
       this.participants = [];
       this.round = 0;

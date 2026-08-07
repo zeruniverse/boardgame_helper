@@ -589,7 +589,11 @@ class TexasHoldemWorker extends BaseGameWorker {
       pot: gs.pot,
       bets: gs.bets,
       currentTurn: this.getCurrentTurnPlayerId(),
+      // dealerIndex 是参与者数组下标，不能直接映射客户端的 room.players；额外发布稳定的玩家ID。
       dealerIndex: gs.dealerIndex,
+      dealerPlayerId: gs.dealerPlayerId,
+      // 弃牌属于公开桌面状态；重连和普通状态同步都必须携带，避免前端继续显示为游戏中。
+      folded: [...gs.folded],
       round: gs.round,
       currentBet: gs.currentBet,
       lastRaiseAmount: gs.lastRaiseAmount,
