@@ -12,6 +12,12 @@ import { getRecommendedRoles } from '../utils/onuWerewolfPresets';
 import { getRequiredHostKickVotes, pruneHostKickVoters } from '../utils/hostKickVote';
 import { CHAT_MAX_LENGTH, normalizeChatText } from '../utils/chat';
 import { sanitizeIncomingGameConfig, validateGameActionPayloadSize } from '../utils/gameConfigInput';
+import {
+  getOwnConfigValue,
+  normalizeBoolean,
+  normalizeBoundedInteger,
+  normalizeDurationSeconds
+} from '../utils/configNormalization';
 
 const rooms: Map<string, Room> = new Map();
 let threadManager: RoomThreadManager;
@@ -520,17 +526,32 @@ function buildGameConfig(gameType: string, incomingConfig: any): any {
   }
 
   if (gameType === 'one-night-werewolf') {
-    gameConfig.discussTime = gameConfig.discussTime ?? gameConfig.discussionTime ?? 180;
-    gameConfig.votingTime = gameConfig.votingTime ?? gameConfig.voteTime ?? 300;
-    gameConfig.nightTime = gameConfig.nightTime ?? gameConfig.actionTime ?? 300;
+    const rawConfig = gameConfig as Record<string, unknown>;
+    gameConfig.random = normalizeBoolean(gameConfig.random, true);
+    gameConfig.loneWolf = normalizeBoolean(gameConfig.loneWolf, false);
+    gameConfig.allowRoleReveal = normalizeBoolean(gameConfig.allowRoleReveal, false);
+    gameConfig.discussTime = normalizeDurationSeconds(
+      getOwnConfigValue(rawConfig, 'discussTime', 'discussionTime'),
+      180
+    );
+    gameConfig.votingTime = normalizeDurationSeconds(
+      getOwnConfigValue(rawConfig, 'votingTime', 'voteTime'),
+      300
+    );
+    gameConfig.nightTime = normalizeDurationSeconds(
+      getOwnConfigValue(rawConfig, 'nightTime', 'actionTime'),
+      300
+    );
   }
 
   if (gameType === 'texas-holdem') {
     const requestedOfflineMode = gameConfig.dealingMode === 'offline' || gameConfig.offlineDealing === true;
-    gameConfig.allowSystemDealing = requestedOfflineMode ? false : gameConfig.allowSystemDealing !== false;
-    gameConfig.defaultStack = Math.max(1, Math.floor(Number(gameConfig.defaultStack) || 1000));
-    const smallBlind = Math.max(1, Math.floor(Number(gameConfig.blinds?.smallBlind) || 5));
-    const bigBlind = Math.max(smallBlind, Math.floor(Number(gameConfig.blinds?.bigBlind) || 10));
+    gameConfig.allowSystemDealing = requestedOfflineMode
+      ? false
+      : normalizeBoolean(gameConfig.allowSystemDealing, true);
+    gameConfig.defaultStack = normalizeBoundedInteger(gameConfig.defaultStack, 1000, 1, 1_000_000_000);
+    const smallBlind = normalizeBoundedInteger(gameConfig.blinds?.smallBlind, 5, 1, 100_000_000);
+    const bigBlind = normalizeBoundedInteger(gameConfig.blinds?.bigBlind, 10, smallBlind, 100_000_000);
     gameConfig.blinds = {
       ...(gameConfig.blinds || {}),
       smallBlind,

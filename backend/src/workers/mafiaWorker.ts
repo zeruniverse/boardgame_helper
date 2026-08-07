@@ -3,6 +3,7 @@ import { BaseGameWorker } from './baseGameWorker';
 import { Room } from '../models/Room';
 import { Player } from '../models/Player';
 import { normalizeChatText } from '../utils/chat';
+import { normalizeBoundedInteger, normalizeDurationSeconds } from '../utils/configNormalization';
 
 if (!parentPort) {
   throw new Error('这个文件只能在Worker线程中运行');
@@ -205,9 +206,7 @@ class MafiaWorker extends BaseGameWorker {
   }
 
   private toBoundedInt(value: unknown, fallback: number, min: number, max: number): number {
-    const parsed = Number(value);
-    if (!Number.isFinite(parsed)) return fallback;
-    return Math.max(min, Math.min(max, Math.floor(parsed)));
+    return normalizeBoundedInteger(value, fallback, min, max);
   }
 
   private getDefaultRoleConfig(playerCount: number): [number, number, number, number, number] {
@@ -216,8 +215,9 @@ class MafiaWorker extends BaseGameWorker {
   }
 
   private hasRoleCountFields(config: Partial<MafiaConfig> = {}): boolean {
+    const rawConfig = config as unknown as Record<string, unknown>;
     return ['killerCount', 'copCount', 'doctorCount', 'sniperCount'].some(key =>
-      Object.prototype.hasOwnProperty.call(config, key)
+      typeof rawConfig[key] === 'number' && Number.isFinite(rawConfig[key])
     );
   }
 
@@ -238,7 +238,7 @@ class MafiaWorker extends BaseGameWorker {
 
   private buildEffectiveConfig(
     config: Partial<MafiaConfig> = this.config || {},
-    roleCountsCustomized = Boolean(config.roleCountsCustomized)
+    roleCountsCustomized = config.roleCountsCustomized === true
   ): MafiaConfig {
     const displayConfig = this.buildDisplayConfig(config);
 
@@ -264,15 +264,16 @@ class MafiaWorker extends BaseGameWorker {
     const fallbackPlayerCount = this.room?.maxPlayers || this.room?.players?.length || MIN_PLAYER_COUNT;
     const [defaultKillers, defaultCops, defaultDoctors, defaultSnipers] = this.getDefaultRoleConfig(fallbackPlayerCount);
     return {
-      speakTime: this.toBoundedInt(config.speakTime, this.config?.speakTime ?? 60, 0, 600),
-      actionTime: this.toBoundedInt(config.actionTime, this.config?.actionTime ?? 60, 0, 600),
-      nightTime: this.toBoundedInt(config.nightTime, this.config?.nightTime ?? 60, 0, 600),
+      // null/0 保持不限时；字符串和布尔值不会被隐式转成秒数。
+      speakTime: normalizeDurationSeconds(config.speakTime, this.config?.speakTime ?? 60, 600),
+      actionTime: normalizeDurationSeconds(config.actionTime, this.config?.actionTime ?? 60, 600),
+      nightTime: normalizeDurationSeconds(config.nightTime, this.config?.nightTime ?? 60, 600),
       lastWordRound: this.toBoundedInt(config.lastWordRound, this.config?.lastWordRound ?? 3, 0, 10),
       killerCount: this.toBoundedInt(config.killerCount, this.config?.killerCount ?? defaultKillers, 1, MAX_PLAYER_COUNT),
       copCount: this.toBoundedInt(config.copCount, this.config?.copCount ?? defaultCops, 0, MAX_PLAYER_COUNT),
       doctorCount: this.toBoundedInt(config.doctorCount, this.config?.doctorCount ?? defaultDoctors, 0, MAX_PLAYER_COUNT),
       sniperCount: this.toBoundedInt(config.sniperCount, this.config?.sniperCount ?? defaultSnipers, 0, MAX_SNIPER_COUNT),
-      roleCountsCustomized: Boolean(config.roleCountsCustomized)
+      roleCountsCustomized: config.roleCountsCustomized === true
     };
   }
 
@@ -349,6 +350,10 @@ class MafiaWorker extends BaseGameWorker {
       config: this.config,
       gameInfo: this.getGameInfo()
     });
+    // prepare_room may normalize malformed or out-of-range input. Publish the
+    // authoritative room snapshot so the controller does not keep serving the
+    // pre-normalization gameConfig.
+    this.sendToRoom('room_update', this.room);
   }
 
   async changeConfig(config: Partial<MafiaConfig>): Promise<void> {

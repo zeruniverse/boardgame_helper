@@ -4,6 +4,11 @@ import { Room } from '../models/Room';
 import { Player } from '../models/Player';
 import { normalizeChatText } from '../utils/chat';
 import { mergeRoomGameConfig } from '../utils/roomGameConfig';
+import {
+  getOwnConfigValue,
+  normalizeBoolean,
+  normalizeDurationSeconds
+} from '../utils/configNormalization';
 
 import {
   OnuWerewolfRole,
@@ -62,20 +67,6 @@ interface GameTaskResponse {
 }
 
 const OFFLINE_TIMER_RETRY_MS = 1000;
-const MAX_PHASE_DURATION_SECONDS = 3600;
-
-function normalizePhaseDurationSeconds(value: unknown, fallback: number): number {
-  if (value === null) return 0;
-  const numeric = Number(value);
-  if (!Number.isFinite(numeric) || numeric < 0) return fallback;
-  return Math.min(MAX_PHASE_DURATION_SECONDS, Math.floor(numeric));
-}
-
-function getConfigValue(config: Record<string, unknown>, primaryKey: string, aliasKey: string): unknown {
-  if (Object.prototype.hasOwnProperty.call(config, primaryKey)) return config[primaryKey];
-  if (Object.prototype.hasOwnProperty.call(config, aliasKey)) return config[aliasKey];
-  return undefined;
-}
 
 class OnuWerewolfWorker extends BaseGameWorker {
   private config!: OnuWerewolfConfig;
@@ -120,21 +111,25 @@ class OnuWerewolfWorker extends BaseGameWorker {
   async prepareRoom(room: Room, config: OnuWerewolfConfig): Promise<void> {
     this.room = room;
     const rawConfig = (config || {}) as unknown as Record<string, unknown>;
+    const roles = Array.isArray(rawConfig.roles)
+      ? [...rawConfig.roles] as OnuWerewolfRole[]
+      : [];
     
     // 验证配置
-    const validation = onuValidateGameConfig(config.roles);
+    const validation = onuValidateGameConfig(roles);
     if (!validation.valid) {
       throw new Error(validation.error);
     }
 
     this.config = {
-      roles: config.roles,
-      random: config.random !== false,
-      loneWolf: config.loneWolf === true,
-      nightTime: normalizePhaseDurationSeconds(getConfigValue(rawConfig, 'nightTime', 'actionTime'), 300),
-      votingTime: normalizePhaseDurationSeconds(getConfigValue(rawConfig, 'votingTime', 'voteTime'), 300),
-      discussTime: normalizePhaseDurationSeconds(getConfigValue(rawConfig, 'discussTime', 'discussionTime'), 180),
-      autoRoles: config.autoRoles === true
+      roles,
+      random: normalizeBoolean(rawConfig.random, true),
+      loneWolf: normalizeBoolean(rawConfig.loneWolf, false),
+      nightTime: normalizeDurationSeconds(getOwnConfigValue(rawConfig, 'nightTime', 'actionTime'), 300),
+      votingTime: normalizeDurationSeconds(getOwnConfigValue(rawConfig, 'votingTime', 'voteTime'), 300),
+      discussTime: normalizeDurationSeconds(getOwnConfigValue(rawConfig, 'discussTime', 'discussionTime'), 180),
+      allowRoleReveal: normalizeBoolean(rawConfig.allowRoleReveal, false),
+      autoRoles: normalizeBoolean(rawConfig.autoRoles, false)
     };
 
     this.gameState.config = this.config;
@@ -160,33 +155,54 @@ class OnuWerewolfWorker extends BaseGameWorker {
       throw new Error('游戏已开始，无法修改配置');
     }
 
-    // 如果传入了角色配置，先验证
-    if (config.roles && config.roles.length > 0) {
-      const validation = onuValidateGameConfig(config.roles);
+    const rawConfig = (config || {}) as unknown as Record<string, unknown>;
+    const hasRoles = Object.prototype.hasOwnProperty.call(rawConfig, 'roles');
+    let roles = this.config.roles;
+
+    // 角色数组必须整体有效，避免字符串或空数组进入运行态后才在开局阶段失败。
+    if (hasRoles) {
+      if (!Array.isArray(rawConfig.roles)) {
+        throw new Error('角色列表无效');
+      }
+      roles = [...rawConfig.roles] as OnuWerewolfRole[];
+      const validation = onuValidateGameConfig(roles);
       if (!validation.valid) {
         throw new Error(validation.error);
       }
     }
 
-    const rawConfig = (config || {}) as unknown as Record<string, unknown>;
-    const requestedNightTime = getConfigValue(rawConfig, 'nightTime', 'actionTime');
-    const requestedVotingTime = getConfigValue(rawConfig, 'votingTime', 'voteTime');
-    const requestedDiscussTime = getConfigValue(rawConfig, 'discussTime', 'discussionTime');
-    const normalizedConfig = {
-      ...config,
+    const requestedNightTime = getOwnConfigValue(rawConfig, 'nightTime', 'actionTime');
+    const requestedVotingTime = getOwnConfigValue(rawConfig, 'votingTime', 'voteTime');
+    const requestedDiscussTime = getOwnConfigValue(rawConfig, 'discussTime', 'discussionTime');
+    const normalizedConfig: OnuWerewolfConfig = {
+      ...this.config,
+      roles,
+      random: Object.prototype.hasOwnProperty.call(rawConfig, 'random')
+        ? normalizeBoolean(rawConfig.random, this.config.random)
+        : this.config.random,
+      loneWolf: Object.prototype.hasOwnProperty.call(rawConfig, 'loneWolf')
+        ? normalizeBoolean(rawConfig.loneWolf, this.config.loneWolf)
+        : this.config.loneWolf,
       nightTime: requestedNightTime === undefined
         ? this.config.nightTime
-        : normalizePhaseDurationSeconds(requestedNightTime, this.config.nightTime),
+        : normalizeDurationSeconds(requestedNightTime, this.config.nightTime),
       votingTime: requestedVotingTime === undefined
         ? this.config.votingTime
-        : normalizePhaseDurationSeconds(requestedVotingTime, this.config.votingTime),
+        : normalizeDurationSeconds(requestedVotingTime, this.config.votingTime),
       discussTime: requestedDiscussTime === undefined
         ? this.config.discussTime
-        : normalizePhaseDurationSeconds(requestedDiscussTime, this.config.discussTime),
-      autoRoles: Array.isArray(config.roles) ? false : this.config.autoRoles
+        : normalizeDurationSeconds(requestedDiscussTime, this.config.discussTime),
+      allowRoleReveal: Object.prototype.hasOwnProperty.call(rawConfig, 'allowRoleReveal')
+        ? normalizeBoolean(rawConfig.allowRoleReveal, this.config.allowRoleReveal ?? false)
+        : this.config.allowRoleReveal,
+      autoRoles: hasRoles
+        ? false
+        : Object.prototype.hasOwnProperty.call(rawConfig, 'autoRoles')
+          ? normalizeBoolean(rawConfig.autoRoles, this.config.autoRoles ?? false)
+          : this.config.autoRoles
     };
 
-    this.config = { ...this.config, ...normalizedConfig };
+    this.config = normalizedConfig;
     this.gameState.config = this.config;
     mergeRoomGameConfig(this.room, this.config);
 

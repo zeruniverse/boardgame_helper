@@ -7,6 +7,7 @@ import { evaluateHand } from '../utils/handEvaluator';
 import { calculateUncalledBetReturn, splitPotSidePots, type SidePot } from '../utils/sidePot';
 import { buildChatPayload, normalizeChatText } from '../utils/chat';
 import { mergeRoomGameConfig } from '../utils/roomGameConfig';
+import { normalizeBoolean, normalizeBoundedInteger } from '../utils/configNormalization';
 
 if (!parentPort) {
   throw new Error('这个文件只能在Worker线程中运行');
@@ -40,6 +41,9 @@ interface TexasHoldemGameState {
 }
 
 // 德州扑克配置接口
+const MAX_DEFAULT_STACK = 1_000_000_000;
+const MAX_BLIND = 100_000_000;
+
 interface TexasHoldemConfig {
   allowSystemDealing: boolean;
   blinds: {
@@ -169,18 +173,54 @@ class TexasHoldemWorker extends BaseGameWorker {
     }
   }
 
+  private normalizeConfig(config: unknown, fallback?: TexasHoldemConfig): TexasHoldemConfig {
+    const rawConfig = config && typeof config === 'object' && !Array.isArray(config)
+      ? config as Record<string, unknown>
+      : {};
+    const rawBlinds = rawConfig.blinds && typeof rawConfig.blinds === 'object' && !Array.isArray(rawConfig.blinds)
+      ? rawConfig.blinds as Record<string, unknown>
+      : {};
+    const fallbackSmallBlind = fallback?.blinds.smallBlind ?? 5;
+    const smallBlind = normalizeBoundedInteger(
+      rawBlinds.smallBlind,
+      fallbackSmallBlind,
+      1,
+      MAX_BLIND
+    );
+    const bigBlind = normalizeBoundedInteger(
+      rawBlinds.bigBlind,
+      Math.max(smallBlind, fallback?.blinds.bigBlind ?? 10),
+      smallBlind,
+      MAX_BLIND
+    );
+    const requestedOfflineMode = rawConfig.dealingMode === 'offline' || rawConfig.offlineDealing === true;
+
+    return {
+      allowSystemDealing: requestedOfflineMode
+        ? false
+        : normalizeBoolean(rawConfig.allowSystemDealing, fallback?.allowSystemDealing ?? true),
+      blinds: { smallBlind, bigBlind },
+      defaultStack: normalizeBoundedInteger(
+        rawConfig.defaultStack,
+        fallback?.defaultStack ?? 1000,
+        1,
+        MAX_DEFAULT_STACK
+      )
+    };
+  }
+
   async prepareRoom(room: Room, config: TexasHoldemConfig): Promise<void> {
     this.room = room;
-    this.config = config;
+    this.config = this.normalizeConfig(config);
 
     // 初始化德州扑克游戏状态
     this.gameState.blinds = {
-      sb: config.blinds.smallBlind,
-      bb: config.blinds.bigBlind
+      sb: this.config.blinds.smallBlind,
+      bb: this.config.blinds.bigBlind
     };
-    this.gameState.currentBet = config.blinds.bigBlind;
-    this.gameState.lastRaiseAmount = config.blinds.bigBlind;
-    this.gameState.lastFullBet = config.blinds.bigBlind;
+    this.gameState.currentBet = this.config.blinds.bigBlind;
+    this.gameState.lastRaiseAmount = this.config.blinds.bigBlind;
+    this.gameState.lastFullBet = this.config.blinds.bigBlind;
     this.gameState.raiseLocked = [];
     this.gameState.actedAtBet = {};
 
@@ -195,26 +235,27 @@ class TexasHoldemWorker extends BaseGameWorker {
       if (!player.gameMetadata) {
         player.gameMetadata = {};
       }
-      if (typeof player.gameMetadata.chips !== 'number') {
-        player.gameMetadata.chips = config.defaultStack || 1000;
+      if (typeof player.gameMetadata.chips !== 'number' || !Number.isSafeInteger(player.gameMetadata.chips) || player.gameMetadata.chips < 0) {
+        player.gameMetadata.chips = this.config.defaultStack;
       }
       player.gameMetadata.inGame = true;
       player.gameMetadata.cashinCount = player.gameMetadata.cashinCount || 0;
     });
 
+    mergeRoomGameConfig(this.room, this.config);
     this.sendToRoom('room_update', room);
     this.sendToRoom('chat_broadcast', { message: '德州扑克房间已准备就绪' });
   }
 
   async changeConfig(config: TexasHoldemConfig): Promise<void> {
-    this.config = config;
+    this.config = this.normalizeConfig(config, this.config);
     this.gameState.blinds = {
-      sb: config.blinds.smallBlind,
-      bb: config.blinds.bigBlind
+      sb: this.config.blinds.smallBlind,
+      bb: this.config.blinds.bigBlind
     };
-    this.gameState.currentBet = config.blinds.bigBlind;
-    this.gameState.lastRaiseAmount = config.blinds.bigBlind;
-    this.gameState.lastFullBet = config.blinds.bigBlind;
+    this.gameState.currentBet = this.config.blinds.bigBlind;
+    this.gameState.lastRaiseAmount = this.config.blinds.bigBlind;
+    this.gameState.lastFullBet = this.config.blinds.bigBlind;
     this.gameState.raiseLocked = [];
     this.gameState.actedAtBet = {};
 
@@ -223,6 +264,7 @@ class TexasHoldemWorker extends BaseGameWorker {
     }
     this.syncDealingModeMetadata();
     this.room.gameMetadata.participants = [...this.participants];
+    mergeRoomGameConfig(this.room, this.config);
 
     this.sendToRoom('chat_broadcast', { message: '房间配置已更新' });
     this.sendToRoom('room_update', this.room);
@@ -233,7 +275,7 @@ class TexasHoldemWorker extends BaseGameWorker {
 
     // 初始化玩家的德州扑克游戏数据，写回 this.room.players 中的对象
     if (typeof roomPlayer.gameMetadata.chips !== 'number') {
-      roomPlayer.gameMetadata.chips = this.config?.defaultStack || 1000;
+      roomPlayer.gameMetadata.chips = this.config?.defaultStack ?? 1000;
     }
     roomPlayer.gameMetadata.inGame = true;
     roomPlayer.gameMetadata.cashinCount = roomPlayer.gameMetadata.cashinCount || 0;

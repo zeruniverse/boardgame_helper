@@ -423,9 +423,12 @@ const getVoteDisagreeNames = (): string => {
 
 const getAssassinateTargets = () => {
   const targets: Record<string, any> = {}
-  // 刺客选择目标（后端会验证目标是否属于蓝方阵营）
+  const assassinId = props.playerSecret?.playerId
+  // 刺客只能指认另一名玩家；错误目标会直接结束刺杀，不能重试。
   Object.keys(props.gameState.players).forEach(playerId => {
-    targets[playerId] = props.gameState.players[playerId]
+    if (playerId !== assassinId) {
+      targets[playerId] = props.gameState.players[playerId]
+    }
   })
   return targets
 }

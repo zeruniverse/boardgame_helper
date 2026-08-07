@@ -4,6 +4,12 @@ import { Room } from '../models/Room';
 import { Player } from '../models/Player';
 import { buildChatPayload, normalizeChatChannel, normalizeChatText } from '../utils/chat';
 import { mergeRoomGameConfig } from '../utils/roomGameConfig';
+import {
+  getOwnConfigValue,
+  normalizeBoolean,
+  normalizeBoundedInteger,
+  normalizeDurationSeconds
+} from '../utils/configNormalization';
 
 if (!parentPort) {
   throw new Error('这个文件只能在Worker线程中运行');
@@ -204,32 +210,30 @@ class AvalonWorker extends BaseGameWorker {
   }
 
   private normalizeConfig(config: AvalonRawConfig = {}, fallback?: AvalonConfig): AvalonConfig {
-    const questDiscussionTime = config.questDiscussionTime;
-    const normalizeTimer = (value: unknown, fallbackValue: number): number => {
-      // 兼容旧配置中用 null/0 表示不限时；此前 null 会被 ?? 当成“未提供”并错误恢复为 60 秒。
-      if (value === null) return 0;
-      const numeric = Number(value);
-      if (!Number.isFinite(numeric) || numeric < 0) return fallbackValue;
-      return Math.min(3600, Math.floor(numeric));
-    };
-    const requestedSpeakTime = config.speakTime !== undefined ? config.speakTime : questDiscussionTime;
-    const requestedActionTime = config.actionTime !== undefined ? config.actionTime : questDiscussionTime;
+    const rawConfig = (config || {}) as unknown as Record<string, unknown>;
     const fallbackSpeakTime = fallback?.speakTime ?? 60;
     const fallbackActionTime = fallback?.actionTime ?? 60;
-    const requestedSpeakRound = config.speakRound ?? fallback?.speakRound ?? 1;
-    const speakRound = Number.isFinite(Number(requestedSpeakRound))
-      ? Math.min(10, Math.max(1, Math.floor(Number(requestedSpeakRound))))
-      : (fallback?.speakRound ?? 1);
 
     return {
-      speakTime: requestedSpeakTime === undefined
-        ? fallbackSpeakTime
-        : normalizeTimer(requestedSpeakTime, fallbackSpeakTime),
-      actionTime: requestedActionTime === undefined
-        ? fallbackActionTime
-        : normalizeTimer(requestedActionTime, fallbackActionTime),
-      speakRound,
-      lakeLady: config.lakeLady ?? config.enableLady ?? fallback?.lakeLady ?? false
+      // null/0 表示不限时；字符串和布尔值不再被 Number() 隐式转换成秒数。
+      speakTime: normalizeDurationSeconds(
+        getOwnConfigValue(rawConfig, 'speakTime', 'questDiscussionTime'),
+        fallbackSpeakTime
+      ),
+      actionTime: normalizeDurationSeconds(
+        getOwnConfigValue(rawConfig, 'actionTime', 'questDiscussionTime'),
+        fallbackActionTime
+      ),
+      speakRound: normalizeBoundedInteger(
+        getOwnConfigValue(rawConfig, 'speakRound'),
+        fallback?.speakRound ?? 1,
+        1,
+        10
+      ),
+      lakeLady: normalizeBoolean(
+        getOwnConfigValue(rawConfig, 'lakeLady', 'enableLady'),
+        fallback?.lakeLady ?? false
+      )
     };
   }
 
@@ -425,9 +429,9 @@ class AvalonWorker extends BaseGameWorker {
 
   private autoAssassinate(playerId: string): void {
     const state = this.gameState as AvalonGameState;
-    const candidateTargets = Object.keys(state.players);
+    const candidateTargets = Object.keys(state.players).filter(id => id !== playerId);
     const randomTarget = candidateTargets[Math.floor(Math.random() * candidateTargets.length)];
-    this.handleAssassinate(playerId, randomTarget);
+    if (randomTarget) this.handleAssassinate(playerId, randomTarget);
   }
 
   private autoLadyInspect(playerId: string): void {
@@ -1132,8 +1136,8 @@ class AvalonWorker extends BaseGameWorker {
       return;
     }
 
-    // 刺杀本质是猜梅林；选择非梅林（包括邪恶方或自己）都应视为刺杀失败，不能让刺客重试。
-    if (typeof targetId !== 'string' || !state.players || !state.players[targetId]) {
+    // 刺客必须指认另一名玩家；选错目标会直接判定刺杀失败，不能重试。
+    if (typeof targetId !== 'string' || targetId === playerId || !state.players || !state.players[targetId]) {
       this.sendToPlayer(playerId, 'game_error', {
         message: '无效的刺杀目标'
       });
@@ -1618,9 +1622,9 @@ class AvalonWorker extends BaseGameWorker {
           id => state.topSecret.red[id] === Role.ASSASSIN
         );
         if (assassin) {
-          const candidateTargets = Object.keys(state.players);
+          const candidateTargets = Object.keys(state.players).filter(id => id !== assassin);
           const randomTarget = candidateTargets[Math.floor(Math.random() * candidateTargets.length)];
-          this.handleAssassinate(assassin, randomTarget);
+          if (randomTarget) this.handleAssassinate(assassin, randomTarget);
         }
         break;
       case GameStatus.LADY:

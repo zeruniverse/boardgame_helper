@@ -537,3 +537,35 @@ Commit: fix(round1): 修复钟楼开局原子性、一夜狼人猎人连锁与�
   - package-lock 工作区依赖树通过 npm ls --package-lock-only --all；git diff --check 通过；根目录不存在 src/。
   - 完整 npm run build 已尝试但未在当前容器完成：此前依赖安装只留下部分/空 node_modules，正式后端 tsc 因缺少 body-parser、express、node、uuid 等已声明类型而中止，前端 vue-tsc/Vite 未进入执行；内部依赖源此前无法取得锁定的 TypeScript 包。仍需在依赖完整的本地或 CI 环境执行 npm ci && npm run build 做最终生产构建确认。
 备注: 本轮优先处理会导致私密房间访问码可预测、规则结算错误、血染钟楼阶段瞬间推进及失败开局污染状态的高影响问题；未修改 frontend/src/ 文件，未删除文件，未创建根目录 src/。
+
+=== 本次请求第 6 轮修复记录 ===
+时间: 2026-08-07 15:37:20 UTC
+Commit: fix(round6): 加固多游戏配置同步并修正阿瓦隆刺杀目标
+修改/新增文件:
+  - backend/src/controllers/roomController.ts (124738 bytes)
+  - backend/src/utils/configNormalization.ts (1792 bytes，新文件)
+  - backend/src/workers/avalonWorker.ts (69750 bytes)
+  - backend/src/workers/mafiaWorker.ts (97859 bytes)
+  - backend/src/workers/onuWerewolfWorker.ts (58837 bytes)
+  - backend/src/workers/texasHoldemWorker.ts (88360 bytes)
+  - backend/src/workers/werewolfWorker.ts (73574 bytes)
+  - frontend/src/components/AvalonActionPanel.vue (19492 bytes)
+  - repair_log.txt
+删除文件: 无
+构建测试: 部分通过
+本轮修复:
+  - 新增后端统一配置规范化工具：计时字段仅接受有限非负 number，null/0 保持不限时，超大值限制上限；整数和布尔配置不再通过 Number()/Boolean() 隐式接受字符串、布尔或 null。
+  - 狼人杀统一规范 speak/action/night/day/vote 计时及字段别名，严格校验 characters 必须为数组；动态修改配置时同步别名并阻止畸形值进入 setTimeout。
+  - 杀人游戏严格规范计时、遗言轮数和角色数量；字符串角色数量不再错误触发“自定义角色”模式；prepare_room 增加权威 room_update，避免 Controller 长期保留规范化前的旧配置。
+  - 一夜狼人严格校验 roles 整体数组及 random/loneWolf/allowRoleReveal/autoRoles 布尔配置，统一处理旧计时字段别名并保留 null=不限时；配置更新不再允许字符串角色列表污染运行态。
+  - 德州扑克在 Controller 与 Worker 两层校验发牌模式、盲注和初始筹码，设置安全上限；无效、负数、NaN 或非安全整数筹码会恢复为规范化默认值；Worker 将最终配置写回 room.gameMetadata，修复前后端显示与实际盲注/筹码不一致。
+  - 阿瓦隆严格规范讨论时间、行动时间、发言轮数和湖上夫人开关；刺客不能选择自己，自动刺杀和超时刺杀也排除刺客本人；前端目标列表同步过滤自己，错误目标仍按一次刺杀直接结算，不能重试。
+  - 对血染钟楼当前配置、开局和状态同步路径完成复查，本轮未发现优先级高于上述跨游戏配置污染问题的新阻断项，保留原实现。
+验证:
+  - backend/src 的全部 TypeScript 源码使用 TypeScript 5.8.3、真实 Node 类型和临时外部模块类型桩完成 strict 编译，并成功生成 34 个测试用 CommonJS 文件，无类型错误。
+  - backend/src 与 frontend/src 共 83 个 TypeScript/Vue/CSS 源码文件完成语法及相对导入路径检查，无错误；git diff --check 通过。
+  - 六个实际 Worker 的 prepare_room 烟雾测试通过：狼人杀、杀人游戏、一夜狼人、阿瓦隆、德州扑克、血染钟楼均可初始化。
+  - 专项配置测试通过：字符串/布尔计时不再被隐式转换，null 保持不限时，超大计时/筹码/盲注被限制；狼人角色列表、一夜狼人角色列表的畸形更新明确失败；杀人游戏发布规范化后的权威房间快照；德州扑克异常筹码恢复为安全默认值。
+  - package-lock 工作区依赖树通过 npm ls --package-lock-only --all 校验。
+  - 完整 npm ci / npm run build 已尝试但未在当前容器完成：内部依赖源对锁定的 typescript-5.8.3.tgz 返回 404，失败安装只留下空/不完整依赖目录；正式后端 tsc 因缺少已声明类型包中止，前端 vue-tsc/Vite 未进入执行。需在依赖可用的本地或 CI 环境执行 npm ci && npm run build 做最终生产构建确认。
+备注: 所有后端源码修改均位于 backend/src/，所有前端源码修改均位于 frontend/src/；未删除文件，未创建根目录 src/。

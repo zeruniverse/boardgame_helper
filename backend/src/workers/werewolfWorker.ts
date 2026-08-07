@@ -23,6 +23,11 @@ import {
 import { stateHandlers, clearScheduledStateTasks } from '../utils/werewolfStateHandlers';
 import { buildChatPayload, normalizeChatChannel, normalizeChatText } from '../utils/chat';
 import { mergeRoomGameConfig } from '../utils/roomGameConfig';
+import {
+  getOwnConfigValue,
+  normalizeBoolean,
+  normalizeDurationSeconds
+} from '../utils/configNormalization';
 
 if (!parentPort) {
   throw new Error('这个文件只能在Worker线程中运行');
@@ -90,18 +95,51 @@ class WerewolfWorker extends BaseGameWorker {
     } as WerewolfGameState;
   }
 
+  private normalizeConfig(
+    config: Partial<WerewolfConfig> = {},
+    fallback?: WerewolfConfig
+  ): WerewolfConfig {
+    const rawConfig = (config || {}) as unknown as Record<string, unknown>;
+    const rawCharacters = getOwnConfigValue(rawConfig, 'characters');
+    if (rawCharacters !== undefined && !Array.isArray(rawCharacters)) {
+      throw new Error('角色配置必须是数组');
+    }
+
+    return {
+      // 保留 0/null=不限时；只接受真实有限 number，拒绝字符串/布尔值的隐式数值转换。
+      speakTime: normalizeDurationSeconds(
+        getOwnConfigValue(rawConfig, 'speakTime', 'dayTime'),
+        fallback?.speakTime ?? 60
+      ),
+      actionTime: normalizeDurationSeconds(
+        getOwnConfigValue(rawConfig, 'actionTime', 'nightTime'),
+        fallback?.actionTime ?? 60
+      ),
+      nightTime: normalizeDurationSeconds(
+        getOwnConfigValue(rawConfig, 'nightTime', 'actionTime'),
+        fallback?.nightTime ?? 60
+      ),
+      dayTime: normalizeDurationSeconds(
+        getOwnConfigValue(rawConfig, 'dayTime', 'speakTime'),
+        fallback?.dayTime ?? 120
+      ),
+      voteTime: normalizeDurationSeconds(
+        getOwnConfigValue(rawConfig, 'voteTime'),
+        fallback?.voteTime ?? 60
+      ),
+      characters: Array.isArray(rawCharacters)
+        ? [...rawCharacters] as WerewolfCharacter[]
+        : [...(fallback?.characters || [])],
+      autoCharacters: normalizeBoolean(
+        getOwnConfigValue(rawConfig, 'autoCharacters'),
+        fallback?.autoCharacters === true
+      )
+    };
+  }
+
   async prepareRoom(room: Room, config: WerewolfConfig): Promise<void> {
     this.room = room;
-    this.config = {
-      // 使用 nullish 合并，保留 0=不限时；同时兼容 dayTime/nightTime 与 speakTime/actionTime 的别名。
-      speakTime: config.speakTime ?? config.dayTime ?? 60,
-      actionTime: config.actionTime ?? config.nightTime ?? 60,
-      nightTime: config.nightTime ?? config.actionTime ?? 60,
-      dayTime: config.dayTime ?? config.speakTime ?? 120,
-      voteTime: config.voteTime ?? 60,
-      characters: config.characters || [],
-      autoCharacters: config.autoCharacters === true
-    };
+    this.config = this.normalizeConfig(config);
 
     // 验证角色配置
     if (!validateCharacterConfig(this.config.characters)) {
@@ -154,24 +192,18 @@ class WerewolfWorker extends BaseGameWorker {
   }
 
   async changeConfig(config: Partial<WerewolfConfig>): Promise<void> {
-    const hasCharacterUpdate = Array.isArray(config.characters);
-    const nextCharacters = hasCharacterUpdate ? config.characters! : this.config.characters;
-    if (!validateCharacterConfig(nextCharacters)) {
+    const rawConfig = (config || {}) as unknown as Record<string, unknown>;
+    const hasCharacterUpdate = Object.prototype.hasOwnProperty.call(rawConfig, 'characters');
+    const nextConfig = this.normalizeConfig(config, this.config);
+    if (!validateCharacterConfig(nextConfig.characters)) {
       throw new Error('角色配置不合法');
     }
 
     // 前端配置面板使用 dayTime/nightTime，后端流程读取 speakTime/actionTime；
-    // 同步两组别名，避免 UI 修改后实际夜晚/白天计时仍使用旧值。
+    // normalizeConfig 会同步别名，并阻止畸形计时值进入 setTimeout。
     this.config = {
-      ...this.config,
-      ...config,
-      speakTime: config.speakTime ?? config.dayTime ?? this.config.speakTime,
-      actionTime: config.actionTime ?? config.nightTime ?? this.config.actionTime,
-      nightTime: config.nightTime ?? config.actionTime ?? this.config.nightTime,
-      dayTime: config.dayTime ?? config.speakTime ?? this.config.dayTime,
-      voteTime: config.voteTime ?? this.config.voteTime,
-      characters: nextCharacters,
-      autoCharacters: hasCharacterUpdate ? false : this.config.autoCharacters
+      ...nextConfig,
+      autoCharacters: hasCharacterUpdate ? false : nextConfig.autoCharacters
     };
     this.gameState.needingCharacters = this.config.characters;
     mergeRoomGameConfig(this.room, this.config);
