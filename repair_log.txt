@@ -2496,3 +2496,32 @@ Commit: fix(round60): 封堵空房即时销毁与重连竞态
   - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts 校验。
   - 正式 npm ci --ignore-scripts --no-audit --no-fund 已在最终源码工作区执行，当前内部 npm 镜像请求 package-lock 锁定的 typescript-5.8.3.tgz 返回 404。正式 npm run build 也已执行；因安装失败没有完整 node_modules，backend tsc 在 Node 内建类型及 Express/CORS/Socket.IO/UUID 等 package.json 已声明依赖/类型解析阶段中止，未进入 frontend vue-tsc/Vite。安装/构建残留的 node_modules、backend/dist、frontend/dist 已清理。相同 backend/src 已通过上述 strict/noEmit、隔离 CommonJS 编译和六 Worker 实际运行烟雾；完整生产构建与“可直接部署”仍需在依赖可正常安装的本地或 CI 执行 npm ci && npm run build 最终确认。
 备注: 本轮未删除文件，未创建根目录 src/；所有源码修改仅位于 backend/src/，本轮没有 frontend/src/ 源码修改；修复包只包含 backend/src/controllers/roomController.ts 与更新后的 repair_log.txt，可按相对路径直接覆盖。
+
+=== 当前请求第 61 轮修复记录 ===
+时间: 2026-08-08 15:49:59 UTC
+Commit: fix(round61): 统一空房线程清理与连接事务互斥
+修改/新增文件:
+  - backend/src/services/RoomThreadManager.ts
+  - backend/src/controllers/roomController.ts
+  - repair_log.txt
+删除文件: 无
+构建测试: 部分通过（backend/src + frontend/src 当前全部 86 个源文件静态扫描、backend/src 全部 35 个 TypeScript strict/noEmit 与隔离 CommonJS 编译、六游戏 Worker prepare_room 烟雾、空闲线程清理/连接事务专项回归、package-lock 工作区依赖树检查均通过；正式 npm ci 仍被当前内部 npm 镜像缺失 TypeScript 5.8.3 tarball 的 404 阻塞，正式 npm run build 因没有完整 node_modules 在 backend tsc 的 Node/Express/CORS/Socket.IO/UUID 等已声明依赖/类型解析阶段中止，未进入 frontend vue-tsc/Vite，因此完整生产构建与直接部署仍需在依赖镜像正常的本地或 CI 终验）
+本轮修复:
+  - 补齐第 58/60 轮 Worker 生命周期互斥后仍遗漏的一条高危旁路：RoomThreadManager 自身每 30 秒执行的 checkAndCleanupIdleThreads 会在看到“空房超过 1 分钟”后直接 stopRoomThread。该路径完全绕过 roomController 新增的 socketRoomConnectionClaims / roomCleanupStops 屏障，因此即使 Controller 的延迟清理、即时空房清理都已防住重连竞态，线程管理器定时器仍可能基于旧空房快照，在新 join/reconnect 已开始异步提交时不可逆终止 Worker，留下“Controller 房间/新座位还在，但游戏内存状态已被销毁”的跨层分叉。
+  - RoomThreadManager 现在接受可选的 idleEmptyRoomHandler。roomController 首次初始化和 resetServer 后重建管理器时都显式传入 handleIdleEmptyRoomCandidate；线程管理器只负责识别候选，真正销毁回到 Controller 的 deleteRoomIfStillEmpty，由它在权威 rooms 上重新检查房间仍为空、确认没有 connection claim，并在任何 await 前设置 roomCleanupStops 后才 stop Worker。这样“连接先取得 claim -> 清理退让”和“清理先设置 stop marker -> 后续连接拒绝”两个竞态方向继续遵循同一原子边界。
+  - checkAndCleanupIdleThreads 不再把第一次扫描结果当作最终事实。候选现在同时记录精确 Worker 实例与 lastActiveTime；每次实际清理前重新确认仍是同一个 Worker、房间仍为空、活动时间未变化且确实超过阈值。串行处理前一个候选期间若另一个房间已经有新座位/新快照，旧候选会被跳过，不再因“批量候选列表过期”误停后续房间。
+  - shutdown 开始后空闲清理循环会停止继续处理剩余候选，避免服务器重置/关闭正在回收线程时，已经进入本轮定时扫描的旧管理器在后续 await 之后继续发起新的空房清理。
+  - 公共 cleanupIdleRoom 入口同步使用同一 idleEmptyRoomHandler；避免未来或旧调用方显式请求“空闲清理”时重新绕开 Controller 生命周期屏障。未配置 Controller 回调的独立 RoomThreadManager 仍保留直接 stop 的兼容兜底，并在 stop 前完成无 await 的精确 Worker/空房快照二次检查。
+审查结果/本轮未改动重点:
+  - 本轮继续覆盖 backend/src 与 frontend/src 当前全部 86 个源码文件，并结合前 60 轮 repair_log 重点复核 roomController、RoomThreadManager、BaseGameWorker、六个游戏 Worker、六套前端 Store/Room/ActionPanel/ActionBar/PlayerList/Chat 以及共享 session/socket/config/random/state 工具。当前最高优先级的新确定性问题是“线程管理器自身定时清理仍绕过 Controller 生命周期互斥”，因此本批次集中封堵该事实源旁路，没有扩大为高风险跨游戏重构。
+  - 六游戏主流程再次交叉检查：狼人杀的狼人共识、预言家/女巫/守卫夜序、警长/放逐/遗言/猎人死亡链；杀人游戏的杀手/警察/医生/狙击手、PK 与项目胜负；一夜狼人的玩家+3 中心牌、换牌最终身份、猎人/皮匠/爪牙与女巫强制交换；阿瓦隆的任务人数、7 人以上第 4 任务双失败、五次否决、刺杀与湖上夫人；德州扑克的 HU 盲注/行动顺序、短码 all-in/加注权、未跟注返还、边池/奇数筹码与 burn card。本轮未发现优先级高于上述 Worker 状态丢失竞态、且适合当前批次安全合入的新确定性规则阻断项。
+  - 血染钟楼继续保留此前 repair_log 已记录、需要更大状态模型或真人说书人逐次裁决 UI 才能完整解决的架构级边界：特殊自定义夜序下 Pit-Hag 创建 Demon 后无法安全逆向更早已经真实落地并触发被动的死亡；真人说书人缺每次 Recluse/Spy registration 的逐次人工裁决 UI；自由文本/多重效果抵消等 Mathematician 极端情况缺统一逐次最终基准审计。本轮没有用近似逻辑冒险覆盖这些边界。
+  - 前端 27 个 Vue SFC 继续统一使用 Element Plus，并维持现有 Room + PlayerList + ActionPanel/ActionBar + Chat 分层以及共享 LocalPlayerMark/gameSocket/gameSession/playerName/messages/forcedExit 等复用结构。本轮问题完全位于 Worker/Controller 生命周期，未发现需要为修复该问题新增前端状态或复制组件，因此 frontend/src 无修改。
+验证:
+  - backend/src + frontend/src 全量静态扫描通过：共 86 个源文件、84 个 TypeScript/Vue script 解析单元、27 个 Vue SFC、28 个 style/CSS 单元、227 次静态相对本地导入解析检查；未发现 TypeScript 语法错误、CSS 花括号错误、真实合并冲突标记或失效本地导入；项目根目录不存在 src/。
+  - backend/src 全部 35 个 TypeScript 文件使用全局 TypeScript 5.8.3、strict 模式、真实全局 Node 类型与项目目录外 Express/CORS/Socket.IO/UUID 临时声明桩完成 noEmit 类型检查，0 个源码类型错误；同一严格配置成功生成 35 个隔离 CommonJS 测试文件。临时声明、脚本和编译产物只位于 /mnt/data/round61_validation，不进入修复包。
+  - 六个实际游戏 Worker 使用本轮最新隔离编译产物执行合法 prepare_room 烟雾全部通过：狼人杀、杀人游戏、血染钟楼、一夜狼人、阿瓦隆、德州扑克均能启动 Worker 并完成房间初始化。
+  - 空闲线程生命周期专项回归通过：构造两个同时满足旧定时清理条件的空房候选，在处理第一个候选期间模拟第二个房间加入新座位/更新时间；本轮二次检查只提交第一个候选，第二个过期候选被正确跳过。专项同时确认 cleanupIdleRoom 会委托 Controller 回调；roomController 初始与 reset 后两个 RoomThreadManager 均安装该回调；回调最终进入 deleteRoomIfStillEmpty，且 helper 保持“hasRoomConnectionClaim -> roomCleanupStops.add -> await stopRoomThread”的原子顺序。
+  - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts 校验，仅有可选依赖提示。
+  - 正式 npm ci --ignore-scripts --no-audit --no-fund 已在最终源码工作区执行，当前内部 npm 镜像请求 package-lock 锁定的 typescript-5.8.3.tgz 返回 404；尝试切换公共 registry 的安装在当前容器网络窗口内未完成，产生的部分 node_modules 已全部清理。正式 npm run build 也已执行；因没有完整 node_modules，backend tsc 在 Node 内建类型及 Express/CORS/Socket.IO/UUID 等 package.json 已声明依赖解析阶段中止，未进入 frontend vue-tsc/Vite；构建产物 backend/dist/frontend/dist 已清理。相同 backend/src 已通过上述 strict/noEmit、隔离 CommonJS 编译、专项回归与六 Worker 实际运行烟雾；完整生产构建与“可直接部署”仍需在依赖可正常安装的本地或 CI 执行 npm ci && npm run build 最终确认。
+备注: 本轮未删除文件，未创建根目录 src/；所有源码修改仅位于 backend/src/，本轮没有 frontend/src/ 源码修改；修复包只包含 backend/src/services/RoomThreadManager.ts、backend/src/controllers/roomController.ts 与更新后的 repair_log.txt，可按相对路径直接覆盖。

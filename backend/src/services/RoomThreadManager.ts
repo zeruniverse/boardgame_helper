@@ -34,10 +34,15 @@ export class RoomThreadManager {
   private quarantinedWorkers: Map<string, Worker> = new Map();
   private cleanupInterval: NodeJS.Timeout | null;
   private onMessage?: (data: any) => void | Promise<void>;
+  private onIdleEmptyRoom?: (roomId: string) => void | Promise<void>;
   private shuttingDown = false;
 
-  constructor(eventHandler?: (data: any) => void | Promise<void>) {
+  constructor(
+    eventHandler?: (data: any) => void | Promise<void>,
+    idleEmptyRoomHandler?: (roomId: string) => void | Promise<void>
+  ) {
     this.onMessage = eventHandler;
+    this.onIdleEmptyRoom = idleEmptyRoomHandler;
 
     // 定期检查并清理空闲线程。控制层会负责按房间保留时间删除离线房间；
     // 这里不能提前停止仍有玩家记录的 worker，否则重连时会丢失游戏内存状态。
@@ -530,26 +535,49 @@ export class RoomThreadManager {
     const now = Date.now();
     const idleThreshold = 60000; // 1分钟空闲时间
 
-    const roomsToCleanup: string[] = [];
-    for (const [roomId, _worker] of this.workers.entries()) {
+    const roomsToCleanup: Array<{ roomId: string; worker: Worker; lastActiveTime: number }> = [];
+    for (const [roomId, worker] of this.workers.entries()) {
       // 获取房间信息进行检查
       const roomData = this.roomData.get(roomId);
       if (roomData) {
-        const onlinePlayers = roomData.players.filter(p => p.online);
         const timeSinceLastActive = now - roomData.lastActiveTime;
 
         // 只清理真正已无玩家记录的孤儿线程。仍有离线玩家的房间可能还在
         // roomController 的重连保留窗口内，必须保留 worker 中的角色、牌局、计时器等状态。
-        if (roomData.players.length === 0 && onlinePlayers.length === 0 && timeSinceLastActive > idleThreshold) {
-          roomsToCleanup.push(roomId);
+        if (roomData.players.length === 0 && timeSinceLastActive > idleThreshold) {
+          roomsToCleanup.push({ roomId, worker, lastActiveTime: roomData.lastActiveTime });
         }
       }
     }
 
-    // 串行清理以避免竞态条件
-    for (const roomId of roomsToCleanup) {
-      console.log(`正在销毁空闲房间: ${roomId}`);
-      await this.stopRoomThread(roomId);
+    // 串行清理以避免竞态条件。候选列表只是一次观察：真正执行前必须确认仍是
+    // 同一个 Worker、同一个空房快照，避免前一个 await 期间到达的新座位/新线程被误停。
+    for (const candidate of roomsToCleanup) {
+      if (this.shuttingDown) {
+        return;
+      }
+
+      const currentRoom = this.roomData.get(candidate.roomId);
+      if (
+        this.workers.get(candidate.roomId) !== candidate.worker ||
+        !currentRoom ||
+        currentRoom.players.length !== 0 ||
+        currentRoom.lastActiveTime !== candidate.lastActiveTime ||
+        Date.now() - currentRoom.lastActiveTime <= idleThreshold
+      ) {
+        continue;
+      }
+
+      console.log(`发现空闲空房间，提交统一清理: ${candidate.roomId}`);
+      if (this.onIdleEmptyRoom) {
+        // 房间生命周期由 Controller 持有。让 Controller 在同一个连接事务屏障下
+        // 重新检查 rooms / connection claims 后再停止 Worker，不能由定时器绕过该屏障。
+        await this.onIdleEmptyRoom(candidate.roomId);
+      } else {
+        // 保留 RoomThreadManager 独立使用时的兜底；上面的二次检查与 stopRoomThread
+        // 的同步隔离步骤之间没有 await，因此管理器自身状态不会在这个窗口中被插队修改。
+        await this.stopRoomThread(candidate.roomId);
+      }
     }
   }
 
@@ -607,8 +635,13 @@ export class RoomThreadManager {
     console.log('所有房间线程已关闭');
   }
 
-  // 清理指定房间的空闲线程
+  // 清理指定房间的空闲线程。配置了 Controller 生命周期回调时，所有“空闲清理”入口
+  // 都必须走同一事务屏障，不能让显式调用重新绕开连接 claim / stop marker。
   async cleanupIdleRoom(roomId: string): Promise<void> {
+    if (this.onIdleEmptyRoom) {
+      await this.onIdleEmptyRoom(roomId);
+      return;
+    }
     await this.stopRoomThread(roomId);
   }
 

@@ -1095,7 +1095,7 @@ function readGameActionFailure(taskResponse: any): { success: false; error: stri
 
 export function roomController(io: Server) {
   // 初始化线程管理器
-  threadManager = new RoomThreadManager(handleThreadMessage);
+  threadManager = new RoomThreadManager(handleThreadMessage, handleIdleEmptyRoomCandidate);
   let idleCleanupInterval: NodeJS.Timeout | null = null;
   let controllerShuttingDown = false;
   let resetInProgress = false;
@@ -1162,7 +1162,7 @@ export function roomController(io: Server) {
       if (controllerShuttingDown) {
         return false;
       }
-      threadManager = new RoomThreadManager(handleThreadMessage);
+      threadManager = new RoomThreadManager(handleThreadMessage, handleIdleEmptyRoomCandidate);
       
       console.log('服务器重置完成，所有房间已清空');
       return true;
@@ -2044,6 +2044,13 @@ export function roomController(io: Server) {
     } finally {
       roomCleanupStops.delete(roomId);
     }
+  }
+
+  async function handleIdleEmptyRoomCandidate(roomId: string): Promise<void> {
+    // RoomThreadManager 只能发现“它自己的快照看起来已经空闲”；真正销毁必须回到
+    // Controller 的权威 rooms 与连接事务屏障中再判断。这样定时清理不会绕过
+    // socketRoomConnectionClaims / roomCleanupStops，在重连或新加入提交途中终止 Worker。
+    await deleteRoomIfStillEmpty(roomId, '线程管理器清理空闲空房间');
   }
 
   async function deleteRoomIfStillEmpty(
