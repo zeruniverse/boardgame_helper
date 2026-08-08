@@ -1662,3 +1662,33 @@ Commit: fix(round32): 修正狼人杀警长票权重与平票PK流程
   - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts 校验。
   - 正式 npm ci --ignore-scripts --no-audit --no-fund 已执行，但当前内部 npm 源请求 package-lock 锁定的 TypeScript 5.8.3 tarball 返回 404。随后 npm run build 在依赖未完整安装的工作区执行，后端 tsc 因 Node/Express/Socket.IO/UUID/CORS 等已声明依赖/类型未安装而中止，根构建因此无法进入前端 vue-tsc/Vite。故本轮不能声称完整生产 npm 构建已在此容器通过；请在依赖源可用的本地或 CI 执行 npm ci && npm run build 做最终部署确认。
 备注: 本轮未删除文件，未创建根目录 src/；所有后端源码修改仅位于 backend/src/，所有前端源码修改仅位于 frontend/src/；修复包只包含本轮修改文件及 repair_log.txt，可按相对路径直接覆盖。
+
+=== 当前请求第 33 轮修复记录 ===
+时间: 2026-08-08 08:38:30 UTC
+Commit: fix(round33): 修复钟楼数学家异常审计与杀手死亡反馈
+修改/新增文件:
+  - backend/src/utils/botcSkills.ts
+  - backend/src/workers/botcWorker.ts
+  - repair_log.txt
+删除文件: 无
+构建测试: 部分通过（85 个源码文件全量静态扫描、backend/src 全量 strict 编译、六游戏 Worker prepare_room 烟雾、血染钟楼数学家专项回归、package-lock 工作区依赖树检查均通过；正式 backend/frontend npm build 仍受当前工作区依赖未完整安装阻塞）
+本轮修复:
+  - 将血染钟楼 Mathematician 从“统计 Poisoned/Mad/Drunk/Protected 提醒数量”的状态快照近似，改为 Worker 内自黎明起按角色去重的实际能力异常事件账本。账本在黎明清空；同一角色一晚/一日内多次异常只计一次；数学家自己的能力异常不计入自身结果；哲学家/自定义剧本取得数学家能力时读取同一窗口。
+  - 给自动结算链路补充高价值异常审计：中毒/醉酒/Vortox 导致的信息结果实际被改写、Recluse/Spy registration 确实改变能力结果、Exorcist 阻止恶魔行动、Monk/Soldier/Tea Lady 等使击杀或保护结果偏离能力文本、Sweetheart/Barber/Grandmother/Moonchild/Fool/Saint 等触发能力因另一角色失效，以及 Slayer、Ravenkeeper、Klutz 等关键白天/死亡技能的异常路径。事件使用 Set 去重，避免同一角色被多条检测链重复累计。
+  - First-night/夜间信息工具不再把 registration “曾经选到另一身份”本身当成异常，而是比较最终可见结果是否真的偏离角色实际身份；Chef、Empath、Clockmaker、Grandmother、Gambler、Professor、Washerwoman/Librarian/Investigator 等增加了物质结果差异标记，减少合法 registration 但结果仍然成立时的误报。
+  - 修正 Snake Charmer 非恶魔目标的结果语义：选择非恶魔时只是正常无事发生，不再返回伪造的 isDemon 信息；这同时修复“中毒蛇魅选择普通镇民却被数学家误计异常”的典型边界。Cerenovus 与 Pit-Hag 也移除了仅回显玩家自己已知选择、却会被通用信息污染逻辑误当作角色信息的内部 information 字段。
+  - 修复 Slayer 的公开反馈错误：旧代码只要目标登记为 Demon 并调用 killPlayer，就固定广播“目标死亡”，即使目标实际被保护/僵怖首死等效果挡住。现在只在本次能力造成新的公开死亡时播报死亡；未造成公开死亡会明确给出无死亡反馈。同时把 registration 异常审计限制为仍可死亡的目标，避免对普通已死亡目标产生数学家误报。
+  - Tea Lady 的数学家审计改为只在具体死亡尝试发生时判断“按实际邻座阵营本应保护”与“当前有效能力实际是否保护”是否不同，不再因为空闲时刻存在中毒/registration 状态就提前计数。
+审查结果/本轮未改动重点:
+  - 再次扫描 backend/src 与 frontend/src 当前全部 85 个 TypeScript/Vue/CSS/SVG 代码文件，并复核六个游戏 Worker、BaseGameWorker、RoomThreadManager/Controller 的串行任务、状态版本合并及 Room/ActionPanel/PlayerList/Store 的状态消费。狼人杀、杀人游戏、一夜狼人、阿瓦隆、德州扑克本轮未发现优先级高于上述 BOTC 架构缺口、且适合低风险当前批次落地的新确定性主流程阻断项。
+  - 前端 27 个 Vue SFC 的 script/template/style、CSS 花括号与相对/@ 导入继续通过静态检查；本轮未修改前端，也没有新增平行组件或样式体系。既有 Room / ActionPanel / PlayerList / Chat 与共享 store/util 结构保持不变。
+  - Controller/RoomThreadManager/BaseGameWorker 的单房间 Worker 消息串行、acknowledgement、workerStateVersion/hostStateVersion/connectionStateVersion 合并路径继续复核；六个实际游戏 Worker 均能使用本轮最新严格隔离编译产物完成 prepare_room。
+  - BOTC 仍保留需要更大状态模型/UI 才能完整解决的高阶边界：真人说书人自由输入的 Artist/High Priestess 等手工信息没有逐条“实际结果 vs 给出结果”的审计标记，因此无法由 Worker 自动判断数学家异常；多个 registration/中毒/Vortox 同时作用并恰好互相抵消的极端信息结果仍缺少统一的最终基准审计；自定义夜序里 Pit-Hag 制造 Demon 后对已真实落地且触发被动的更早死亡仍不能安全逆向撤销；真人说书人也仍缺少每次 Recluse/Spy registration 的逐次手工裁决 UI。本轮没有用不完整的全局重构冒险处理这些边界。
+验证:
+  - backend/src + frontend/src 全量静态扫描通过：共 85 个代码文件、83 个 TypeScript/Vue script 解析单元、27 个 Vue SFC、27 个 style 块、319 个静态 import/export 路径均无 TypeScript 语法、SFC 基本结构、CSS 花括号、合并冲突标记或失效相对/@ 导入错误；项目根目录不存在 src/。
+  - backend/src 全部 34 个 TypeScript 文件使用全局 TypeScript、strict 模式、真实 Node 类型与位于项目目录外的 Express/CORS/Socket.IO/UUID 临时声明桩完成 noEmit/隔离 CommonJS 编译，0 个源码类型错误；隔离产物共 34 个 JS 文件。
+  - 六个实际游戏 Worker 使用本轮最新 strict 编译产物执行 prepare_room 烟雾全部通过：狼人杀、杀人游戏、血染钟楼、一夜狼人、阿瓦隆、德州扑克均能启动 Worker 并完成房间初始化。
+  - 第 33 轮 BOTC 专项回归通过：中毒 Snake Charmer 选择非 Demon 时无 information/effects 且不会被通用抑制判断误计；Mathematician 工具层不再依据 Poisoned/Protected 提醒猜数字；强制 Recluse 以邪恶身份登记时 Chef 只有在数值结果改变后才设置 registrationAltered；Worker 账本按角色去重、排除数学家自身且读取不消费窗口。
+  - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts 校验。
+  - 正式 npm --prefix backend run build 已在本轮最终代码路径上执行，但当前项目 node_modules 缺少 Node/Express/Socket.IO/UUID/CORS 等已声明依赖/类型，tsc 因模块/类型无法解析而中止；npm --prefix frontend run build 因 vue-tsc 未安装而无法启动。相同 backend/src 已通过上述严格隔离类型检查和 Worker 实际运行烟雾，因此没有把依赖安装缺失误判为源码错误；完整生产构建/部署仍需在依赖源可用且 npm ci 完整成功的本地或 CI 再执行 npm run build 最终确认。
+备注: 本轮未删除文件，未创建根目录 src/；所有后端源码修改仅位于 backend/src/，本轮未修改 frontend/src/；修复包只包含本轮修改文件及 repair_log.txt，可按相对路径直接覆盖。

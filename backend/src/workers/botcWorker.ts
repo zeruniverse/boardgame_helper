@@ -142,6 +142,11 @@ export class BOTCWorker extends BaseGameWorker {
   // Chambermaid counts players who actually woke for their own ability, not
   // everyone who pre-submitted an action in the parallel night collector.
   private wokeForOwnAbilityThisNight: Set<string> = new Set();
+  // Mathematician counts characters whose abilities actually malfunctioned because
+  // of another character since dawn. This is an event ledger, not a snapshot of
+  // poison/drunk/protection reminders. It is cleared at dawn, not when one reader
+  // wakes, so Philosopher/custom duplicate Mathematician abilities see the same window.
+  private mathematicianAbnormalPlayerIds: Set<string> = new Set();
   // Barber is a death-triggered choice made by a Demon, not a regular action of
   // the dead Barber. Queue the death event until the correct night transition,
   // then keep the choice as private player state so reconnects can restore it.
@@ -488,15 +493,38 @@ export class BOTCWorker extends BaseGameWorker {
       (effectiveRole?.team === Team.TOWNSFOLK && this.hasActiveVortox());
   }
 
+  private markMathematicianAbnormal(playerId: string): void {
+    const player = this.gamePlayers.get(playerId);
+    if (!player) return;
+
+    // The Mathematician never detects their own ability failing. This also
+    // covers a Philosopher currently using the Mathematician ability.
+    if (this.getEffectiveRole(player)?.id === 'mathematician') return;
+    this.mathematicianAbnormalPlayerIds.add(playerId);
+  }
+
+  private getMathematicianAbnormalCount(): number {
+    return this.mathematicianAbnormalPlayerIds.size;
+  }
+
   private prepareInfoForPlayer(
     player: GamePlayer,
     information: any,
     roleId: string,
     effectiveRole: Role | null = this.getEffectiveRole(player)
   ): any {
-    return this.shouldCorruptInfoForPlayer(player, effectiveRole)
-      ? this.corruptInfo(information, roleId)
-      : information;
+    const shouldCorrupt = this.shouldCorruptInfoForPlayer(player, effectiveRole);
+    if (!shouldCorrupt) return information;
+
+    const corrupted = this.corruptInfo(information, roleId);
+    // Poison/drunkenness may legally yield true information, while Vortox must
+    // make Townsfolk information false. Count a Mathematician event only when
+    // the automatic Storyteller actually changed this concrete result; merely
+    // being poisoned/drunk is not itself detectable.
+    if (JSON.stringify(corrupted) !== JSON.stringify(information)) {
+      this.markMathematicianAbnormal(player.playerId);
+    }
+    return corrupted;
   }
 
   /**
@@ -541,6 +569,19 @@ export class BOTCWorker extends BaseGameWorker {
     return identity.team ?? teamAtEvent ?? player.role?.team ?? null;
   }
 
+  private getHistoricalActualTeam(
+    playerId: string,
+    roleIdAtEvent: string | undefined,
+    teamAtEvent: Team | undefined
+  ): Team | null {
+    const player = this.gamePlayers.get(playerId);
+    if (!player) return teamAtEvent ?? null;
+    if (roleIdAtEvent && player.role?.id !== roleIdAtEvent) {
+      return teamAtEvent ?? null;
+    }
+    return teamAtEvent ?? player.role?.team ?? null;
+  }
+
   /**
    * 茶艺师的保护是持续效果，死亡结算发生时必须按当前存活邻座即时判断。
    * 不能只在夜晚结束后打 Protected 标记，否则同一夜的击杀会先于保护结算。
@@ -557,14 +598,14 @@ export class BOTCWorker extends BaseGameWorker {
       const neighbors = getNeighbors(teaLady.playerId, allPlayers)
         .filter((neighbor, index, arr) => arr.findIndex(p => p.playerId === neighbor.playerId) === index);
 
-      if (
-        neighbors.length === 2 &&
-        neighbors.every(neighbor =>
+      if (neighbors.length === 2) {
+        const registeredAllGood = neighbors.every(neighbor =>
           !neighbor.isDead && this.getRegisteredIdentity(neighbor).alignment === 'good'
-        )
-      ) {
-        for (const neighbor of neighbors) {
-          protectedPlayerIds.add(neighbor.playerId);
+        );
+        if (registeredAllGood) {
+          for (const neighbor of neighbors) {
+            protectedPlayerIds.add(neighbor.playerId);
+          }
         }
       }
     }
@@ -572,8 +613,37 @@ export class BOTCWorker extends BaseGameWorker {
     return protectedPlayerIds;
   }
 
-  private isTeaLadyProtected(playerId: string): boolean {
-    return this.getTeaLadyProtectedPlayerIds().has(playerId);
+  private isTeaLadyProtected(playerId: string, auditMathematician: boolean = false): boolean {
+    const allPlayers = Array.from(this.gamePlayers.values());
+    let protectedByAbility = false;
+
+    for (const teaLady of allPlayers) {
+      if (this.getEffectiveRole(teaLady)?.id !== 'tealady' || teaLady.isDead) {
+        continue;
+      }
+      const neighbors = getNeighbors(teaLady.playerId, allPlayers)
+        .filter((neighbor, index, arr) => arr.findIndex(p => p.playerId === neighbor.playerId) === index);
+      if (neighbors.length !== 2 || !neighbors.some(neighbor => neighbor.playerId === playerId)) {
+        continue;
+      }
+
+      const registeredAllGood = neighbors.every(neighbor =>
+        !neighbor.isDead && this.getRegisteredIdentity(neighbor).alignment === 'good'
+      );
+      const actualAllGood = neighbors.every(neighbor => !neighbor.isDead && !isEvilPlayer(neighbor));
+      const abilityProtects = this.playerAbilityWorks(teaLady) && registeredAllGood;
+      if (auditMathematician && abilityProtects !== actualAllGood) {
+        // Audit only a concrete death attempt. This catches either a poisoned/
+        // drunk Tea Lady failing to protect or Recluse/Spy registration changing
+        // the protection outcome, without counting an idle status snapshot.
+        this.markMathematicianAbnormal(teaLady.playerId);
+      }
+      if (abilityProtects) {
+        protectedByAbility = true;
+      }
+    }
+
+    return protectedByAbility;
   }
 
   private isSoberSailor(player: GamePlayer): boolean {
@@ -627,7 +697,7 @@ export class BOTCWorker extends BaseGameWorker {
       return '旅店老板保护';
     }
 
-    if (this.isTeaLadyProtected(player.playerId)) {
+    if (this.isTeaLadyProtected(player.playerId, true)) {
       return '茶艺师保护';
     }
 
@@ -641,9 +711,12 @@ export class BOTCWorker extends BaseGameWorker {
   private resolveSweetheartDeath(player: GamePlayer): void {
     if (
       this.getEffectiveRole(player)?.id !== 'sweetheart' ||
-      player.reminders.includes('sweetheartProcessed') ||
-      !this.playerAbilityWorks(player)
+      player.reminders.includes('sweetheartProcessed')
     ) {
+      return;
+    }
+    if (!this.playerAbilityWorks(player)) {
+      this.markMathematicianAbnormal(player.playerId);
       return;
     }
 
@@ -674,10 +747,13 @@ export class BOTCWorker extends BaseGameWorker {
     if (
       this.getEffectiveRole(player)?.id !== 'barber' ||
       !player.isDead ||
-      !this.playerAbilityWorks(player) ||
       this.barberDeathsPending.includes(player.playerId) ||
       this.pendingBarberDecision?.barberId === player.playerId
     ) {
+      return;
+    }
+    if (!this.playerAbilityWorks(player)) {
+      this.markMathematicianAbnormal(player.playerId);
       return;
     }
 
@@ -1353,8 +1429,12 @@ export class BOTCWorker extends BaseGameWorker {
 
       // Moonchild 在“今晚”结算时是否清醒健康才决定能力是否有效；目标阵营使用
       // 公开选择当时的快照，避免 Goon 等阵营随后变化导致错误结果。
-      if (entry.targetWasGood && this.getEffectiveRole(source)?.id === 'moonchild' && this.playerAbilityWorks(source)) {
-        await this.killPlayer(target.playerId, 'moonchild');
+      if (entry.targetWasGood && this.getEffectiveRole(source)?.id === 'moonchild') {
+        if (this.playerAbilityWorks(source)) {
+          await this.killPlayer(target.playerId, 'moonchild');
+        } else {
+          this.markMathematicianAbnormal(source.playerId);
+        }
       }
     }
 
@@ -1624,11 +1704,14 @@ export class BOTCWorker extends BaseGameWorker {
     const grandmothers = Array.from(this.gamePlayers.values()).filter(candidate =>
       this.getEffectiveRole(candidate)?.id === 'grandmother' &&
       !candidate.isDead &&
-      candidate.reminders.includes(marker) &&
-      this.playerAbilityWorks(candidate)
+      candidate.reminders.includes(marker)
     );
 
     for (const grandmother of grandmothers) {
+      if (!this.playerAbilityWorks(grandmother)) {
+        this.markMathematicianAbnormal(grandmother.playerId);
+        continue;
+      }
       this.notifyStoryteller(
         `祖母能力触发：${this.getPlayerName(grandchildId)} 被恶魔能力杀死，${this.getPlayerName(grandmother.playerId)} 随之死亡`,
         'warning'
@@ -2363,6 +2446,7 @@ export class BOTCWorker extends BaseGameWorker {
     this.deathsToday = [];
     this.firstNightInfoPlayerIds.clear();
     this.wokeForOwnAbilityThisNight.clear();
+    this.mathematicianAbnormalPlayerIds.clear();
     this.barberDeathsPending = [];
     this.pendingBarberDecision = null;
     this.pendingShabalothRegurgitation = null;
@@ -3392,6 +3476,9 @@ export class BOTCWorker extends BaseGameWorker {
     if (!result.success || !result.information) {
       return;
     }
+    if (result.registrationAltered) {
+      this.markMathematicianAbnormal(player.playerId);
+    }
 
     const isMetaInfo = result.information.requiresTargets !== undefined ||
       result.information.requiresStatement !== undefined ||
@@ -3412,7 +3499,10 @@ export class BOTCWorker extends BaseGameWorker {
       }
     }
 
-    const finalInfo = this.prepareInfoForPlayer(player, result.information, copiedRole.id, copiedRole);
+    const actualInformation = copiedRole.id === 'mathematician'
+      ? { abnormalCount: this.getMathematicianAbnormalCount() }
+      : result.information;
+    const finalInfo = this.prepareInfoForPlayer(player, actualInformation, copiedRole.id, copiedRole);
     this.sendNightInfoToPlayer(player.playerId, {
       role: copiedRole.id,
       information: finalInfo,
@@ -3438,6 +3528,9 @@ export class BOTCWorker extends BaseGameWorker {
         const result = processFirstNightInfo(player, allPlayers, this.gameConfig.edition);
         
         if (result.success && result.information) {
+          if (result.registrationAltered) {
+            this.markMathematicianAbnormal(playerId);
+          }
           // 判断信息是否为元数据（需要玩家选择目标的提示）还是实际信息
           const isMetaInfo = result.information.requiresTargets !== undefined ||
                              result.information.requiresStatement !== undefined ||
@@ -3461,8 +3554,14 @@ export class BOTCWorker extends BaseGameWorker {
               }
             }
 
+            // Read the since-dawn event ledger before corrupting the recipient's
+            // own result. Mathematician never contributes its own malfunction.
+            const actualInformation = effectiveRole.id === 'mathematician'
+              ? { abnormalCount: this.getMathematicianAbnormalCount() }
+              : result.information;
+
             // 中毒/醉酒或有效 Vortox 在场时，镇民信息必须为错误信息，且不能向玩家泄露被污染状态。
-            const finalInfo = this.prepareInfoForPlayer(player, result.information, effectiveRole.id, effectiveRole);
+            const finalInfo = this.prepareInfoForPlayer(player, actualInformation, effectiveRole.id, effectiveRole);
 
             this.sendNightInfoToPlayer(playerId, {
               role: effectiveRole.id,
@@ -3609,6 +3708,9 @@ export class BOTCWorker extends BaseGameWorker {
     this.isProcessingNight = false;
 
     this.gameState.phase = GamePhase.DAY;
+    // Mathematician explicitly reports malfunctions since dawn. Dawn starts a
+    // fresh reporting window, so no event from the preceding night carries over.
+    this.mathematicianAbnormalPlayerIds.clear();
     this.gameState.day++;
     this.gameState.isFirstDay = this.gameState.day === 1;
     this.gameState.nominations = [];
@@ -3889,6 +3991,12 @@ export class BOTCWorker extends BaseGameWorker {
       // Virgin 首次被提名后失去能力；若当时中毒/醉酒，则不产生立即处决。
       nominee.reminders.push('No ability');
       const nominatorRegistration = this.getRegisteredIdentity(nominator);
+      if ((nominatorRegistration.team === Team.TOWNSFOLK) !== (nominator.role?.team === Team.TOWNSFOLK)) {
+        this.markMathematicianAbnormal(nominee.playerId);
+      }
+      if (!virginAbilityWorks && nominatorRegistration.team === Team.TOWNSFOLK) {
+        this.markMathematicianAbnormal(nominee.playerId);
+      }
       if (virginAbilityWorks && nominatorRegistration.team === Team.TOWNSFOLK) {
         // Virgin still represents a real nomination even though it immediately
         // causes an execution and never opens a vote. Preserve that history so
@@ -4431,7 +4539,7 @@ export class BOTCWorker extends BaseGameWorker {
       return;
     }
 
-    if (this.isTeaLadyProtected(playerId)) {
+    if (this.isTeaLadyProtected(playerId, true)) {
       await this.resolveSurvivedExecution(player, executedBy, '茶艺师保护');
       return;
     }
@@ -4441,6 +4549,9 @@ export class BOTCWorker extends BaseGameWorker {
       return;
     }
 
+    if (this.getEffectiveRole(player)?.id === 'fool' && !this.playerAbilityWorks(player) && !player.reminders?.includes('foolUsed')) {
+      this.markMathematicianAbnormal(playerId);
+    }
     if (this.getEffectiveRole(player)?.id === 'fool' && this.playerAbilityWorks(player) && !player.reminders?.includes('foolUsed')) {
       this.addReminder(player, 'foolUsed');
       await this.resolveSurvivedExecution(player, executedBy, '愚者首次免死');
@@ -4448,6 +4559,9 @@ export class BOTCWorker extends BaseGameWorker {
     }
 
     // 处理圣徒被处决 - 善良阵营直接失败
+    if (this.getEffectiveRole(player)?.id === 'saint' && !this.playerAbilityWorks(player)) {
+      this.markMathematicianAbnormal(playerId);
+    }
     if (this.getEffectiveRole(player)?.id === 'saint' && this.playerAbilityWorks(player)) {
       await this.endGame('evil', '圣徒被处决，善良阵营失败');
       return;
@@ -4653,6 +4767,9 @@ export class BOTCWorker extends BaseGameWorker {
       player.reminders.push('ravenkeeperDeathAbilityUsed');
 
       const targetRegistration = this.getRegisteredIdentity(target);
+      if (targetRegistration.role?.id !== target.role?.id) {
+        this.markMathematicianAbnormal(playerId);
+      }
       const actualInformation = {
         playerId: target.playerId,
         playerName: this.getPlayerName(target.playerId),
@@ -4711,9 +4828,17 @@ export class BOTCWorker extends BaseGameWorker {
       });
 
       const targetRegistration = this.getRegisteredIdentity(target);
-      if (this.playerAbilityWorks(player) && targetRegistration.alignment === 'evil') {
-        const winner: 'good' | 'evil' = isEvilPlayer(player) ? 'good' : 'evil';
-        await this.endGame(winner, '笨蛋死亡后公开选择了邪恶玩家，其阵营失败');
+      const actualTargetAlignment = isEvilPlayer(target) ? 'evil' : 'good';
+      if (targetRegistration.alignment && targetRegistration.alignment !== actualTargetAlignment) {
+        this.markMathematicianAbnormal(playerId);
+      }
+      if (targetRegistration.alignment === 'evil') {
+        if (this.playerAbilityWorks(player)) {
+          const winner: 'good' | 'evil' = isEvilPlayer(player) ? 'good' : 'evil';
+          await this.endGame(winner, '笨蛋死亡后公开选择了邪恶玩家，其阵营失败');
+        } else {
+          this.markMathematicianAbnormal(playerId);
+        }
       }
       return;
     }
@@ -4730,6 +4855,10 @@ export class BOTCWorker extends BaseGameWorker {
 
       player.reminders = player.reminders.filter(reminder => reminder !== MOONCHILD_DEATH_PENDING_REMINDER);
       const targetRegistration = this.getRegisteredIdentity(target);
+      const actualTargetAlignment = isEvilPlayer(target) ? 'evil' : 'good';
+      if (targetRegistration.alignment && targetRegistration.alignment !== actualTargetAlignment) {
+        this.markMathematicianAbnormal(playerId);
+      }
       this.getPendingMoonchildDeaths().push({
         sourceId: player.playerId,
         targetId: target.playerId,
@@ -4986,17 +5115,33 @@ export class BOTCWorker extends BaseGameWorker {
         }
         player.reminders.push('No ability'); // 标记能力已使用
         const targetRegistration = this.getRegisteredIdentity(target);
+        const registeredAsDemon = targetRegistration.team === Team.DEMON;
+        const actuallyDemon = target.role?.team === Team.DEMON;
         const targetCanStillDie = !target.isDead || isZombuulLivingWhileRegisteredDead(target);
-        if (!isDebuffed && targetCanStillDie && targetRegistration.team === Team.DEMON) {
-          // 目标是恶魔，立即击杀
+        if (targetCanStillDie && registeredAsDemon !== actuallyDemon) {
+          this.markMathematicianAbnormal(playerId);
+        }
+        if (isDebuffed && targetCanStillDie && registeredAsDemon) {
+          this.markMathematicianAbnormal(playerId);
+        }
+        if (!isDebuffed && targetCanStillDie && registeredAsDemon) {
+          // 目标登记为恶魔时尝试立即击杀。保护/僵怖首死等效果可能让目标
+          // 仍功能性存活；不能在这种情况下向全房间错误宣布“死亡”。
+          const wasPubliclyDead = target.isDead;
+          const wasFunctionallyAlive = this.isFunctionallyAlive(target);
           await this.killPlayer(targetId, 'slayer');
+          if (wasFunctionallyAlive && this.isFunctionallyAlive(target)) {
+            this.markMathematicianAbnormal(playerId);
+          }
           if (!isZombuulLivingWhileRegisteredDead(target)) {
             this.promoteScarletWomanIfNeeded(targetId);
           }
           this.broadcastGameState();
           this.sendToRoom('gameMessage', {
-            message: `${this.getPlayerName(playerId)} 使用杀手能力后，${this.getPlayerName(targetId)} 死亡了！`,
-            type: 'success'
+            message: !wasPubliclyDead && target.isDead
+              ? `${this.getPlayerName(playerId)} 使用杀手能力后，${this.getPlayerName(targetId)} 死亡了！`
+              : `${this.getPlayerName(playerId)} 使用杀手能力选择了 ${this.getPlayerName(targetId)}，没有玩家因此公开死亡`,
+            type: target.isDead ? 'success' : 'info'
           });
           const gameEnd = checkGameEnd(
             Array.from(this.gamePlayers.values()),
@@ -5190,6 +5335,9 @@ export class BOTCWorker extends BaseGameWorker {
         });
         
         if (result.success) {
+          if (result.registrationAltered) {
+            this.markMathematicianAbnormal(action.playerId);
+          }
 
           // A chosen Demon learns the Exorcist even when that Demon would not
           // otherwise have a submitted action this night (for example a
@@ -5211,6 +5359,9 @@ export class BOTCWorker extends BaseGameWorker {
           // “服务端突然允许违规投票”反向泄露其中毒/醉酒状态。processButler 只产生 Master
           // 提醒标记，因此在能力失效时应用这一项不会触发其他游戏效果。
           const shouldTrackButlerMaster = effectiveRole?.id === 'butler';
+          if (!abilityWorks && this.suppressedNightResultWouldDiffer(result, action)) {
+            this.markMathematicianAbnormal(action.playerId);
+          }
           if (abilityWorks || shouldTrackButlerMaster) {
             await this.applyNightEffects(result.effects || {}, action);
           } else {
@@ -5422,6 +5573,7 @@ export class BOTCWorker extends BaseGameWorker {
       this.exorcisedDemonIdsThisNight.has(action.playerId) &&
       this.getEffectiveRole(player)?.team === Team.DEMON
     ) {
+      this.markMathematicianAbnormal(action.playerId);
       return true;
     }
 
@@ -5430,6 +5582,27 @@ export class BOTCWorker extends BaseGameWorker {
       // 醉酒时某些行动仍然执行但信息可能错误
     }
 
+    return false;
+  }
+
+  private suppressedNightResultWouldDiffer(result: any, action: NightAction): boolean {
+    const effects = result?.effects;
+    if (!effects || typeof effects !== 'object') return false;
+
+    const directEffectKeys = [
+      'killed', 'poisoned', 'protected', 'drunk', 'mad', 'revived',
+      'roleChanges', 'displayRoleChanges', 'roleSwaps', 'globalReminders'
+    ];
+    if (directEffectKeys.some(key => Array.isArray(effects[key]) && effects[key].length > 0)) {
+      return true;
+    }
+
+    if (Array.isArray(effects.reminders)) {
+      return effects.reminders.some((reminder: any) =>
+        reminder?.playerId !== action.playerId ||
+        (reminder?.reminder !== 'No ability' && reminder?.reminder !== 'Philosopher used')
+      );
+    }
     return false;
   }
 
@@ -5476,6 +5649,7 @@ export class BOTCWorker extends BaseGameWorker {
         if (sourceRole?.team === Team.DEMON) {
           const safetyReason = this.getDemonSafetyReason(player);
           if (safetyReason) {
+            this.markMathematicianAbnormal(action.playerId);
             this.sendToPlayer(this.gameConfig.storytellerId, 'playerProtected', {
               playerId,
               playerName: this.getPlayerName(playerId),
@@ -5545,7 +5719,13 @@ export class BOTCWorker extends BaseGameWorker {
             continue;
           }
         }
+        const targetWasFunctionallyAlive = Boolean(killTarget && this.isFunctionallyAlive(killTarget));
         await this.killPlayer(playerId, killCause);
+        if (targetWasFunctionallyAlive && killTarget && this.isFunctionallyAlive(killTarget)) {
+          // A protection/redirection/character ability prevented this actor's
+          // concrete kill effect from working as written. Count the actor once.
+          this.markMathematicianAbnormal(action.playerId);
+        }
         if (roleId === 'vigormortis' && wasLivingMinion && killTarget?.isDead) {
           this.activateVigormortisKilledMinion(killTarget);
         }
@@ -5764,6 +5944,10 @@ export class BOTCWorker extends BaseGameWorker {
           const evilCount = neighbors.filter(neighbor =>
             this.getRegisteredIdentity(neighbor).alignment === 'evil'
           ).length;
+          const actualEvilCount = neighbors.filter(isEvilPlayer).length;
+          if (evilCount !== actualEvilCount) {
+            this.markMathematicianAbnormal(playerId);
+          }
           sendInfo(playerId, player, roleId, { evilCount });
         }
 
@@ -5776,6 +5960,12 @@ export class BOTCWorker extends BaseGameWorker {
           const isDemon = targets.some(target =>
             this.getRegisteredIdentity(target).team === Team.DEMON || target.reminders.includes('Red herring')
           );
+          const actualIsDemon = targets.some(target =>
+            target.role?.team === Team.DEMON || target.reminders.includes('Red herring')
+          );
+          if (isDemon !== actualIsDemon) {
+            this.markMathematicianAbnormal(playerId);
+          }
           sendInfo(playerId, player, roleId, { isDemon });
         }
 
@@ -5797,6 +5987,9 @@ export class BOTCWorker extends BaseGameWorker {
           const roles = Math.random() < 0.5
             ? [registeredRole, fakeRole]
             : [fakeRole, registeredRole];
+          if (target.role?.id && !roles.some(role => role?.id === target.role?.id)) {
+            this.markMathematicianAbnormal(playerId);
+          }
           sendInfo(playerId, player, roleId, {
             playerId: target.playerId,
             playerName: this.getPlayerName(target.playerId),
@@ -5816,6 +6009,10 @@ export class BOTCWorker extends BaseGameWorker {
           const firstAlignment = this.getRegisteredIdentity(targets[0]).alignment;
           const secondAlignment = this.getRegisteredIdentity(targets[1]).alignment;
           const sameAlignment = firstAlignment !== null && firstAlignment === secondAlignment;
+          const actualSameAlignment = isEvilPlayer(targets[0]) === isEvilPlayer(targets[1]);
+          if (sameAlignment !== actualSameAlignment) {
+            this.markMathematicianAbnormal(playerId);
+          }
           sendInfo(playerId, player, roleId, { sameAlignment });
           player.reminders.push('Seamstress used');
         }
@@ -5831,29 +6028,26 @@ export class BOTCWorker extends BaseGameWorker {
         }
 
         else if (roleId === 'flowergirl') {
-          sendInfo(playerId, player, roleId, { demonVoted: this.checkIfDemonVotedToday() });
+          sendInfo(playerId, player, roleId, { demonVoted: this.checkIfDemonVotedToday(playerId) });
         }
 
         else if (roleId === 'towncrier') {
-          sendInfo(playerId, player, roleId, { minionNominated: this.checkIfMinionNominatedToday() });
+          sendInfo(playerId, player, roleId, { minionNominated: this.checkIfMinionNominatedToday(playerId) });
         }
 
         else if (roleId === 'oracle') {
           const deadEvilCount = allPlayers.filter(p =>
             p.isDead && this.getRegisteredIdentity(p).alignment === 'evil'
           ).length;
+          const actualDeadEvilCount = allPlayers.filter(p => p.isDead && isEvilPlayer(p)).length;
+          if (deadEvilCount !== actualDeadEvilCount) {
+            this.markMathematicianAbnormal(playerId);
+          }
           sendInfo(playerId, player, roleId, { deadEvilCount });
         }
 
         else if (roleId === 'mathematician') {
-          const abnormalCount = allPlayers.filter(p =>
-            p.reminders.includes('Poisoned') ||
-            p.reminders.includes('中毒') ||
-            p.reminders.includes('Mad') ||
-            p.reminders.includes('Drunk') ||
-            p.reminders.includes('醉酒') ||
-            p.reminders.includes('Protected')
-          ).length;
+          const abnormalCount = this.getMathematicianAbnormalCount();
           sendInfo(playerId, player, roleId, { abnormalCount });
         }
 
@@ -5874,7 +6068,11 @@ export class BOTCWorker extends BaseGameWorker {
             // Recluse/Spy registration is resolved per information check while they still
             // have that character. If their character changed after death, reveal the
             // recorded character-at-death rather than the replacement character.
-            learnedRole = this.getRegisteredIdentity(executedPlayer).role || learnedRole;
+            const registeredRole = this.getRegisteredIdentity(executedPlayer).role;
+            if (registeredRole?.id && registeredRole.id !== executionDeath.roleId) {
+              this.markMathematicianAbnormal(playerId);
+            }
+            learnedRole = registeredRole || learnedRole;
           }
 
           sendInfo(playerId, player, roleId, {
@@ -5916,44 +6114,66 @@ export class BOTCWorker extends BaseGameWorker {
   /**
    * 检查白天是否有恶魔投票
    */
-  private checkIfDemonVotedToday(): boolean {
+  private checkIfDemonVotedToday(observerPlayerId?: string): boolean {
     const todayNominations = this.gameState.nominations || [];
     const registrationCache = new Map<string, BotcRegisteredIdentity>();
+    let registeredDemonVoted = false;
+    let actualDemonVoted = false;
+
     for (const nom of todayNominations) {
       for (const vote of nom.votes) {
         if (vote.vote !== 'for') continue;
-        const team = this.getHistoricalRegisteredTeam(
+        const registeredTeam = this.getHistoricalRegisteredTeam(
           vote.playerId,
           vote.voterRoleIdAtVote,
           vote.voterTeamAtVote,
           registrationCache
         );
-        if (team === Team.DEMON) {
-          return true;
-        }
+        const actualTeam = this.getHistoricalActualTeam(
+          vote.playerId,
+          vote.voterRoleIdAtVote,
+          vote.voterTeamAtVote
+        );
+        registeredDemonVoted ||= registeredTeam === Team.DEMON;
+        actualDemonVoted ||= actualTeam === Team.DEMON;
       }
     }
-    return false;
+
+    if (observerPlayerId && registeredDemonVoted !== actualDemonVoted) {
+      this.markMathematicianAbnormal(observerPlayerId);
+    }
+    return registeredDemonVoted;
   }
 
   /**
    * 检查白天是否有爪牙提名
    */
-  private checkIfMinionNominatedToday(): boolean {
+  private checkIfMinionNominatedToday(observerPlayerId?: string): boolean {
     const todayNominations = this.gameState.nominations || [];
     const registrationCache = new Map<string, BotcRegisteredIdentity>();
+    let registeredMinionNominated = false;
+    let actualMinionNominated = false;
+
     for (const nom of todayNominations) {
-      const team = this.getHistoricalRegisteredTeam(
+      const registeredTeam = this.getHistoricalRegisteredTeam(
         nom.nominator,
         nom.nominatorRoleIdAtNomination,
         nom.nominatorTeamAtNomination,
         registrationCache
       );
-      if (team === Team.MINION) {
-        return true;
-      }
+      const actualTeam = this.getHistoricalActualTeam(
+        nom.nominator,
+        nom.nominatorRoleIdAtNomination,
+        nom.nominatorTeamAtNomination
+      );
+      registeredMinionNominated ||= registeredTeam === Team.MINION;
+      actualMinionNominated ||= actualTeam === Team.MINION;
     }
-    return false;
+
+    if (observerPlayerId && registeredMinionNominated !== actualMinionNominated) {
+      this.markMathematicianAbnormal(observerPlayerId);
+    }
+    return registeredMinionNominated;
   }
 
   /**
@@ -6043,6 +6263,16 @@ export class BOTCWorker extends BaseGameWorker {
       return;
     }
 
+    const effectiveRoleAtDeath = this.getEffectiveRole(player);
+    if (this.isDemonAbilityCause(cause) && effectiveRoleAtDeath?.id === 'soldier' && !this.playerAbilityWorks(player)) {
+      // Canonical Mathematician case: a poisoned/drunk Soldier is actually
+      // killed by a Demon because the Soldier's safety failed.
+      this.markMathematicianAbnormal(playerId);
+    }
+    if (!ignoresDeathProtection && effectiveRoleAtDeath?.id === 'fool' && !player.reminders?.includes('foolUsed') && !this.playerAbilityWorks(player)) {
+      this.markMathematicianAbnormal(playerId);
+    }
+
     // 检查愚者（Fool）免死效果。刺客会绕过一切防死效果；其他保护先生效，避免白白消耗愚者。
     if (!ignoresDeathProtection && this.getEffectiveRole(player)?.id === 'fool' && this.playerAbilityWorks(player) && !player.reminders?.includes('foolUsed')) {
       this.addReminder(player, 'foolUsed');
@@ -6108,6 +6338,7 @@ export class BOTCWorker extends BaseGameWorker {
       let pair: GamePlayer[] = [];
 
       if (shouldCorruptSageInfo) {
+        this.markMathematicianAbnormal(playerId);
         // For a malfunctioning information ability, a definitely-false pair is a
         // legal arbitrary result and also satisfies Vortox's mandatory-false rule.
         const nonDemons = withoutSelf.filter(p => p.role?.team !== Team.DEMON);
@@ -6121,15 +6352,18 @@ export class BOTCWorker extends BaseGameWorker {
         // applies to dead players, and Recluse may register as a Demon even
         // while dead. Resolve each candidate once so the pair is internally
         // coherent for this single information result.
-        const demons = withoutSelf.filter(candidate =>
-          this.getRegisteredIdentity(candidate).team === Team.DEMON
-        );
-        const demon = pickRandom(demons);
-        if (demon) {
-          const others = withoutSelf.filter(p => p.playerId !== demon.playerId);
+        const registeredDemons = withoutSelf
+          .map(candidate => ({ player: candidate, identity: this.getRegisteredIdentity(candidate) }))
+          .filter(entry => entry.identity.team === Team.DEMON);
+        const demonEntry = pickRandom(registeredDemons);
+        if (demonEntry) {
+          const others = withoutSelf.filter(p => p.playerId !== demonEntry.player.playerId);
           const other = pickRandom(others);
           if (other) {
-            pair = [demon, other];
+            pair = [demonEntry.player, other];
+            if (!pair.some(candidate => candidate.role?.team === Team.DEMON)) {
+              this.markMathematicianAbnormal(playerId);
+            }
           }
         }
       }

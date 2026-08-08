@@ -36,6 +36,9 @@ export interface SkillResult {
     message?: string;
   };
   message?: string;
+  // True when Recluse/Spy registration materially changed this ability's
+  // resolved result compared with the characters' actual identities.
+  registrationAltered?: boolean;
 }
 
 /**
@@ -162,47 +165,44 @@ function processWasherwoman(
       identity: chooseRegisteredIdentity(target, editionId, !isAbilitySuppressed(target))
     }))
     .filter(entry => entry.identity.team === Team.TOWNSFOLK && entry.identity.role);
-  
+
   if (townsfolk.length === 0) {
-    return { 
-      success: true, 
+    const actualTownsfolkExists = allPlayers.some(target =>
+      target.playerId !== player.playerId && target.role?.team === Team.TOWNSFOLK
+    );
+    return {
+      success: true,
       information: { roleId: null, players: [] },
-      message: '没有其他村民在场'
+      message: '没有其他村民在场',
+      registrationAltered: actualTownsfolkExists
     };
   }
 
   const randomTownsfolk = townsfolk[Math.floor(Math.random() * townsfolk.length)];
-  const otherPlayers = allPlayers.filter(p => 
+  const otherPlayers = allPlayers.filter(p =>
     p.playerId !== player.playerId && p.playerId !== randomTownsfolk.player.playerId
   );
-  // 确保选择两个不同的玩家
-  const randomOther = otherPlayers.length > 0 
+  const randomOther = otherPlayers.length > 0
     ? otherPlayers[Math.floor(Math.random() * otherPlayers.length)]
     : null;
-  
-  if (!randomOther) {
-    // 场上只有一个镇民（除去洗衣妇自己），返回该信息
-    return {
-      success: true,
-      information: {
-        roleId: randomTownsfolk.identity.role?.id,
-        roleName: randomTownsfolk.identity.role?.name,
-        players: [randomTownsfolk.player.playerId]
-      }
-    };
-  }
+  const information = {
+    roleId: randomTownsfolk.identity.role?.id,
+    roleName: randomTownsfolk.identity.role?.name,
+    players: randomOther
+      ? (Math.random() < 0.5
+        ? [randomTownsfolk.player.playerId, randomOther.playerId]
+        : [randomOther.playerId, randomTownsfolk.player.playerId])
+      : [randomTownsfolk.player.playerId]
+  };
 
-  const chosenPlayers = Math.random() < 0.5 
-    ? [randomTownsfolk.player.playerId, randomOther.playerId]
-    : [randomOther.playerId, randomTownsfolk.player.playerId];
+  const claimMatchesActualRole = Boolean(information.roleId) && information.players.some(playerId =>
+    allPlayers.find(target => target.playerId === playerId)?.role?.id === information.roleId
+  );
 
   return {
     success: true,
-    information: {
-      roleId: randomTownsfolk.identity.role?.id,
-      roleName: randomTownsfolk.identity.role?.name,
-      players: chosenPlayers
-    }
+    information,
+    registrationAltered: !claimMatchesActualRole
   };
 }
 
@@ -221,46 +221,44 @@ function processLibrarian(
       identity: chooseRegisteredIdentity(target, editionId, !isAbilitySuppressed(target))
     }))
     .filter(entry => entry.identity.team === Team.OUTSIDER && entry.identity.role);
-  
+
   if (outsiders.length === 0) {
-    return { 
-      success: true, 
+    const actualOutsiderExists = allPlayers.some(target =>
+      target.playerId !== player.playerId && target.role?.team === Team.OUTSIDER
+    );
+    return {
+      success: true,
       information: { roleId: null, players: [] },
-      message: '没有外来者在场'
+      message: '没有外来者在场',
+      registrationAltered: actualOutsiderExists
     };
   }
 
   const randomOutsider = outsiders[Math.floor(Math.random() * outsiders.length)];
-  const otherPlayers = allPlayers.filter(p => 
+  const otherPlayers = allPlayers.filter(p =>
     p.playerId !== player.playerId && p.playerId !== randomOutsider.player.playerId
   );
-  // 确保选择两个不同的玩家
   const randomOther = otherPlayers.length > 0
     ? otherPlayers[Math.floor(Math.random() * otherPlayers.length)]
     : null;
-  
-  if (!randomOther) {
-    return {
-      success: true,
-      information: {
-        roleId: randomOutsider.identity.role?.id,
-        roleName: randomOutsider.identity.role?.name,
-        players: [randomOutsider.player.playerId]
-      }
-    };
-  }
+  const information = {
+    roleId: randomOutsider.identity.role?.id,
+    roleName: randomOutsider.identity.role?.name,
+    players: randomOther
+      ? (Math.random() < 0.5
+        ? [randomOutsider.player.playerId, randomOther.playerId]
+        : [randomOther.playerId, randomOutsider.player.playerId])
+      : [randomOutsider.player.playerId]
+  };
 
-  const chosenPlayers = Math.random() < 0.5 
-    ? [randomOutsider.player.playerId, randomOther.playerId]
-    : [randomOther.playerId, randomOutsider.player.playerId];
+  const claimMatchesActualRole = Boolean(information.roleId) && information.players.some(playerId =>
+    allPlayers.find(target => target.playerId === playerId)?.role?.id === information.roleId
+  );
 
   return {
     success: true,
-    information: {
-      roleId: randomOutsider.identity.role?.id,
-      roleName: randomOutsider.identity.role?.name,
-      players: chosenPlayers
-    }
+    information,
+    registrationAltered: !claimMatchesActualRole
   };
 }
 
@@ -279,46 +277,44 @@ function processInvestigator(
       identity: chooseRegisteredIdentity(target, editionId, !isAbilitySuppressed(target))
     }))
     .filter(entry => entry.identity.team === Team.MINION && entry.identity.role);
-  
+
   if (minions.length === 0) {
-    return { 
-      success: true, 
+    const actualMinionExists = allPlayers.some(target =>
+      target.playerId !== player.playerId && target.role?.team === Team.MINION
+    );
+    return {
+      success: true,
       information: { roleId: null, players: [] },
-      message: '没有爪牙在场'
+      message: '没有爪牙在场',
+      registrationAltered: actualMinionExists
     };
   }
 
   const randomMinion = minions[Math.floor(Math.random() * minions.length)];
-  const otherPlayers = allPlayers.filter(p => 
+  const otherPlayers = allPlayers.filter(p =>
     p.playerId !== player.playerId && p.playerId !== randomMinion.player.playerId
   );
-  // 确保选择两个不同的玩家
   const randomOther = otherPlayers.length > 0
     ? otherPlayers[Math.floor(Math.random() * otherPlayers.length)]
     : null;
-  
-  if (!randomOther) {
-    return {
-      success: true,
-      information: {
-        roleId: randomMinion.identity.role?.id,
-        roleName: randomMinion.identity.role?.name,
-        players: [randomMinion.player.playerId]
-      }
-    };
-  }
+  const information = {
+    roleId: randomMinion.identity.role?.id,
+    roleName: randomMinion.identity.role?.name,
+    players: randomOther
+      ? (Math.random() < 0.5
+        ? [randomMinion.player.playerId, randomOther.playerId]
+        : [randomOther.playerId, randomMinion.player.playerId])
+      : [randomMinion.player.playerId]
+  };
 
-  const chosenPlayers = Math.random() < 0.5 
-    ? [randomMinion.player.playerId, randomOther.playerId]
-    : [randomOther.playerId, randomMinion.player.playerId];
+  const claimMatchesActualRole = Boolean(information.roleId) && information.players.some(playerId =>
+    allPlayers.find(target => target.playerId === playerId)?.role?.id === information.roleId
+  );
 
   return {
     success: true,
-    information: {
-      roleId: randomMinion.identity.role?.id,
-      roleName: randomMinion.identity.role?.name,
-      players: chosenPlayers
-    }
+    information,
+    registrationAltered: !claimMatchesActualRole
   };
 }
 
@@ -327,10 +323,12 @@ function processInvestigator(
  */
 function processChef(player: GamePlayer, allPlayers: GamePlayer[], editionId: string): SkillResult {
   const pairs = countAdjacentEvilPairs(allPlayers, editionId, target => !isAbilitySuppressed(target));
-  
+  const actualPairs = countAdjacentEvilPairs(allPlayers);
+
   return {
     success: true,
-    information: { pairs }
+    information: { pairs },
+    registrationAltered: pairs !== actualPairs
   };
 }
 
@@ -342,10 +340,12 @@ function processEmpath(player: GamePlayer, allPlayers: GamePlayer[], editionId: 
   const evilNeighbors = neighbors.filter(neighbor =>
     chooseRegisteredIdentity(neighbor, editionId, !isAbilitySuppressed(neighbor)).alignment === 'evil'
   );
-  
+  const actualEvilCount = neighbors.filter(isEvilPlayer).length;
+
   return {
     success: true,
-    information: { evilCount: evilNeighbors.length }
+    information: { evilCount: evilNeighbors.length },
+    registrationAltered: evilNeighbors.length !== actualEvilCount
   };
 }
 
@@ -377,40 +377,40 @@ function processClockmaker(
   allPlayers: GamePlayer[],
   editionId: string
 ): SkillResult {
-  // Resolve each player's registration once for this single information check.
-  // This matters on custom/role-change states where Recluse or Spy can coexist
-  // with Clockmaker even though they are not on Sects & Violets itself.
-  const registered = allPlayers
-    .map(target => ({
-      player: target,
-      identity: chooseRegisteredIdentity(target, editionId, !isAbilitySuppressed(target))
-    }));
-  const demons = registered.filter(entry => entry.identity.team === Team.DEMON);
-  const minions = registered.filter(entry => entry.identity.team === Team.MINION);
-  if (demons.length === 0 || minions.length === 0) {
-    return { success: true, information: { distance: 0 } };
-  }
-
-  // 使用原始总玩家数计算圆桌距离（座位号基于原始总数）
   const totalSeats = allPlayers.length;
+  const registered = allPlayers.map(target => ({
+    player: target,
+    identity: chooseRegisteredIdentity(target, editionId, !isAbilitySuppressed(target))
+  }));
 
-  // If multiple players legally register as Demon/Minion, any true distance is
-  // a legal automatic Storyteller result; choose the nearest registered pair.
-  let minDistance = Infinity;
-  for (const demon of demons) {
-    for (const minion of minions) {
-      if (demon.player.playerId === minion.player.playerId) continue;
-      const diff = Math.abs(demon.player.seat - minion.player.seat);
-      const circularDist = Math.min(diff, totalSeats - diff);
-      if (circularDist < minDistance) {
-        minDistance = circularDist;
+  const calculateDistance = (
+    demons: GamePlayer[],
+    minions: GamePlayer[]
+  ): number => {
+    let minDistance = Infinity;
+    for (const demon of demons) {
+      for (const minion of minions) {
+        if (demon.playerId === minion.playerId) continue;
+        const diff = Math.abs(demon.seat - minion.seat);
+        minDistance = Math.min(minDistance, Math.min(diff, totalSeats - diff));
       }
     }
-  }
+    return Number.isFinite(minDistance) ? minDistance : 0;
+  };
+
+  const registeredDistance = calculateDistance(
+    registered.filter(entry => entry.identity.team === Team.DEMON).map(entry => entry.player),
+    registered.filter(entry => entry.identity.team === Team.MINION).map(entry => entry.player)
+  );
+  const actualDistance = calculateDistance(
+    allPlayers.filter(target => target.role?.team === Team.DEMON),
+    allPlayers.filter(target => target.role?.team === Team.MINION)
+  );
 
   return {
     success: true,
-    information: { distance: Number.isFinite(minDistance) ? minDistance : 0 }
+    information: { distance: registeredDistance },
+    registrationAltered: registeredDistance !== actualDistance
   };
 }
 
@@ -424,13 +424,20 @@ function processGrandmother(player: GamePlayer, allPlayers: GamePlayer[], editio
     }))
     .filter(entry => entry.identity.alignment === 'good' && entry.identity.role);
   const grandchild = goodPlayers[Math.floor(Math.random() * goodPlayers.length)];
+  const actualGoodExists = allPlayers.some(target =>
+    target.playerId !== player.playerId && !isEvilPlayer(target)
+  );
+  const grandchildMatchesActual = grandchild
+    ? !isEvilPlayer(grandchild.player) && grandchild.player.role?.id === grandchild.identity.role?.id
+    : !actualGoodExists;
   
   return {
     success: true,
     information: {
       grandchild: grandchild?.player.playerId,
       grandchildRole: grandchild?.identity.role
-    }
+    },
+    registrationAltered: !grandchildMatchesActual
   };
 }
 
@@ -452,17 +459,12 @@ function processDreamer(player: GamePlayer, allPlayers: GamePlayer[]): SkillResu
 }
 
 function processMathematician(player: GamePlayer, allPlayers: GamePlayer[]): SkillResult {
-  // 计算异常玩家数量（使用英文标记）
-  const abnormalCount = allPlayers.filter(p => 
-    p.reminders.includes('Poisoned') || 
-    p.reminders.includes('Mad') ||
-    p.reminders.includes('Drunk') ||
-    p.reminders.includes('Protected')
-  ).length;
-  
+  // The utility layer has no execution-history ledger, so it must not infer the
+  // result from poison/drunk/protection reminder snapshots. BOTCWorker replaces
+  // this placeholder with its authoritative event-audit count at wake time.
   return {
     success: true,
-    information: { abnormalCount }
+    information: { abnormalCount: 0 }
   };
 }
 
@@ -726,6 +728,9 @@ function processGambler(
   const normalizedRoleName = registeredRole?.name?.trim().toLowerCase();
   const isCorrect = registeredRole?.id.toLowerCase() === normalizedGuess ||
     normalizedRoleName === normalizedGuess;
+  const actualRoleName = target.role.name?.trim().toLowerCase();
+  const actualIsCorrect = target.role.id.toLowerCase() === normalizedGuess ||
+    actualRoleName === normalizedGuess;
 
   // The Gambler is not told whether the guess was correct. A wrong guess is
   // represented only by the death effect; returning isCorrect as information
@@ -734,7 +739,8 @@ function processGambler(
     success: true,
     effects: isCorrect ? undefined : {
       killed: [action.playerId]
-    }
+    },
+    registrationAltered: isCorrect !== actualIsCorrect
   };
 }
 
@@ -946,6 +952,8 @@ function processProfessor(action: NightAction, allPlayers: GamePlayer[], edition
   const targetTeam = editionId
     ? chooseRegisteredIdentity(target, editionId, !isAbilitySuppressed(target)).team
     : target.role?.team;
+  const registrationAltered = (targetTeam === Team.TOWNSFOLK) !==
+    (target.role?.team === Team.TOWNSFOLK);
   if (targetTeam !== Team.TOWNSFOLK) {
     return {
       success: true,
@@ -954,7 +962,8 @@ function processProfessor(action: NightAction, allPlayers: GamePlayer[], edition
           { playerId: action.playerId, reminder: 'No ability' }
         ]
       },
-      message: '教授选择的目标不是镇民，未能复活'
+      message: '教授选择的目标不是镇民，未能复活',
+      registrationAltered
     };
   }
 
@@ -966,7 +975,8 @@ function processProfessor(action: NightAction, allPlayers: GamePlayer[], edition
         { playerId: action.playerId, reminder: 'No ability' }
       ]
     },
-    message: '教授复活了一名死亡镇民'
+    message: '教授复活了一名死亡镇民',
+    registrationAltered
   };
 }
 
@@ -987,15 +997,14 @@ function processSnakeCharmer(action: NightAction, allPlayers: GamePlayer[]): Ski
   }
 
   if (target.role?.team !== Team.DEMON) {
-    return {
-      success: true,
-      information: { isDemon: false, target: target.playerId }
-    };
+    // A Snake Charmer who chooses a non-Demon simply remains unchanged. This is
+    // not an information result, which matters for poisoned/drunk interactions
+    // and the Mathematician (the official example treats this as normal).
+    return { success: true };
   }
 
   return {
     success: true,
-    information: { isDemon: true, target: target.playerId },
     effects: {
       roleSwaps: [
         { playerA: action.playerId, playerB: target.playerId, poisonPlayerId: target.playerId }
@@ -1124,7 +1133,6 @@ function processCerenovus(action: NightAction, allPlayers: GamePlayer[]): SkillR
 
   return {
     success: true,
-    information: { target: targets[0], characterId },
     effects: {
       reminders: [
         { playerId: targets[0], reminder: `Mad:${characterId}` }
@@ -1148,15 +1156,12 @@ function processPitHag(action: NightAction, allPlayers: GamePlayer[]): SkillResu
 
   const alreadyInPlay = allPlayers.some(p => p.role?.id === role.id);
   if (alreadyInPlay) {
-    return {
-      success: true,
-      information: { changed: false, reason: 'characterInPlay', roleId: role.id }
-    };
+    // Pit-Hag is not told whether the chosen character was already in play.
+    return { success: true };
   }
 
   return {
     success: true,
-    information: { changed: true, roleId: role.id, target: targets[0] },
     effects: {
       roleChanges: [
         { playerId: targets[0], roleId: role.id, message: '坑巫改变了你的角色' }
