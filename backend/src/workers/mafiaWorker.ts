@@ -360,6 +360,13 @@ class MafiaWorker extends BaseGameWorker {
   }
 
   async changeConfig(config: Partial<MafiaConfig>): Promise<void> {
+    // game_action 路径会先检查 WAITING，但 Worker 任务协议也保留了直接
+    // change_config 入口。把阶段校验放在真正修改状态的方法里，防止旧控制端
+    // 或内部调用在游戏中途改写角色数量/计时并造成运行态与房间快照分叉。
+    if ((this.gameState as MafiaGameState).status !== GameStatus.WAITING) {
+      throw new Error('游戏已开始，无法修改配置');
+    }
+
     const incomingConfig = config || {};
     const roleCountsCustomized = this.shouldUseCustomRoleCounts(incomingConfig, Boolean(this.config?.roleCountsCustomized));
     this.config = this.buildEffectiveConfig({
@@ -1046,6 +1053,23 @@ class MafiaWorker extends BaseGameWorker {
       return;
     }
     const [killerCount, copCount, doctorCount, sniperCount, civilianCount] = roleConfig;
+
+    // 非自定义阵容会按“实际准备并参局的人数”重新套用人数表。prepareRoom 时
+    // 房间往往只有房主，room.gameMetadata 中因此可能仍是 6 人默认值；把本局真正
+    // 生效的自动角色数量持久化到 Worker config + Room，保证 Controller、重连和
+    // 前端配置展示都与分配角色时使用的数字一致。
+    if (!this.config.roleCountsCustomized) {
+      this.config = {
+        ...this.config,
+        killerCount,
+        copCount,
+        doctorCount,
+        sniperCount,
+        roleCountsCustomized: false
+      };
+      this.syncConfigToRoom();
+      this.sendToRoom('room_update', this.room);
+    }
     
     // 分配角色
     const roles: Role[] = [

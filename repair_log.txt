@@ -2269,3 +2269,33 @@ Commit: fix(round51): 修正狼人杀遗言顺序与死亡状态结算
   - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts 校验。
   - 正式 npm run build 已在本轮最终源码上执行并进入 backend tsc；由于提取工作区没有 node_modules，Node 内建类型以及 Express/CORS/Socket.IO/UUID 等 package.json 已声明依赖/类型无法解析，backend 阶段中止，未进入 frontend vue-tsc/Vite。构建尝试产生的 backend/dist/frontend/dist 已清理。相同 backend/src 已通过上述全量 strict/noEmit、隔离 CommonJS 编译和六 Worker 实际运行烟雾；完整生产构建与“可直接部署”仍需在 npm ci 可完整成功的本地或 CI 执行 npm run build 做最终确认。
 备注: 本轮未删除文件，未创建根目录 src/；所有后端源码修改仅位于 backend/src/，本轮没有 frontend/src/ 源码修改；修复包只包含本轮修改源码文件与更新后的 repair_log.txt，可按相对路径直接覆盖。
+
+=== 当前请求第 52 轮修复记录 ===
+时间: 2026-08-08 13:31:46 UTC
+Commit: fix(round52): 同步开局自动阵容并封堵运行中改配
+修改/新增文件:
+  - backend/src/workers/werewolfWorker.ts
+  - backend/src/workers/onuWerewolfWorker.ts
+  - backend/src/workers/mafiaWorker.ts
+  - repair_log.txt
+删除文件: 无
+构建测试: 部分通过（backend/src + frontend/src 当前全部 86 个源文件静态扫描、backend/src 全部 35 个 TypeScript strict/noEmit 与隔离 CommonJS 编译、六游戏 Worker prepare_room 烟雾、狼人杀/一夜狼人/杀人游戏自动阵容同步与开局后改配专项回归、package-lock 工作区依赖树检查均通过；正式 npm ci 仍被当前内部 npm 镜像缺失 TypeScript 5.8.3 tarball 的 404 阻塞，正式 npm run build 因附件工作区没有完整 node_modules 在 backend tsc 的依赖/Node 类型解析阶段中止，因此完整 frontend vue-tsc/Vite 生产构建与直接部署仍需在依赖可正常安装的本地或 CI 终验）
+本轮修复:
+  - 修复狼人杀自动角色配置只在 Worker 私有 config 中按“实际开局人数”重算，却没有把本局真正生效的角色数组同步回 Room/Controller 的问题。房间创建时通常只有房主，初始推荐阵容可能按较少人数生成；多人随后加入并开局时，旧实现虽然会正确分配新的角色数组，但 Controller 持有的 room.gameMetadata.gameConfig.characters 仍可能是旧人数阵容，导致房间快照、重连和配置展示与正在运行的 Worker 事实源分叉。现在自动阵容重算后会 mergeRoomGameConfig 并立即发 room_update，同步本局实际生效配置。
+  - 修复一夜狼人 autoRoles 同类状态分叉。开局时会按照实际参局人数重新生成“玩家人数 + 3 张中心牌”的推荐角色列表；旧实现只更新 this.config / gameState.config，不更新 Room。现在重算完成后同步 Room 并广播 room_update，Controller 与重连客户端拿到的是本局实际使用的角色列表。
+  - 修复杀人游戏非自定义角色数量在开局时按实际人数重新套用人数表，却仍把 prepare_room 阶段的旧计数留在 room.gameMetadata 的问题。现在实际得到 killer/cop/doctor/sniper/civilian 数量后，非自定义模式会把前四项权威计数写回 this.config，再通过既有 syncConfigToRoom 与 room_update 同步 Controller；例如房间最初按 6 人默认准备、实际 13 人开局时，不再继续向外暴露旧角色数量。
+  - 封堵狼人杀和杀人游戏 Worker 任务协议中 change_config 的生命周期旁路。game_action 路径此前已经限制只能 WAITING 修改配置，但 BaseGameWorker 的直接 change_config 任务仍可调用真正的 changeConfig 方法；旧控制端或内部调用因此可能在游戏运行中改写角色/计时，使后续流程和 Room 快照出现不一致。现在阶段校验放到状态变更方法本身，所有入口统一拒绝开局后的配置修改。一夜狼人、阿瓦隆和血染钟楼已有对应阶段保护，本轮未重复改写。
+审查结果/本轮未改动重点:
+  - 本轮继续覆盖 backend/src 与 frontend/src 当前全部 86 个 TypeScript/Vue/CSS/SVG 源文件，并结合前 51 轮修复记录重点复核 RoomThreadManager、roomController、BaseGameWorker、六个游戏 Worker、共享状态/会话/Socket 工具以及六套前端 Room/Store/ActionPanel/PlayerList/Chat。当前最重要且适合低风险直接合入的新问题集中在“开局时自动阵容以实际参与人数变化，但 Room/Controller 仍保留准备阶段旧配置”以及两个直接 change_config 入口缺少最终生命周期防线。
+  - 六游戏主流程继续按项目文档与实现交叉检查。狼人杀、杀人游戏、一夜狼人、阿瓦隆、德州扑克本轮未发现优先级高于上述同步问题、且能安全小批次落地的新确定性规则错误；此前已修复的死亡链、女巫强制交换/爪牙皮匠、阿瓦隆任务/刺杀、德州 HU/短码 all-in/边池/未跟注返还/burn card 等路径未发现本轮回归。
+  - 血染钟楼仍保留 repair_log 已记录的架构级边界：特殊自定义夜序下 Pit-Hag 创建 Demon 后无法安全逆向更早已真实落地并触发被动的死亡；真人说书人缺每次 Recluse/Spy registration 的逐次人工裁决 UI；自由文本/多重效果抵消等 Mathematician 极端情况缺统一逐次最终基准审计。本轮没有用近似实现冒险覆盖这些需要更大状态模型的场景。
+  - RoomThreadManager 仍按房间 Worker 串行化任务/事件，Controller 的 workerStateVersion、connectionStateVersion、hostStateVersion 事实源合并和新座位事务保护继续保持；本轮没有发现需要新增锁或改变线程协议的确定性竞态。新增同步仅在 Worker 已经确定本局实际配置时更新同一个 Room 快照，不新增平行状态源。
+  - 前端 27 个 Vue SFC 的页面结构、本地依赖、共享 gameSocket/gameSession/playerName/messages/forcedExit 工具和 Room + PlayerList + ActionPanel/ActionBar + Chat 分层再次复核。本轮没有发现需要以高风险大重构换取“表面统一”的问题，也没有新增视觉体系或重复组件，因此本轮不修改 frontend/src。
+验证:
+  - backend/src + frontend/src 全量静态扫描通过：共 86 个源文件（57 个 .ts、27 个 Vue SFC、1 个 CSS、1 个 SVG）；TypeScript/Vue script 解析、本地相对/@ 导入解析、真实合并冲突标记和 CSS 花括号检查均通过；项目根目录不存在 src/。
+  - backend/src 全部 35 个 TypeScript 文件使用全局 TypeScript 5.8.3、strict 模式、真实全局 Node 类型与项目目录外的 Express/CORS/Socket.IO/UUID 临时声明桩完成 noEmit 类型检查，0 个源码类型错误；同一严格配置成功生成隔离 CommonJS 测试产物。临时声明、测试脚本和编译产物只位于 /mnt/data/round52_validation，不进入修复包。
+  - 自动阵容/生命周期专项 Worker 回归通过：狼人杀以 6 角色初始自动配置准备房间、实际 8 人开局后最新 room_update 中 characters 为 8；一夜狼人以 3 人推荐阵容准备、实际 5 人开局后最新 room_update 中 roles 为 8（5 名玩家 + 3 张中心牌）；杀人游戏按房主单人准备后实际 13 人开局，最新 Room 配置角色计数同步为 4 杀手/3 警察/2 医生/1 狙击手。狼人杀和杀人游戏开局后的直接 change_config 均被 Worker 拒绝。
+  - 六个实际游戏 Worker 使用本轮最新隔离编译产物执行 prepare_room 烟雾全部通过：狼人杀、杀人游戏、血染钟楼、一夜狼人、阿瓦隆、德州扑克均能启动 Worker 并完成合法房间配置初始化。
+  - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts 校验。
+  - 正式 npm ci --ignore-scripts --no-audit --no-fund 已执行，但当前内部 npm 镜像请求 package-lock 锁定的 typescript-5.8.3.tgz 返回 404。正式 npm run build 也已执行；因 npm ci 无法形成完整 node_modules，backend tsc 在 Node 内建类型及 Express/CORS/Socket.IO/UUID 等 package.json 已声明依赖解析处中止，未进入 frontend vue-tsc/Vite。构建尝试产生的 backend/dist/frontend/dist 已清理。相同 backend/src 已通过上述全量 strict/noEmit、隔离编译和 Worker 实际运行测试；完整生产构建与“可直接部署”仍需在依赖镜像正常的本地或 CI 执行 npm ci && npm run build 最终确认。
+备注: 本轮未删除文件，未创建根目录 src/；所有后端源码修改仅位于 backend/src/，本轮没有 frontend/src/ 源码修改；修复包只包含本轮修改源码文件与更新后的 repair_log.txt，可按相对路径直接覆盖。

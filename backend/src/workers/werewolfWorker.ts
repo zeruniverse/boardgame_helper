@@ -193,6 +193,15 @@ class WerewolfWorker extends BaseGameWorker {
   }
 
   async changeConfig(config: Partial<WerewolfConfig>): Promise<void> {
+    // BaseGameWorker exposes changeConfig through the worker task protocol as well as
+    // through game_action.  The latter already checks WAITING, but keeping the guard
+    // only in the socket-facing wrapper lets a direct/legacy change_config task rewrite
+    // roles and timers in the middle of a live game.  Enforce the lifecycle invariant
+    // at the state-mutating method itself so every entry point behaves identically.
+    if (this.gameState.status !== GameStatus.WAITING) {
+      throw new Error('游戏已开始，无法修改配置');
+    }
+
     const rawConfig = (config || {}) as unknown as Record<string, unknown>;
     const hasCharacterUpdate = Object.prototype.hasOwnProperty.call(rawConfig, 'characters');
     const nextConfig = this.normalizeConfig(config, this.config);
@@ -864,6 +873,11 @@ class WerewolfWorker extends BaseGameWorker {
     if (this.config.autoCharacters) {
       this.config.characters = defaultWerewolfCharacters(onlinePlayers.length);
       this.gameState.needingCharacters = this.config.characters;
+      // 自动阵容以实际参局人数为准。创建房间时 Controller 保存的默认阵容可能
+      // 是按房间容量计算的；若开局时只改 Worker 私有 config，后续 room_update、
+      // 重连与线程状态同步仍会携带旧角色表。把最终生效配置写回 Room 作为唯一事实源。
+      mergeRoomGameConfig(this.room, this.config);
+      this.sendToRoom('room_update', this.room);
     }
 
     if (readyPlayers.length !== this.gameState.needingCharacters.length) {

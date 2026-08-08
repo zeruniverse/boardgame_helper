@@ -637,6 +637,11 @@ class OnuWerewolfWorker extends BaseGameWorker {
     if (this.config.autoRoles) {
       this.config.roles = getRecommendedRoles(playerCount);
       this.gameState.config = this.config;
+      // autoRoles 会根据真正开局的在线人数重新生成牌组。创建房间时保存的
+      // gameMetadata.gameConfig 可能按房间容量生成，必须同步最终牌组，否则
+      // Controller/重连客户端看到的配置与 Worker 实际发出的角色牌不一致。
+      mergeRoomGameConfig(this.room, this.config);
+      this.sendToRoom('room_update', this.room);
     }
 
     const validation = onuValidateGameConfig(this.config.roles);
