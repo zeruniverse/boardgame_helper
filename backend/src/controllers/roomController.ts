@@ -653,7 +653,20 @@ function isStaleWorkerSnapshot(existingRoom: Room, workerRoom: Room): boolean {
 }
 
 function shouldPreserveControllerOnlyPlayer(existingRoom: Room, workerRoom: Room, player: Player, incomingPlayerIds: Set<string>): boolean {
-  if (incomingPlayerIds.has(player.id) || !isStaleWorkerSnapshot(existingRoom, workerRoom)) {
+  if (incomingPlayerIds.has(player.id)) {
+    return false;
+  }
+
+  // New-seat membership is owned by the controller until join_room commits or rolls
+  // back. A Worker room_update may have a higher game revision while still being based
+  // on the pre-join member list (for example a timer fires while socket.join() awaits).
+  // workerStateVersion orders Worker game mutations, not Controller membership
+  // transactions, so revision alone cannot authorize removal of this provisional seat.
+  if (isPendingNewSeat(existingRoom.id, player.id)) {
+    return true;
+  }
+
+  if (!isStaleWorkerSnapshot(existingRoom, workerRoom)) {
     return false;
   }
 
@@ -706,7 +719,7 @@ function mergeRoomUpdateFromWorker(existingRoom: Room | undefined, workerRoom: R
 
   if (controllerOnlyPlayers.length > 0) {
     console.warn(
-      `房间 ${workerRoom.id} 收到较旧的worker成员快照，保留控制线程中的新近玩家: ${controllerOnlyPlayers.map(player => player.nickname).join(', ')}`
+      `房间 ${workerRoom.id} 的worker成员快照未包含控制线程保护中的玩家，暂时保留: ${controllerOnlyPlayers.map(player => player.nickname).join(', ')}`
     );
   }
 
@@ -1200,7 +1213,16 @@ export function roomController(io: Server) {
 
     const incomingPlayerIds = new Set(workerRoom.players.map(player => player.id));
     const removedPlayers = (existingRoom.players || [])
-      .filter(player => !incomingPlayerIds.has(player.id))
+      .filter(player =>
+        !incomingPlayerIds.has(player.id) &&
+        // A new seat is controller-authoritative until its join transaction has
+        // completed. While socket.join()/Worker startup is awaiting, an unrelated
+        // Worker timer or game action can legitimately emit a newer room_update that
+        // was created before update_room_data reached the Worker. Treating the missing
+        // provisional seat as a kick here would clear its token and detach its socket,
+        // causing a valid concurrent join to roll back.
+        !isPendingNewSeat(workerRoom.id, player.id)
+      )
       .map(player => ({
         id: player.id,
         nickname: player.nickname,

@@ -2440,3 +2440,30 @@ Commit: fix(round58): 封堵房间清理与重连导致的 Worker 状态丢失
   - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts 校验；显示的 ws/bundler 相关项均为可选依赖提示。
   - 正式 npm ci --ignore-scripts --no-audit --no-fund 已执行，当前内部 npm 镜像请求 package-lock 锁定的 typescript-5.8.3.tgz 返回 404。正式 npm run build 也已执行；因安装失败没有完整 node_modules，backend tsc 在 Node 内建类型及 Express/CORS/Socket.IO/UUID 等 package.json 已声明依赖解析处中止，未进入 frontend vue-tsc/Vite。失败安装/构建残留的 node_modules、backend/dist、frontend/dist 已清理。相同 backend/src 已通过上述 strict/noEmit、隔离 CommonJS 编译和六 Worker 实际运行烟雾；完整生产构建与“可直接部署”仍需在依赖可正常安装的本地或 CI 执行 npm ci && npm run build 最终确认。
 备注: 本轮未删除文件，未创建根目录 src/；所有源码修改仅位于 backend/src/，本轮没有 frontend/src/ 源码修改；修复包只包含 backend/src/controllers/roomController.ts 与更新后的 repair_log.txt，可按相对路径直接覆盖。
+
+=== 当前请求第 59 轮修复记录 ===
+时间: 2026-08-08 15:30:00 UTC
+Commit: fix(round59): 防止 Worker 新快照误删并发加入座位
+修改/新增文件:
+  - backend/src/controllers/roomController.ts
+  - repair_log.txt
+删除文件: 无
+构建测试: 部分通过（backend/src + frontend/src 当前全部 86 个源文件静态扫描、backend/src 全部 35 个 TypeScript strict/noEmit 与隔离 CommonJS 编译、六游戏 Worker prepare_room 烟雾、并发新座位/Worker room_update 专项回归、package-lock 工作区依赖树检查均通过；正式 npm ci 仍被当前内部 npm 镜像缺失 TypeScript 5.8.3 tarball 的 404 阻塞，正式 npm run build 因没有完整 node_modules 在 backend tsc 的 Node/Express/CORS/Socket.IO/UUID 等已声明依赖/类型解析阶段中止，未进入 frontend vue-tsc/Vite，完整生产构建与直接部署仍需在依赖镜像正常的本地或 CI 终验）
+本轮修复:
+  - 修复“新增座位正在异步加入时，被无关但 workerStateVersion 更新的 Worker room_update 当作已移除成员”的高危竞态。join_room / join_room_by_name 会先在 Controller 注册 NewSeatConnection 并把新玩家写入 room.players，随后 await socket.join / Worker 启动与 update_room_data；这段窗口里定时器或其他玩家的普通 game_action 可以让 Worker 基于加入前的成员列表先发出一个更高 revision 的 room_update。旧逻辑只在 Worker 快照被判定为 stale 时保留 Controller-only 玩家，因此更高 revision 会把这个尚未提交但完全合法的新座位从 Controller 合并结果中删除。
+  - 将 pending new seat 明确视为加入事务提交前的 Controller 权威成员。shouldPreserveControllerOnlyPlayer 现在无论 Worker 游戏 revision 新旧，只要玩家仍处于 isPendingNewSeat 就保留该座位；workerStateVersion 继续只负责排序 Worker 游戏状态，不再被错误当作 Controller 成员事务的全局版本号。
+  - 同步修复 room_update 的副作用路径：detachSocketsRemovedByWorker 在计算 Worker “已移除玩家”时直接排除 pending new seat。否则即使后续 merge 重新保留座位，旧代码也可能已经提前 clearPlayerSessionToken、发送 room_left 并执行 socket.leave，导致有效加入事务随后因座位/连接失效而回滚。现在“成员合并”和“socket/session 清理”两条路径采用相同的临时座位权威边界。
+  - 保持已提交成员的既有删除语义不变：pending 标记清除后，如果新 Worker 快照确实不再包含该玩家，仍会按原逻辑移除；若 Worker 快照本身已经包含 pending 玩家，也不会因为 Controller 保护逻辑产生重复成员。
+审查结果/本轮未改动重点:
+  - 本轮继续覆盖 backend/src 与 frontend/src 当前全部 86 个源码文件，并结合前 58 轮 repair_log 重点复核 roomController、RoomThreadManager、BaseGameWorker、六个游戏 Worker、六套前端 Store/Room/ActionPanel/ActionBar/PlayerList/Chat 以及共享 session/socket/config/random/state 工具。当前最高优先级的新确定性问题是“Worker 游戏 revision 不能排序 Controller 新座位事务”这一跨层事实源竞态，因此本批次集中修复该问题，没有扩大为高风险重构。
+  - 六游戏规则主流程再次交叉检查：狼人杀的狼人共识、神职夜序、警长/放逐/遗言/死亡链；杀人游戏的杀手/警察/医生/狙击手与 PK；一夜狼人的玩家+3 中心牌、头狼额外中心牌、换牌最终身份、猎人/皮匠/爪牙胜负与女巫强制交换；阿瓦隆的任务人数、7 人以上第 4 任务双失败、五次否决、刺杀与湖上夫人；德州扑克的 HU 盲注和行动顺序、短码 all-in/加注权、未跟注返还、边池/奇数筹码和 burn card。本轮未发现优先级高于上述并发加入状态丢失、且适合当前批次安全合入的新确定性规则阻断项。
+  - 血染钟楼继续保留 repair_log 已记录、需要更大状态模型或真人说书人逐次裁决 UI 才能完整解决的架构级边界：特殊自定义夜序下 Pit-Hag 创建 Demon 后无法安全逆向更早已经真实落地并触发被动的死亡；真人说书人缺每次 Recluse/Spy registration 的逐次人工裁决 UI；自由文本/多重效果抵消等 Mathematician 极端情况缺统一逐次最终基准审计。本轮没有用近似逻辑冒险覆盖这些边界。
+  - 前端 27 个 Vue SFC 继续统一使用 Element Plus，并维持现有 Room + PlayerList + ActionPanel/ActionBar + Chat 分层与共享 gameSocket/gameSession/playerName/messages/forcedExit 等工具。本轮问题完全位于 Controller/Worker 成员同步边界，不需要复制前端状态或新增组件，因此 frontend/src 无修改。
+验证:
+  - backend/src + frontend/src 全量静态扫描通过：共 86 个源文件、84 个 TypeScript/Vue script 解析单元、28 个 style/CSS 单元、222 次静态相对 import/export 解析检查；未发现 TypeScript 解析错误、CSS 花括号错误或失效本地导入；项目根目录不存在 src/，源码仍只位于 backend/src 与 frontend/src。
+  - backend/src 全部 35 个 TypeScript 文件使用全局 TypeScript 5.8.3、strict 模式、真实全局 Node 类型与项目目录外/临时的 Express/CORS/Socket.IO/UUID 声明桩完成 noEmit 类型检查，0 个源码类型错误；同一严格配置成功生成 35 个隔离 CommonJS 测试文件。临时声明、脚本与编译产物只位于 /mnt/data/round59_validation，不进入修复包。
+  - 六个实际游戏 Worker 使用本轮最新隔离编译产物执行合法 prepare_room 烟雾全部通过：狼人杀、杀人游戏、血染钟楼、一夜狼人、阿瓦隆、德州扑克均能启动 Worker 并完成房间初始化。
+  - 并发新座位专项回归直接从原始附件与本轮 roomController.ts 的 AST 提取实际 merge helper 执行：构造 existing workerStateVersion=5、Controller 已加入 pending 玩家、Worker 基于加入前成员列表发出 workerStateVersion=6 快照。原始代码 pendingPreserved=false，本轮代码 pendingPreserved=true；清除 pending 标记后同一快照仍会正确删除该已提交但缺失的玩家；Worker 已包含该 pending 玩家时结果只有 1 个成员，不重复。专项同时断言 detachSocketsRemovedByWorker 已加入 pending-seat 过滤，避免提前清除 token/socket。
+  - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts 校验，仅有可选依赖提示。
+  - 正式 npm ci --ignore-scripts --no-audit --no-fund 已在最终源码工作区执行，当前内部 npm 镜像请求 package-lock 锁定的 typescript-5.8.3.tgz 返回 404。正式 npm run build 也已执行；因安装失败没有完整 node_modules，backend tsc 在 Node 内建类型及 Express/CORS/Socket.IO/UUID 等 package.json 已声明依赖解析处中止，未进入 frontend vue-tsc/Vite。构建尝试生成的 backend/dist 以及任何安装残留均已清理。相同 backend/src 已通过上述 strict/noEmit、隔离 CommonJS 编译和六 Worker 实际运行烟雾；完整生产构建与“可直接部署”仍需在依赖可正常安装的本地或 CI 执行 npm ci && npm run build 最终确认。
+备注: 本轮未删除文件，未创建根目录 src/；所有源码修改仅位于 backend/src/，本轮没有 frontend/src/ 源码修改；修复包只包含 backend/src/controllers/roomController.ts 与更新后的 repair_log.txt，可按相对路径直接覆盖。
