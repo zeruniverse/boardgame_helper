@@ -759,7 +759,15 @@ const mandatoryNightRoles = new Set<OnuWerewolfRole>([
   OnuWerewolfRole.AlphaWolf,
   OnuWerewolfRole.Drunk
 ]);
-const canSkipSkill = computed(() => Boolean(activeRole.value) && !mandatoryNightRoles.has(activeRole.value!));
+const hasPendingWitchExchange = computed(() =>
+  activeRole.value === OnuWerewolfRole.Witch &&
+  typeof props.playerSecret?.skillData?.witchCardPosition === 'number'
+);
+const canSkipSkill = computed(() =>
+  Boolean(activeRole.value) &&
+  !mandatoryNightRoles.has(activeRole.value!) &&
+  !hasPendingWitchExchange.value
+);
 const isDiscussionPhase = computed(() => props.gameState?.currentPhase === '讨论阶段');
 
 const getCenterCardLabel = (position: number) => {

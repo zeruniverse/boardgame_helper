@@ -2171,3 +2171,35 @@ Commit: fix(round48): 收紧临时席位踢人投票边界并修正德州延时
   - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts 校验，仅有 ws 的可选原生依赖提示。
   - 正式 npm ci --ignore-scripts --no-audit --no-fund 已再次执行，但当前内部 npm 镜像请求 package-lock 锁定的 typescript-5.8.3.tgz 返回 404；正式 npm run build 也因附件工作区没有完整 node_modules，在 backend tsc 阶段被 Node/Express/CORS/Socket.IO/UUID 等 package.json 已声明依赖/类型缺失阻塞。相同 backend/src 已通过上述全量 strict/noEmit、隔离编译和 Worker 实际运行测试，但完整 frontend vue-tsc/Vite 生产构建与“可直接部署”仍需在依赖镜像正常的本地或 CI 执行 npm ci && npm run build 最终确认。
 备注: 本轮未删除文件，未创建根目录 src/；所有后端源码修改仅位于 backend/src/，本轮没有前端源码修改；正式 build 失败时临时产生的 backend/dist 已清理，不进入修复包。修复包只包含本轮修改源码文件与更新后的 repair_log.txt，可按相对路径直接覆盖。
+
+=== 当前请求第 49 轮修复记录 ===
+时间: 2026-08-08 12:31:43 UTC
+Commit: fix(round49): 修正一夜狼人女巫强制交换与爪牙皮匠并列胜负
+修改/新增文件:
+  - backend/src/utils/onuWerewolfUtils.ts
+  - backend/src/workers/onuWerewolfWorker.ts
+  - frontend/src/components/OnuWerewolfActionPanel.vue
+  - doc/onu-werewolf.md
+  - repair_log.txt
+删除文件: 无
+构建测试: 部分通过（backend/src + frontend/src 当前全部 85 个源文件静态扫描、修改的一夜狼人 Worker 依赖闭包 strict/noEmit、六游戏 Worker 源码启动烟雾、一夜狼人爪牙/皮匠胜负专项与女巫“两步技能→禁止手动跳过→离线自动完成强制交换”Worker 专项回归、package-lock 工作区依赖树检查均通过；正式 npm ci 仍被当前内部 npm 镜像缺失 TypeScript 5.8.3 tarball 的 404 阻塞，因此无法在本容器完成完整 frontend vue-tsc/Vite 生产构建与直接部署终验）
+本轮修复:
+  - 修复一夜狼人“场上没有真实狼人、爪牙在场、皮匠被处决”时错误只判皮匠个人胜利、把爪牙排除在外的问题。官方爪牙条件是在没有玩家是狼人时，只要另一名非爪牙玩家死亡，爪牙即获胜；该被处决者可以恰好是皮匠。现在逐玩家权威 won 判定独立计算这两个条件，因此兼容单一 winner 仍可保持 Tanner，同时 winningTeams 会正确同时包含狼人阵营和皮匠阵营，现有前端多阵营结果展示无需另造协议。
+  - 修复 Daybreak 女巫在查看一张中心牌后仍能点击“跳过技能”、断线或单技能超时也能直接结束行动，从而绕过“既然查看就必须把该牌与任意一名玩家（包括自己）交换”的第二步强制效果。Worker 现在把“尚未查看”视为可选技能、把“已保存 witchCardPosition”视为条件式强制步骤：人工 skip 会明确拒绝；断线/单技能超时/夜晚总超时会走统一 mandatory auto-resolve，从合法未受盾玩家中按座位确定性选择目标完成交换，保证房间不会因离线玩家卡死，也不会无声跳过规则效果。
+  - 女巫自动完成交换后会同步清理 Worker 内持久化 witchCardPosition，避免重连私密状态残留“仍待第二步”的假状态；手动正常完成交换的既有清理保持不变。
+  - 前端 OnuWerewolfActionPanel 现在在服务端 playerSecret.skillData 已存在 witchCardPosition 时隐藏“跳过技能”。第一步之前仍允许女巫完全不发动技能；第一步之后 UI 与 Worker 同时收紧，旧客户端即使仍发送 skip_skill 也会由后端权威拒绝。
+  - 同步更新 doc/onu-werewolf.md 的爪牙/皮匠胜负说明，明确“有真实狼人”和“无真实狼人”的两种皮匠死亡情形，避免文档继续把无狼时的爪牙特殊胜利条件错误排除皮匠。
+审查结果/本轮未改动重点:
+  - 再次覆盖 backend/src 与 frontend/src 全部 85 个 TypeScript/Vue/CSS/SVG 源文件，结合前 48 轮累计修复重点复核 roomController、RoomThreadManager、BaseGameWorker、六游戏 Worker、各游戏 Store/Room/ActionPanel/PlayerList/Chat、共享 session/socket 工具及本地导入关系。本轮新发现且适合低风险落地的最高优先级确定性问题集中在一夜狼人官方规则的两个边界：爪牙+皮匠并列胜负，以及女巫查看后的强制交换。
+  - 狼人杀、杀人游戏、阿瓦隆、德州扑克主流程继续对照项目规则文档与现有实现复核；此前已修正的狼人共识/职业夜序、杀人游戏夜间职业与 PK、阿瓦隆任务人数/双失败/五次否决/刺杀、德州 HU/短码 all-in/加注权/边池/未跟注返还/burn card 等核心路径本轮未发现新的高优先级确定性回归。Controller/Worker 的 workerStateVersion、connectionStateVersion、hostStateVersion 和串行任务模型也未发现需要在本批次再次改动的新事实源分叉。
+  - 前端 27 个 Vue SFC 继续复用现有 Room / ActionPanel / PlayerList / Chat、Element Plus 与共享工具。本轮只在既有一夜狼人 ActionPanel 收紧条件式跳过按钮，没有新增平行组件或另一套视觉体系，各游戏主题差异保持不变。
+  - 血染钟楼仍保留此前 repair_log 已记录、需要更大状态模型或真人说书人逐次裁决 UI 才能完整解决的架构级边界：特殊自定义夜序下 Pit-Hag 创建 Demon 后无法安全逆向更早已经真实落地并触发被动的死亡；真人说书人仍缺每次 Recluse/Spy registration 的逐次手工裁决 UI；自由文本/多重效果抵消等 Mathematician 极端情况仍缺统一逐次最终基准审计。本轮没有用不完整近似逻辑冒险修改这些边界。
+验证:
+  - backend/src + frontend/src 全量静态扫描通过：共 85 个源文件（56 个 .ts/.tsx、27 个 Vue SFC，另含 CSS/SVG）；27 个 Vue script 块均可由 TypeScript 5.8.3 解析，本地相对 import/export 均可解析，无 TypeScript 解析错误、SFC template/style 基本结构异常；项目根目录不存在 src/。
+  - backend/src/workers/onuWerewolfWorker.ts 及其内部依赖闭包使用全局 TypeScript 5.8.3、strict、Node 真实全局类型完成 noEmit 类型检查，0 个源码类型错误。
+  - 爪牙/皮匠专项回归通过：确定性构造“爪牙 + 皮匠 + 村民、无真实狼人、皮匠被处决”，兼容 winner 保持 Tanner；逐玩家结果为 Minion=true、Tanner=true、Villager=false，证明 winningTeams 可派生出狼人阵营+皮匠并列获胜。
+  - 女巫 Worker 专项回归通过：random=false 确定性让座位 1 获得女巫，第一步查看中心牌后直接 skip_skill 返回“必须选择一名玩家完成交换”的失败 acknowledgement；随后将该玩家标记离线并触发 player_offline，Worker 自动完成保存中心牌与合法玩家的交换并发出实际交换结果，证明人工跳过被禁止而断线兜底仍可推进。
+  - 六个实际游戏 Worker（狼人杀、杀人游戏、血染钟楼、一夜狼人、阿瓦隆、德州扑克）均使用本轮最新源码通过 ts-node Worker 启动烟雾，无模块加载或构造期异常。
+  - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts 校验，仅有 ws 的可选原生依赖提示。
+  - 正式 npm ci --ignore-scripts --no-audit --no-fund 已再次执行，但当前内部 npm 镜像请求 package-lock 锁定的 typescript-5.8.3.tgz 返回 404。正式 npm run build 也已执行；因为 npm ci 无法形成完整 node_modules，backend tsc 在 Node/Express/CORS/Socket.IO/UUID 等 package.json 已声明依赖/类型解析处中止，未进入 frontend vue-tsc/Vite。构建尝试临时生成的 backend/dist 已清理。完整生产构建与“可直接部署”仍需在依赖镜像正常的本地或 CI 执行 npm ci && npm run build 最终确认。
+备注: 本轮未删除文件，未创建根目录 src/；所有后端源码修改仅位于 backend/src/，所有前端源码修改仅位于 frontend/src/；修复包只包含本轮修改源码/文档文件与更新后的 repair_log.txt，可按相对路径直接覆盖。

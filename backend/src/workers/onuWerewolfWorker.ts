@@ -313,7 +313,7 @@ class OnuWerewolfWorker extends BaseGameWorker {
 
   private async skipOfflineNightSkill(playerId: string): Promise<void> {
     // 夜间技能身份是隐藏信息；不要把“某玩家被跳过夜间技能”广播到房间。
-    await this.handleSkipSkill(playerId);
+    await this.handleSkipSkill(playerId, true);
   }
 
   async gameAction(playerId: string, actionType: string, actionData: any): Promise<void> {
@@ -946,7 +946,7 @@ class OnuWerewolfWorker extends BaseGameWorker {
       this.setSkillTimer(perSkillTime, () => {
         try {
           if (!player.skillUsed) {
-            this.handleSkipSkill(player.id);
+            this.handleSkipSkill(player.id, true);
           }
         } catch (err) {
           console.error('技能超时处理失败:', err);
@@ -1174,6 +1174,22 @@ class OnuWerewolfWorker extends BaseGameWorker {
       }
 
       result = skill.execute({ cards: [centerCard.position] });
+    } else if (skill.getRole() === OnuWerewolfRole.Witch) {
+      const storedWitchCard = player.skillData?.witchCardPosition;
+      if (typeof storedWitchCard !== 'number') {
+        // 女巫尚未查看中心牌时可以选择不发动技能；查看之后交换才成为强制步骤。
+        return false;
+      }
+
+      const target = Object.values(this.gameState.players)
+        .filter(p => !p.shielded)
+        .sort((a, b) => a.seat - b.seat)[0];
+
+      if (!target) {
+        return false;
+      }
+
+      result = skill.execute({ cards: [storedWitchCard], players: [target.seat] });
     } else {
       return false;
     }
@@ -1186,6 +1202,9 @@ class OnuWerewolfWorker extends BaseGameWorker {
       player.auraVisible = true;
     }
     this.applySkillResult(result);
+    if (skill.getRole() === OnuWerewolfRole.Witch && player.skillData?.witchCardPosition !== undefined) {
+      delete player.skillData.witchCardPosition;
+    }
     this.mergePrivateVision(player, result.vision);
     this.sendToPlayer(player.id, 'onu_skill_result', {
       message: result.message,
@@ -1194,7 +1213,7 @@ class OnuWerewolfWorker extends BaseGameWorker {
     return true;
   }
 
-  private handleSkipSkill(playerId: string): void {
+  private handleSkipSkill(playerId: string, autoResolveConditionalMandatory = false): void {
     const player = this.gameState.players[playerId];
     if (!player) {
       throw new Error('玩家不存在');
@@ -1212,7 +1231,18 @@ class OnuWerewolfWorker extends BaseGameWorker {
       throw new Error('你已经完成本次技能操作');
     }
 
+    const hasPendingWitchExchange =
+      currentSkillItem.skill.getRole() === OnuWerewolfRole.Witch &&
+      typeof player.skillData?.witchCardPosition === 'number';
+
+    if (hasPendingWitchExchange && !autoResolveConditionalMandatory) {
+      throw new Error('女巫查看中心牌后必须选择一名玩家完成交换，不能跳过');
+    }
+
     const autoResolved = this.tryAutoResolveMandatorySkill(player, currentSkillItem.skill);
+    if (hasPendingWitchExchange && !autoResolved) {
+      throw new Error('女巫已查看中心牌，但当前没有合法交换目标');
+    }
 
     // 标记技能已使用（跳过或已由系统自动处理强制技能）
     player.skillUsed = true;
