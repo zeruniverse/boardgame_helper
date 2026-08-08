@@ -155,7 +155,10 @@ export class BOTCWorker extends BaseGameWorker {
       abilityState: {
         poCharged: effectiveRole?.id === 'po' &&
           player.reminders.includes('Po Charged') &&
-          !player.reminders.includes('Po Charged Used')
+          !player.reminders.includes('Po Charged Used'),
+        ...((effectiveRole?.id === 'exorcist' || effectiveRole?.id === 'devilsadvocate')
+          ? { lastNightTargetId: this.getPreviousNightTarget(player.playerId, effectiveRole.id) }
+          : {})
       }
     };
     if (includeNightInfo) {
@@ -164,11 +167,40 @@ export class BOTCWorker extends BaseGameWorker {
     return payload;
   }
 
+  private getPreviousNightTarget(playerId: string, roleId: 'exorcist' | 'devilsadvocate'): string | undefined {
+    const history = this.gameState?.grimoire?.nightChoiceHistory as Record<string, { roleId?: string; targetId?: string; nightRound?: number }> | undefined;
+    const entry = history?.[playerId];
+    if (
+      !entry ||
+      entry.roleId !== roleId ||
+      entry.nightRound !== this.nightRound - 1 ||
+      typeof entry.targetId !== 'string'
+    ) {
+      return undefined;
+    }
+    return entry.targetId;
+  }
+
+  private rememberNightTarget(playerId: string, roleId: 'exorcist' | 'devilsadvocate', targetId: string): void {
+    if (!this.gameState.grimoire.nightChoiceHistory) {
+      this.gameState.grimoire.nightChoiceHistory = {};
+    }
+    this.gameState.grimoire.nightChoiceHistory[playerId] = {
+      roleId,
+      targetId,
+      nightRound: this.nightRound
+    };
+  }
+
+  private getNonTravelerPlayerCount(): number {
+    return Array.from(this.gamePlayers.values()).filter(player => player.role?.team !== Team.TRAVELER).length;
+  }
+
   private getKnownIdentitiesForPlayer(viewer: GamePlayer): any[] {
     const knownByPlayerId = new Map<string, any>();
 
     // 标准血染钟楼中，恶魔/爪牙只有在 7 人及以上游戏首夜互认；5-6 人局不应提前暴露邪恶队友。
-    if (this.gamePlayers.size >= 7 && isEvilPlayer(viewer)) {
+    if (this.getNonTravelerPlayerCount() >= 7 && isEvilPlayer(viewer)) {
       for (const player of this.gamePlayers.values()) {
         if (player.playerId === viewer.playerId || !isEvilPlayer(player)) continue;
         const roleTeam = player.role?.team;
@@ -183,6 +215,16 @@ export class BOTCWorker extends BaseGameWorker {
           team: roleTeam || 'evil'
         });
       }
+    }
+
+    const exorcistReveals = this.gameState?.grimoire?.exorcistReveals as Record<string, string> | undefined;
+    const knownExorcistId = exorcistReveals?.[viewer.playerId];
+    if (knownExorcistId && this.gamePlayers.has(knownExorcistId)) {
+      knownByPlayerId.set(knownExorcistId, {
+        playerId: knownExorcistId,
+        label: '驱魔师',
+        roleId: 'exorcist'
+      });
     }
 
     const twinInfo = viewer.nightInfo?.information;
@@ -204,7 +246,7 @@ export class BOTCWorker extends BaseGameWorker {
   }
 
   /**
-   * At setup every Demon learns three good characters that are not in play.
+   * In standard 7+ player games, every Demon learns three good characters that are not in play.
    * Keep the generated bluff set in the Demon's private nightInfo so reconnects
    * receive exactly the same information instead of re-rolling a new set.
    *
@@ -214,6 +256,11 @@ export class BOTCWorker extends BaseGameWorker {
    * unnecessarily misleading.
    */
   private assignDemonBluffs(): void {
+    // 5-6 player Teensyville games skip the normal DEMON INFO step: the Demon
+    // gets no bluffs (and evil players do not learn one another). Keep the same
+    // rule even when using a standard-edition character list at that player count.
+    if (this.getNonTravelerPlayerCount() < 7) return;
+
     const demons = Array.from(this.gamePlayers.values()).filter(player => player.role?.team === Team.DEMON);
     if (demons.length === 0) return;
 
@@ -918,9 +965,11 @@ export class BOTCWorker extends BaseGameWorker {
         return requireExactlyOne('管家必须选择一名主人') ||
           (targets[0] === player.playerId ? '管家不能选择自己为主人' : null);
       case 'sailor':
-        return requireExactlyOne('水手必须选择一名玩家');
+        return requireExactlyOne('水手必须选择一名存活玩家') ||
+          (targetPlayer()?.isDead ? '水手必须选择一名存活玩家' : null);
       case 'exorcist':
-        return requireExactlyOne('驱魔师必须选择一名玩家');
+        return requireExactlyOne('驱魔师必须选择一名玩家') ||
+          (targets[0] === this.getPreviousNightTarget(player.playerId, 'exorcist') ? '驱魔师不能连续两晚选择同一名玩家' : null);
       case 'innkeeper':
         return requireTargetCount(2, 2, '酒馆老板必须选择两名玩家');
       case 'gambler':
@@ -940,11 +989,12 @@ export class BOTCWorker extends BaseGameWorker {
         return requireExactlyOne('普卡必须选择一名玩家');
       case 'devilsadvocate':
         return requireExactlyOne('恶魔律师必须选择一名存活玩家') ||
-          (targetPlayer()?.isDead ? '恶魔律师必须选择一名存活玩家' : null);
+          (targetPlayer()?.isDead ? '恶魔律师必须选择一名存活玩家' : null) ||
+          (targets[0] === this.getPreviousNightTarget(player.playerId, 'devilsadvocate') ? '恶魔律师不能连续两晚选择同一名玩家' : null);
       case 'assassin':
         return hasUsedOncePerGameAbility ? null : requireExactlyOne('刺客必须选择一名玩家');
       case 'shabaloth':
-        return requireTargetCount(1, 2, '沙巴洛斯必须选择一到两名玩家');
+        return requireTargetCount(2, 2, '沙巴洛斯必须选择两名不同玩家');
       case 'po': {
         const charged = player.reminders.includes('Po Charged') && !player.reminders.includes('Po Charged Used');
         if (!charged && targets.length === 0) return null;
@@ -3686,6 +3736,12 @@ export class BOTCWorker extends BaseGameWorker {
       return;
     }
 
+    if ((effectiveRole?.id === 'exorcist' || effectiveRole?.id === 'devilsadvocate') && action.targets?.[0]) {
+      // The restriction is on the player's choice, not whether the ability later
+      // succeeds. Poisoned/drunk characters still cannot repeat last night's target.
+      this.rememberNightTarget(player.playerId, effectiveRole.id, action.targets[0]);
+    }
+
     this.nightActions.push(action);
     player.hasActed = true;
 
@@ -4172,6 +4228,13 @@ export class BOTCWorker extends BaseGameWorker {
           const abilityWorks = this.playerAbilityWorks(player);
           const effectiveRole = this.getEffectiveRole(player) || player.role;
 
+          // A chosen Demon learns the Exorcist even when that Demon would not
+          // otherwise have a submitted action this night (for example a
+          // conditionally sleeping Demon). The Exorcist receives no result.
+          if (abilityWorks && effectiveRole?.id === 'exorcist') {
+            this.revealExorcistToChosenDemon(action);
+          }
+
           // Pukka's previously poisoned player dies when the Pukka wakes,
           // before the newly chosen player is poisoned. Resolving it here
           // preserves night order and also respects Exorcist/poison/drunk
@@ -4294,6 +4357,39 @@ export class BOTCWorker extends BaseGameWorker {
     }
   }
 
+  private revealExorcistToChosenDemon(exorcistAction: NightAction): void {
+    const exorcist = this.gamePlayers.get(exorcistAction.playerId);
+    const targetId = exorcistAction.targets?.[0];
+    const target = targetId ? this.gamePlayers.get(targetId) : undefined;
+    if (
+      !exorcist ||
+      !targetId ||
+      this.getEffectiveRole(exorcist)?.id !== 'exorcist' ||
+      !this.playerAbilityWorks(exorcist) ||
+      !target ||
+      target.role?.team !== Team.DEMON
+    ) {
+      return;
+    }
+
+    if (!this.gameState.grimoire.exorcistReveals) {
+      this.gameState.grimoire.exorcistReveals = {};
+    }
+    const alreadyKnown = this.gameState.grimoire.exorcistReveals[targetId] === exorcist.playerId;
+    this.gameState.grimoire.exorcistReveals[targetId] = exorcist.playerId;
+    if (alreadyKnown) return;
+
+    this.sendRoleStateToPlayer(targetId, false);
+    this.sendToPlayer(targetId, 'nightInfo', {
+      role: this.getEffectiveRole(target)?.id || target.role?.id || 'demon',
+      information: {
+        exorcistPlayerId: exorcist.playerId,
+        exorcistPlayerName: this.getPlayerName(exorcist.playerId),
+        message: `驱魔师 ${this.getPlayerName(exorcist.playerId)} 选择了你，你今晚不能发动恶魔夜间行动`
+      }
+    });
+  }
+
   /**
    * 判断是否应该跳过该行动（被阻止等）
    */
@@ -4310,6 +4406,9 @@ export class BOTCWorker extends BaseGameWorker {
     });
     
     if (exorcistAction && player.role?.team === Team.DEMON) {
+      // Normally this reveal already happened when the Exorcist action was
+      // processed. Keep this defensive call for unusual custom night orders.
+      this.revealExorcistToChosenDemon(exorcistAction);
       return true;
     }
 
@@ -5280,6 +5379,17 @@ export class BOTCWorker extends BaseGameWorker {
       case 'sailor':
         actionData.targets = [this.selectProtectTarget(allPlayers, aiBias, isGoodStrong, isEvilStrong)];
         break;
+      case 'exorcist':
+      case 'devilsadvocate': {
+        const previousTarget = this.getPreviousNightTarget(player.playerId, roleId);
+        const candidates = allPlayers.filter(candidate =>
+          (roleId !== 'devilsadvocate' || !candidate.isDead) &&
+          candidate.playerId !== previousTarget
+        );
+        const target = candidates[Math.floor(Math.random() * candidates.length)];
+        actionData.targets = target ? [target.playerId] : [];
+        break;
+      }
       case 'innkeeper':
         { const targets = this.selectInnkeeperTargets(allPlayers, aiBias, isGoodStrong, isEvilStrong);
           actionData.targets = targets; }
@@ -5378,8 +5488,11 @@ export class BOTCWorker extends BaseGameWorker {
    */
   private selectShabalothTargets(allPlayers: GamePlayer[], aiBias: string, isGoodStrong: boolean, isEvilStrong: boolean): string[] {
     const target1 = this.selectDemonTarget(allPlayers, aiBias, isGoodStrong, isEvilStrong, 'shabaloth');
-    const target2 = this.selectDemonTarget(allPlayers, aiBias, isGoodStrong, isEvilStrong, 'shabaloth');
-    return target1 === target2 ? [target1] : [target1, target2];
+    if (!target1) return [];
+
+    const remainingPlayers = allPlayers.filter(candidate => candidate.playerId !== target1);
+    const target2 = this.selectDemonTarget(remainingPlayers, aiBias, isGoodStrong, isEvilStrong, 'shabaloth');
+    return target2 ? [target1, target2] : [target1];
   }
 
   /**

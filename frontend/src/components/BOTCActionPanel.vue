@@ -772,7 +772,7 @@ const minTargetCount = computed(() => {
     return isPoCharged.value ? 1 : 0
   }
   if (roleId === 'shabaloth') {
-    return 1
+    return 2
   }
   if (roleId === 'godfather' || roleId === 'zombuul') {
     return 0
@@ -819,12 +819,14 @@ const showNightConfirmButton = computed(() => !shouldAutoSubmitSingleTarget.valu
 const availableTargets = computed(() => {
   const roleId = props.playerRole?.id || ''
   const selfExcludedRoles = ['monk', 'butler', 'dreamer', 'seamstress', 'chambermaid', 'snakecharmer']
-  const aliveOnlyRoles = ['chambermaid', 'devilsadvocate', 'snakecharmer']
+  const aliveOnlyRoles = ['sailor', 'chambermaid', 'devilsadvocate', 'snakecharmer']
   const deadOnlyRoles = ['professor']
+  const lastNightTargetId = props.playerRole?.abilityState?.lastNightTargetId
   return props.gameState?.players?.filter((p: any) => {
     if (selfExcludedRoles.includes(roleId) && p.id === props.currentUserId) return false
     if (aliveOnlyRoles.includes(roleId) && p.isDead) return false
     if (deadOnlyRoles.includes(roleId) && !p.isDead) return false
+    if (['exorcist', 'devilsadvocate'].includes(roleId) && lastNightTargetId && p.id === lastNightTargetId) return false
     return true
   }) || []
 })
@@ -1154,13 +1156,13 @@ const getRoleActionDescription = () => {
     'imp': '选择一个玩家杀死（选择自己会自杀转移）',
     'butler': '选择一个主人（明天你只能跟随他投票）',
     'spy': '查看魔典（查看所有玩家的真实状态）',
-    'sailor': '选择一个玩家：你或他醉酒',
-    'exorcist': '选择一个玩家：如果是恶魔，恶魔今晚不行动',
+    'sailor': '选择一名存活玩家：你或他醉酒',
+    'exorcist': '选择一个与昨晚不同的玩家：如果是恶魔，恶魔会得知你且今晚不行动',
     'innkeeper': '选择两个玩家：他们不能死亡，但一个醉酒',
     'gambler': '选择一个玩家并猜测他的角色',
     'professor': '选择一名死亡镇民复活（一次性能力）',
     'godfather': '首夜得知在场外来者；若今天有外来者死亡，夜晚可选择一名玩家杀死',
-    'devilsadvocate': '选择一名存活玩家，使其明天被处决也不会死亡',
+    'devilsadvocate': '选择一名与昨晚不同的存活玩家，使其明天被处决也不会死亡',
     'assassin': '选择一名玩家死亡（一次性能力）',
     'zombuul': '若今天无人死亡，夜晚可选择一名玩家杀死；第一次死亡会登记为死亡但游戏继续',
     'pukka': '选择一个玩家中毒（前一晚中毒的会死亡）',

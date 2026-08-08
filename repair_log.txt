@@ -1023,3 +1023,35 @@ Commit: fix(round11): 补齐钟楼恶魔伪装与管家投票规则
   - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts 校验；新增/修改行通过 diff --check，未引入新的尾随空白错误。
   - 已再次尝试正式 npm run build，但当前项目 node_modules 未能安装：本轮 npm ci --ignore-scripts 仍因当前内部 npm 源对锁定的 typescript-5.8.3.tgz 返回 404 而失败；正式后端 tsc 随后因缺少 Node/Express/Socket.IO/UUID/CORS 等已声明依赖/类型中止，前端 vue-tsc/Vite 未能进入执行。因此本轮不能声称完整生产构建已在此容器通过，仍需在依赖源可用的本地或 CI 执行 npm ci && npm run build 做最终部署构建确认。
 备注: 本轮未删除文件，未创建根目录 src/；所有后端源码修改仅位于 backend/src/，所有前端源码修改/新增仅位于 frontend/src/；修复包只包含本轮修改/新增文件及 repair_log.txt，可按相对路径直接覆盖。
+
+=== 当前请求第 12 轮修复记录 ===
+时间: 2026-08-08 03:07:50 UTC
+Commit: fix(round12): 校正钟楼小局信息与夜间目标规则
+修改/新增文件:
+  - backend/src/workers/botcWorker.ts
+  - backend/src/utils/botcSkills.ts
+  - frontend/src/components/BOTCActionPanel.vue
+  - repair_log.txt
+删除文件: 无
+构建测试: 部分通过（源码 strict/静态检查、六 Worker prepare_room 烟雾与 BOTC 专项回归通过；完整 npm build 仍受当前容器内部 npm 源缺包阻塞）
+本轮修复:
+  - 修复 5-6 人 Teensyville 的恶魔开局信息：不再错误发送 3 个恶魔伪装角色；邪恶阵营互认与伪装信息的人数判断统一按“非旅行者玩家数”计算，避免加入旅行者后把 5-6 人局误判成标准 7+ 人局。
+  - 修复 Exorcist（驱魔师）严重信息泄露：驱魔师选择恶魔后不再收到 isDemon 真值；能力有效时改为由被选中的恶魔私下得知驱魔师身份并跳过当夜恶魔行动，且该已知身份写入私有状态，断线重连后仍保留。
+  - 补齐 Exorcist 在“被选恶魔本夜本来没有提交/唤醒行动”情况下的身份告知路径，不再依赖恶魔动作实际进入结算队列才通知；醉酒/中毒的驱魔师不会错误触发该告知或阻止。
+  - 补齐 Exorcist 与 Devil's Advocate（恶魔律师）“不能连续两晚选择同一玩家”的服务端校验、客户端候选过滤与能力状态同步；历史按具体玩家保存，避免 Pit-Hag/Barber 等换角后把上一位角色持有者的目标限制错误继承给新持有者。
+  - 修复 Sailor（水手）允许选择死亡玩家的问题：前端候选只显示存活玩家，Worker 提交校验与技能层都再次验证目标存活，避免 AI/旧客户端绕过 UI。
+  - 修复 Shabaloth（沙巴洛斯）错误允许只选 1 人的问题：前端最少目标数、Worker 校验和技能层统一为必须选择 2 名不同玩家；同时修复 AI 说书人可能连续选到同一目标后只提交 1 个目标、导致沙巴洛斯整晚动作被静默拒绝的问题。
+  - AI 说书人为 Exorcist/Devil's Advocate 增加上一夜目标排除，避免服务端规则收紧后 AI 重复目标而被拒绝、从而漏掉当夜合法行动。
+审查结果/本轮未改动重点:
+  - 继续对 backend/src 与 frontend/src 当前全部 84 个 TypeScript/Vue/CSS 源码文件做语法、SFC 结构、样式括号、相对/@ 导入和目录约束扫描，并复查六个游戏 Worker、Controller/RoomThreadManager 的状态边界。当前未发现优先级高于上述 BOTC 规则/隐私错误、且适合本批安全落地的新通用竞态或部署阻断源码问题。
+  - 狼人杀、杀人游戏、一夜狼人、阿瓦隆、德州扑克本轮未新增源码修改，继续沿用前几轮已修复的阶段推进、身份隐私、权威计时、掉线/重连、刺杀、边池/加注权和 Worker 状态版本逻辑；六个 Worker 本轮均重新完成 prepare_room 烟雾验证。
+  - 前端继续复用现有 Room / ActionPanel / PlayerList / Chat 分层与 Element Plus 组件体系。本轮仅在既有 BOTCActionPanel 内修正规则候选与说明，没有发现值得以跨游戏大规模视觉重构换取的高优先级收益。
+  - BOTC 仍存在已知的高阶规则边界，例如 Recluse/Spy registration 等尚未抽象成通用说书人裁决层；另外 Shabaloth 的“昨夜所选死亡玩家可能被反刍复活”说书人裁决链目前仍未实现，本轮只修正其必须选择两名不同玩家及 AI 双目标提交。后续仍建议继续专项验证。
+验证:
+  - backend/src 全部 34 个 TypeScript 文件使用 TypeScript strict 模式和位于项目目录外的临时 Node/外部模块声明桩完成 noEmit 类型检查，0 个错误；同一配置成功生成 34 个测试用 CommonJS 文件。
+  - backend/src + frontend/src 共 84 个源码文件完成静态扫描：83 个 TypeScript/Vue script 解析单元、27 个 Vue SFC、27 个 style 块、319 个 import/export 路径检查均通过，无语法、SFC 结构、CSS 花括号或失效相对/@ 导入错误；项目根目录不存在 src/。
+  - 六个实际游戏 Worker 使用本轮严格编译产物执行 prepare_room 烟雾测试全部通过：狼人杀、杀人游戏、血染钟楼、一夜狼人、阿瓦隆、德州扑克均可加载并完成房间初始化。
+  - BOTC 第 12 轮专项回归通过 11 个场景：5-6 人不发恶魔伪装；旅行者不把 5 人 Teensyville 错算为 7+；7+ 人仍发 3 个唯一伪装；驱魔师不再获得 isDemon；驱魔师/恶魔律师连续目标限制与玩家级历史；水手死亡目标拒绝；沙巴洛斯双不同目标；AI 沙巴洛斯双目标；AI 连续目标排除；恶魔被驱魔时私下获知驱魔师且重连状态保留。
+  - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts 校验。
+  - 正式 npm run build 已再次执行，但当前项目 node_modules 未安装，后端 tsc 因缺少 Node/Express/Socket.IO/UUID/CORS 等已声明依赖/类型中止；随后 npm ci --ignore-scripts 再次因当前内部 npm 源对锁定的 typescript-5.8.3.tgz 返回 404 而失败，前端 vue-tsc/Vite 无法进入正式生产构建。因此本轮不能声称完整生产构建已在此容器通过，仍需在依赖源可用的本地或 CI 执行 npm ci && npm run build 做最终部署构建确认。
+备注: 本轮未删除文件，未创建根目录 src/；所有后端源码修改仅位于 backend/src/，所有前端源码修改仅位于 frontend/src/；修复包只包含本轮修改文件及 repair_log.txt，可按相对路径直接覆盖。

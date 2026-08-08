@@ -617,6 +617,10 @@ function processSailor(action: NightAction, allPlayers: GamePlayer[]): SkillResu
   if (!targets || targets.length !== 1) {
     return { success: false, message: '水手必须选择一个目标' };
   }
+  const target = allPlayers.find(player => player.playerId === targets[0]);
+  if (!target || target.isDead) {
+    return { success: false, message: '水手必须选择一名存活玩家' };
+  }
 
   // 随机决定是水手还是目标醉酒
   const drunkTarget = Math.random() < 0.5 ? action.playerId : targets[0];
@@ -631,22 +635,13 @@ function processSailor(action: NightAction, allPlayers: GamePlayer[]): SkillResu
 
 function processExorcist(action: NightAction, allPlayers: GamePlayer[]): SkillResult {
   const targets = action.targets;
-  if (!targets || targets.length !== 1) {
+  if (!targets || targets.length !== 1 || !allPlayers.some(player => player.playerId === targets[0])) {
     return { success: false, message: '驱魔师必须选择一个目标' };
   }
 
-  const target = allPlayers.find(p => p.playerId === targets[0]);
-  const isDemon = target?.role?.team === Team.DEMON;
-
-  return {
-    success: true,
-    information: { isDemon },
-    effects: isDemon ? {
-      reminders: [
-        { playerId: targets[0], reminder: '被阻止' }
-      ]
-    } : undefined
-  };
+  // Exorcist learns no information. The Worker resolves whether the chosen Demon
+  // wakes and privately tells that Demon which Exorcist stopped them.
+  return { success: true };
 }
 
 function processInnkeeper(action: NightAction, allPlayers: GamePlayer[]): SkillResult {
@@ -827,8 +822,8 @@ function processAssassin(action: NightAction, allPlayers: GamePlayer[]): SkillRe
 
 function processShabaloth(action: NightAction, allPlayers: GamePlayer[]): SkillResult {
   const targets = action.targets || [];
-  if (targets.length < 1 || targets.length > 2) {
-    return { success: false, message: '沙巴洛斯必须选择一到两名玩家' };
+  if (targets.length !== 2 || new Set(targets).size !== 2) {
+    return { success: false, message: '沙巴洛斯必须选择两名不同玩家' };
   }
 
   return {
