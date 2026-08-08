@@ -1598,6 +1598,18 @@ class WerewolfWorker extends BaseGameWorker {
       return;
     }
 
+    // 当前 operators 是状态机根据实际投票资格计算出的权威名单：警长竞选仅警下
+    // 玩家可投，放逐平票 PK 时 PK 台玩家不可投。不能只用 isAlive 放行，否则
+    // 前端陈旧状态或手工构造请求可以绕过规则，而且这些无效票还会污染 allVoted。
+    if (!this.gameState.operators?.includes(playerId)) {
+      this.sendToPlayer(playerId, 'error', {
+        message: this.gameState.status === GameStatus.SHERIFF_VOTE
+          ? '警上玩家没有警长竞选投票权'
+          : '平票 PK 台上的玩家本轮不能投票'
+      });
+      return;
+    }
+
     const resolvedTarget = this.resolveOptionalTarget(actionData);
     if (resolvedTarget.error) {
       this.sendToPlayer(playerId, 'error', { message: `投票目标无效：${resolvedTarget.error}` });
@@ -1654,8 +1666,10 @@ class WerewolfWorker extends BaseGameWorker {
     });
 
     // 检查是否所有人都已投票
-    const alivePlayers = (Object.values(this.gameState.players) as WerewolfPlayerState[]).filter(p => p.isAlive);
-    const allVoted = alivePlayers.every(p =>
+    const eligibleVoterIds = new Set(this.gameState.operators || []);
+    const eligiblePlayers = (Object.values(this.gameState.players) as WerewolfPlayerState[])
+      .filter(p => p.isAlive && eligibleVoterIds.has(p.id));
+    const allVoted = eligiblePlayers.every(p =>
       (this.gameState.status === GameStatus.EXILE_VOTE && p.hasVotedAt[this.gameState.currentDay] !== undefined) ||
       (this.gameState.status === GameStatus.SHERIFF_VOTE && p.sheriffVotes[this.gameState.currentDay] !== undefined)
     );

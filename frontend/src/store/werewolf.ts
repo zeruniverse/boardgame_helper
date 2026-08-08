@@ -17,6 +17,7 @@ interface WerewolfPlayer {
   role?: string;
   isSheriff?: boolean;
   isDying?: boolean;
+  canBeVoted?: boolean;
 }
 
 interface WerewolfGameState {

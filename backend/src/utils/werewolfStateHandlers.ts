@@ -120,9 +120,29 @@ export function clearScheduledStateTasks(gameState: WerewolfGameState): void {
 
 const VOTE_TIMEOUT_GRACE_MS = 1200;
 
-function allAlivePlayersVoted(gameState: WerewolfGameState, voteType: 'exile' | 'sheriff'): boolean {
+function getEligibleVotePlayers(
+  gameState: WerewolfGameState,
+  voteType: 'exile' | 'sheriff'
+): WerewolfPlayerState[] {
   const alivePlayers = Object.values(gameState.players).filter(p => p.isAlive);
-  return alivePlayers.every(p => {
+
+  if (voteType === 'sheriff') {
+    // 标准警长竞选由“警下”玩家投票；所有选择过上警的玩家（包括 PK 时
+    // 已经不在候选列表中的玩家）都没有警长票。原始上警信息保存在
+    // sheriffElectResponses，不能只依赖会在 PK 时被收窄的 canBeVoted。
+    return alivePlayers.filter(p => gameState.sheriffElectResponses?.[p.id] === false);
+  }
+
+  if ((gameState.pkRound || 0) > 0) {
+    // 放逐平票 PK 时，PK 台上的玩家不能参与本轮投票。
+    return alivePlayers.filter(p => !p.canBeVoted);
+  }
+
+  return alivePlayers;
+}
+
+function allEligiblePlayersVoted(gameState: WerewolfGameState, voteType: 'exile' | 'sheriff'): boolean {
+  return getEligibleVotePlayers(gameState, voteType).every(p => {
     const votedAt = voteType === 'exile'
       ? p.hasVotedAt?.[gameState.currentDay]
       : p.sheriffVotes?.[gameState.currentDay];
@@ -143,7 +163,7 @@ function extendIncompleteVoteOnce(
   const currentSeq = state.stateSeq || 0;
   const graceKey = handler.status;
 
-  if (gameState.status !== handler.status || allAlivePlayersVoted(gameState, voteType)) {
+  if (gameState.status !== handler.status || allEligiblePlayersVoted(gameState, voteType)) {
     return false;
   }
 
@@ -323,12 +343,17 @@ function updateOperators(gameState: WerewolfGameState): void {
       break;
 
     case GameStatus.SHERIFF_ELECT:
-    case GameStatus.EXILE_VOTE:
-    case GameStatus.SHERIFF_VOTE:
-      // 所有存活玩家可以操作
       operators = players
         .filter(p => p.isAlive)
         .map(p => p.id);
+      break;
+
+    case GameStatus.EXILE_VOTE:
+      operators = getEligibleVotePlayers(gameState, 'exile').map(p => p.id);
+      break;
+
+    case GameStatus.SHERIFF_VOTE:
+      operators = getEligibleVotePlayers(gameState, 'sheriff').map(p => p.id);
       break;
 
     case GameStatus.DAY_DISCUSS:
@@ -574,7 +599,7 @@ export const WolfKillHandler: StateHandler = {
 
     // 重置投票记录和PK轮数
     gameState.votes = {};
-    (gameState as any).pkRound = 0;
+    gameState.pkRound = 0;
 
     // 重置canBeVoted
     Object.values(gameState.players).forEach(p => {
@@ -761,6 +786,7 @@ export const SheriffElectHandler: StateHandler = {
     // 注意：天数不再在这里递增，统一在WolfKillHandler中递增
     // 初始没有候选人；玩家主动上警后才可被投票
     gameState.sheriffElectResponses = {};
+    gameState.sheriffPkRound = 0;
     Object.values(gameState.players).forEach(p => {
       p.canBeVoted = false;
     });
@@ -780,13 +806,36 @@ export const SheriffElectHandler: StateHandler = {
       gameState.timer = undefined;
     }
 
+    // 竞选阶段截止时，未提交“是否上警”的存活玩家一律视为警下。
+    // 这样即使玩家在倒计时结束前断线/未响应，之后重连仍保留标准警下投票权；
+    // 否则 sheriffElectResponses 为 undefined 会让他既不在警上，也被错误排除在警下。
+    if (!gameState.sheriffElectResponses) {
+      gameState.sheriffElectResponses = {};
+    }
+    Object.values(gameState.players).forEach(p => {
+      if (p.isAlive && gameState.sheriffElectResponses![p.id] === undefined) {
+        gameState.sheriffElectResponses![p.id] = false;
+        p.canBeVoted = false;
+      }
+    });
+
     // 检查是否有人上警
-    const candidates = Object.values(gameState.players).filter(p => p.canBeVoted);
+    const candidates = Object.values(gameState.players).filter(p => p.isAlive && p.canBeVoted);
 
     if (candidates.length === 0) {
       // 没有人竞选警长
       context.sendToRoom('show_message', {
         message: '没有人竞选警长，警徽将被销毁'
+      });
+      BeforeDayDiscussHandler.startOfState(gameState, context);
+    } else if (candidates.length === 1) {
+      // 只有一名候选人时无需进行一个没有竞争意义的投票，直接当选。
+      Object.values(gameState.players).forEach(p => {
+        p.isSheriff = p.id === candidates[0].id;
+        p.canBeVoted = false;
+      });
+      context.sendToRoom('show_message', {
+        message: `只有一名警长候选人，${candidates[0].index}号 ${candidates[0].name} 自动当选警长`
       });
       BeforeDayDiscussHandler.startOfState(gameState, context);
     } else {
@@ -872,16 +921,25 @@ export const SheriffVoteHandler: StateHandler = {
 
   startOfState(gameState, context) {
     // 先设置操作者和投票数据，再广播状态，避免前端收到旧 operators/votes。
-    const alivePlayers = Object.values(gameState.players).filter(p => p.isAlive);
-    gameState.toFinishPlayers = new Set(alivePlayers.map(p => p.index));
+    // 警长竞选只有原始“警下”玩家拥有投票权。
+    const eligibleVoters = getEligibleVotePlayers(gameState, 'sheriff');
+    gameState.toFinishPlayers = new Set(eligibleVoters.map(p => p.index));
     gameState.votes = {};
     clearCurrentDayVoteMarks(gameState, 'sheriff');
 
     startCurrentState(this, gameState, context);
 
     context.sendToRoom('show_message', {
-      message: '请所有存活玩家投票选出警长'
+      message: eligibleVoters.length > 0
+        ? '请警下玩家投票选出警长（警上玩家没有投票权）'
+        : '当前没有警下玩家可投票，本轮警长竞选将无法产生警长'
     });
+
+    if (eligibleVoters.length === 0) {
+      scheduleStateTask(gameState, context, () => {
+        SheriffVoteHandler.endOfState(gameState, context);
+      }, 1000);
+    }
   },
 
   endOfState(gameState, context) {
@@ -893,8 +951,7 @@ export const SheriffVoteHandler: StateHandler = {
     }
 
     // 统计警长投票
-    const votes: Vote[] = Object.values(gameState.players)
-      .filter(p => p.isAlive)
+    const votes: Vote[] = getEligibleVotePlayers(gameState, 'sheriff')
       .map(p => ({
         from: p.index,
         voteAt: p.sheriffVotes?.[gameState.currentDay] || 0
@@ -906,18 +963,44 @@ export const SheriffVoteHandler: StateHandler = {
       const winner = findPlayerByIndex(gameState.players, result[0]);
       if (winner) {
         // 清除之前的警长
-        Object.values(gameState.players).forEach(p => { p.isSheriff = false; });
+        Object.values(gameState.players).forEach(p => {
+          p.isSheriff = false;
+          p.canBeVoted = false;
+        });
         winner.isSheriff = true;
 
         context.sendToRoom('show_message', {
           message: `警长选举结果：${result[0]}号 ${winner.name} 当选警长`
         });
       }
+    } else if (result && result.length > 1 && (gameState.sheriffPkRound || 0) < 1) {
+      // 第一次平票：平票候选人重新发言，仍由原始警下玩家重新投票。
+      gameState.sheriffPkRound = 1;
+      Object.values(gameState.players).forEach(p => {
+        p.canBeVoted = result.includes(p.index);
+      });
+      gameState.speakOrder = [...result];
+      gameState.currentSpeakerIndex = 0;
+      gameState.votes = {};
+      clearCurrentDayVoteMarks(gameState, 'sheriff');
+
+      context.sendToRoom('show_message', {
+        message: renderPlayersHTML('警长竞选平票，以下玩家进入一次 PK 发言:', result)
+      });
+
+      scheduleStateTask(gameState, context, () => {
+        SheriffSpeechHandler.startOfState(gameState, context);
+      }, 1000);
+      return;
     } else {
+      Object.values(gameState.players).forEach(p => {
+        p.isSheriff = false;
+        p.canBeVoted = false;
+      });
       context.sendToRoom('show_message', {
         message: result && result.length > 1
-          ? renderPlayersHTML('平票，以下玩家得票相同:', result)
-          : '没有人获得票数，警徽将被销毁'
+          ? '警长竞选 PK 再次平票，警徽流失，本局不设警长'
+          : '没有人获得有效票数，警徽将被销毁'
       });
     }
 
@@ -1151,15 +1234,17 @@ export const ExileVoteHandler: StateHandler = {
 
   startOfState(gameState, context) {
     // 先设置操作者和投票数据，再广播状态，避免前端/测试在 status_changed 后立即投票时读取旧状态。
-    const alivePlayers = Object.values(gameState.players).filter(p => p.isAlive);
-    gameState.toFinishPlayers = new Set(alivePlayers.map(p => p.index));
+    const eligibleVoters = getEligibleVotePlayers(gameState, 'exile');
+    gameState.toFinishPlayers = new Set(eligibleVoters.map(p => p.index));
     gameState.votes = {};
     clearCurrentDayVoteMarks(gameState, 'exile');
 
     startCurrentState(this, gameState, context);
 
     context.sendToRoom('show_message', {
-      message: '投票放逐阶段，请选择你要放逐的玩家'
+      message: (gameState.pkRound || 0) > 0
+        ? '平票 PK 重新投票：PK 台玩家不能投票，其他存活玩家只能在 PK 台中选择'
+        : '投票放逐阶段，请选择你要放逐的玩家（警长票按 1.5 票计算）'
     });
   },
 
@@ -1172,14 +1257,18 @@ export const ExileVoteHandler: StateHandler = {
     }
 
     // 统计投票
-    const votes: Vote[] = Object.values(gameState.players)
-      .filter(p => p.isAlive)
+    const eligibleVoters = getEligibleVotePlayers(gameState, 'exile');
+    const votes: Vote[] = eligibleVoters
       .map(p => ({
         from: p.index,
         voteAt: p.hasVotedAt[gameState.currentDay] || 0
       }));
 
-    const highestVotes = getVoteResult(votes);
+    const voterWeights: Record<number, number> = {};
+    eligibleVoters.forEach(p => {
+      voterWeights[p.index] = p.isSheriff ? 1.5 : 1;
+    });
+    const highestVotes = getVoteResult(votes, voterWeights);
 
     if (!highestVotes || highestVotes.length === 0) {
       // 全员弃票，进入夜晚
@@ -1224,13 +1313,13 @@ export const ExileVoteHandler: StateHandler = {
       }
     } else {
       // 平票处理 - 限制PK轮数防止无限循环
-      const pkRound = ((gameState as any).pkRound || 0) + 1;
-      (gameState as any).pkRound = pkRound;
+      const pkRound = (gameState.pkRound || 0) + 1;
+      gameState.pkRound = pkRound;
 
-      if (pkRound > 2) {
-        // 超过最大PK轮数，无人被放逐
+      if (pkRound >= 2) {
+        // 标准规则只进行一次平票 PK；PK 再平票则当天无人被放逐。
         context.sendToRoom('show_message', {
-          message: '平票PK已达最大轮数，无人被放逐，即将进入夜晚'
+          message: '平票 PK 再次平票，无人被放逐，即将进入夜晚'
         });
         scheduleStateTask(gameState, context, () => {
           if (!checkAndHandleGameEnd(gameState, context)) {

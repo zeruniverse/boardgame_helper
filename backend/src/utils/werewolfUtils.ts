@@ -12,9 +12,13 @@ import {
 /**
  * 获取投票结果 - 返回票数最多的玩家编号列表
  * @param votes 投票数组
+ * @param voterWeights 可选的投票权重（key 为投票者编号）。未提供的投票者按 1 票计算。
  * @returns 票数最多的玩家编号数组，全弃票返回null
  */
-export function getVoteResult(votes: Vote[]): number[] | null {
+export function getVoteResult(
+  votes: Vote[],
+  voterWeights: Record<number, number> = {}
+): number[] | null {
   if (!votes || votes.length === 0) return null;
 
   const voteSituation = getVoteSituation(votes);
@@ -30,11 +34,19 @@ export function getVoteResult(votes: Vote[]): number[] | null {
   Object.entries(voteSituation).forEach(([target, voters]) => {
     if (target === '0') return; // 不考虑弃票
 
-    if (voters.length < maxVoteCount) return;
-    else if (voters.length === maxVoteCount) {
+    const voteCount = voters.reduce((sum, voterIndex) => {
+      const configuredWeight = voterWeights[voterIndex];
+      const weight = Number.isFinite(configuredWeight) && configuredWeight > 0
+        ? configuredWeight
+        : 1;
+      return sum + weight;
+    }, 0);
+
+    if (voteCount < maxVoteCount) return;
+    else if (voteCount === maxVoteCount) {
       maxVoteTargets.push(Number(target));
     } else {
-      maxVoteCount = voters.length;
+      maxVoteCount = voteCount;
       maxVoteTargets = [Number(target)];
     }
   });
@@ -218,7 +230,7 @@ export function validatePlayerAction(
     case GameStatus.SHERIFF_ELECT:
     case GameStatus.EXILE_VOTE:
     case GameStatus.SHERIFF_VOTE:
-      // 这些状态通常允许所有活着的玩家操作
+      // 这里只做通用存活校验；具体投票资格由 Worker 的权威 operators 再校验。
       if (!player.isAlive) {
         return { valid: false, reason: '你已经死亡，无法操作' };
       }

@@ -49,6 +49,8 @@ export interface WerewolfGameState {
   };
   votes?: Record<string, string>;  // 投票记录 playerId -> targetId
   sheriffElectResponses?: Record<string, boolean>;  // 警长竞选响应 playerId -> 是否上警
+  sheriffPkRound?: number;  // 警长竞选平票 PK 轮数（标准规则最多 1 轮）
+  pkRound?: number;  // 白天放逐平票 PK 轮数（标准规则最多 1 轮）
   speakOrder?: number[];  // 发言顺序（玩家index数组）
   currentSpeakerIndex?: number;  // 当前发言者在speakOrder中的索引
   deathChainDepth?: number;  // 死亡链递归深度（防止无限连锁）

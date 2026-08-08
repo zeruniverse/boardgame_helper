@@ -1625,3 +1625,40 @@ Commit: fix(round31): 消除德州刷新竞态并修复同源部署房间直链
   - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts 校验；本轮两个源码修改文件无新增尾随空白。
   - 正式 npm ci --ignore-scripts --no-audit --no-fund 已在最终源码上执行，但当前内部 npm 源请求 package-lock 锁定的 frontend TypeScript 5.8.3 tarball 返回 404。随后 npm run build 在依赖未完整安装的工作区执行，后端 tsc 因 Node/Express/Socket.IO/UUID/CORS 等依赖/类型缺失而中止，根构建因此无法进入前端 vue-tsc/Vite。故本轮不能声称完整生产 npm 构建已在此容器通过；请在依赖源可用的本地或 CI 执行 npm ci && npm run build 做最终部署确认。
 备注: 本轮未删除文件，未创建根目录 src/；所有后端源码修改仅位于 backend/src/，所有前端源码修改仅位于 frontend/src/；修复包只包含本轮修改文件及 repair_log.txt，可按相对路径直接覆盖。
+
+=== 当前请求第 32 轮修复记录 ===
+时间: 2026-08-08 08:12:37 UTC
+Commit: fix(round32): 修正狼人杀警长票权重与平票PK流程
+修改/新增文件:
+  - backend/src/utils/werewolfStateHandlers.ts
+  - backend/src/utils/werewolfTypes.ts
+  - backend/src/utils/werewolfUtils.ts
+  - backend/src/workers/werewolfWorker.ts
+  - frontend/src/components/Lobby.vue
+  - frontend/src/components/WerewolfActionPanel.vue
+  - frontend/src/store/werewolf.ts
+  - doc/werewolf.md
+  - repair_log.txt
+删除文件: 无
+构建测试: 部分通过（85 个源码文件全量静态扫描、backend/src 全量 strict/noEmit 与隔离 CommonJS 编译、六游戏 Worker prepare_room 烟雾、狼人杀警长/放逐专项回归、package-lock 工作区依赖树检查均通过；正式 npm ci / npm run build 仍受当前容器内部 npm 源缺少 package-lock 锁定 TypeScript 5.8.3 包及由此造成的 node_modules 不完整阻塞）
+本轮修复:
+  - 修复狼人杀警长投票资格错误。警上竞选截止时，仍未明确响应的存活玩家现在统一按“退水/不上警”处理并成为警下投票者；警上候选人不能给警长候选人投票。后端每次 SHERIFF_VOTE 都从权威状态重建 operators，Worker 收票时再按 operators 校验，避免客户端伪造警上投票或超时/重连后沿用过期资格。
+  - 修复警长竞选平票流程。第一次最高票并列会只保留并列候选人进入一次 PK 发言并重新投票；PK 再次并列则警徽流失，不再无限重复竞选。无候选人、唯一候选人和无可投票警下玩家也都有确定的收敛路径。
+  - 修复白天放逐票权与 PK 资格。警长的有效放逐票按 1.5 票计；初次放逐并列后只进行一次 PK，PK 台上的并列候选人不能投票，其他存活玩家只能在 PK 候选人中选择；PK 再平票则当天无人出局。前端候选列表、操作权限和可见票数显示同步采用同一语义。
+  - 增加狼人杀投票时长房间配置入口，复用现有 gameConfig.voteTime 后端配置字段，支持 30/60/90/120/180 秒，默认 60 秒；修复此前后端已有配置但大厅无法设置导致实际流程配置不完整的问题。
+  - 补齐 WerewolfPlayer 前端类型的 canBeVoted，并更新狼人杀规则文档，使警长竞选、警徽票权、放逐 PK 次数和 PK 台投票限制与当前实现一致；未新增平行组件或根目录源码。
+审查结果/本轮未改动重点:
+  - 再次覆盖 backend/src 与 frontend/src 当前全部 85 个代码文件，重点复核六个游戏 Worker、BaseGameWorker、RoomThreadManager/Controller 的消息串行、状态版本合并、房间同步和各前端 Store/Room/ActionPanel 的状态消费。本轮最明确且优先级最高的确定性规则偏差集中在狼人杀警长/放逐投票，因此修改限定在既有狼人杀状态机、Worker、ActionPanel、Lobby 与 Store 内。
+  - 杀人游戏继续复核杀手共识击杀、警察/医生/狙击手、PK 和项目屠边胜负；血染钟楼继续复核夜序、registration、夜间生命状态保密、提名/投票和说书人裁决；一夜狼人继续复核初始身份、独狼、换牌、并列处决与最终身份胜负；阿瓦隆继续复核组队、任务人数、7 人以上第四任务双失败、五次否决、刺杀与湖上夫人；德州扑克继续复核盲注、HU 顺序、短码 all-in、最小加注/加注权、未跟注返还、边池和摊牌。本轮未发现另一项比上述狼人杀规则偏差更适合低风险当前批次落地的确定性主流程阻断项。
+  - Controller/RoomThreadManager/BaseGameWorker 的单房间 Worker 任务串行、acknowledgement、workerStateVersion/hostStateVersion/connectionStateVersion 合并继续复核；本轮未发现需要追加源码修改的新确定性跨线程竞态。狼人杀投票结束判断改为只等待当前权威 operators，避免等待无投票资格玩家造成假超时。
+  - 前端 27 个 Vue SFC 继续沿用 Room / ActionPanel / PlayerList / Chat、Element Plus 与现有 store/socket 工具；本轮狼人杀配置和提示均复用已有组件/样式，没有创建新的页面体系。各游戏有意的主题差异保留，未进行高风险的跨游戏视觉重构。
+  - BOTC 仍保留前轮已记录的架构级缺口：Mathematician 尚未基于“自黎明起由另一角色导致能力实际异常工作”的逐次能力执行审计精确计数；Pit-Hag 在特定自定义夜序中无法安全逆向已经真实落地并触发被动的死亡；真人说书人仍没有每次 Recluse/Spy registration 的逐次手工裁决 UI。本轮未用近似逻辑冒险修补这些问题。
+验证:
+  - backend/src + frontend/src 全量静态扫描通过：共 85 个代码文件、83 个 TypeScript/Vue script 解析单元、27 个 Vue SFC、27 个 style 块、218 个相对/@ 静态导入均无 TypeScript 语法、SFC 顶层结构、CSS 花括号或失效导入错误；项目根目录不存在 src/。
+  - backend/src 全部 34 个 TypeScript 文件使用全局 TypeScript 5.8.3、strict 模式、真实全局 Node 类型和位于项目目录外的 Express/CORS/Socket.IO/UUID 临时声明桩完成 noEmit 类型检查，0 个错误；同一严格配置成功生成 34 个隔离 CommonJS 测试编译文件。
+  - 六个实际游戏 Worker 使用本轮最新 strict 编译产物执行 prepare_room 烟雾全部通过：狼人杀、杀人游戏、血染钟楼、一夜狼人、阿瓦隆、德州扑克均能启动 Worker 并完成房间初始化。
+  - 第 32 轮狼人杀专项回归通过：通用计票器 1.5 权重可压过普通 1 票；警上截止未响应者会变成警下；警长投票只接受警下 operators；首次警长平票只进入一次 PK；白天放逐警长 1.5 票可改变最高票结果；放逐 PK operators 排除 PK 台玩家，二次平票正确结束当天放逐。
+  - 前端静态契约检查通过：放逐操作要求 canOperate && isAlive，SHERIFF/EXILE 候选只取存活 canBeVoted 玩家，可见放逐票数按警长 1.5 展示，大厅创建房间会提交 voteTime。
+  - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts 校验。
+  - 正式 npm ci --ignore-scripts --no-audit --no-fund 已执行，但当前内部 npm 源请求 package-lock 锁定的 TypeScript 5.8.3 tarball 返回 404。随后 npm run build 在依赖未完整安装的工作区执行，后端 tsc 因 Node/Express/Socket.IO/UUID/CORS 等已声明依赖/类型未安装而中止，根构建因此无法进入前端 vue-tsc/Vite。故本轮不能声称完整生产 npm 构建已在此容器通过；请在依赖源可用的本地或 CI 执行 npm ci && npm run build 做最终部署确认。
+备注: 本轮未删除文件，未创建根目录 src/；所有后端源码修改仅位于 backend/src/，所有前端源码修改仅位于 frontend/src/；修复包只包含本轮修改文件及 repair_log.txt，可按相对路径直接覆盖。

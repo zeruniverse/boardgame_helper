@@ -266,7 +266,8 @@
         </div>
       </div>
       <div v-else class="waiting-section">
-        <p>等待其他玩家完成警长投票...</p>
+        <p v-if="isAlive">你当前没有警长竞选投票权，等待警下玩家完成投票...</p>
+        <p v-else>你已死亡，不能参与警长投票</p>
       </div>
     </div>
 
@@ -303,7 +304,7 @@
     <!-- 投票放逐阶段 -->
     <div v-else-if="gameState.status === 'EXILE_VOTE'" class="action-section">
       <h4>投票放逐</h4>
-      <div v-if="isAlive" class="vote-section">
+      <div v-if="canOperate && isAlive" class="vote-section">
         <p>选择要放逐的玩家:</p>
         <div class="player-selection">
           <div
@@ -315,8 +316,8 @@
           >
             <span class="player-number">{{ player.index }}号</span>
             <span class="player-name">{{ displayPlayerName(player) }}</span>
-            <span v-if="gameState.votes && Object.values(gameState.votes).includes(player.id)" class="vote-count">
-              ({{ Object.entries(gameState.votes).filter(([_, v]) => v === player.id).length }}票)
+            <span v-if="getDisplayedVoteCount(player.id) > 0" class="vote-count">
+              ({{ getDisplayedVoteCount(player.id) }}票)
             </span>
           </div>
         </div>
@@ -332,7 +333,8 @@
         </div>
       </div>
       <div v-else class="waiting-section">
-        <p>你已死亡，不能投票</p>
+        <p v-if="isAlive">你在平票 PK 台上，本轮不能投票</p>
+        <p v-else>你已死亡，不能投票</p>
       </div>
     </div>
 
@@ -576,8 +578,19 @@ const getAlivePlayers = (): any[] => {
 
 const getVotablePlayers = (): any[] => {
   const alivePlayers = getAlivePlayers()
-  const constrained = alivePlayers.filter((p: any) => p.canBeVoted)
-  return constrained.length > 0 ? constrained : alivePlayers
+  if (props.gameState.status === 'EXILE_VOTE' || props.gameState.status === 'SHERIFF_VOTE') {
+    return alivePlayers.filter((p: any) => p.canBeVoted)
+  }
+  return alivePlayers
+}
+
+const getDisplayedVoteCount = (targetId: string): number => {
+  if (!props.gameState.votes) return 0
+
+  return Object.entries(props.gameState.votes).reduce((total, [voterId, votedTargetId]) => {
+    if (votedTargetId !== targetId) return total
+    return total + (props.gameState.players[voterId]?.isSheriff ? 1.5 : 1)
+  }, 0)
 }
 
 // 获取存活的其他玩家（排除自己）

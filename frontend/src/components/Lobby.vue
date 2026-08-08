@@ -685,6 +685,15 @@
                   <el-option label="180秒" :value="180" />
                 </el-select>
               </el-form-item>
+              <el-form-item label="投票时间">
+                <el-select v-model="createRoomForm.voteTime" placeholder="选择投票时间">
+                  <el-option label="30秒" :value="30" />
+                  <el-option label="60秒" :value="60" />
+                  <el-option label="90秒" :value="90" />
+                  <el-option label="120秒" :value="120" />
+                  <el-option label="180秒" :value="180" />
+                </el-select>
+              </el-form-item>
             </template>
 
             <!-- 一夜狼人特有设置 -->
@@ -840,6 +849,7 @@ const createRoomForm = ref({
   isPrivate: false,
   speakTime: 60,
   actionTime: 60,
+  voteTime: 60,
   edition: 'tb',
   dayTime: 600,
   nightTime: 180,
@@ -980,6 +990,7 @@ function showCreateRoomDialog() {
   createRoomForm.value.isPrivate = false;
   createRoomForm.value.speakTime = 60;
   createRoomForm.value.actionTime = 60;
+  createRoomForm.value.voteTime = 60;
   createRoomForm.value.nightTime = 180;
   createRoomForm.value.votingTime = 300;
   createRoomForm.value.discussTime = 180;
@@ -1077,6 +1088,7 @@ async function confirmCreateRoom() {
       gameConfig.speakTime = createRoomForm.value.speakTime;
       gameConfig.dayTime = createRoomForm.value.speakTime;
       gameConfig.actionTime = createRoomForm.value.actionTime;
+      gameConfig.voteTime = createRoomForm.value.voteTime;
       // nightTime 是旧版夜间行动字段，不是另一个独立的“整夜总时长”。
       // 同时发送同值别名，兼容旧 Worker/旧房间快照且避免两个设置互相覆盖。
       gameConfig.nightTime = createRoomForm.value.actionTime;
@@ -1190,7 +1202,7 @@ function selectGame(gameType: string) {
   // 会变成杀人游戏的 nightTime，而用户在杀人游戏页面此前根本看不到该字段）。
   switch (gameType) {
     case 'werewolf':
-      Object.assign(createRoomForm.value, { speakTime: 60, actionTime: 60, nightTime: 60 });
+      Object.assign(createRoomForm.value, { speakTime: 60, actionTime: 60, voteTime: 60, nightTime: 60 });
       break;
     case 'mafia':
       Object.assign(createRoomForm.value, { speakTime: 60, actionTime: 60, nightTime: 60 });
