@@ -2114,3 +2114,30 @@ Commit: fix(round46): 隔离新增座位加入事务并规范房间路由码
   - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts 校验，仅有 ws 的可选原生依赖提示。
   - 正式 npm ci --ignore-scripts --no-audit --no-fund 已再次执行，但当前内部 npm 镜像请求 package-lock 锁定的 typescript-5.8.3.tgz 返回 404，因此无法形成完整 node_modules，也无法在本容器完成正式 npm run build / frontend vue-tsc + Vite 生产构建。后端源码已经通过上述全量 strict/noEmit 与六 Worker 实际运行烟雾，但“可直接部署”仍需在依赖镜像正常的本地或 CI 完成 npm ci && npm run build 最终确认。
 备注: 本轮未删除文件，未创建根目录 src/；所有后端源码修改仅位于 backend/src/，所有前端源码修改仅位于 frontend/src/；修复包只包含本轮修改源码文件与更新后的 repair_log.txt，可按相对路径直接覆盖。
+
+=== 当前请求第 47 轮修复记录 ===
+时间: 2026-08-08 12:00:06 UTC
+Commit: fix(round47): 隔离房间创建提交窗口并阻断跨连接抢入
+修改/新增文件:
+  - backend/src/controllers/roomController.ts
+  - repair_log.txt
+删除文件: 无
+构建测试: 部分通过（backend/src + frontend/src 当前全部 85 个源文件全量静态扫描、backend/src 34 个 TypeScript strict/noEmit 与隔离 CommonJS 编译、六游戏 Worker prepare_room 烟雾、Controller 房间创建竞态专项回归、package-lock 工作区依赖树检查均通过；正式 npm run build 已执行，但附件工作区依赖安装不完整，backend tsc 被缺失 Node/Express/CORS/Socket.IO/UUID 等运行依赖/类型阻塞，未进入 frontend vue-tsc/Vite）
+本轮修复:
+  - 修复第 46 轮新增座位事务之后仍存在的“房间本身尚未提交却已对其他连接可见”竞态。create_room 过去会先 rooms.set，再 await Socket.IO join、Worker 启动和首位玩家 join_room；这段窗口虽然创建者座位已被 NewSeatConnection 隔离，但公共 get_lobby 仍会把半成品房间列出来，知道/猜到房间码的其他 Socket 也能通过 join_room / join_room_by_name 进入。如果创建者随后断线或 Worker 启动失败，rollbackFailedCreatedRoom 会无条件删除整个房间，从而把第二个连接已经成功提交的座位一起擦掉。
+  - 新增 PendingRoomCreation 创建事务登记。房间从生成并写入 rooms 起，到 Worker 明确接纳首位玩家且最后一次连接有效性检查通过之前，都保持 pending；公共大厅主动过滤 pending 房间，join_room、join_room_by_name 和 reconnect_room 统一拒绝进入，并返回“房间仍在创建中，请稍后重试”。这样“房间提交”与“首座位提交”成为同一个对外可见边界。
+  - 收紧创建失败回滚的时序。pending 标记会贯穿 socket.leave / Worker stop 的异步回滚窗口，只有房间真正从 Controller 删除后才清除，避免 stopRoomThread await 期间短暂重新暴露一个马上会被删除的房间；清理使用本次事务对象身份匹配，避免误清未来可能复用同一房间码的独立事务。
+  - 补齐 create_room 在登记 pending 后、进入内部 Worker 事务前若发生同步异常时的兜底回滚，避免 finally 仅清 pending 标记而遗留半成品 room。reset/shutdown 同步清空 PendingRoomCreation 注册表，保持与 ExistingSeatMigration / NewSeatConnection 生命周期一致。
+审查结果/本轮未改动重点:
+  - 再次覆盖 backend/src 与 frontend/src 当前全部 85 个 TypeScript/Vue/CSS/SVG 源文件，重点复核 roomController、RoomThreadManager、BaseGameWorker、六个游戏 Worker、各 Store/Room/ActionPanel/PlayerList/Chat 的任务串行、连接事务、Controller/Worker 房间快照、公开/私密状态以及共享 Socket/会话生命周期。本轮当前最高优先级且可确定复现的问题，是房间创建事务和第 46 轮“首座位事务”之间仍缺一个房间级提交边界，因此修复继续限定在 Controller，不引入新的前端平行状态。
+  - 六游戏主流程继续按项目现有规则文档和实现交叉复核：狼人杀的狼人共识、预言家/女巫/守卫/猎人夜序、警长与放逐；杀人游戏的杀手/警察/医生/狙击手、医生跳过与一次 PK；一夜狼人的玩家+3 中心牌、夜间换牌后的最终身份、平票/猎人/皮匠；阿瓦隆的标准任务人数、7 人以上第 4 任务双失败、五次组队否决、刺杀与湖上夫人；德州扑克的盲注/HU、短码 all-in/加注权、未跟注返还、边池/奇数筹码/burn card；血染钟楼的夜序、提名投票、说书人私密魔典与终局。本轮未发现比房间创建跨连接竞态更高优先级、且适合本批次低风险合入的新确定性主流程规则错误。
+  - 前端 27 个 Vue SFC 继续复用现有 Room / ActionPanel / PlayerList / Chat、Element Plus 与共享 gameSession/gameSocket/store/playerName/messages 工具；本轮无需前端源码改动，没有新增重复组件或视觉体系，各游戏既有主题差异保持不变。
+  - 血染钟楼仍保留此前 repair_log 已记录、需要更大状态模型或真人说书人逐次裁决 UI 才能完整解决的架构级边界：特殊自定义夜序下 Pit-Hag 创建 Demon 后无法安全逆向更早已经真实落地并触发被动的死亡；真人说书人仍缺每次 Recluse/Spy registration 的逐次手工裁决 UI；自由文本/多重效果抵消等 Mathematician 极端情况仍缺统一逐次最终基准审计。本轮没有用不完整近似逻辑冒险修改这些边界。
+验证:
+  - backend/src + frontend/src 全量静态扫描通过：共 85 个源文件（34 个 backend TypeScript、22 个 frontend TypeScript、27 个 Vue SFC、1 个 CSS、1 个 SVG）；83 个 TS/Vue script 解析单元、28 个 style/CSS 块与静态相对/@ 导入均未发现 TypeScript 语法、SFC 基本结构、CSS 花括号、真实合并冲突标记或失效本地导入错误；SVG 可正常 XML 解析；项目根目录不存在 src/。
+  - backend/src 全部 34 个 TypeScript 文件使用全局 TypeScript 5.8.3、strict 模式、真实全局 Node 类型与位于项目目录外的 Express/CORS/Socket.IO/UUID 临时声明桩完成 noEmit 类型检查，0 个源码类型错误；同一严格配置成功生成隔离 CommonJS 测试产物。临时声明/编译产物只位于 /mnt/data/round47_validation，不进入修复包。
+  - 六个实际游戏 Worker 使用本轮最新隔离编译产物执行 prepare_room 烟雾全部通过：狼人杀、杀人游戏、血染钟楼、一夜狼人、阿瓦隆、德州扑克均能启动 Worker 并完成合法房间配置初始化。
+  - 第 47 轮 Controller 房间创建竞态专项回归通过：人为暂停创建者的 socket.join 后，第二连接 get_lobby 看不到该临时公共房间；通过 roomId 的 join_room 和通过房间名的 join_room_by_name 均在加入频道/Worker 前被明确拒绝；创建者随后在暂停窗口断线，释放 await 后创建事务失败并完整回滚，公共大厅中没有遗留房间。
+  - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts 校验，仅有 ws 的可选原生依赖提示。
+  - 正式 npm run build 已执行并进入 backend tsc，但当前附件工作区的 node_modules/类型依赖不完整，fs/path/crypto/worker_threads 的 Node 类型以及 Express/CORS/Socket.IO/UUID 等 package.json 已声明依赖无法解析，构建在 backend 阶段中止，未进入 frontend vue-tsc/Vite。相同 backend/src 已通过上述全量 strict/noEmit、隔离 CommonJS 编译、六 Worker 实际运行烟雾和 Controller 专项回归，因此没有把依赖环境缺失误判成源码错误；完整生产构建与“可直接部署”仍需在 npm ci 能完整成功的本地或 CI 执行 npm run build 做最终确认。
+备注: 本轮未删除文件，未创建根目录 src/；所有后端源码修改仅位于 backend/src/，本轮没有前端源码修改；修复包只包含 backend/src/controllers/roomController.ts 与更新后的 repair_log.txt，可按相对路径直接覆盖。

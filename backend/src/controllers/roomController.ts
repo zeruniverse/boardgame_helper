@@ -69,6 +69,12 @@ interface NewSeatConnection {
   aborted: boolean;
 }
 
+interface PendingRoomCreation {
+  roomId: string;
+  creatorSocketId: string;
+  creatorPlayerId: string;
+}
+
 // 已有座位迁移在 worker 同步完成前只是“临时绑定”。这段窗口里新 socket 可能断线、
 // 主动离房，甚至恶意抢先发送 game_action。若把临时绑定当成正式连接处理，断线事件
 // 会触发德州扑克自动弃牌/其他游戏离线代操作，产生无法通过连接字段回滚的游戏副作用。
@@ -79,6 +85,11 @@ const existingSeatMigrationsBySocket: Map<string, ExistingSeatMigration> = new M
 // game_action，断线也会被普通 disconnect 当成正式玩家并触发自动弃牌/离线代操作。
 // 单独登记新增座位，直到 Controller 与 Worker 都确认加入后才提交。
 const newSeatConnectionsBySocket: Map<string, NewSeatConnection> = new Map();
+// 创建房间从 rooms.set 到 Worker 接纳首位玩家之间仍是事务中的临时房间。若这段
+// 时间直接暴露给大厅/加入接口，另一个 Socket 可以先加入尚未提交的房间；一旦创建者
+// 随后断线或 Worker 启动失败，创建回滚会删除整个房间，把第二个玩家的成功加入一起
+// 擦掉。显式登记创建事务，在提交前既不展示，也不允许其他连接进入。
+const pendingRoomCreations: Map<string, PendingRoomCreation> = new Map();
 
 // 同一个 Socket 在任一时刻只允许执行一次“占用/迁移房间座位”的异步事务。
 // Socket.IO 会并发调用 async 事件处理器；如果用户双击加入、同时创建/加入，或
@@ -238,6 +249,33 @@ function clearNewSeatConnection(connection: NewSeatConnection | undefined): void
   }
 }
 
+function registerPendingRoomCreation(roomId: string, playerId: string, socket: Socket): PendingRoomCreation {
+  const creation: PendingRoomCreation = {
+    roomId,
+    creatorSocketId: socket.id,
+    creatorPlayerId: playerId
+  };
+  pendingRoomCreations.set(roomId, creation);
+  return creation;
+}
+
+function clearPendingRoomCreation(creation: PendingRoomCreation | undefined): void {
+  if (creation && pendingRoomCreations.get(creation.roomId) === creation) {
+    pendingRoomCreations.delete(creation.roomId);
+  }
+}
+
+function isPendingRoomCreation(roomId: string): boolean {
+  return pendingRoomCreations.has(roomId);
+}
+
+function rejectPendingRoomCreation(
+  socket: Socket,
+  ack?: (response: any) => void
+): void {
+  sendErrorResponse(socket, '房间仍在创建中，请稍后重试', ack);
+}
+
 function isPendingNewSeat(roomId: string, playerId: string): boolean {
   for (const connection of newSeatConnectionsBySocket.values()) {
     // aborted 仅表示加入事务必须回滚；在 finally 真正清除记录之前，这个座位仍然
@@ -303,7 +341,7 @@ function generateUniqueRoomIdAndName(): string {
 // 获取所有公共房间的信息
 function getPublicRooms() {
   return Array.from(rooms.values())
-    .filter(room => room.private !== true)
+    .filter(room => room.private !== true && !isPendingRoomCreation(room.id))
     .map(room => ({
       id: room.id,
       name: room.name,
@@ -1020,6 +1058,7 @@ export function roomController(io: Server) {
       existingSeatConnectionQueues.clear();
       existingSeatMigrationsBySocket.clear();
       newSeatConnectionsBySocket.clear();
+      pendingRoomCreations.clear();
       socketRoomConnectionClaims.clear();
       
       // 6. 重新初始化线程管理器。若进程已开始关闭，不再创建新的 Worker 管理器。
@@ -1882,7 +1921,14 @@ export function roomController(io: Server) {
     await leaveSocketRoomSafely(socket, roomId, context);
   }
 
-  async function rollbackFailedCreatedRoom(roomId: string, socket: Socket): Promise<void> {
+  async function rollbackFailedCreatedRoom(
+    roomId: string,
+    socket: Socket,
+    creation: PendingRoomCreation | undefined
+  ): Promise<void> {
+    // 在整个异步回滚期间保留 pending 标记，避免 stopRoomThread 的 await 窗口重新
+    // 暴露一个马上会被删除的房间。仅清理由本次创建事务登记的标记，防止误伤未来
+    // 可能复用同一房间码的独立事务。
     await leaveSocketRoomForRollback(socket, roomId, '回滚创建失败的房间');
 
     try {
@@ -1895,6 +1941,7 @@ export function roomController(io: Server) {
     rooms.delete(roomId);
     hostKickVotes.delete(roomId);
     clearRoomSessionTokens(roomId);
+    clearPendingRoomCreation(creation);
     broadcastLobbyUpdate();
   }
 
@@ -2169,6 +2216,7 @@ export function roomController(io: Server) {
     }, ack?: (response: any) => void) => {
       let connectionClaimed = false;
       let provisionalNewSeat: NewSeatConnection | undefined;
+      let pendingRoomCreation: PendingRoomCreation | undefined;
       try {
         // Validate input
         if (!data || !data.gameType || typeof data.gameType !== 'string') {
@@ -2253,6 +2301,7 @@ export function roomController(io: Server) {
           gameMetadata: { gameConfig }
         };
 
+        pendingRoomCreation = registerPendingRoomCreation(room.id, player.id, socket);
         provisionalNewSeat = registerNewSeatConnection(room.id, player.id, socket);
         rooms.set(room.id, room);
         ensurePlayerSessionToken(room.id, player.id);
@@ -2294,15 +2343,19 @@ export function roomController(io: Server) {
           currentRoom = committedSeat.room;
           currentPlayer = committedSeat.player;
         } catch (error) {
-          await rollbackFailedCreatedRoom(room.id, socket);
+          await rollbackFailedCreatedRoom(room.id, socket, pendingRoomCreation);
+          pendingRoomCreation = undefined;
           throw error;
         }
 
         // 到这里 Worker 已确认首位玩家加入，且最后一次 getCommittedJoiningSeat
-        // 已验证 socket 仍在线。先提交临时座位，再向客户端发布 sessionToken。
+        // 已验证 socket 仍在线。先构造最终回包；若这里意外失败，pending 标记仍在，
+        // 外层 catch 会完整回滚。随后房间和首个座位在同一个提交点转为对外可见。
+        const joinedPayload = buildRoomJoinedPayload(currentRoom, currentPlayer);
+        clearPendingRoomCreation(pendingRoomCreation);
+        pendingRoomCreation = undefined;
         clearNewSeatConnection(provisionalNewSeat);
         provisionalNewSeat = undefined;
-        const joinedPayload = buildRoomJoinedPayload(currentRoom, currentPlayer);
         socket.emit('room_joined', joinedPayload);
         ack?.({ success: true, ...joinedPayload });
 
@@ -2311,11 +2364,18 @@ export function roomController(io: Server) {
 
         console.log(`玩家 ${player.nickname} 创建了房间 ${room.name} (${room.type})`);
       } catch (error) {
+        // registerPendingRoomCreation 之后、内部 Worker 事务开始之前若出现同步异常，也
+        // 必须按创建事务回滚，不能只清 pending 标记后把半成品房间暴露出去。
+        if (pendingRoomCreation) {
+          await rollbackFailedCreatedRoom(pendingRoomCreation.roomId, socket, pendingRoomCreation);
+          pendingRoomCreation = undefined;
+        }
         console.error('创建房间失败:', error);
         socket.emit('error', { message: '创建房间失败' });
         ack?.({ success: false, error: error instanceof Error ? error.message : '创建房间失败' });
       } finally {
         clearNewSeatConnection(provisionalNewSeat);
+        clearPendingRoomCreation(pendingRoomCreation);
         if (connectionClaimed) {
           endSocketRoomConnection(socket);
         }
@@ -2332,6 +2392,10 @@ export function roomController(io: Server) {
         }
         const { roomId, playerId } = data;
         const room = rooms.get(roomId);
+        if (room && isPendingRoomCreation(room.id)) {
+          rejectPendingRoomCreation(socket);
+          return;
+        }
         const player = room?.players.find(p => p.id === playerId);
 
         if (room && player) {
@@ -2404,6 +2468,11 @@ export function roomController(io: Server) {
 
         if (!room) {
           sendErrorResponse(socket, '房间不存在', ack);
+          return;
+        }
+
+        if (isPendingRoomCreation(room.id)) {
+          rejectPendingRoomCreation(socket, ack);
           return;
         }
 
@@ -2590,6 +2659,11 @@ export function roomController(io: Server) {
 
         if (!room) {
           sendErrorResponse(socket, '房间不存在', ack);
+          return;
+        }
+
+        if (isPendingRoomCreation(room.id)) {
+          rejectPendingRoomCreation(socket, ack);
           return;
         }
 
@@ -3591,6 +3665,7 @@ export function roomController(io: Server) {
     existingSeatConnectionQueues.clear();
     existingSeatMigrationsBySocket.clear();
     newSeatConnectionsBySocket.clear();
+    pendingRoomCreations.clear();
     socketRoomConnectionClaims.clear();
   }
 
