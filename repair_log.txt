@@ -930,3 +930,33 @@ Commit: fix(round8): 补齐钟楼理发师换角并修正条件夜序
   - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts；差异空白检查未报告新增问题；根目录不存在 src/。
   - 完整 npm run build 已再次执行，但项目 node_modules 未完整安装，后端正式 tsc 因缺少 Node/Express/Socket.IO/UUID/CORS 等依赖/类型而中止，前端 vue-tsc/Vite 未进入执行。此前 npm ci --ignore-scripts 又因当前内部 npm 源无法提供锁定的 typescript-5.8.3.tgz 而失败。因此本轮不能宣称“生产构建已在此容器通过”，仍需在依赖源可用的本地或 CI 执行 npm ci && npm run build 做最终部署构建确认。
 备注: 本轮未删除文件，未创建根目录 src/；所有后端源码修改均位于 backend/src/，所有前端源码修改均位于 frontend/src/；修复包只包含本轮修改文件及 repair_log.txt，可按相对路径直接覆盖。
+
+=== 当前请求第 9 轮修复记录 ===
+时间: 2026-08-08 UTC
+Commit: fix(round9): 修正钟楼智者乌鸦与镇长夜间结算
+修改/新增文件:
+  - backend/src/workers/botcWorker.ts
+  - frontend/src/components/BOTCActionPanel.vue
+  - repair_log.txt
+删除文件: 无
+构建测试: 部分通过（源码 strict/静态检查及 BOTC 专项回归通过；完整 npm build 仍受当前容器内部依赖源 404 阻塞）
+本轮修复:
+  - 血染钟楼修复 Sage（智者）死亡信息的核心规则错误：此前候选按“任意邪恶 + 善良”生成，可能得到“爪牙 + 善良”而两人中根本没有恶魔；现在健康智者得到的两人组合必含一名当前功能性存活恶魔。
+  - Sage 的触发来源不再只识别通用 cause=demon，补齐 Pukka 等已由 Worker 标记为恶魔能力的死亡来源；中毒/醉酒或 Vortox 生效时不再静默跳过死亡信息，而是生成确定为假的两人组合，避免通过“没有收到信息”反向泄露醉毒状态，并满足 Vortox 的错误信息约束。
+  - 血染钟楼修复 Ravenkeeper（乌鸦饲养员）死亡能力直接返回真实角色的问题。死亡后选定目标的结果现在统一经过现有信息污染管线：健康时得到真实角色；中毒/醉酒或 Vortox 下得到错误角色，不再绕过统一的信息角色状态处理。
+  - 血染钟楼修复 Mayor（市长）夜间替死仅限 cause=demon 的错误。正常夜间死亡来源（例如 Godfather、Moonchild 或说书人夜间死亡）也可进入市长替死判定；同时显式排除 Assassin，保持其“死亡不可被任何保护/替代效果阻止”的优先级。
+  - BOTCActionPanel 复用现有夜间信息区域增加 Sage 两名候选的可读格式化，不新增独立组件或样式体系；兼容对象形式和旧字符串 ID 形式的候选数据。
+审查结果/本轮未改动重点:
+  - 继续检查 backend/src 与 frontend/src 当前全部 84 个源码文件、六个游戏的 Worker/规则文档、Controller/RoomThreadManager 状态同步边界以及前端 Room / ActionPanel / PlayerList / Chat 组件分层。本轮可稳定复现且规则影响最大的新增问题集中在 BOTC 的三个信息/死亡能力结算点，因此优先做小范围修复，没有进行高风险的大规模重构。
+  - 狼人杀、杀人游戏、一夜狼人、阿瓦隆、德州扑克沿用前八轮已修复的阶段推进、隐私、掉线/重连、投票/刺杀、边池/加注权和状态版本逻辑；本轮静态复查未发现优先级高于上述 BOTC 规则错误、且适合在当前批次安全落地的新阻断项。
+  - BOTC 自定义极端状态仍有边界近似：若同时存在多名功能性存活恶魔，当前 Sage 信息会选择其中一名恶魔，而 killPlayer 目前没有携带“具体是哪名恶魔造成击杀”的 actorId，因此不能在该非标准状态下保证候选必含精确击杀者。标准剧本单恶魔流程不受影响。
+  - Ravenkeeper 的 Recluse/Spy 等“可登记为另一角色/阵营”的高级 registration 交互尚未抽象为通用登记系统；本轮修复的是醉毒/Vortox 绕过信息污染的确定性错误。
+  - 前端仍沿用既有 Element Plus 与各游戏 ActionPanel/Room 分层；27 个 Vue SFC 的 template/script/style 结构和样式括号检查均通过，本轮只补充现有格式化逻辑，没有新增重复 UI 组件。
+验证:
+  - backend/src 全量 TypeScript 使用 TypeScript 5.8.3、strict 模式、真实 Node 类型与临时 Express/CORS/Socket.IO/UUID 声明桩完成 noEmit 类型检查，0 个错误。
+  - frontend/src 的 48 个 TypeScript/JavaScript script 解析单元完成语法检查，0 个解析错误；27 个 Vue SFC、27 个 style 块和 1 个 CSS 文件结构检查通过。
+  - backend/src + frontend/src 共检查 216 个相对导入，全部可解析；根目录不存在 src/；源码文件总数仍为 84。
+  - BOTC 第 9 轮专项回归 6 个场景通过：Pukka 杀死健康 Sage 时两人信息含恶魔；醉毒/Vortox Sage 仍收到确定错误信息；醉毒 Ravenkeeper 不泄露真实角色；健康 Ravenkeeper 返回真实角色；Godfather 夜间死亡可触发 Mayor 替死；Assassin 杀 Mayor 不会被替死绕过。
+  - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts 校验；差异空白检查未报告新增空白问题。
+  - 已再次尝试 npm ci --ignore-scripts，但当前内部 npm 源对锁定的 typescript-5.8.3.tgz 返回 404；随后 npm run build 因 node_modules 未安装，在后端正式 tsc 阶段缺少 Node/Express/Socket.IO/UUID/CORS 等项目已声明依赖/类型而中止，前端 vue-tsc/Vite 未进入执行。因此本轮不能声称生产构建已在此容器通过，仍需在依赖源可用的本地或 CI 执行 npm ci && npm run build 做最终部署构建确认。
+备注: 本轮未删除文件，未创建根目录 src/；所有后端源码修改仅位于 backend/src/，所有前端源码修改仅位于 frontend/src/；修复包只包含本轮修改文件及 repair_log.txt，可按相对路径直接覆盖。

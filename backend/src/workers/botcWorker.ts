@@ -3621,12 +3621,22 @@ export class BOTCWorker extends BaseGameWorker {
       player.reminders = player.reminders.filter(reminder => reminder !== 'ravenkeeperDeathAbilityPending');
       player.reminders.push('ravenkeeperDeathAbilityUsed');
 
-      const information = {
+      const actualInformation = {
         playerId: target.playerId,
         playerName: this.getPlayerName(target.playerId),
         roleName: target.role?.name,
         roleId: target.role?.id
       };
+      // Ravenkeeper is an information Townsfolk. A poisoned/drunk Ravenkeeper may
+      // receive arbitrary information, and Vortox requires false information.
+      // Sending the raw role here leaked the true character and also let the
+      // player infer that poison/drunkenness was being ignored.
+      const information = this.prepareInfoForPlayer(
+        player,
+        actualInformation,
+        'ravenkeeper',
+        this.getEffectiveRole(player)
+      );
 
       this.sendNightInfoToPlayer(playerId, {
         role: 'ravenkeeper',
@@ -4720,8 +4730,12 @@ export class BOTCWorker extends BaseGameWorker {
       return;
     }
 
-    // 检查市长效果 - 如果市长被恶魔夜间杀死，可能由另一名存活玩家代替死亡
-    if (player.role?.id === 'mayor' && this.playerAbilityWorks(player) && cause === 'demon') {
+    // Mayor: if the Mayor would die at night, another player might die instead.
+    // This is not limited to a generic Demon kill: Godfather, Moonchild and other
+    // night-time deaths can be redirected too. Assassin explicitly bypasses any
+    // effect that would stop its chosen player from dying, so do not redirect it.
+    const diedAtNight = this.gameState.phase === GamePhase.NIGHT || this.gameState.phase === GamePhase.FIRST_NIGHT;
+    if (player.role?.id === 'mayor' && this.playerAbilityWorks(player) && diedAtNight && !ignoresDeathProtection) {
       const allPlayers = Array.from(this.gamePlayers.values());
       const redirectCandidates = allPlayers.filter(p => !p.isDead && p.playerId !== playerId);
       if (redirectCandidates.length > 0 && Math.random() < 0.5) {
@@ -4749,8 +4763,13 @@ export class BOTCWorker extends BaseGameWorker {
       return;
     }
 
-    // 处理智者（Sage）的死亡能力 - 被恶魔杀死时看到两名玩家中的一名是恶魔
-    if (player.role?.id === 'sage' && this.playerAbilityWorks(player) && cause === 'demon') {
+    // 处理智者（Sage）的死亡能力：被恶魔能力杀死时，得到“两人中一人是恶魔”的信息。
+    // Pukka 使用独立 deathCause 做延迟死亡记账，但仍然是恶魔能力，不能漏掉。
+    // 中毒/醉酒的智者以及 Vortox 下的智者仍会收到信息，只是信息必须可以是错误的；
+    // 静默不提示会反向泄露其能力已经失效。
+    if (player.role?.id === 'sage' && this.isDemonAbilityCause(cause)) {
+      const shouldCorruptSageInfo = this.shouldCorruptInfoForPlayer(player, this.getEffectiveRole(player));
+
       player.isDead = true;
       player.isAlive = false;
       player.deathCause = cause;
@@ -4770,39 +4789,65 @@ export class BOTCWorker extends BaseGameWorker {
       this.broadcastGameState();
 
       const allPlayers = Array.from(this.gamePlayers.values());
-      const aliveEvil = allPlayers.filter(p => !p.isDead && isEvilPlayer(p) && p.playerId !== playerId);
-      const aliveGood = allPlayers.filter(p => !p.isDead && !isEvilPlayer(p) && p.playerId !== playerId);
-      
-      if (aliveEvil.length > 0 && aliveGood.length > 0) {
-        const randomEvil = aliveEvil[Math.floor(Math.random() * aliveEvil.length)];
-        const randomGood = aliveGood[Math.floor(Math.random() * aliveGood.length)];
-        const isComputerStoryteller = this.isComputerStoryteller();
-        
-        if (isComputerStoryteller) {
-          // AI模式下随机排序并返回
-          const pair = Math.random() < 0.5 ? [randomEvil, randomGood] : [randomGood, randomEvil];
-          this.sendNightInfoToPlayer(playerId, {
-            role: 'sage',
-            information: {
-              players: pair.map(p => ({
-                playerId: p.playerId,
-                playerName: this.getPlayerName(p.playerId)
-              })),
-              message: '恶魔是这两名玩家之一'
-            },
-            isDeathAbility: true
-          });
-        } else {
-          // 玩家模式下发送提示
-          this.sendToPlayer(playerId, 'deathAbilityPrompt', {
-            role: 'sage',
-            message: '你是智者，你被恶魔杀死了。恶魔是以下两名玩家之一。',
-            information: {
-              players: [randomEvil.playerId, randomGood.playerId].sort(() => Math.random() - 0.5)
-            }
-          });
+      const pickRandom = <T>(items: T[]): T | undefined => items[Math.floor(Math.random() * items.length)];
+      const withoutSelf = allPlayers.filter(p => p.playerId !== playerId);
+      let pair: GamePlayer[] = [];
+
+      if (shouldCorruptSageInfo) {
+        // For a malfunctioning information ability, a definitely-false pair is a
+        // legal arbitrary result and also satisfies Vortox's mandatory-false rule.
+        const nonDemons = withoutSelf.filter(p => p.role?.team !== Team.DEMON);
+        if (nonDemons.length >= 2) {
+          const first = pickRandom(nonDemons)!;
+          const second = pickRandom(nonDemons.filter(p => p.playerId !== first.playerId))!;
+          pair = [first, second];
+        }
+      } else {
+        // Sage says Demon, not merely "evil". The previous code selected any
+        // evil player, so a Minion + Good pair could truthfully contain no Demon.
+        const demons = withoutSelf.filter(p =>
+          p.role?.team === Team.DEMON && this.isFunctionallyAlive(p)
+        );
+        const demon = pickRandom(demons);
+        if (demon) {
+          const others = withoutSelf.filter(p => p.playerId !== demon.playerId);
+          const other = pickRandom(others);
+          if (other) {
+            pair = [demon, other];
+          }
         }
       }
+
+      // Defensive fallback for highly unusual custom states. In normal 5-15
+      // player games there are always enough candidates for the branches above.
+      if (pair.length !== 2) {
+        const fallback = [...withoutSelf].sort(() => Math.random() - 0.5).slice(0, 2);
+        pair = fallback;
+      }
+
+      if (pair.length === 2) {
+        if (Math.random() < 0.5) pair.reverse();
+        const information = {
+          players: pair.map(p => ({
+            playerId: p.playerId,
+            playerName: this.getPlayerName(p.playerId)
+          })),
+          message: '恶魔是这两名玩家之一'
+        };
+
+        this.sendNightInfoToPlayer(playerId, {
+          role: 'sage',
+          information,
+          isDeathAbility: true
+        });
+        this.sendToPlayer(this.gameConfig.storytellerId, 'deathAbilityResolved', {
+          playerId,
+          playerName: this.getPlayerName(playerId),
+          role: 'sage',
+          information
+        });
+      }
+
       const gameEndSage = checkGameEnd(
         Array.from(this.gamePlayers.values()),
         true,
@@ -4815,7 +4860,6 @@ export class BOTCWorker extends BaseGameWorker {
     }
 
     // 处理乌鸦饲养员的死亡能力（夜间死亡触发）
-    const diedAtNight = this.gameState.phase === GamePhase.NIGHT || this.gameState.phase === GamePhase.FIRST_NIGHT;
     if (player.role?.id === 'ravenkeeper' && diedAtNight) {
       player.isDead = true;
       player.isAlive = false;

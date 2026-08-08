@@ -1208,6 +1208,13 @@ const formatNightInfo = (info: any) => {
   
   if (info.information) {
     const data = info.information
+    if (info.role === 'sage' && Array.isArray(data.players)) {
+      const names = data.players.map((entry: any) => {
+        if (typeof entry === 'string') return getGamePlayerName(entry)
+        return displayPlayerNameById(entry?.playerId, entry?.playerName)
+      }).filter(Boolean).join('、')
+      return `${data.message || '恶魔是以下两名玩家之一'}${names ? `：${names}` : ''}`
+    }
     if (Array.isArray(data.outsiderRoles)) {
       return data.outsiderRoles.length > 0
         ? `在场外来者角色：${data.outsiderRoles.map((role: any) => role.roleName || role.roleId).join('、')}`
