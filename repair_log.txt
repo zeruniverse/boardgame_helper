@@ -1114,3 +1114,33 @@ Commit: fix(round14): 修正钟楼夜序失效动作与复活能力状态
   - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts 校验；本轮修改通过 diff --check。
   - 正式 npm run build 在本轮开始时再次执行，但现有不完整 node_modules 缺少多项 @types 包而在后端 tsc 阶段中止；随后 npm ci --ignore-scripts 再次请求当前内部 npm 源的 typescript-5.8.3.tgz 并返回 404，因此无法恢复完整 node_modules，也无法执行正式 vue-tsc/Vite 生产构建。本轮不能声称完整生产构建已在此容器通过，仍需在依赖源可用的本地或 CI 执行 npm ci && npm run build 做最终部署确认。
 备注: 本轮未删除文件，未创建根目录 src/；所有后端源码修改仅位于 backend/src/，所有前端源码修改仅位于 frontend/src/；修复包只包含本轮修改文件及 repair_log.txt，可按相对路径直接覆盖。
+
+=== 当前请求第 15 轮修复记录 ===
+时间: 2026-08-08 03:46:24 UTC
+Commit: fix(round15): 补齐钟楼坑巫任意死亡与侍女夜醒判定
+修改/新增文件:
+  - backend/src/workers/botcWorker.ts
+  - frontend/src/components/BOTCActionPanel.vue
+  - repair_log.txt
+删除文件: 无
+构建测试: 部分通过（六 Worker strict/prepare_room、85 文件静态扫描、BOTC 第 15 轮专项回归与 package-lock 依赖树检查通过；正式 npm run build 仍因当前容器缺少完整 Node/第三方依赖类型而在后端 tsc 阶段中止）
+本轮修复:
+  - 补齐 Pit-Hag（坑巫）“制造 Demon 后本夜死亡由说书人任意裁决”的核心结算链：当坑巫的有效改角实际制造恶魔后，本夜后续 Demon/Assassin/Gossip/Godfather/Moonchild/Pukka 等自动死亡不会立刻落地，而是记录为参考候选；人类说书人在夜晚面板可从当前功能性存活玩家中任意多选实际死亡者，也可明确选择无人死亡，随后才继续首夜/特殊夜间信息、被动效果、Barber 与天亮流程。
+  - 坑巫任意死亡裁决保持为说书人私有状态，普通玩家公开 gameState 不暴露候选或待裁决信息；在待裁决期间服务端拒绝重复夜间结算、直接进入白天或下一阶段，避免定时器和按钮并发造成夜晚重复结算。结算完成后清理挂起 continuation；游戏直接结束时也清理本轮新增的挂起状态。
+  - AI 说书人补齐该分支的保守自动裁决：若后续能力确实尝试造成死亡，则从仍合法的尝试目标中选择一个；没有尝试目标时允许本夜无人死亡，避免 AI 房间因缺少人工裁决永久卡夜。
+  - 修复 Chambermaid（侍女）统计“因自身能力醒来”时把所有预提交夜间动作都算作醒来的错误：新增当夜实际唤醒集合，仅在行动通过死亡/换角/驱魔等夜序失效检查后记录；中毒/醉酒不阻止角色醒来，因此仍会正确计入。这样已死亡、被换角取消旧动作、或被驱魔而未唤醒的目标不会再被错误计数。
+  - 修复 No Dashii（无上欢愉）在 Snake Charmer/Pit-Hag 等夜间换角后持续中毒位置不即时重算的问题：每次夜间角色变化/复活/持续状态处理后先刷新无上欢愉相邻镇民中毒，再刷新维格莫提斯效果，使新出现、移动或消失的无上欢愉立即对应当前座次。
+  - 前端坑巫裁决直接复用现有 BOTCActionPanel 的 storyteller-decision / death-ability-targets 组件样式与 Element Plus 按钮体系，没有新增平行页面或根目录源码结构；“进入白天”会在沙巴洛斯反刍或坑巫任意死亡未完成时禁用。
+审查结果/本轮未改动重点:
+  - 再次对 backend/src 与 frontend/src 当前全部 85 个文件进行 TypeScript/Vue/CSS 解析、SFC 标签、样式括号、相对/@ 导入及目录约束扫描，并复查六个 Worker 的严格类型入口与 prepare_room 初始化。本轮未发现优先级高于上述 BOTC 已知规则缺口的新通用阻断项。
+  - 狼人杀、杀人游戏、一夜狼人、阿瓦隆、德州扑克本轮未新增源码修改；继续沿用前十四轮已修复的阶段推进、身份隐私、投票/刺杀、断线重连、Worker/Controller 状态版本、德州扑克边池与加注权逻辑，本轮六个 Worker 均重新通过 strict 编译和初始化烟雾。
+  - BOTC 仍有高阶规则边界待后续处理：Recluse/Spy registration 尚未抽象成通用说书人裁决；夜晚开始时已经死亡、在中途由 Professor/Shabaloth 复活的角色若应在本夜后续夜序获得全新交互，当前并行预收集架构仍不能动态插入新的玩家行动/信息；自定义剧本若安排某些死亡效果早于坑巫制造恶魔，则“已经在此前发生的死亡”尚不能被现有后续死亡暂停机制逆向重写。
+  - 前端继续使用各游戏 Room / ActionPanel / PlayerList / Chat 的既有分层与 Element Plus 体系。本轮只在已有钟楼说书人面板添加必要裁决交互，并复用现有样式，不进行跨游戏大规模视觉重构以避免扩大回归面。
+验证:
+  - 血染钟楼 Worker 及其相对依赖使用 TypeScript strict/noEmit 专项配置检查 0 错误；六个游戏 Worker 入口在同一严格配置下全部通过类型检查。
+  - backend/src + frontend/src 静态扫描通过：共 85 个文件、83 个 TypeScript/Vue script 解析单元、27 个 Vue SFC、27 个 style 块、213 个相对/@ 静态导入均无语法、SFC 结构、CSS 花括号或失效导入错误；项目根目录不存在 src/。
+  - 六个实际游戏 Worker 使用本轮最新 strict 编译产物执行 prepare_room 烟雾全部通过：狼人杀、杀人游戏、一夜狼人、阿瓦隆、血染钟楼、德州扑克均能启动并完成房间初始化。
+  - BOTC 第 15 轮专项回归 3/3 通过：坑巫制造恶魔后后续 Demon 自动死亡被暂停、记录并可由说书人任意选择后以 Pit-Hag 死亡原因落地；侍女只统计实际夜序中真正醒来的角色而非所有预提交动作；坑巫制造 No Dashii 后相邻镇民中毒立即按新座位刷新且坑巫任意死亡模式同时正确建立。
+  - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts 校验；本轮源码 diff --check 无尾随空白错误。
+  - 正式 npm run build 已在本轮修改后再次执行，但当前项目 node_modules/类型依赖不完整，后端 tsc 因缺少 Node、Express、Socket.IO、UUID、CORS、worker_threads 等声明而中止，前端 vue-tsc/Vite 未进入生产构建。结合前几轮 npm ci 对当前内部源锁定 TypeScript 包返回 404 的记录，本轮仍不能声称完整生产构建已在此容器通过；需在依赖源可用的本地或 CI 执行 npm ci && npm run build 做最终部署确认。
+备注: 本轮未删除文件，未创建根目录 src/；所有后端源码修改仅位于 backend/src/，所有前端源码修改仅位于 frontend/src/；修复包只包含本轮修改文件及 repair_log.txt，可按相对路径直接覆盖。

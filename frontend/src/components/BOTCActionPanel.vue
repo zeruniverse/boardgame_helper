@@ -414,7 +414,39 @@
             <el-button size="small" plain @click="resolveShabalothRegurgitation(null)">本夜不反刍</el-button>
           </div>
 
-          <el-button @click="nextPhase" type="primary" class="next-phase-btn">
+          <div v-if="pitHagArbitraryDeaths && !pitHagArbitraryDeaths.resolved" class="storyteller-decision">
+            <h5>坑巫制造恶魔：任意死亡裁决</h5>
+            <p class="hint-text">
+              {{ pitHagArbitraryDeaths.pitHagName || '坑巫' }} 制造了新的恶魔
+              {{ pitHagArbitraryDeaths.createdDemonPlayerName ? '（' + pitHagArbitraryDeaths.createdDemonPlayerName + '）' : '' }}。
+              请选择今晚实际死亡的任意存活玩家；可以多选，也可以不选任何人。
+            </p>
+            <p v-if="pitHagArbitraryDeaths.suppressedPlayers?.length" class="hint-text">
+              后续能力原本尝试造成死亡：
+              {{ formatPitHagSuppressedPlayers(pitHagArbitraryDeaths.suppressedPlayers) }}
+            </p>
+            <div class="death-ability-targets">
+              <el-button
+                v-for="target in pitHagArbitraryDeaths.eligiblePlayers || []"
+                :key="target.playerId"
+                size="small"
+                :type="selectedPitHagDeathTargets.includes(target.playerId) ? 'danger' : 'default'"
+                @click="togglePitHagDeathTarget(target.playerId)"
+              >
+                {{ displayPlayerNameById(target.playerId, target.playerName) }}
+              </el-button>
+            </div>
+            <el-button type="primary" size="small" @click="resolvePitHagArbitraryDeaths">
+              {{ selectedPitHagDeathTargets.length ? '确认 ' + selectedPitHagDeathTargets.length + ' 人死亡' : '确认今晚无人死亡' }}
+            </el-button>
+          </div>
+
+          <el-button
+            @click="nextPhase"
+            type="primary"
+            class="next-phase-btn"
+            :disabled="Boolean((shabalothRegurgitation && !shabalothRegurgitation.resolved) || (pitHagArbitraryDeaths && !pitHagArbitraryDeaths.resolved))"
+          >
             进入白天
           </el-button>
         </div>
@@ -557,6 +589,7 @@ const deathAbilityCompleted = ref(false)
 const selectedNightTargets = ref<string[]>([])
 const selectedDayTarget = ref('')
 const selectedBarberSwapTargets = ref<string[]>([])
+const selectedPitHagDeathTargets = ref<string[]>([])
 const nightExtraInput = ref('')
 const dayAbilityInput = ref('')
 const storytellerResponseInput = ref('')
@@ -600,6 +633,13 @@ const watchBarberSwap = watch(() => props.nightInfo, (info) => {
   }
 })
 
+const watchPitHagArbitraryDeaths = watch(
+  () => props.gameState?.pitHagArbitraryDeaths?.nightRound,
+  () => {
+    selectedPitHagDeathTargets.value = []
+  }
+)
+
 const watchNightActionConfirmation = watch(() => props.nightInfo, (info) => {
   if (info?.playerId === props.currentUserId && info?.actionType) {
     nightActionCompleted.value = true
@@ -626,6 +666,7 @@ onUnmounted(() => {
   watchRole()
   watchDeathAbility()
   watchBarberSwap()
+  watchPitHagArbitraryDeaths()
   watchNightActionConfirmation()
   watchEndDayProposal()
   stopEndDayTimer()
@@ -660,6 +701,12 @@ const displayPlayerNameById = (playerId?: string, name?: string): string => {
   )
 }
 
+const formatPitHagSuppressedPlayers = (players: any[] = []): string => {
+  return players
+    .map(player => displayPlayerNameById(player?.playerId, player?.playerName))
+    .join('、')
+}
+
 // 计算属性
 const deathAbilityPrompt = computed(() => {
   return props.nightInfo?.isDeathAbilityPrompt ? props.nightInfo : null
@@ -679,6 +726,10 @@ const deathAbilityTargets = computed(() => {
 
 const shabalothRegurgitation = computed(() => {
   return props.isStoryteller ? props.gameState?.shabalothRegurgitation || null : null
+})
+
+const pitHagArbitraryDeaths = computed(() => {
+  return props.isStoryteller ? props.gameState?.pitHagArbitraryDeaths || null : null
 })
 
 const currentNomination = computed(() => {
@@ -1118,6 +1169,25 @@ const resolveShabalothRegurgitation = (playerId: string | null) => {
     data: playerId
       ? { actionType: 'shabalothRegurgitate', playerId }
       : { actionType: 'shabalothRegurgitate', skip: true }
+  })
+}
+
+const togglePitHagDeathTarget = (playerId: string) => {
+  const index = selectedPitHagDeathTargets.value.indexOf(playerId)
+  if (index >= 0) {
+    selectedPitHagDeathTargets.value.splice(index, 1)
+  } else {
+    selectedPitHagDeathTargets.value.push(playerId)
+  }
+}
+
+const resolvePitHagArbitraryDeaths = () => {
+  emit('game-action', {
+    type: 'storytellerAction',
+    data: {
+      actionType: 'pitHagArbitraryDeaths',
+      playerIds: [...selectedPitHagDeathTargets.value]
+    }
   })
 }
 

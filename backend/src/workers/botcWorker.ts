@@ -70,6 +70,19 @@ interface PendingShabalothRegurgitation {
   nightRound: number;
 }
 
+interface PendingPitHagArbitraryDeaths {
+  pitHagId: string;
+  createdDemonPlayerId: string;
+  nightRound: number;
+  suppressedPlayerIds: string[];
+  resolved: boolean;
+}
+
+interface PendingNightCompletion {
+  processedActions: Array<{ playerId: string; roleId: string; result: boolean }>;
+  isFirstNight: boolean;
+}
+
 interface ShabalothTargetHistoryEntry {
   nightRound: number;
   targetIds: string[];
@@ -115,6 +128,9 @@ export class BOTCWorker extends BaseGameWorker {
   private noExecutionToday: boolean = true;
   private deathsToday: Array<{ playerId: string; roleId?: string; team?: Team; cause: string }> = [];
   private firstNightInfoPlayerIds: Set<string> = new Set();
+  // Chambermaid counts players who actually woke for their own ability, not
+  // everyone who pre-submitted an action in the parallel night collector.
+  private wokeForOwnAbilityThisNight: Set<string> = new Set();
   // Barber is a death-triggered choice made by a Demon, not a regular action of
   // the dead Barber. Queue the death event until the correct night transition,
   // then keep the choice as private player state so reconnects can restore it.
@@ -123,6 +139,11 @@ export class BOTCWorker extends BaseGameWorker {
   // Shabaloth 的“反刍”属于说书人在该恶魔醒来前做出的裁决。当前项目允许玩家
   // 并行提交夜间动作，因此把裁决单独持久化，在统一结算到 Shabaloth 夜序时才真正复活。
   private pendingShabalothRegurgitation: PendingShabalothRegurgitation | null = null;
+  // Pit-Hag: if its functioning ability creates a Demon, deaths for the rest of
+  // that night are Storyteller-arbitrary. Automated kill effects are suppressed
+  // and collected as suggestions until the Storyteller chooses the actual deaths.
+  private pendingPitHagArbitraryDeaths: PendingPitHagArbitraryDeaths | null = null;
+  private pendingNightCompletion: PendingNightCompletion | null = null;
   // Exorcist choices must only suppress a Demon after the Exorcist's own queued
   // action has actually resolved. Looking ahead through every submitted action
   // lets an Exorcist who died or changed character earlier in the night still
@@ -770,6 +791,136 @@ export class BOTCWorker extends BaseGameWorker {
     const allNightActorsDone = this.gameState.nightOrder.every(actorId => this.gamePlayers.get(actorId)?.hasActed === true);
     if (allNightActorsDone) {
       this.scheduleNightTask('pendingNightActions', 0, () => this.processNightActions());
+    }
+  }
+
+  private isPitHagArbitraryDeathsActive(): boolean {
+    return Boolean(
+      this.pendingPitHagArbitraryDeaths &&
+      this.pendingPitHagArbitraryDeaths.nightRound === this.nightRound &&
+      !this.pendingPitHagArbitraryDeaths.resolved &&
+      this.isNightPhase()
+    );
+  }
+
+  private isPitHagDecisionBlockingNight(): boolean {
+    return this.isPitHagArbitraryDeathsActive() && !this.isComputerStoryteller();
+  }
+
+  private beginPitHagArbitraryDeaths(pitHagId: string, createdDemonPlayerId: string): void {
+    if (!this.isNightPhase()) return;
+
+    // A Pit-Hag has only one action, but custom scripts/role changes can produce
+    // unusual states. Keep the first actual Demon-creation event authoritative for
+    // this night instead of resetting already-suppressed death candidates.
+    if (this.pendingPitHagArbitraryDeaths?.nightRound === this.nightRound) {
+      return;
+    }
+
+    this.pendingPitHagArbitraryDeaths = {
+      pitHagId,
+      createdDemonPlayerId,
+      nightRound: this.nightRound,
+      suppressedPlayerIds: [],
+      resolved: false
+    };
+
+    this.notifyStoryteller(
+      `${this.getPlayerName(pitHagId)}（坑巫）制造了恶魔；本夜后续自动死亡将暂停，由说书人任意裁决`,
+      'warning'
+    );
+  }
+
+  private rememberSuppressedPitHagDeath(playerId: string): void {
+    const pending = this.pendingPitHagArbitraryDeaths;
+    if (!pending || pending.nightRound !== this.nightRound || pending.resolved) return;
+    if (!pending.suppressedPlayerIds.includes(playerId)) {
+      pending.suppressedPlayerIds.push(playerId);
+    }
+  }
+
+  private shouldSuppressAutomatedDeathForPitHag(cause: string): boolean {
+    if (!this.isPitHagArbitraryDeathsActive()) return false;
+    // Manual Storyteller kills are already arbitrary choices. The dedicated
+    // resolution cause is used when applying the multi-select decision below.
+    return cause !== 'storyteller' && cause !== 'pithag-arbitrary';
+  }
+
+  private getPitHagArbitraryDeathTargets(): Array<{ playerId: string; playerName: string }> {
+    return Array.from(this.gamePlayers.values())
+      .filter(player => this.isFunctionallyAlive(player))
+      .sort((a, b) => a.seat - b.seat)
+      .map(player => ({
+        playerId: player.playerId,
+        playerName: this.getPlayerName(player.playerId)
+      }));
+  }
+
+  private chooseAIPitHagArbitraryDeaths(): string[] {
+    const pending = this.pendingPitHagArbitraryDeaths;
+    if (!pending) return [];
+
+    // Preserve a plausible death count while still honoring the Pit-Hag rule:
+    // if later abilities attempted deaths, choose one currently legal attempted
+    // target; otherwise allow the Storyteller to choose no death.
+    const candidates = pending.suppressedPlayerIds.filter(playerId => {
+      const player = this.gamePlayers.get(playerId);
+      return Boolean(player && this.isFunctionallyAlive(player));
+    });
+    if (candidates.length === 0) return [];
+    return [candidates[Math.floor(Math.random() * candidates.length)]];
+  }
+
+  private async applyPitHagArbitraryDeaths(targetIds: string[]): Promise<void> {
+    const pending = this.pendingPitHagArbitraryDeaths;
+    if (!pending || pending.nightRound !== this.nightRound || pending.resolved) return;
+
+    pending.resolved = true;
+    for (const playerId of targetIds) {
+      await this.killPlayer(playerId, 'pithag-arbitrary');
+    }
+  }
+
+  private async resolvePitHagArbitraryDeathsDecision(playerId: string, data: any): Promise<void> {
+    const pending = this.pendingPitHagArbitraryDeaths;
+    if (!pending || pending.nightRound !== this.nightRound) {
+      this.sendToPlayer(playerId, 'actionError', { message: '当前没有待处理的坑巫任意死亡裁决' });
+      return;
+    }
+    if (pending.resolved) {
+      this.sendToPlayer(playerId, 'actionError', { message: '本夜坑巫任意死亡裁决已经完成' });
+      return;
+    }
+
+    const requestedTargets: string[] = Array.isArray(data?.playerIds)
+      ? (data.playerIds as unknown[]).filter((targetId: unknown): targetId is string => typeof targetId === 'string')
+      : [];
+    const targetIds: string[] = [...new Set<string>(requestedTargets)];
+    const legalTargets = new Set(this.getPitHagArbitraryDeathTargets().map(target => target.playerId));
+    if (targetIds.some(targetId => !legalTargets.has(targetId))) {
+      this.sendToPlayer(playerId, 'actionError', { message: '坑巫任意死亡只能选择当前功能性存活的玩家' });
+      return;
+    }
+
+    await this.applyPitHagArbitraryDeaths(targetIds);
+    this.sendToPlayer(playerId, 'pitHagArbitraryDeathsResolved', {
+      pitHagId: pending.pitHagId,
+      createdDemonPlayerId: pending.createdDemonPlayerId,
+      playerIds: targetIds
+    });
+
+    const completion = this.pendingNightCompletion;
+    if (completion) {
+      this.pendingNightCompletion = null;
+      this.isProcessingNight = true;
+      try {
+        await this.finishNightAfterActionLoop(completion.processedActions, completion.isFirstNight);
+      } catch (error) {
+        this.isProcessingNight = false;
+        throw error;
+      }
+    } else {
+      this.broadcastGameState();
     }
   }
 
@@ -1896,9 +2047,12 @@ export class BOTCWorker extends BaseGameWorker {
     this.noExecutionToday = true;
     this.deathsToday = [];
     this.firstNightInfoPlayerIds.clear();
+    this.wokeForOwnAbilityThisNight.clear();
     this.barberDeathsPending = [];
     this.pendingBarberDecision = null;
     this.pendingShabalothRegurgitation = null;
+    this.pendingPitHagArbitraryDeaths = null;
+    this.pendingNightCompletion = null;
     this.exorcisedDemonIdsThisNight.clear();
     this.lastGameResult = null;
     this.gameState = initializeGameState(this.gameConfig.storytellerId);
@@ -2760,7 +2914,10 @@ export class BOTCWorker extends BaseGameWorker {
     this.isProcessingNight = false;
     this.nightActions = [];
     this.firstNightInfoPlayerIds.clear();
+    this.wokeForOwnAbilityThisNight.clear();
     this.exorcisedDemonIdsThisNight.clear();
+    this.pendingPitHagArbitraryDeaths = null;
+    this.pendingNightCompletion = null;
     this.nightRound++;
 
     // Butler 的 Master 只对“明天”有效。进入新夜后先清掉上一晚选择，避免 Butler
@@ -2936,6 +3093,7 @@ export class BOTCWorker extends BaseGameWorker {
               isCorrupted: false
             });
 
+            this.wokeForOwnAbilityThisNight.add(playerId);
             // 标记首夜信息已处理，避免processSpecialNightInfo重复发送
             this.firstNightInfoPlayerIds.add(playerId);
             player.hasActed = true;
@@ -3063,6 +3221,9 @@ export class BOTCWorker extends BaseGameWorker {
       return;
     }
     if (this.pendingBarberDecision) {
+      return;
+    }
+    if (this.pendingNightCompletion || this.isPitHagDecisionBlockingNight()) {
       return;
     }
 
@@ -4157,10 +4318,17 @@ export class BOTCWorker extends BaseGameWorker {
           this.sendToPlayer(playerId, 'actionError', { message: '请先完成沙巴洛斯本夜是否反刍的裁决' });
           return;
         }
+        if (this.pendingNightCompletion || this.isPitHagDecisionBlockingNight()) {
+          this.sendToPlayer(playerId, 'actionError', { message: '请先完成坑巫制造恶魔后的本夜任意死亡裁决' });
+          return;
+        }
         await this.processNightActions();
         break;
       case 'shabalothRegurgitate':
         await this.resolveShabalothRegurgitationDecision(playerId, data);
+        break;
+      case 'pitHagArbitraryDeaths':
+        await this.resolvePitHagArbitraryDeathsDecision(playerId, data);
         break;
       case 'startDay':
         if (!this.isNightPhase()) {
@@ -4173,6 +4341,10 @@ export class BOTCWorker extends BaseGameWorker {
         }
         if (this.isShabalothDecisionBlockingNight()) {
           this.sendToPlayer(playerId, 'actionError', { message: '请先完成沙巴洛斯本夜是否反刍的裁决' });
+          return;
+        }
+        if (this.pendingNightCompletion || this.isPitHagDecisionBlockingNight()) {
+          this.sendToPlayer(playerId, 'actionError', { message: '请先完成坑巫制造恶魔后的本夜任意死亡裁决' });
           return;
         }
         await this.startDay();
@@ -4214,6 +4386,10 @@ export class BOTCWorker extends BaseGameWorker {
           }
           if (this.isShabalothDecisionBlockingNight()) {
             this.sendToPlayer(playerId, 'actionError', { message: '请先完成沙巴洛斯本夜是否反刍的裁决' });
+            return;
+          }
+          if (this.pendingNightCompletion || this.isPitHagDecisionBlockingNight()) {
+            this.sendToPlayer(playerId, 'actionError', { message: '请先完成坑巫制造恶魔后的本夜任意死亡裁决' });
             return;
           }
           await this.processNightActions();
@@ -4423,6 +4599,11 @@ export class BOTCWorker extends BaseGameWorker {
       this.broadcastGameState();
       return;
     }
+    if (this.pendingNightCompletion || this.isPitHagDecisionBlockingNight()) {
+      this.notifyStoryteller('请先完成坑巫制造恶魔后的本夜任意死亡裁决', 'warning');
+      this.broadcastGameState();
+      return;
+    }
 
     // 夜晚结算包含死亡、角色晋升和被动能力等不可重复副作用。定时器、玩家最后一次行动和
     // 说书人按钮可能在同一时间触发结算，必须保证整个结算阶段只执行一次。
@@ -4502,6 +4683,11 @@ export class BOTCWorker extends BaseGameWorker {
       try {
         const effectiveRole = this.getEffectiveRole(player) || player.role;
         const abilityWorks = this.playerAbilityWorks(player);
+        // Chambermaid cares whether a player actually woke for their own ability.
+        // Reaching this point means the queued action survived death/role-change
+        // cancellation and was not suppressed by Exorcist. Poison/drunkenness do
+        // not stop a character from waking, so record the wake before abilityWorks.
+        this.wokeForOwnAbilityThisNight.add(player.playerId);
 
         // Shabaloth regurgitation is resolved immediately before the Shabaloth
         // wakes/acts. A poisoned, drunk or Exorcised Shabaloth has no functioning
@@ -4574,20 +4760,59 @@ export class BOTCWorker extends BaseGameWorker {
       moonchildDeathsResolved = true;
     }
 
-    // 首夜信息必须等前置夜晚效果（如投毒、保护、阻止）按顺序结算后再发送。
+    if (this.isPitHagArbitraryDeathsActive()) {
+      if (this.isComputerStoryteller()) {
+        await this.applyPitHagArbitraryDeaths(this.chooseAIPitHagArbitraryDeaths());
+      } else {
+        // All queued actions are now settled, but information/passive effects that
+        // depend on who is dead must wait for the Storyteller's arbitrary-death
+        // choice. Persist the continuation instead of replaying night actions.
+        this.pendingNightCompletion = {
+          processedActions: [...processedActions],
+          isFirstNight
+        };
+        this.isProcessingNight = false;
+        this.sendToPlayer(this.gameConfig.storytellerId, 'pitHagArbitraryDeathsPending', {
+          pitHagId: this.pendingPitHagArbitraryDeaths!.pitHagId,
+          createdDemonPlayerId: this.pendingPitHagArbitraryDeaths!.createdDemonPlayerId,
+          suppressedPlayerIds: [...this.pendingPitHagArbitraryDeaths!.suppressedPlayerIds],
+          message: '坑巫制造了恶魔：请选择今晚实际死亡的任意存活玩家，也可以选择无人死亡。'
+        });
+        this.broadcastGameState();
+        return;
+      }
+    }
+
+    await this.finishNightAfterActionLoop(processedActions, isFirstNight);
+    } catch (error) {
+      // 未完成结算时允许说书人重试，避免一次异常把房间永久锁死。
+      this.isProcessingNight = false;
+      throw error;
+    }
+  }
+
+  private async finishNightAfterActionLoop(
+    processedActions: PendingNightCompletion['processedActions'],
+    isFirstNight: boolean
+  ): Promise<void> {
+    if (!this.isNightPhase()) {
+      this.isProcessingNight = false;
+      this.pendingNightCompletion = null;
+      return;
+    }
+
+    // First-night information must wait until all earlier night effects have
+    // resolved. For a Pit-Hag Demon creation, arbitrary deaths are deliberately
+    // settled before information roles so Oracle/neighbor-based information sees
+    // the actual Storyteller-chosen death state.
     if (isFirstNight) {
       await this.processFirstNightInfo();
     }
 
-    // 处理特殊信息角色的夜晚信息（Flowergirl、Towncrier等需要白天历史数据）
     await this.processSpecialNightInfo();
-
-    // Pukka 的延迟死亡已在其夜间顺序位置即时结算。
-
-    // 处理其他夜间被动效果
     await this.processPassiveEffects();
 
-    // 恶魔死亡后，确保红颜晋升逻辑被触发
+    const allPlayers = Array.from(this.gamePlayers.values());
     const anyDemonDiedTonight = allPlayers.some(p =>
       p.role?.team === Team.DEMON &&
       p.isDead &&
@@ -4597,7 +4822,6 @@ export class BOTCWorker extends BaseGameWorker {
     if (anyDemonDiedTonight) {
       const promoted = this.promoteScarletWomanIfNeeded();
       if (!promoted) {
-        // 没有红颜晋升，检查是否还有存活恶魔；若无，可能影响游戏胜负
         const aliveDemon = allPlayers.find(p =>
           p.role?.team === Team.DEMON && (!p.isDead || isZombuulLivingWhileRegisteredDead(p))
         );
@@ -4611,13 +4835,12 @@ export class BOTCWorker extends BaseGameWorker {
       }
     }
 
-    // 若 Shabaloth 因驱魔、醉毒或超时没有真正行动，本夜也已经完成结算；
-    // 丢弃尚未应用的裁决，不能让它串到下一夜。
     if (this.pendingShabalothRegurgitation?.nightRound === this.nightRound) {
       this.pendingShabalothRegurgitation = null;
     }
 
-    // 清空夜晚行动数组
+    this.pendingNightCompletion = null;
+    this.pendingPitHagArbitraryDeaths = null;
     this.nightActions = [];
 
     this.sendToPlayer(this.gameConfig.storytellerId, 'nightProcessed', {
@@ -4625,7 +4848,6 @@ export class BOTCWorker extends BaseGameWorker {
       summary: `处理了 ${processedActions.length} 个夜晚行动`
     });
 
-    // 夜晚结束也要检查“只剩2名存活玩家”的邪恶胜利条件。
     const gameEnd = checkGameEnd(
       Array.from(this.gamePlayers.values()),
       true,
@@ -4636,20 +4858,11 @@ export class BOTCWorker extends BaseGameWorker {
       return;
     }
 
-    // A Barber that died during this night still resolves before dawn. The
-    // regular night actions have already been settled, so after the Demon makes
-    // (or skips) the swap we only need to continue to the day transition.
     if (this.beginNextBarberDecision('finishNight')) {
       return;
     }
 
-      // 进入白天
-      this.scheduleNightTask('processNightToDay', 3000, () => this.startDay());
-    } catch (error) {
-      // 未完成结算时允许说书人重试，避免一次异常把房间永久锁死。
-      this.isProcessingNight = false;
-      throw error;
-    }
+    this.scheduleNightTask('processNightToDay', 3000, () => this.startDay());
   }
 
   private revealExorcistToChosenDemon(exorcistAction: NightAction): void {
@@ -4907,6 +5120,9 @@ export class BOTCWorker extends BaseGameWorker {
         this.clearFreshCharacterUsageState(player, false);
         player.role = { ...newRole };
         player.displayRole = undefined;
+        if (this.getNightActionRoleId(action) === 'pithag' && newRole.team === Team.DEMON) {
+          this.beginPitHagArbitraryDeaths(action.playerId, player.playerId);
+        }
         if (change.poison) {
           this.applyDebuff(player, 'Poisoned', 'pithag');
         }
@@ -4949,7 +5165,9 @@ export class BOTCWorker extends BaseGameWorker {
       }
     }
 
-    // 角色变化、复活、醉酒/中毒都可能即时影响维格莫提斯与其死亡爪牙的持续能力。
+    // 角色变化、复活、醉酒/中毒都可能即时改变恶魔持续效果。尤其 Snake Charmer
+    // 或 Pit-Hag 把 No Dashii 移到新座位时，相邻镇民必须立即按新位置重算中毒。
+    this.refreshNoDashiiPoison();
     this.refreshVigormortisEffects();
   }
 
@@ -5055,7 +5273,7 @@ export class BOTCWorker extends BaseGameWorker {
             this.sendToPlayer(playerId, 'actionError', { message: '侍女必须选择两名存活且非自己的玩家' });
             continue;
           }
-          const wokeCount = targets.filter(target => this.nightActions.some(a => a.playerId === target.playerId)).length;
+          const wokeCount = targets.filter(target => this.wokeForOwnAbilityThisNight.has(target.playerId)).length;
           sendInfo(playerId, player, roleId, { wokeCount });
         }
 
@@ -5209,6 +5427,15 @@ export class BOTCWorker extends BaseGameWorker {
   private async killPlayer(playerId: string, cause: string): Promise<void> {
     const player = this.gamePlayers.get(playerId);
     if (!player) return;
+
+    if (this.shouldSuppressAutomatedDeathForPitHag(cause)) {
+      this.rememberSuppressedPitHagDeath(playerId);
+      this.notifyStoryteller(
+        `${this.getPlayerName(playerId)} 原本会在本夜死亡；因坑巫制造恶魔，该自动死亡已改由说书人任意裁决`,
+        'info'
+      );
+      return;
+    }
 
     if (player.isDead) {
       if (!isZombuulLivingWhileRegisteredDead(player)) return;
@@ -5940,6 +6167,8 @@ export class BOTCWorker extends BaseGameWorker {
 
     this.gameState.phase = GamePhase.ENDED;
     this.isProcessingNight = false;
+    this.pendingNightCompletion = null;
+    this.pendingPitHagArbitraryDeaths = null;
     this.clearTimers();
 
     const gameResult: BOTCGameResult = {
@@ -6008,6 +6237,19 @@ export class BOTCWorker extends BaseGameWorker {
           playerId,
           playerName: this.getPlayerName(playerId)
         }))
+      } : undefined,
+      pitHagArbitraryDeaths: this.pendingPitHagArbitraryDeaths ? {
+        pitHagId: this.pendingPitHagArbitraryDeaths.pitHagId,
+        pitHagName: this.getPlayerName(this.pendingPitHagArbitraryDeaths.pitHagId),
+        createdDemonPlayerId: this.pendingPitHagArbitraryDeaths.createdDemonPlayerId,
+        createdDemonPlayerName: this.getPlayerName(this.pendingPitHagArbitraryDeaths.createdDemonPlayerId),
+        nightRound: this.pendingPitHagArbitraryDeaths.nightRound,
+        resolved: this.pendingPitHagArbitraryDeaths.resolved,
+        suppressedPlayers: this.pendingPitHagArbitraryDeaths.suppressedPlayerIds.map(playerId => ({
+          playerId,
+          playerName: this.getPlayerName(playerId)
+        })),
+        eligiblePlayers: this.getPitHagArbitraryDeathTargets()
       } : undefined
     };
   }
