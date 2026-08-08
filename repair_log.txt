@@ -2299,3 +2299,29 @@ Commit: fix(round52): 同步开局自动阵容并封堵运行中改配
   - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts 校验。
   - 正式 npm ci --ignore-scripts --no-audit --no-fund 已执行，但当前内部 npm 镜像请求 package-lock 锁定的 typescript-5.8.3.tgz 返回 404。正式 npm run build 也已执行；因 npm ci 无法形成完整 node_modules，backend tsc 在 Node 内建类型及 Express/CORS/Socket.IO/UUID 等 package.json 已声明依赖解析处中止，未进入 frontend vue-tsc/Vite。构建尝试产生的 backend/dist/frontend/dist 已清理。相同 backend/src 已通过上述全量 strict/noEmit、隔离编译和 Worker 实际运行测试；完整生产构建与“可直接部署”仍需在依赖镜像正常的本地或 CI 执行 npm ci && npm run build 最终确认。
 备注: 本轮未删除文件，未创建根目录 src/；所有后端源码修改仅位于 backend/src/，本轮没有 frontend/src/ 源码修改；修复包只包含本轮修改源码文件与更新后的 repair_log.txt，可按相对路径直接覆盖。
+
+=== 当前请求第 54 轮修复记录 ===
+时间: 2026-08-08 14:17:40 UTC
+Commit: fix(round54): 封堵座位连接事务与开局动作竞态
+修改/新增文件:
+  - backend/src/controllers/roomController.ts
+  - repair_log.txt
+删除文件: 无
+构建测试: 部分通过（backend/src + frontend/src 当前全部 86 个源文件静态扫描、backend/src 全部 35 个 TypeScript strict/noEmit 与隔离 CommonJS 编译、六游戏 Worker prepare_room 启动烟雾、座位连接事务/开局生命周期专项回归、package-lock 工作区依赖树检查均通过；正式 npm run build 仍因附件工作区没有完整 node_modules，在 backend tsc 的 Node/Express/CORS/Socket.IO/UUID 等已声明依赖/类型解析阶段中止，未进入 frontend vue-tsc/Vite；此前本轮 npm ci 也被当前内部 npm 镜像缺失 TypeScript 5.8.3 tarball 的 404 阻塞，因此完整生产构建与直接部署仍需在依赖镜像正常的本地或 CI 终验）
+本轮修复:
+  - 修复“新玩家加入/已有座位重连迁移”与其他已提交玩家的开局动作并发时，Controller 与 Worker 可能按不同在线玩家集合决定本局参与者的竞态。新增座位和已有座位迁移都会在异步 socket.join / update_room_data / join_room / player_online 完成前先产生 Controller 侧临时连接状态；旧逻辑只禁止临时座位本人操作，却允许房主或其他玩家在这个 await 窗口发送 ready/startGame/restartGame。如果 Worker 此时仍持有旧快照，可能按旧玩家集合开局，把实际上已先开始加入/重连的玩家永久漏出本局。
+  - Controller 现在以房间为粒度检测 existingSeatMigrationsBySocket 与 newSeatConnectionsBySocket。只要该房间仍有座位连接事务未提交/回滚，就暂时拒绝会直接或间接触发开局的 ready、startGame/start_game 和 restartGame/restart_game；普通聊天、投票和局内行动不被全局阻塞，避免把短暂连接确认窗口扩大成房间级停服。
+  - 特别覆盖两个显式旁路：阿瓦隆的 ready 会在全员准备后自动调用 checkAutoStart，血染钟楼的 ready 本身就是“开始游戏”入口。因此不能只拦截字面 startGame；本轮把 ready 一并纳入生命周期门禁，六游戏共用 Controller 后不再留下游戏特例旁路。
+  - 生命周期门禁放在 Controller 已确认操作者是正式房间成员之后、任何 Worker game_action 入队之前。这样事件先后关系保持清晰：若连接事务先建立，则开局等待它提交/回滚；若开局动作先完成，新玩家随后加入，则各游戏原有的中途旁观/候补语义继续生效，不额外改变游戏规则。
+审查结果/本轮未改动重点:
+  - 继续覆盖 RoomThreadManager、roomController、BaseGameWorker、六游戏 Worker 与六套前端 Store/Room/ActionPanel/PlayerList/Chat。RoomThreadManager 的单房间 Worker、任务响应串行落地以及 workerStateVersion/connectionStateVersion/hostStateVersion 合并模型本轮未发现需要再改变的事实源分工；当前最高优先级的新确定性问题是“临时座位事务只保护本人、不保护其他玩家触发开局”的跨 Socket 竞态，因此本轮集中修复该处。
+  - 狼人杀、杀人游戏、一夜狼人、阿瓦隆与德州扑克主流程继续结合项目规则文档、既有累计专项修复和当前实现复核；未发现优先级高于本轮连接/开局竞态且适合当前小批次安全落地的新规则阻断项。血染钟楼的提名/投票/处决与基础胜负流程继续保持现有实现；此前 repair_log 已记录的 Pit-Hag 特殊自定义夜序逆向死亡、Recluse/Spy 逐次 registration 人工裁决 UI、Mathematician 多重/自由文本效果审计等架构级边界仍未以近似逻辑强行修改。
+  - 前端 27 个 Vue SFC 继续使用现有 Room / ActionPanel / PlayerList / Chat 分层、Element Plus 和共享 session/socket/messages 工具。本轮竞态应由后端统一门禁解决，不需要在六套页面各复制一份“有人正在重连”状态，也没有新增样式或平行组件体系。
+验证:
+  - backend/src + frontend/src 全量静态扫描通过：共 86 个源文件、84 个 TypeScript/Vue script 解析单元、28 个 style/CSS 单元、222 个本地相对/@ 导入；未发现 TypeScript 语法错误、CSS 花括号错误、真实合并冲突标记或失效本地导入；项目根目录不存在 src/。
+  - backend/src 全部 35 个 TypeScript 文件使用全局 TypeScript 5.8.3、strict 模式、真实全局 Node 类型和项目目录外的 Express/CORS/Socket.IO/UUID 临时声明桩完成 noEmit 类型检查，0 个源码类型错误；同一配置成功生成 35 个隔离 CommonJS 测试文件。临时声明、脚本和编译产物仅位于 /mnt/data/round54_validation，不进入修复包。
+  - 六个实际游戏 Worker 使用本轮最新隔离编译产物执行 prepare_room 烟雾全部通过：狼人杀、杀人游戏、血染钟楼、一夜狼人、阿瓦隆、德州扑克均可启动 Worker 并完成合法房间配置初始化。
+  - 座位事务/开局专项回归直接从本轮 roomController.ts AST 提取新增 helper 执行：无事务时 startGame 不受影响；同房间 pending new-seat 时 ready、start_game、restartGame 均被拒绝；普通 chat 仍允许；existing-seat migration 同样阻止 ready；其他房间的连接事务不会误锁本房间。
+  - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts 校验。
+  - 正式 npm run build 已在本轮最终源码上执行；由于 npm ci 未能形成完整 node_modules，backend tsc 报缺失 Node 内建类型以及 Express/CORS/Socket.IO/UUID 等 package.json 已声明依赖，未进入 frontend vue-tsc/Vite。此前本轮 npm ci --ignore-scripts --no-audit --no-fund 请求当前内部镜像中的 typescript-5.8.3.tgz 返回 404。构建尝试产生的 backend/dist/frontend/dist 已清理；完整生产构建与“可直接部署”仍需在依赖可正常安装的本地或 CI 执行 npm ci && npm run build 最终确认。
+备注: 本轮未删除文件，未创建根目录 src/；所有后端源码修改仅位于 backend/src/，本轮没有 frontend/src/ 源码修改；修复包只包含本轮修改文件与更新后的 repair_log.txt，可按相对路径直接覆盖。

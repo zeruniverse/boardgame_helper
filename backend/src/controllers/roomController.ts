@@ -291,6 +291,42 @@ function isCommittedRoomMember(room: Room, player: Player): boolean {
   return !isPendingNewSeat(room.id, player.id);
 }
 
+function hasPendingRoomSeatConnection(roomId: string): boolean {
+  // 新座位加入和已有座位迁移都会先更新 Controller 的连接字段，再异步同步到 Worker。
+  // 在事务提交前，Controller 与 Worker 对“当前在线/参局玩家”可能短暂看到不同集合。
+  // 这段窗口不能允许任何会直接或间接开局的动作，否则 Worker 可能按旧玩家集合开始游戏。
+  for (const migration of existingSeatMigrationsBySocket.values()) {
+    if (migration.roomId === roomId) return true;
+  }
+  for (const connection of newSeatConnectionsBySocket.values()) {
+    if (connection.roomId === roomId) return true;
+  }
+  return false;
+}
+
+function isGameStartLifecycleAction(actionType: string): boolean {
+  const normalizedActionType = actionType.toLowerCase().replace(/[_-]/g, '');
+  // Avalon 的 ready 会自动触发开局，BOTC 的 ready 本身就是“开始游戏”；其余游戏虽然
+  // 多数还需要显式 startGame，也统一在连接事务期间暂停 ready，避免跨游戏留下旁路。
+  return normalizedActionType === 'ready' ||
+    normalizedActionType === 'startgame' ||
+    normalizedActionType === 'restartgame';
+}
+
+function rejectGameStartDuringPendingSeatConnection(
+  socket: Socket,
+  roomId: string,
+  actionType: string,
+  ack?: (response: any) => void
+): boolean {
+  if (!isGameStartLifecycleAction(actionType) || !hasPendingRoomSeatConnection(roomId)) {
+    return false;
+  }
+
+  sendErrorResponse(socket, '有玩家的房间连接仍在确认中，请稍后再开始游戏', ack);
+  return true;
+}
+
 function findCommittedHostCandidate(room: Room, excludePlayerId?: string): Player | undefined {
   const candidates = room.players.filter(player =>
     player.id !== excludePlayerId &&
@@ -3123,6 +3159,11 @@ export function roomController(io: Server) {
           return;
         }
         if (rejectProvisionalSeatAction(socket, room.id, player.id, ack)) return;
+        // 另一个 Socket 可能正在新增座位或迁移已有座位。此时 Controller 已看到新的
+        // 在线状态，而对应 Worker 仍可能停留在旧快照；若房主/其他玩家在 await 窗口
+        // 内 start/restart/ready（Avalon 会 ready 自动开局，BOTC 的 ready 即开局），
+        // 游戏就可能永久漏掉该玩家。等座位事务提交/回滚后再允许这些生命周期动作。
+        if (rejectGameStartDuringPendingSeatConnection(socket, room.id, requestedActionType, ack)) return;
 
         const payloadSizeResult = validateGameActionPayloadSize(data.actionData);
         if (!payloadSizeResult.valid) {
