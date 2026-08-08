@@ -203,7 +203,9 @@ class AvalonWorker extends BaseGameWorker {
         fallbackSpeakTime
       ),
       actionTime: normalizeDurationSeconds(
-        getOwnConfigValue(rawConfig, 'actionTime', 'questDiscussionTime'),
+        // questDiscussionTime 仅兼容旧的讨论/发言配置；不能把它同时解释为
+        // 选队、投票、任务、刺杀和湖上夫人等行动阶段的超时。
+        getOwnConfigValue(rawConfig, 'actionTime'),
         fallbackActionTime
       ),
       speakRound: normalizeBoundedInteger(
@@ -1792,7 +1794,9 @@ class AvalonWorker extends BaseGameWorker {
   private isLakeLadyEnabled(): boolean {
     const state = this.gameState as AvalonGameState;
     const playerCount = state.players ? Object.keys(state.players).length : this.room.players.length;
-    return this.config.lakeLady && playerCount >= 7 && playerCount <= 10;
+    // 大厅允许 5-10 人局启用湖上夫人，项目规则文档也明确支持该范围。
+    // 旧实现却在 5/6 人局静默关闭，导致“已启用”的房间实际完全没有湖上夫人流程。
+    return this.config.lakeLady && playerCount >= 5 && playerCount <= 10;
   }
 
   private shuffleArray<T>(array: T[]): T[] {

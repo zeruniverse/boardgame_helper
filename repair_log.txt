@@ -1300,3 +1300,30 @@ Commit: fix(round20): 修正钟楼殡仪员处决死亡判定与一夜狼人皮�
   - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts 校验。
   - 正式 npm run build 已在本轮最终源码上执行，但当前工作区 node_modules 是之前失败安装留下的空/不完整目录，后端 tsc 因多个 @types 包内容缺失中止；随后 npm ci --ignore-scripts 再次尝试安装，当前内部 npm 源对 package-lock 锁定的 typescript-5.8.3.tgz 返回 404。因此本轮不能声称完整生产 npm 构建已在此容器通过；请在依赖源可用的本地或 CI 执行 npm ci && npm run build 做最终部署构建确认。
 备注: 本轮未删除文件，未创建根目录 src/；所有后端源码修改仅位于 backend/src/，所有前端源码修改仅位于 frontend/src/；修复包只包含本轮修改文件及 repair_log.txt，可按相对路径直接覆盖。
+
+=== 当前请求第 21 轮修复记录 ===
+时间: 2026-08-08 05:23:15 UTC
+Commit: fix(round21): 修正阿瓦隆湖上夫人与阶段计时配置
+修改/新增文件:
+  - backend/src/controllers/roomController.ts
+  - backend/src/workers/avalonWorker.ts
+  - repair_log.txt
+删除文件: 无
+构建测试: 部分通过（后端 34 个 TypeScript strict/noEmit 与隔离测试编译、85 个源码文件静态扫描、六 Worker prepare_room 烟雾、阿瓦隆 5 人湖上夫人/旧计时字段专项回归及 package-lock 依赖树检查通过；正式 npm ci / npm run build 仍受当前容器内部 npm 源缺少锁定 TypeScript 5.8.3 包阻塞）
+本轮修复:
+  - 修复阿瓦隆创建房间时把旧字段 questDiscussionTime 同时解释为 speakTime 和 actionTime 的配置错误。backend/config.json 默认 questDiscussionTime=180，旧逻辑会把选队、组队投票、任务行动、刺杀和湖上夫人等所有行动阶段也一起变成 180 秒；现在该旧字段只兼容讨论/发言时限，actionTime 没有显式配置时保持独立的 60 秒默认值，显式 actionTime 仍按统一安全计时规范化处理。
+  - Controller 创建房间路径同步生成规范化的 Avalon speakTime/actionTime/lakeLady，避免 Controller 房间快照与 Worker 实际生效配置使用不同语义；湖上夫人开关改用统一 normalizeBoolean，仅真实布尔值可覆盖配置，字符串 "false" 等畸形网络值不会被错误当作启用。
+  - 修复 5/6 人阿瓦隆房间在大厅开启“湖上夫人”后，Worker 又通过 isLakeLadyEnabled 静默关闭该机制的问题。大厅与项目规则允许 5-10 人创建该模式，因此 Worker 现在在完整 5-10 人范围尊重 lakeLady 配置；5 人局开局会正确初始化一名湖上夫人持有者，并继续沿用第 2/3/4 个任务后触发、不能查自己或历史持有者、结果仅给查验者的既有流程。
+审查结果/本轮未改动重点:
+  - 覆盖 backend/src 与 frontend/src 当前全部 85 个 TypeScript/Vue/CSS/SVG 代码文件进行语法、Vue SFC 块、CSS 花括号、313 个 import/export 相对路径和目录约束扫描；根目录不存在 src/。同时继续人工复核六个游戏 Worker、BaseGameWorker、RoomThreadManager/Controller 的公开/私密状态边界、阶段推进和已修竞态路径。
+  - 狼人杀、杀人游戏、一夜狼人、德州扑克以及本轮未涉及的血染钟楼主流程没有发现优先级高于上述可稳定复现的阿瓦隆配置失配、且适合当前批次低风险落地的新阻断项；继续沿用前 20 轮已经修复的夜间身份隐私、投票/刺杀、断线恢复、Worker 状态版本、德州扑克边池/短码加注权和 BOTC 夜序/登记/哲学家等路径。
+  - 前端 27 个 Vue SFC 的 Room / ActionPanel / PlayerList / Chat 分层、Element Plus 复用和现有全局样式继续通过结构扫描；本轮问题位于后端配置语义，未为了无关视觉重构扩大 frontend/src 回归面。
+  - BOTC 仍保留前轮已经记录的高阶边界：自定义夜序中若某个死亡在 Pit-Hag 制造 Demon 之前已经真正落地，当前“本夜死亡任意”机制仍不能逆向撤销此前死亡；真人说书人的 Recluse/Spy registration 也仍没有逐次手工裁决 UI。本轮没有对这些高风险夜序架构做额外重构。
+验证:
+  - backend/src 全部 34 个 TypeScript 文件使用 TypeScript 5.8.3、strict 模式、真实 Node 类型和项目外 Express/CORS/Socket.IO/UUID 临时声明桩完成 noEmit 类型检查，0 个错误；同一配置成功生成 34 个 CommonJS 隔离测试文件。
+  - backend/src + frontend/src 静态扫描通过：共 85 个代码文件、83 个 TypeScript/Vue script 解析单元、27 个 Vue SFC、27 个 style 块、313 个 import/export 路径均无 TypeScript 语法、SFC 标签、CSS 花括号或失效相对/@ 导入错误；项目根目录不存在 src/。
+  - 六个实际游戏 Worker 使用本轮 strict 编译产物执行 prepare_room 烟雾全部通过：狼人杀、杀人游戏、血染钟楼、一夜狼人、阿瓦隆、德州扑克均能启动并完成房间初始化。
+  - 阿瓦隆第 21 轮专项回归通过：legacy questDiscussionTime=180 时规范化结果为 speakTime=180、actionTime=60；5 人且 enableLady=true 时开局 game_start 正确包含 1 名湖上夫人初始持有者；第一阶段 action deadline 约为 60 秒而非旧逻辑的 180 秒。
+  - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts；本轮源码相对附件原始版本的 git diff --no-index --check 通过。
+  - 正式 npm ci --ignore-scripts 已再次尝试，但当前内部 npm 源对 package-lock 锁定的 typescript-5.8.3.tgz 返回 404。随后正式 npm run build 在缺少 node_modules 的工作区执行，后端 tsc 因 Node/Express/Socket.IO/UUID/CORS 等已声明依赖/类型未安装而中止，前端 vue-tsc/Vite 因后端构建失败未进入执行。因此本轮不能声称完整生产 npm 构建已在此容器通过；仍需在依赖源可用的本地或 CI 执行 npm ci && npm run build 做最终部署构建确认。
+备注: 本轮未删除文件，未创建根目录 src/；所有后端源码修改仅位于 backend/src/，未修改 frontend/src/；修复包只包含本轮修改文件及 repair_log.txt，可按相对路径直接覆盖。

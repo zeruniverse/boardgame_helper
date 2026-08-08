@@ -615,8 +615,24 @@ function buildGameConfig(gameType: string, incomingConfig: any): any {
   }
 
   if (gameType === 'avalon') {
-    // 前端字段是 enableLady，worker 字段是 lakeLady。
-    gameConfig.lakeLady = gameConfig.lakeLady ?? gameConfig.enableLady ?? false;
+    const rawConfig = gameConfig as Record<string, unknown>;
+    // questDiscussionTime 是旧配置中的“讨论/发言阶段”字段，不能同时拿来覆盖
+    // 投票、任务、刺杀和湖上夫人等行动阶段的时限。否则默认配置里的 180 秒
+    // 会把所有行动阶段都意外拉长到 180 秒。
+    gameConfig.speakTime = normalizeDurationSeconds(
+      getOwnConfigValue(rawConfig, 'speakTime', 'questDiscussionTime'),
+      60
+    );
+    gameConfig.actionTime = normalizeDurationSeconds(
+      getOwnConfigValue(rawConfig, 'actionTime'),
+      60
+    );
+    // 前端字段是 enableLady，worker 字段是 lakeLady；只接受真实布尔值，避免
+    // 字符串 "false" 之类的网络载荷被当作启用。
+    gameConfig.lakeLady = normalizeBoolean(
+      getOwnConfigValue(rawConfig, 'lakeLady', 'enableLady'),
+      false
+    );
   }
 
   if (gameType === 'blood-on-the-clocktower') {
