@@ -1358,3 +1358,30 @@ Commit: fix(round22): 统一狼人杀计时配置并修复跨游戏创建参数�
   - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts 校验。
   - 正式 npm ci --ignore-scripts 已再次尝试，但当前内部 npm 源对 package-lock 锁定的 typescript-5.8.3.tgz 返回 404。正式 npm run build 在依赖未完整安装的工作区执行时，后端 tsc 因 Node/Express/Socket.IO/UUID/CORS 等依赖/类型缺失而中止，根构建流程因此未进入前端 vue-tsc/Vite。故本轮不能声称完整生产构建已在此容器通过；请在依赖源可用的本地或 CI 执行 npm ci && npm run build 做最终部署确认。
 备注: 本轮未删除文件，未创建根目录 src/；所有后端源码修改仅位于 backend/src/，所有前端源码修改仅位于 frontend/src/；修复包只包含本轮修改文件及 repair_log.txt，可按相对路径直接覆盖。
+
+=== 当前请求第 23 轮修复记录 ===
+时间: 2026-08-08 05:49:53 UTC
+Commit: fix(round23): 修复狼人杀旧状态夜序卡死并统一角色跳过逻辑
+修改/新增文件:
+  - backend/src/utils/werewolfStateHandlers.ts
+  - backend/src/utils/werewolfUtils.ts
+  - repair_log.txt
+删除文件: 无
+构建测试: 部分通过（全量 85 个源码文件静态扫描、后端 34 个 TypeScript strict/noEmit 与隔离测试编译、六 Worker prepare_room 烟雾、狼人杀夜序跳过专项回归及 package-lock 依赖树检查通过；正式 npm run build 仍因当前工作区 node_modules 不完整而在后端 tsc 阶段中止）
+本轮修复:
+  - 修复狼人杀遗留 WOLF_KILL_CHECK 状态在“无存活预言家、无存活女巫、无存活守卫”时仍无条件进入 GUARD_PROTECT 的卡死问题。该状态仍保留在状态映射和兼容路径中；旧逻辑若遇到 actionTime=0（不限时），会进入没有任何 operator、也没有自动超时的守卫阶段并永久停局。现在旧状态/恢复状态与当前主流程统一按实际存活角色跳过不存在的夜间阶段，首夜继续进入警长竞选，后续夜直接进入天亮结算。
+  - 将狼人击杀后、预言家后、女巫后的夜序推进抽成同一组共享跳过函数，消除四处分叉实现。这样自定义角色配置或角色夜间死亡后，当前 WOLF_KILL 主路径与旧 WOLF_KILL_CHECK 兼容路径不会再因为维护漂移得到不同下一状态。
+  - 修复 werewolfUtils.getNextGameStatus 中相同的缺席角色跳转错误：WOLF_KILL_CHECK 原来在没有预言家时直接返回 WITCH_ACT，即使女巫也不存在；SEER_CHECK 原来在没有女巫时直接返回 GUARD_PROTECT，即使守卫也不存在。现在工具函数会依次检查女巫/守卫，并在都缺席时按首夜/后续夜回到警长竞选或天亮阶段，与实际状态处理器一致。
+审查结果/本轮未改动重点:
+  - 再次覆盖 backend/src 与 frontend/src 当前全部 85 个 TypeScript/Vue/CSS/SVG 代码文件，并人工复核六个游戏 Worker 的关键规则与流程：狼人杀夜序/药剂/守护/猎人/投票；杀人游戏杀手一致击杀、警察/医生/狙击手与阵营胜负；血染钟楼夜序、registration、哲学家/复活/坑巫裁决链；一夜狼人换牌、投票并列与最终身份胜负；阿瓦隆组队/任务/五次否决/刺杀/湖上夫人；德州扑克盲注、行动顺序、短码 all-in、边池、未跟注筹码返还与摊牌。除本轮狼人杀兼容状态死锁外，没有发现适合本批低风险落地、优先级更高的新主流程阻断项。
+  - Controller、RoomThreadManager、BaseGameWorker 的房间任务串行、Worker 超时隔离、workerStateVersion/hostStateVersion/connectionStateVersion 合并和 game_action acknowledgement 继续复查，未发现本轮需要新增修改的确定性竞态；六个 Worker 均能在本轮严格隔离编译产物中完成 prepare_room。
+  - 前端 27 个 Vue SFC 的 script/template/style、CSS 花括号和相对/@ 导入重新扫描通过；各游戏继续复用既有 Room / ActionPanel / PlayerList / Chat 分层与 Element Plus 体系。页面主题仍有游戏间视觉差异，但未发现会影响构建/运行或值得在本轮进行高回归风险跨游戏重构的组件问题，因此本轮未修改 frontend/src。
+  - BOTC 仍保留此前已知的高阶边界：自定义夜序中如果某次死亡已经在 Pit-Hag 制造 Demon 之前真实落地，当前“本夜死亡任意”机制不能安全逆向撤销已经触发的死亡/被动效果；真人说书人也仍没有针对每一次 Recluse/Spy registration 的逐次手工裁决 UI。本轮没有对这两个需要更大状态模型/UI 改造的问题做冒险性修改。
+验证:
+  - backend/src 全部 34 个 TypeScript 文件使用 TypeScript 5.8.3、strict 模式、真实 Node 类型和位于项目目录外的 Express/CORS/Socket.IO/UUID 临时声明桩完成 noEmit 类型检查，0 个错误；同一配置成功生成 34 个 CommonJS 隔离测试文件。
+  - backend/src + frontend/src 全量静态扫描通过：共 85 个代码文件、83 个 TypeScript/Vue script 解析单元、27 个 Vue SFC、27 个 style 块、213 个相对/@ 静态导入均无 TypeScript 语法、SFC 标签平衡、CSS 花括号或失效导入错误；项目根目录不存在 src/。
+  - 六个实际游戏 Worker 使用本轮最新 strict 编译产物执行 prepare_room 烟雾全部通过：狼人杀、杀人游戏、一夜狼人、阿瓦隆、血染钟楼、德州扑克均能启动 Worker 并完成房间初始化。
+  - 狼人杀第 23 轮夜序专项回归 5/5 通过：旧 WOLF_KILL_CHECK 在首夜缺少预言家/女巫/守卫时跳到 SHERIFF_ELECT；后续夜同条件跳到 BEFORE_DAY_DISCUSS 而不是空 GUARD_PROTECT；getNextGameStatus 对无角色首夜/后续夜以及仅有守卫的分支均返回正确状态。
+  - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts 校验；本轮两个源码文件相对原始附件执行 diff --check 无新增尾随空白错误。
+  - 正式 npm run build 已在本轮最终源码上执行，但当前工作区 node_modules 仍是不完整安装，后端正式 tsc 因缺少 Node/Express/Socket.IO/UUID/CORS 等项目已声明依赖/类型而中止，根构建流程未进入前端 vue-tsc/Vite。因此本轮不能声称完整生产构建已在此容器通过；仍需在依赖源可用且能完成 npm ci 的本地或 CI 执行 npm ci && npm run build 做最终部署确认。
+备注: 本轮未删除文件，未创建根目录 src/；所有后端源码修改仅位于既有 backend/src/，未修改 frontend/src/；修复包只包含本轮修改文件及 repair_log.txt，可按相对路径直接覆盖。

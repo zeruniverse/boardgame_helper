@@ -325,10 +325,15 @@ export function getNextGameStatus(
       return GameStatus.WOLF_KILL_CHECK;
 
     case GameStatus.WOLF_KILL_CHECK:
-      return context.hasCharacter('SEER') ? GameStatus.SEER_CHECK : GameStatus.WITCH_ACT;
+      if (context.hasCharacter('SEER')) return GameStatus.SEER_CHECK;
+      if (context.hasCharacter('WITCH')) return GameStatus.WITCH_ACT;
+      if (context.hasCharacter('GUARD')) return GameStatus.GUARD_PROTECT;
+      return context.currentDay <= 1 ? GameStatus.SHERIFF_ELECT : GameStatus.BEFORE_DAY_DISCUSS;
 
     case GameStatus.SEER_CHECK:
-      return context.hasCharacter('WITCH') ? GameStatus.WITCH_ACT : GameStatus.GUARD_PROTECT;
+      if (context.hasCharacter('WITCH')) return GameStatus.WITCH_ACT;
+      if (context.hasCharacter('GUARD')) return GameStatus.GUARD_PROTECT;
+      return context.currentDay <= 1 ? GameStatus.SHERIFF_ELECT : GameStatus.BEFORE_DAY_DISCUSS;
 
     case GameStatus.WITCH_ACT:
       return context.hasCharacter('GUARD') ? GameStatus.GUARD_PROTECT :

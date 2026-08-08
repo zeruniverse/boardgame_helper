@@ -378,6 +378,40 @@ function hasAliveCharacter(players: Record<string, WerewolfPlayerState>, charact
   return Object.values(players).some(p => p.character === character && p.isAlive);
 }
 
+// 夜间角色可能因自定义配置或中途死亡而缺席。所有从狼人阶段继续的路径
+// 必须使用同一套“跳过缺席角色”规则，否则旧状态/恢复状态可能进入一个没有
+// operator 的不限时阶段而永久卡住。
+function continueNightAfterWolfKill(gameState: WerewolfGameState, context: any): void {
+  if (hasAliveCharacter(gameState.players, 'SEER')) {
+    SeerCheckHandler.startOfState(gameState, context);
+    return;
+  }
+
+  continueNightAfterSeer(gameState, context);
+}
+
+function continueNightAfterSeer(gameState: WerewolfGameState, context: any): void {
+  if (hasAliveCharacter(gameState.players, 'WITCH')) {
+    WitchActHandler.startOfState(gameState, context);
+    return;
+  }
+
+  continueNightAfterWitch(gameState, context);
+}
+
+function continueNightAfterWitch(gameState: WerewolfGameState, context: any): void {
+  if (hasAliveCharacter(gameState.players, 'GUARD')) {
+    GuardProtectHandler.startOfState(gameState, context);
+    return;
+  }
+
+  if (gameState.currentDay <= 1) {
+    SheriffElectHandler.startOfState(gameState, context);
+  } else {
+    BeforeDayDiscussHandler.startOfState(gameState, context);
+  }
+}
+
 // 工具函数 - 检查游戏结束并处理
 function checkAndHandleGameEnd(gameState: WerewolfGameState, context: any): boolean {
   const winner = checkGameEnd(gameState.players);
@@ -615,25 +649,8 @@ export const WolfKillHandler: StateHandler = {
       });
     }
 
-    // 进入预言家验人阶段（如果有预言家）
-    const hasSeer = hasAliveCharacter(gameState.players, 'SEER');
-    if (hasSeer) {
-      SeerCheckHandler.startOfState(gameState, context);
-    } else {
-      const hasWitch = hasAliveCharacter(gameState.players, 'WITCH');
-      if (hasWitch) {
-        WitchActHandler.startOfState(gameState, context);
-      } else {
-        const hasGuard = hasAliveCharacter(gameState.players, 'GUARD');
-        if (hasGuard) {
-          GuardProtectHandler.startOfState(gameState, context);
-        } else if (gameState.currentDay <= 1) {
-          SheriffElectHandler.startOfState(gameState, context);
-        } else {
-          BeforeDayDiscussHandler.startOfState(gameState, context);
-        }
-      }
-    }
+    // 统一跳过当前配置中不存在/已经死亡的夜间角色。
+    continueNightAfterWolfKill(gameState, context);
   }
 };
 
@@ -659,20 +676,8 @@ export const SeerCheckHandler: StateHandler = {
       gameState.timer = undefined;
     }
 
-    // 进入女巫阶段（如果有女巫）
-    const hasWitch = hasAliveCharacter(gameState.players, 'WITCH');
-    if (hasWitch) {
-      WitchActHandler.startOfState(gameState, context);
-    } else {
-      const hasGuard = hasAliveCharacter(gameState.players, 'GUARD');
-      if (hasGuard) {
-        GuardProtectHandler.startOfState(gameState, context);
-      } else if (gameState.currentDay <= 1) {
-        SheriffElectHandler.startOfState(gameState, context);
-      } else {
-        BeforeDayDiscussHandler.startOfState(gameState, context);
-      }
-    }
+    // 统一跳过当前配置中不存在/已经死亡的后续夜间角色。
+    continueNightAfterSeer(gameState, context);
   }
 };
 
@@ -714,18 +719,8 @@ export const WitchActHandler: StateHandler = {
       gameState.timer = undefined;
     }
 
-    // 进入守卫阶段（如果有守卫）
-    const hasGuard = hasAliveCharacter(gameState.players, 'GUARD');
-    if (hasGuard) {
-      GuardProtectHandler.startOfState(gameState, context);
-    } else {
-      // 第一天有警长竞选
-      if (gameState.currentDay <= 1) {
-        SheriffElectHandler.startOfState(gameState, context);
-      } else {
-        BeforeDayDiscussHandler.startOfState(gameState, context);
-      }
-    }
+    // 统一跳过当前配置中不存在/已经死亡的守卫阶段。
+    continueNightAfterWitch(gameState, context);
   }
 };
 
@@ -1612,18 +1607,9 @@ export const WolfKillCheckHandler: StateHandler = {
       gameState.timer = undefined;
     }
 
-    // 进入预言家阶段
-    const hasSeer = hasAliveCharacter(gameState.players, 'SEER');
-    if (hasSeer) {
-      SeerCheckHandler.startOfState(gameState, context);
-    } else {
-      const hasWitch = hasAliveCharacter(gameState.players, 'WITCH');
-      if (hasWitch) {
-        WitchActHandler.startOfState(gameState, context);
-      } else {
-        GuardProtectHandler.startOfState(gameState, context);
-      }
-    }
+    // 旧版/恢复状态也必须复用当前夜序跳过逻辑。旧实现无条件进入
+    // GUARD_PROTECT；当本局没有存活守卫且 actionTime=0 时会永久卡住。
+    continueNightAfterWolfKill(gameState, context);
   }
 };
 
