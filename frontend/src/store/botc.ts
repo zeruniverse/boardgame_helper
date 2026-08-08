@@ -320,7 +320,7 @@ export const useBOTCGameStore = defineStore('botc', () => {
               player.isAlive = false
             }
           }
-          ElMessage.error(`${data.playerName} 死亡！原因: ${data.cause}`)
+          ElMessage.error(`${data.playerName} 死亡！`)
         })
 
         on('playerRevived', (data) => {

@@ -53,6 +53,7 @@ const VIGORMORTIS_POISON_SOURCE_PREFIX = 'vigormortis:';
 const KLUTZ_DEATH_PENDING_REMINDER = 'Klutz Death Ability Pending';
 const MOONCHILD_DEATH_PENDING_REMINDER = 'Moonchild Death Ability Pending';
 const BARBER_HAIRCUT_REMINDER = 'Haircuts tonight';
+const GRANDMOTHER_GRANDCHILD_PREFIX = 'Grandchild:';
 
 interface PendingBarberDecision {
   barberId: string;
@@ -122,6 +123,21 @@ export class BOTCWorker extends BaseGameWorker {
   private getPlayerName(playerId: string): string {
     const player = this.room.players.find(p => p.id === playerId);
     return player?.name || player?.nickname || '未知玩家';
+  }
+
+  /**
+   * BOTC 的死亡原因与角色触发通常属于魔典私密信息。公共事件只广播
+   * “谁死亡了”，避免通过 cause/能力标记直接泄露隐藏角色或击杀来源。
+   */
+  private announcePublicDeath(playerId: string): void {
+    this.sendToRoom('playerDied', {
+      playerId,
+      playerName: this.getPlayerName(playerId)
+    });
+  }
+
+  private notifyStoryteller(message: string, type: 'info' | 'warning' | 'success' = 'info'): void {
+    this.sendToPlayer(this.gameConfig.storytellerId, 'gameMessage', { message, type });
   }
 
   private getEffectiveRole(player: GamePlayer): Role | null {
@@ -431,7 +447,9 @@ export class BOTCWorker extends BaseGameWorker {
       'Fang Gu Jumped',
       'ravenkeeperDeathAbilityUsed'
     ]);
-    player.reminders = player.reminders.filter(reminder => !characterUsageReminders.has(reminder));
+    player.reminders = player.reminders.filter(reminder =>
+      !characterUsageReminders.has(reminder) && !reminder.startsWith(GRANDMOTHER_GRANDCHILD_PREFIX)
+    );
     player.hasActed = false;
     player.nightInfo = null;
   }
@@ -984,6 +1002,32 @@ export class BOTCWorker extends BaseGameWorker {
     player.deathCause = cause;
     player.isAlive = false;
     this.recordDeathToday(player, cause);
+  }
+
+  /**
+   * Grandmother: the grandchild relationship is fixed at setup. If that player is
+   * actually killed by a Demon ability while the Grandmother is sober/healthy,
+   * the Grandmother dies as well. The follow-up cause is deliberately distinct so
+   * it cannot recursively trigger another Grandmother relation as a Demon kill.
+   */
+  private async resolveGrandmotherDeathForGrandchild(grandchildId: string, cause: string): Promise<void> {
+    if (!this.isDemonAbilityCause(cause)) return;
+
+    const marker = `${GRANDMOTHER_GRANDCHILD_PREFIX}${grandchildId}`;
+    const grandmothers = Array.from(this.gamePlayers.values()).filter(candidate =>
+      candidate.role?.id === 'grandmother' &&
+      !candidate.isDead &&
+      candidate.reminders.includes(marker) &&
+      this.playerAbilityWorks(candidate)
+    );
+
+    for (const grandmother of grandmothers) {
+      this.notifyStoryteller(
+        `祖母能力触发：${this.getPlayerName(grandchildId)} 被恶魔能力杀死，${this.getPlayerName(grandmother.playerId)} 随之死亡`,
+        'warning'
+      );
+      await this.killPlayer(grandmother.playerId, 'grandmother');
+    }
   }
 
   private getDebuffSources(): DebuffSourceMap {
@@ -1979,10 +2023,7 @@ export class BOTCWorker extends BaseGameWorker {
       role: scarletWoman.role.id,
       information: { message: '你成为了新的恶魔！' }
     });
-    this.sendToRoom('gameMessage', {
-      message: '红颜成为了新的恶魔',
-      type: 'warning'
-    });
+    this.notifyStoryteller('红颜成为了新的恶魔', 'warning');
     return true;
   }
 
@@ -2496,9 +2537,10 @@ export class BOTCWorker extends BaseGameWorker {
 
     if (skippedPlayerIds.length > 0) {
       this.sendToRoom('gameMessage', {
-        message: `夜晚计时结束，已跳过 ${skippedPlayerIds.length} 名未行动玩家并结算本夜`,
+        message: '夜晚计时结束，系统已自动结算未完成的行动',
         type: 'warning'
       });
+      this.notifyStoryteller(`夜晚计时结束，已跳过 ${skippedPlayerIds.length} 名未行动玩家并结算本夜`, 'warning');
     }
 
     await this.processNightActions();
@@ -2529,6 +2571,19 @@ export class BOTCWorker extends BaseGameWorker {
           // 只有实际信息才发送给玩家；元数据（如requiresTargets）仅供内部使用，
           // 不应发送给玩家，避免泄露说书人信息（如占卜师的redHerring）
           if (!isMetaInfo) {
+            // Grandmother 的孙辈关系属于真实的角色状态；Vortox 只会让“展示的信息”
+            // 必须为假，不应把真实孙辈关系也改成伪造结果。醉酒/中毒时能力失效，
+            // 因而不建立死亡联动。
+            if (effectiveRole.id === 'grandmother') {
+              player.reminders = player.reminders.filter(reminder => !reminder.startsWith(GRANDMOTHER_GRANDCHILD_PREFIX));
+              const grandchildId = typeof result.information.grandchild === 'string'
+                ? result.information.grandchild
+                : null;
+              if (grandchildId && this.playerAbilityWorks(player)) {
+                this.addReminder(player, `${GRANDMOTHER_GRANDCHILD_PREFIX}${grandchildId}`);
+              }
+            }
+
             // 中毒/醉酒或有效 Vortox 在场时，镇民信息必须为错误信息，且不能向玩家泄露被污染状态。
             const finalInfo = this.prepareInfoForPlayer(player, result.information, effectiveRole.id, effectiveRole);
 
@@ -2941,9 +2996,10 @@ export class BOTCWorker extends BaseGameWorker {
         // 提名者是镇民，Virgin能力成功触发
         await this.executePlayer(playerId, nomineeId);
         this.sendToRoom('gameMessage', {
-          message: `${this.getPlayerName(playerId)} 提名了处女，被立即处决！`,
+          message: `${this.getPlayerName(playerId)} 发起提名后被立即处决！`,
           type: 'warning'
         });
+        this.notifyStoryteller(`处女能力触发：${this.getPlayerName(playerId)} 被立即处决`, 'warning');
 
         // 处女能力造成的是一次处决；按 BOTC 规则每天最多一次处决，
         // 因此若游戏未因该处决结束，应立即结束当天并进入夜晚。
@@ -2961,9 +3017,10 @@ export class BOTCWorker extends BaseGameWorker {
       await this.killPlayer(playerId, 'witch');
       nominator.reminders = nominator.reminders.filter(r => r !== '被诅咒' && r !== 'Cursed');
       this.sendToRoom('gameMessage', {
-        message: `${this.getPlayerName(playerId)} 受到女巫诅咒，因提名而死亡！`,
+        message: `${this.getPlayerName(playerId)} 发起提名后死亡！`,
         type: 'warning'
       });
+      this.notifyStoryteller(`女巫诅咒触发：${this.getPlayerName(playerId)} 因提名死亡`, 'warning');
 
       const gameEnd = checkGameEnd(
         Array.from(this.gamePlayers.values()),
@@ -3350,9 +3407,9 @@ export class BOTCWorker extends BaseGameWorker {
         this.sendToRoom('playerExecuted', {
           playerId,
           playerName: this.getPlayerName(playerId),
-          executedBy: this.getPlayerName(executedBy),
-          finalDeath: true
+          executedBy: this.getPlayerName(executedBy)
         });
+        this.notifyStoryteller(`${this.getPlayerName(playerId)}（僵怖）被再次处决并真正死亡`, 'warning');
         this.broadcastGameState();
 
         if (player.role?.team === Team.DEMON) {
@@ -3366,10 +3423,7 @@ export class BOTCWorker extends BaseGameWorker {
           if (mastermind) {
             this.gameState.grimoire.mastermindTriggered = true;
             this.gameState.grimoire.mastermindResolveDay = this.gameState.day + 1;
-            this.sendToRoom('gameMessage', {
-              message: '幕后黑手生效，游戏继续一天',
-              type: 'info'
-            });
+            this.notifyStoryteller('幕后黑手生效，游戏继续一天', 'info');
             return;
           }
         }
@@ -3434,13 +3488,9 @@ export class BOTCWorker extends BaseGameWorker {
       this.sendToRoom('playerExecuted', {
         playerId,
         playerName: this.getPlayerName(playerId),
-        executedBy: this.getPlayerName(executedBy),
-        zombuulFirstDeath: true
+        executedBy: this.getPlayerName(executedBy)
       });
-      this.sendToRoom('gameMessage', {
-        message: `${this.getPlayerName(playerId)} 死亡并登记为死亡，但游戏仍在继续`,
-        type: 'warning'
-      });
+      this.notifyStoryteller(`${this.getPlayerName(playerId)}（僵怖）首次死亡，公开登记为死亡但仍功能性存活`, 'warning');
       this.broadcastGameState();
       return;
     }
@@ -3499,10 +3549,7 @@ export class BOTCWorker extends BaseGameWorker {
       if (mastermind) {
         this.gameState.grimoire.mastermindTriggered = true;
         this.gameState.grimoire.mastermindResolveDay = this.gameState.day + 1;
-        this.sendToRoom('gameMessage', {
-          message: '幕后黑手生效，游戏继续一天',
-          type: 'info'
-        });
+        this.notifyStoryteller('幕后黑手生效，游戏继续一天', 'info');
         // 幕后黑手生效时不检查游戏结束，继续推进游戏流程
         return;
       }
@@ -3665,7 +3712,7 @@ export class BOTCWorker extends BaseGameWorker {
 
       player.reminders = player.reminders.filter(reminder => reminder !== KLUTZ_DEATH_PENDING_REMINDER);
       this.sendToRoom('gameMessage', {
-        message: `${this.getPlayerName(playerId)} 的死亡能力公开选择了 ${this.getPlayerName(target.playerId)}`,
+        message: `${this.getPlayerName(playerId)} 公开选择了 ${this.getPlayerName(target.playerId)}`,
         type: 'warning'
       });
       this.sendToPlayer(this.gameConfig.storytellerId, 'deathAbilityResolved', {
@@ -3704,7 +3751,7 @@ export class BOTCWorker extends BaseGameWorker {
       });
 
       this.sendToRoom('gameMessage', {
-        message: `${this.getPlayerName(playerId)} 的死亡能力公开选择了 ${this.getPlayerName(target.playerId)}`,
+        message: `${this.getPlayerName(playerId)} 公开选择了 ${this.getPlayerName(target.playerId)}`,
         type: 'warning'
       });
       this.sendToPlayer(this.gameConfig.storytellerId, 'deathAbilityResolved', {
@@ -3816,10 +3863,7 @@ export class BOTCWorker extends BaseGameWorker {
           this.applyDebuff(target, 'Poisoned', 'manual');
         }
         this.refreshVigormortisEffects();
-        this.sendToRoom('gameMessage', {
-          message: `${this.getPlayerName(data.playerId)} ${hasPoisoned ? '被解毒' : '被标记为中毒'}`,
-          type: 'info'
-        });
+        this.notifyStoryteller(`${this.getPlayerName(data.playerId)} ${hasPoisoned ? '被解毒' : '被标记为中毒'}`, 'info');
         this.broadcastGameState();
         break;
       }
@@ -3836,10 +3880,7 @@ export class BOTCWorker extends BaseGameWorker {
           this.applyDebuff(target, 'Drunk', 'manual');
         }
         this.refreshVigormortisEffects();
-        this.sendToRoom('gameMessage', {
-          message: `${this.getPlayerName(data.playerId)} ${hasDrunk ? '恢复清醒' : '被标记为醉酒'}`,
-          type: 'info'
-        });
+        this.notifyStoryteller(`${this.getPlayerName(data.playerId)} ${hasDrunk ? '恢复清醒' : '被标记为醉酒'}`, 'info');
         this.broadcastGameState();
         break;
       }
@@ -3929,7 +3970,7 @@ export class BOTCWorker extends BaseGameWorker {
           }
           this.broadcastGameState();
           this.sendToRoom('gameMessage', {
-            message: `${this.getPlayerName(playerId)} 使用杀手能力击杀了 ${this.getPlayerName(targetId)}（恶魔）！`,
+            message: `${this.getPlayerName(playerId)} 使用杀手能力后，${this.getPlayerName(targetId)} 死亡了！`,
             type: 'success'
           });
           const gameEnd = checkGameEnd(
@@ -4375,10 +4416,7 @@ export class BOTCWorker extends BaseGameWorker {
         this.refreshAlignmentLists();
         this.sendRoleStateToPlayer(playerA.playerId);
         this.sendRoleStateToPlayer(playerB.playerId);
-        this.sendToRoom('gameMessage', {
-          message: swap.message || '有玩家的角色发生了交换',
-          type: 'warning'
-        });
+        this.notifyStoryteller(swap.message || '有玩家的角色发生了交换', 'warning');
       }
     }
 
@@ -4392,6 +4430,7 @@ export class BOTCWorker extends BaseGameWorker {
         player.role = { ...newRole };
         player.displayRole = undefined;
         player.nightInfo = null;
+        player.reminders = player.reminders.filter(reminder => !reminder.startsWith(GRANDMOTHER_GRANDCHILD_PREFIX));
         if (change.poison) {
           this.applyDebuff(player, 'Poisoned', 'pithag');
         }
@@ -4699,12 +4738,7 @@ export class BOTCWorker extends BaseGameWorker {
       if (!isZombuulLivingWhileRegisteredDead(player)) return;
 
       this.finishRegisteredDeadZombuul(player, cause);
-      this.sendToRoom('playerDied', {
-        playerId,
-        playerName: this.getPlayerName(playerId),
-        cause,
-        finalDeath: true
-      });
+      this.notifyStoryteller(`${this.getPlayerName(playerId)}（僵怖）真正死亡`, 'warning');
       if (player.role?.team === Team.DEMON) {
         this.promoteScarletWomanIfNeeded(playerId);
       }
@@ -4726,7 +4760,11 @@ export class BOTCWorker extends BaseGameWorker {
     // 检查愚者（Fool）免死效果。刺客会绕过一切防死效果；其他保护先生效，避免白白消耗愚者。
     if (!ignoresDeathProtection && player.role?.id === 'fool' && this.playerAbilityWorks(player) && !player.reminders?.includes('foolUsed')) {
       this.addReminder(player, 'foolUsed');
-      this.sendToRoom('gameMessage', { message: `${this.getPlayerName(playerId)} 使用了愚者的免死能力！`, type: 'info' });
+      this.sendToPlayer(this.gameConfig.storytellerId, 'playerProtected', {
+        playerId,
+        playerName: this.getPlayerName(playerId),
+        reason: '愚者首次免死'
+      });
       return;
     }
 
@@ -4749,16 +4787,9 @@ export class BOTCWorker extends BaseGameWorker {
     }
 
     if (this.applyZombuulFirstDeath(player, cause)) {
-      this.sendToRoom('playerDied', {
-        playerId,
-        playerName: this.getPlayerName(playerId),
-        cause,
-        zombuulFirstDeath: true
-      });
-      this.sendToRoom('gameMessage', {
-        message: `${this.getPlayerName(playerId)} 死亡并登记为死亡，但游戏仍在继续`,
-        type: 'warning'
-      });
+      this.announcePublicDeath(playerId);
+      this.notifyStoryteller(`${this.getPlayerName(playerId)}（僵怖）首次死亡，公开登记为死亡但仍功能性存活`, 'warning');
+      await this.resolveGrandmotherDeathForGrandchild(playerId, cause);
       this.broadcastGameState();
       return;
     }
@@ -4777,12 +4808,8 @@ export class BOTCWorker extends BaseGameWorker {
       this.gameState.livingPlayers--;
       this.recordDeathToday(player, cause);
 
-      this.sendToRoom('playerDied', {
-        playerId,
-        playerName: this.getPlayerName(playerId),
-        cause,
-        hasDeathAbility: true
-      });
+      this.announcePublicDeath(playerId);
+      await this.resolveGrandmotherDeathForGrandchild(playerId, cause);
       if (player.role?.team === Team.DEMON) {
         this.promoteScarletWomanIfNeeded(playerId);
       }
@@ -4868,12 +4895,8 @@ export class BOTCWorker extends BaseGameWorker {
       this.gameState.livingPlayers--;
       this.recordDeathToday(player, cause);
 
-      this.sendToRoom('playerDied', {
-        playerId,
-        playerName: this.getPlayerName(playerId),
-        cause,
-        hasDeathAbility: true
-      });
+      this.announcePublicDeath(playerId);
+      await this.resolveGrandmotherDeathForGrandchild(playerId, cause);
       if (player.role?.team === Team.DEMON) {
         this.promoteScarletWomanIfNeeded(playerId);
       }
@@ -4915,11 +4938,8 @@ export class BOTCWorker extends BaseGameWorker {
     this.queueBarberDeathIfNeeded(player);
     this.refreshVigormortisEffects();
 
-    this.sendToRoom('playerDied', {
-      playerId,
-      playerName: this.getPlayerName(playerId),
-      cause
-    });
+    this.announcePublicDeath(playerId);
+    await this.resolveGrandmotherDeathForGrandchild(playerId, cause);
     if (player.role?.team === Team.DEMON) {
       this.promoteScarletWomanIfNeeded(playerId);
     }
@@ -5166,7 +5186,7 @@ export class BOTCWorker extends BaseGameWorker {
           actionData.targets = [pithagTarget];
           // AI说书人：如果场上已有存活恶魔，绝不变出第二个恶魔
           const hasAliveDemon = this.hasFunctionallyAliveDemon(allPlayers);
-          const safeOutsiderRoles = ['drunk', 'recluse', 'saint', 'tinker', 'moonchild', 'goon', 'mutant', 'sweetheart', 'barber', 'klutz'];
+          const safeOutsiderRoles = ['drunk', 'recluse', 'saint', 'moonchild', 'sweetheart', 'barber', 'klutz'];
           actionData.data = { 
             character: hasAliveDemon 
               ? safeOutsiderRoles[Math.floor(Math.random() * safeOutsiderRoles.length)]

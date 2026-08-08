@@ -960,3 +960,35 @@ Commit: fix(round9): 修正钟楼智者乌鸦与镇长夜间结算
   - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts 校验；差异空白检查未报告新增空白问题。
   - 已再次尝试 npm ci --ignore-scripts，但当前内部 npm 源对锁定的 typescript-5.8.3.tgz 返回 404；随后 npm run build 因 node_modules 未安装，在后端正式 tsc 阶段缺少 Node/Express/Socket.IO/UUID/CORS 等项目已声明依赖/类型而中止，前端 vue-tsc/Vite 未进入执行。因此本轮不能声称生产构建已在此容器通过，仍需在依赖源可用的本地或 CI 执行 npm ci && npm run build 做最终部署构建确认。
 备注: 本轮未删除文件，未创建根目录 src/；所有后端源码修改仅位于 backend/src/，所有前端源码修改仅位于 frontend/src/；修复包只包含本轮修改文件及 repair_log.txt，可按相对路径直接覆盖。
+
+=== 当前请求第 10 轮修复记录 ===
+时间: 2026-08-08 02:42:33 UTC
+Commit: fix(round10): 修复钟楼隐私泄露与祖母死亡联动
+修改/新增文件:
+  - backend/src/workers/botcWorker.ts
+  - backend/src/utils/botcUtils.ts
+  - frontend/src/store/botc.ts
+  - doc/botc.md
+  - repair_log.txt
+删除文件: 无
+构建测试: 部分通过（源码 strict/静态检查、六 Worker prepare_room 烟雾及 BOTC 专项回归通过；完整 npm build 仍受当前容器内部 npm 源缺包阻塞）
+本轮修复:
+  - 血染钟楼统一收紧死亡事件的公开数据边界：公共 playerDied 只包含玩家 ID/名称，不再广播 death cause、死亡能力标记、Zombuul 首死/最终死亡等魔典私密字段；前端死亡提示同步移除“死亡原因”展示，避免直接从网络事件或 Toast 泄露击杀来源与隐藏角色。
+  - 修复 Zombuul（僵怖）隐藏状态泄露：第一次死亡仍按普通死亡公开登记，但“仍功能性存活”只通知说书人；已经登记死亡的僵怖真正死亡时不再额外广播第二次 playerDied/finalDeath；被再次处决仍只公开正常处决事实，不再携带 finalDeath/zombuulFirstDeath 私密标记。
+  - 修复多处 BOTC 公共系统消息直接报出隐藏角色/魔典状态的问题：Scarlet Woman 接任、Mastermind 生效、Fool 免死、Snake Charmer 换角、人工说书人中毒/醉酒标记改为说书人私密信息；Virgin/Witch 触发、Klutz/Moonchild 公共选择及 Slayer 成功提示改为只描述公开可观察结果，不直接报出隐藏身份/阵营；夜晚超时公共消息不再泄露未行动角色数量。
+  - 补齐 Grandmother（祖母）核心死亡联动：首夜把真实孙辈关系作为魔典状态持久保存；Vortox 仅污染玩家看到的信息，不改写真正孙辈关系；醉酒/中毒导致能力失效时不建立有效联动；真实孙辈被 Demon 能力杀死且祖母当时能力有效时，祖母会随之死亡，非 Demon 死亡不会错误触发。
+  - Grandmother 角色关系在 Barber 换角或 Pit-Hag 改角后会清除旧角色绑定标记，避免以后再次获得 Grandmother 时错误继承旧孙辈关系；规则文档同步修正此前“孙辈被恶魔杀死后祖母可杀恶魔”的错误描述。
+  - AI 说书人自动组局/改角排除当前没有可靠自动裁决链路的 Tinker、Goon、Mutant，并从 AI Pit-Hag 自动外来者候选池移除这些角色，避免 AI 创建后无法正确执行其核心能力。
+审查结果/本轮未改动重点:
+  - 继续扫描 backend/src 与 frontend/src 当前全部 84 个源码文件，复查六个游戏 Worker、Controller/RoomThreadManager 状态边界、Vue SFC 结构与相对导入。本轮最严重且可稳定复现的新问题集中在 BOTC 的公共事件/系统消息越权泄露和 Grandmother 核心能力缺失，因此优先完成小范围、可回归的修复。
+  - 狼人杀、杀人游戏、一夜狼人、阿瓦隆、德州扑克沿用前九轮已修复的阶段推进、身份隐私、断线/重连、投票/刺杀、状态版本、边池与加注权逻辑；本轮全量静态检查和 Worker 初始化烟雾未发现优先级高于上述 BOTC 隐私/规则问题的新阻断项。
+  - BOTC 的 Recluse/Spy 等 registration（可登记为不同角色/阵营）仍未抽象为通用说书人裁决系统；因此 Slayer、部分信息角色及高级角色组合仍存在需要后续逐项补齐的官方边界。Grandmother 被 Professor 复活、以及被中途创造角色后的“start knowing”语义也建议后续做专项交互验证。
+  - 前端仍沿用各游戏 Room / ActionPanel / PlayerList / Chat 既有分层与 Element Plus 体系；本轮没有进行跨游戏大规模视觉重构。现有页面仍存在一定游戏主题差异，但未发现需要以破坏性重构换取的部署阻断问题。
+验证:
+  - backend/src 全部 34 个 TypeScript 文件使用 TypeScript 5.8.3、strict 模式、真实 Node 类型与临时 Express/CORS/Socket.IO/UUID 声明桩完成 noEmit 类型检查，0 个错误；同一配置成功生成 34 个测试用 CommonJS 文件。
+  - backend/src + frontend/src 共 84 个源码文件完成静态扫描：82 个 TypeScript/Vue script 解析单元、27 个 Vue SFC、27 个 style 块、217 个相对导入均通过，无语法、SFC 结构或失效相对导入错误；根目录不存在 src/。
+  - 六个实际游戏 Worker 使用本轮严格编译产物执行 prepare_room 烟雾测试全部通过：狼人杀、杀人游戏、一夜狼人、阿瓦隆、血染钟楼、德州扑克均能启动 Worker 并完成房间初始化。
+  - BOTC 第 10 轮专项回归 7 个场景通过：祖母真实孙辈的 Demon 死亡联动；非 Demon 死亡不触发祖母；人工说书人中毒标记不公开泄露；Zombuul 首死无私密字段/角色公告；Scarlet Woman 接任不公开报角色；Snake Charmer 换角不公开报交换；AI 说书人排除 Tinker/Goon/Mutant。
+  - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts 校验。
+  - 完整 npm ci --ignore-scripts 已再次尝试，但当前内部 npm 源对锁定的 typescript-5.8.3.tgz 返回 404，因此项目 node_modules 无法完整安装，无法在本容器继续执行正式 npm run build / vue-tsc / Vite 生产构建。该环境限制不影响上述源码 strict 类型检查、静态检查、六 Worker 烟雾和专项回归；仍需在依赖源可用的本地或 CI 执行 npm ci && npm run build 做最终部署构建确认。
+备注: 本轮未删除文件，未创建根目录 src/；所有后端源码修改仅位于 backend/src/，所有前端源码修改仅位于 frontend/src/；修复包只包含本轮修改文件及 repair_log.txt，可按相对路径直接覆盖。

@@ -30,7 +30,11 @@ export const AI_STORYTELLER_MANUAL_ROLE_IDS: ReadonlySet<string> = new Set([
   'pacifist',
   'lunatic',
   'savant',
-  'juggler'
+  'juggler',
+  // 这些角色依赖说书人的实时裁量/状态选择；当前 AI 没有对应结算链路。
+  'tinker',
+  'goon',
+  'mutant'
 ]);
 
 export function isZombuulLivingWhileRegisteredDead(player?: GamePlayer | null): boolean {
