@@ -2193,6 +2193,19 @@ export class BOTCWorker extends BaseGameWorker {
     return Boolean(storytellerId?.startsWith('computer_'));
   }
 
+  private getAiBiasFromStorytellerId(storytellerId: string | undefined): GameConfig['aiBias'] | undefined {
+    switch (storytellerId) {
+      case 'computer_good':
+        return 'good';
+      case 'computer_evil':
+        return 'evil';
+      case 'computer_neutral':
+        return 'neutral';
+      default:
+        return undefined;
+    }
+  }
+
   private buildEffectiveGameConfig(config: Partial<GameConfig>, fallback?: GameConfig): GameConfig {
     const requestedEdition = config.edition ?? fallback?.edition ?? 'tb';
     if (!getEditionById(requestedEdition)) {
@@ -2205,9 +2218,22 @@ export class BOTCWorker extends BaseGameWorker {
     }
     const maxPlayers = Math.max(5, Math.min(15, Math.floor(requestedMaxPlayers)));
 
-    const aiBias = config.aiBias === 'good' || config.aiBias === 'evil' || config.aiBias === 'neutral'
+    const configuredAiBias = config.aiBias === 'good' || config.aiBias === 'evil' || config.aiBias === 'neutral'
       ? config.aiBias
-      : fallback?.aiBias || 'neutral';
+      : undefined;
+    const explicitStorytellerId = typeof config.storytellerId === 'string'
+      ? config.storytellerId.trim()
+      : '';
+    // storytellerId 与 aiBias 是同一 AI 说书人选择的两种表示。旧房间/外部客户端
+    // 可能只发送 computer_good / computer_evil 而省略 aiBias；若继续沿用 fallback
+    // 的 neutral，会导致自动选目标与沙巴洛斯等裁决分别读取两个互相矛盾的偏好。
+    // 显式 aiBias 优先，其次从本次显式电脑说书人 ID 推断，再回退到已有规范配置。
+    const aiBias = configuredAiBias
+      ?? this.getAiBiasFromStorytellerId(explicitStorytellerId)
+      ?? (fallback?.aiBias === 'good' || fallback?.aiBias === 'evil' || fallback?.aiBias === 'neutral'
+        ? fallback.aiBias
+        : this.getAiBiasFromStorytellerId(fallback?.storytellerId))
+      ?? 'neutral';
     const requestedMode = config.storytellerMode === 'player' || config.storytellerMode === 'ai' || config.storytellerMode === 'none'
       ? config.storytellerMode
       : fallback?.storytellerMode || 'player';
@@ -2222,9 +2248,9 @@ export class BOTCWorker extends BaseGameWorker {
       storytellerMode = this.isComputerStoryteller(storytellerId) ? 'ai' : 'player';
     }
     if (storytellerMode === 'ai') {
-      if (!this.isComputerStoryteller(storytellerId) || config.aiBias !== undefined) {
-        storytellerId = `computer_${aiBias}`;
-      }
+      // 始终把虚拟说书人 ID 规范成三个受支持值，保证 storytellerId / aiBias
+      // 不会在 room_update、AI 行动和说书人裁决中成为两个不同的事实来源。
+      storytellerId = `computer_${aiBias}`;
     } else if (!storytellerId || this.isComputerStoryteller(storytellerId)) {
       storytellerId = this.room.hostId;
     }
@@ -6271,8 +6297,9 @@ export class BOTCWorker extends BaseGameWorker {
           this.gameState.phase !== GamePhase.NIGHT) return;
 
       const allPlayers = Array.from(this.gamePlayers.values());
-      const aiBias = this.gameConfig.storytellerId?.includes('good') ? 'good' : 
-                     this.gameConfig.storytellerId?.includes('evil') ? 'evil' : 'neutral';
+      // buildEffectiveGameConfig 已保证 aiBias 与电脑说书人 ID 一致。后续 AI
+      // 决策统一读取规范字段，不再从字符串 ID 二次推断出另一份状态。
+      const aiBias = this.gameConfig.aiBias || 'neutral';
 
       // 批量处理夜晚行动
       for (const playerId of this.gameState.nightOrder) {

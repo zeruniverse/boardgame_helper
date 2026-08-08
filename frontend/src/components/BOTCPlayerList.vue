@@ -253,10 +253,11 @@ const isHost = computed(() => {
   return props.currentUserId === props.hostId
 })
 
-// 使用游戏阶段判断游戏是否已开始
+// 普通玩家收到的公开 gameState 会刻意隐藏所有人的真实 role，因此不能用
+// “是否存在非空角色”判断开局状态。gamePlayers 在 SETUP 阶段为空，开局分配
+// 座位后才会出现；直接使用参与者列表即可同时兼容普通玩家、真人说书人和 AI 局。
 const gameStarted = computed(() => {
-  return props.gamePlayers && props.gamePlayers.length > 0 && 
-    props.gamePlayers.some((p: any) => p.role !== null)
+  return Array.isArray(props.gamePlayers) && props.gamePlayers.length > 0
 })
 
 const storytellerId = computed(() => {
