@@ -64,11 +64,11 @@
             <span v-else>建议人数: 5-15名实际玩家 + 1名说书人</span>
           </div>
           <el-button 
-            v-if="isStoryteller && (gameState.players?.length >= 5 || gameState.playerCount >= 5)" 
+            v-if="isStoryteller && !isHost && (gameState.players?.length >= 5 || gameState.playerCount >= 5)" 
             type="primary"
             @click="startGame"
           >
-            开始游戏
+            按当前配置开始游戏
           </el-button>
         </div>
       </el-card>
@@ -243,8 +243,11 @@
           <el-button @click="nextPhase" type="primary">
             进入夜晚
           </el-button>
-          <el-button @click="endGame" type="danger">
-            结束游戏
+          <el-button @click="endGame('good')" type="success" plain>
+            善良获胜并结束
+          </el-button>
+          <el-button @click="endGame('evil')" type="danger" plain>
+            邪恶获胜并结束
           </el-button>
         </div>
       </el-card>
@@ -449,6 +452,14 @@
           >
             进入白天
           </el-button>
+          <div class="storyteller-actions storyteller-result-actions">
+            <el-button @click="endGame('good')" type="success" plain>
+              善良获胜并结束
+            </el-button>
+            <el-button @click="endGame('evil')" type="danger" plain>
+              邪恶获胜并结束
+            </el-button>
+          </div>
         </div>
       </el-card>
 
@@ -550,6 +561,7 @@
 
 <script setup lang="ts">
 import { computed, ref, watch, onUnmounted } from 'vue'
+import { ElMessageBox } from 'element-plus'
 import { formatPlayerName } from '../utils/playerName'
 import { formatBOTCNightInfo } from '../utils/botcNightInfo'
 
@@ -1205,10 +1217,29 @@ const nextPhase = () => {
   })
 }
 
-const endGame = () => {
+const endGame = async (winner: 'good' | 'evil') => {
+  const winnerName = winner === 'good' ? '善良阵营' : '邪恶阵营'
+  try {
+    await ElMessageBox.confirm(
+      `确认判定${winnerName}获胜并立即结束游戏吗？`,
+      '确认结束游戏',
+      {
+        confirmButtonText: '确认结束',
+        cancelButtonText: '取消',
+        type: 'warning'
+      }
+    )
+  } catch {
+    return
+  }
+
   emit('game-action', {
     type: 'storytellerAction',
-    data: { actionType: 'endGame', winner: props.gameState?.winner || 'good', reason: '说书人结束游戏' }
+    data: {
+      actionType: 'endGame',
+      winner,
+      reason: `说书人手动判定${winnerName}获胜`
+    }
   })
 }
 
@@ -1417,8 +1448,13 @@ const formatNightInfo = (info: any) => formatBOTCNightInfo(
 
 .storyteller-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 12px;
   justify-content: center;
+}
+
+.storyteller-result-actions {
+  margin-top: 12px;
 }
 
 .night-panel .player-night {

@@ -1921,3 +1921,33 @@ Commit: fix(round40): 保留杀人游戏已提交夜间行动并统一在线人�
   - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts 校验（仅可选原生依赖提示）。本轮源码差异未创建根目录 src/，后端源码修改仅位于 backend/src/，前端源码修改仅位于 frontend/src/。
   - 正式 npm ci --ignore-scripts --no-audit --no-fund --registry=https://registry.npmjs.org 已再次尝试，但当前容器在 180 秒内仍未完成且没有形成完整 node_modules；随后 npm run build 在该不完整依赖树上执行，backend tsc 因 body-parser/connect/cors/express/node/uuid/ws 等类型定义目录缺失而中止，未进入完整 frontend vue-tsc/Vite。相同 backend/src 已通过严格隔离类型检查与六 Worker 实际运行烟雾，因此没有把依赖安装中断误判为源码错误；完整生产构建/直接部署仍需在 npm ci 能完整成功的本地或 CI 执行 npm run build 最终确认。
 备注: 本轮未删除文件，未创建根目录 src/；所有后端源码修改仅位于 backend/src/，所有前端源码修改仅位于 frontend/src/；修复包只包含本轮修改文件、规则文档及 repair_log.txt，可按相对路径直接覆盖。
+
+=== 当前请求第 41 轮修复记录 ===
+时间: 2026-08-08 10:24:37 UTC
+Commit: fix(round41): 收紧钟楼说书人终局裁定并统一开局入口
+修改/新增文件:
+  - backend/src/workers/botcWorker.ts
+  - frontend/src/components/BOTCActionPanel.vue
+  - doc/botc.md
+  - repair_log.txt
+删除文件: 无
+构建测试: 部分通过（backend/src + frontend/src 当前全部 85 个代码文件全量静态扫描、backend/src 全量 strict/noEmit、血染钟楼 Worker 实际编译与第 41 轮说书人阶段/终局专项回归、package-lock 依赖树检查均通过；正式 npm run build 因附件工作区未安装 node_modules 而被缺失 Node/Express/Socket.IO/UUID/CORS 等依赖/类型阻塞）
+本轮修复:
+  - 修复血染钟楼真人说书人的 storytellerAction 绕过通用 validatePlayerAction 后缺少阶段边界校验的问题。该特殊入口为了允许“不属于 gamePlayers 的真人说书人”操作而在 gameAction 中提前分流，旧逻辑因此允许在 SETUP 直接 endGame，也允许在 ENDED 后继续 revivePlayer/poisonPlayer 等修改魔典内存状态，造成 lastGameResult 公开终局快照与 Worker 内部状态分叉。handleStoryteller 现在在权限校验后明确拒绝 SETUP 与 ENDED 阶段的说书人游戏操作。
+  - 修复血染钟楼手工结束游戏的 winner 可被任意字符串/缺省值污染的问题。后端现在只接受 good 或 evil，并在非法/缺失 winner 时返回 actionError；reason 同时经过既有文本规范化，空原因才回退为明确的阵营获胜描述，避免产生不符合协议的终局 winner 和错误获胜名单。
+  - 修复 BOTCActionPanel 的“结束游戏”按钮实际上始终默认判定善良阵营获胜的问题。旧代码在活跃对局中读取不存在的 gameState.winner，再用 || 'good' 兜底，因此真人说书人即使意图判邪恶获胜也会提交 good。现在白天和夜晚都提供“善良获胜并结束 / 邪恶获胜并结束”两个明确入口，提交前使用 Element Plus 二次确认，并把明确 winner 与理由交给 Worker 权威校验。
+  - 修复真人说书人同时是房主时存在两个“开始游戏”入口、ActionPanel 的无配置 ready 可能忽略 BOTCPlayerList 中尚未提交的剧本/说书人选择的问题。房主现在只从 PlayerList 的统一配置入口开局；非房主真人说书人仍可通过 ActionPanel 按房间当前已保存配置开始，避免 UI 所见配置与实际 Worker 开局配置分叉。
+  - 更新 BOTC 规则/操作文档，明确人工终局必须选择获胜阵营并二次确认，以及房主真人说书人统一从配置入口开局的约束。
+审查结果/本轮未改动重点:
+  - 对 backend/src 与 frontend/src 当前全部 85 个 TypeScript/Vue/CSS/SVG 源文件再次执行全量静态扫描，并重点复核六游戏 Worker、BaseGameWorker、RoomThreadManager、roomController、各 Store/Room/ActionPanel/PlayerList 的状态事实源、消息 acknowledgement、前后端事件语义与断线同步。本轮可稳定复现且优先级最高的新问题集中在 BOTC 真人说书人特殊入口绕过通用校验后的阶段/终局一致性，以及重复开局入口，因此修改限定在既有 BOTC Worker/ActionPanel 和文档，没有引入新的平行状态层。
+  - 六游戏规则流继续交叉检查：狼人杀的狼人共识、神职夜序、警长与放逐；杀人游戏的杀手/警察/医生/狙击手、医生空救与 PK；一夜狼人的玩家+3 中心牌、换牌后最终身份与并列处决；阿瓦隆的任务人数、7 人以上第 4 任务双失败、五次否决、刺杀、湖上夫人以及 Oberon 不参与邪恶互认；德州扑克的盲注/HU 顺序、短码 all-in、加注权、未跟注返还、边池与摊牌；血染钟楼的说书人私密魔典、公开状态过滤、白天/夜晚裁决与终局。本轮没有发现比上述 BOTC 确定性终局错误更适合低风险当前批次合入的新主流程阻断项。
+  - Controller/RoomThreadManager/BaseGameWorker 的单房间任务串行、worker messageChain、game_action acknowledgement 与 workerStateVersion/hostStateVersion/connectionStateVersion 合并继续复核；本轮发现的状态分叉来源是 BOTC storytellerAction 的业务级提前分支，不是底层线程并发本身。修复后特殊入口和普通玩家入口都具备明确的终局阶段边界。
+  - 前端继续复用现有 Room / ActionPanel / PlayerList / Chat、Element Plus 与共享 store/socket/session 工具；终局确认直接使用项目已有 Element Plus 依赖，没有新建重复组件或独立视觉体系，原有游戏主题差异保持不变。
+  - BOTC 仍保留此前 repair_log 已记录、需要更大状态模型或真人说书人逐次裁决 UI 才能完整解决的高阶边界：特殊自定义夜序下 Pit-Hag 创建 Demon 后无法安全逆向更早已经真实落地并触发被动的死亡；真人说书人仍缺少每一次 Recluse/Spy registration 的逐次手工裁决 UI；自由文本/多重效果抵消等 Mathematician 极端情况仍缺统一的逐次最终基准审计。本轮没有用不完整近似逻辑修改这些架构级问题。
+验证:
+  - backend/src + frontend/src 全量静态扫描通过：共 85 个源码文件、83 个 TypeScript/Vue script 解析单元、27 个 Vue SFC、28 个 CSS/style 块、219 个静态 import 路径均无 TypeScript 语法、SFC 基本结构、CSS 花括号、合并冲突标记或失效相对导入错误；项目根目录不存在 src/。
+  - backend/src 全部 34 个 TypeScript 文件使用全局 TypeScript、strict 模式、真实全局 Node 类型与位于项目目录外的 Express/CORS/Socket.IO/UUID 临时声明桩完成 noEmit 类型检查，0 个源码类型错误。
+  - botcWorker.ts 连同内部依赖使用 strict TypeScript 实际编译为 CommonJS 测试产物并成功运行第 41 轮 Worker 专项回归：SETUP 阶段 storyteller endGame 返回 success=false/“游戏尚未开始”；正常开局后非法 winner 返回 success=false/“结束游戏时必须明确选择善良或邪恶阵营获胜”；显式 evil 能成功结束并产出 winner=evil；ENDED 后 revivePlayer 返回 success=false/“游戏已结束”，且未产生复活事件，证明终局后不再污染魔典状态。
+  - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts 校验，仅有 optional 原生依赖提示。
+  - 正式 npm run build 已在附件源码目录执行；由于该提取工作区本身没有完整 node_modules，backend tsc 首先因 @types/node、Express、CORS、Socket.IO、UUID 等已声明依赖/类型无法解析而中止，未进入完整 frontend vue-tsc/Vite。相同 backend/src 已通过上述全量 strict/noEmit，BOTC Worker 也已实际编译并执行专项回归，因此当前无法把依赖未安装环境下的正式构建失败归因于源码；完整生产构建/直接部署仍需在 npm ci 完整成功的本地或 CI 再执行 npm run build 最终确认。
+备注: 本轮未删除文件，未创建根目录 src/；所有后端源码修改仅位于 backend/src/，所有前端源码修改仅位于 frontend/src/；修复包仅包含本轮修改文件、BOTC 文档及 repair_log.txt，可按相对路径直接覆盖。

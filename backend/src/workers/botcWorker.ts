@@ -4912,7 +4912,20 @@ export class BOTCWorker extends BaseGameWorker {
       return;
     }
 
-    switch (data.actionType) {
+    // storytellerAction 在 gameAction 中为兼容真人说书人（其本人不在 gamePlayers 中）
+    // 会绕过通用 validatePlayerAction，因此阶段边界必须在这里再次做权威校验。
+    // 否则说书人可以在 SETUP 直接 endGame，或在 ENDED 后继续复活/中毒玩家，
+    // 造成公开终局快照与魔典内存状态分叉。
+    if (this.gameState.phase === GamePhase.SETUP) {
+      this.sendToPlayer(playerId, 'actionError', { message: '游戏尚未开始' });
+      return;
+    }
+    if (this.gameState.phase === GamePhase.ENDED) {
+      this.sendToPlayer(playerId, 'actionError', { message: '游戏已结束' });
+      return;
+    }
+
+    switch (data?.actionType) {
       case 'processNight':
         if (this.pendingBarberDecision) {
           this.sendToPlayer(playerId, 'actionError', { message: '请等待恶魔先处理理发师换角' });
@@ -5054,9 +5067,16 @@ export class BOTCWorker extends BaseGameWorker {
         this.broadcastGameState();
         break;
       }
-      case 'endGame':
-        await this.endGame(data.winner || 'good', data.reason || '说书人结束游戏');
+      case 'endGame': {
+        const winner = data?.winner;
+        if (winner !== 'good' && winner !== 'evil') {
+          this.sendToPlayer(playerId, 'actionError', { message: '结束游戏时必须明确选择善良或邪恶阵营获胜' });
+          return;
+        }
+        const reason = normalizeChatText(data?.reason, 200) || `说书人判定${winner === 'good' ? '善良' : '邪恶'}阵营获胜`;
+        await this.endGame(winner, reason);
         break;
+      }
       case 'answerQuestion':
       case 'storytellerAnswer':
       case 'respondToQuestion': {
