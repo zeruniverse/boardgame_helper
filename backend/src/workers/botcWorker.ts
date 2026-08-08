@@ -123,6 +123,11 @@ export class BOTCWorker extends BaseGameWorker {
   // Shabaloth 的“反刍”属于说书人在该恶魔醒来前做出的裁决。当前项目允许玩家
   // 并行提交夜间动作，因此把裁决单独持久化，在统一结算到 Shabaloth 夜序时才真正复活。
   private pendingShabalothRegurgitation: PendingShabalothRegurgitation | null = null;
+  // Exorcist choices must only suppress a Demon after the Exorcist's own queued
+  // action has actually resolved. Looking ahead through every submitted action
+  // lets an Exorcist who died or changed character earlier in the night still
+  // suppress a Demon, which is incorrect in the parallel-submission model.
+  private exorcisedDemonIdsThisNight: Set<string> = new Set();
   // 终局结果必须保留在 Worker 权威状态中。仅广播一次 gameEnded 会导致刷新/重连
   // 玩家拿到 phase=ended 却丢失胜方和角色揭晓。
   private lastGameResult: BOTCGameResult | null = null;
@@ -358,6 +363,32 @@ export class BOTCWorker extends BaseGameWorker {
       return false;
     }
     return !this.isPlayerPoisoned(player) && !this.isPlayerDrunk(player);
+  }
+
+  /**
+   * A player may have submitted a night choice while alive and then die before
+   * their place in night order.  Death normally removes the character ability,
+   * so an already queued choice must not execute.  Zombuul's first registered
+   * death and Vigormortis-retained Minions are the two supported exceptions.
+   */
+  private canResolveQueuedNightAction(player: GamePlayer): boolean {
+    if (!player.isDead || isZombuulLivingWhileRegisteredDead(player)) {
+      return true;
+    }
+    return hasVigormortisRetainedAbility(player, Array.from(this.gamePlayers.values()));
+  }
+
+  /**
+   * Pit-Hag, Snake Charmer and Barber can change a character after that player
+   * has already submitted a choice. processNightAction intentionally dispatches
+   * from the player's current character, so feeding it an old payload could turn
+   * (for example) an information-role choice into a Demon kill. Invalidate the
+   * old queued payload instead; a newly gained character never inherits the old
+   * character's already-submitted choice.
+   */
+  private queuedNightActionMatchesCurrentRole(player: GamePlayer, action: NightAction): boolean {
+    const effectiveRole = this.getEffectiveRole(player);
+    return Boolean(effectiveRole && action.roleId && effectiveRole.id === action.roleId);
   }
 
   private hasActiveVortox(): boolean {
@@ -1868,6 +1899,7 @@ export class BOTCWorker extends BaseGameWorker {
     this.barberDeathsPending = [];
     this.pendingBarberDecision = null;
     this.pendingShabalothRegurgitation = null;
+    this.exorcisedDemonIdsThisNight.clear();
     this.lastGameResult = null;
     this.gameState = initializeGameState(this.gameConfig.storytellerId);
     this.gameState.grimoire.startTime = Date.now();
@@ -2728,6 +2760,7 @@ export class BOTCWorker extends BaseGameWorker {
     this.isProcessingNight = false;
     this.nightActions = [];
     this.firstNightInfoPlayerIds.clear();
+    this.exorcisedDemonIdsThisNight.clear();
     this.nightRound++;
 
     // Butler 的 Master 只对“明天”有效。进入新夜后先清掉上一晚选择，避免 Butler
@@ -4437,6 +4470,30 @@ export class BOTCWorker extends BaseGameWorker {
         }
       }
 
+      // A queued choice is only a declaration of what the character will do at
+      // their night-order position. If an earlier ability killed that player,
+      // the old choice must not fire after death (except supported retained-
+      // ability cases). This check is deliberately separate from
+      // playerAbilityWorks because death-trigger abilities call that helper too.
+      if (!this.canResolveQueuedNightAction(player)) {
+        this.notifyStoryteller(
+          `${this.getPlayerName(player.playerId)} 在其夜序前已死亡，已取消其预先提交的夜间行动`,
+          'info'
+        );
+        continue;
+      }
+
+      // Character-changing abilities can resolve before a player's original
+      // queued action. Never reinterpret the old payload as the newly gained
+      // character's ability.
+      if (!this.queuedNightActionMatchesCurrentRole(player, action)) {
+        this.notifyStoryteller(
+          `${this.getPlayerName(player.playerId)} 的角色已在其夜序前改变，已取消旧角色 ${getRoleName(action.roleId)} 的预提交行动`,
+          'info'
+        );
+        continue;
+      }
+
       // 检查玩家是否被保护或免疫
       if (this.shouldSkipAction(player, action)) {
         continue;
@@ -4603,12 +4660,15 @@ export class BOTCWorker extends BaseGameWorker {
       !exorcist ||
       !targetId ||
       this.getEffectiveRole(exorcist)?.id !== 'exorcist' ||
+      !this.canResolveQueuedNightAction(exorcist) ||
       !this.playerAbilityWorks(exorcist) ||
       !target ||
       target.role?.team !== Team.DEMON
     ) {
       return;
     }
+
+    this.exorcisedDemonIdsThisNight.add(targetId);
 
     if (!this.gameState.grimoire.exorcistReveals) {
       this.gameState.grimoire.exorcistReveals = {};
@@ -4632,21 +4692,13 @@ export class BOTCWorker extends BaseGameWorker {
    * 判断是否应该跳过该行动（被阻止等）
    */
   private shouldSkipAction(player: GamePlayer, action: NightAction): boolean {
-    // 检查是否被驱魔师阻止
-    const exorcistAction = this.nightActions.find(a => {
-      const aPlayer = this.gamePlayers.get(a.playerId);
-      return Boolean(
-        aPlayer &&
-        this.getEffectiveRole(aPlayer)?.id === 'exorcist' &&
-        this.playerAbilityWorks(aPlayer) &&
-        a.targets?.includes(action.playerId)
-      );
-    });
-    
-    if (exorcistAction && player.role?.team === Team.DEMON) {
-      // Normally this reveal already happened when the Exorcist action was
-      // processed. Keep this defensive call for unusual custom night orders.
-      this.revealExorcistToChosenDemon(exorcistAction);
+    // Only a successfully resolved Exorcist action may suppress a Demon. Do not
+    // look ahead through this.nightActions: the queued Exorcist might have died,
+    // changed character or lost its ability before its own night-order position.
+    if (
+      this.exorcisedDemonIdsThisNight.has(action.playerId) &&
+      this.getEffectiveRole(player)?.team === Team.DEMON
+    ) {
       return true;
     }
 
@@ -5377,6 +5429,11 @@ export class BOTCWorker extends BaseGameWorker {
     const player = this.gamePlayers.get(playerId);
     if (!player || !player.isDead) return;
 
+    // Resurrection gives the character a fresh ability. In particular, used
+    // once-per-game abilities can be used again after resurrection. Preserve
+    // player-bound effects such as poisoning/drunkenness, but clear usage flags,
+    // per-character target history and stale private night information.
+    this.clearFreshCharacterUsageState(player);
     player.isDead = false;
     player.isAlive = true;
     player.deathCause = undefined;

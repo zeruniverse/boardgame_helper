@@ -1085,3 +1085,32 @@ Commit: fix(round13): 补齐钟楼沙巴洛斯反刍与换角能力状态
   - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts 校验。
   - 正式 npm ci --ignore-scripts 已再次尝试，但当前内部 npm 源对锁定的 typescript-5.8.3.tgz 返回 404；因此项目 node_modules 仍无法完整安装。随后正式 npm run build 因缺少 Node/Express/Socket.IO/UUID/CORS 等已声明依赖/类型在后端 tsc 阶段中止，前端 vue-tsc/Vite 无法进入正式生产构建。本轮不能声称完整生产构建已在此容器通过，仍需在依赖源可用的本地或 CI 执行 npm ci && npm run build 做最终部署确认。
 备注: 本轮未删除文件，未创建根目录 src/；所有后端源码修改仅位于 backend/src/，所有前端源码修改仅位于 frontend/src/；修复包只包含本轮修改/新增文件及 repair_log.txt，可按相对路径直接覆盖。
+
+=== 当前请求第 14 轮修复记录 ===
+时间: 2026-08-08 03:33:16 UTC
+Commit: fix(round14): 修正钟楼夜序失效动作与复活能力状态
+修改/新增文件:
+  - backend/src/workers/botcWorker.ts
+  - frontend/src/components/Lobby.vue
+  - repair_log.txt
+删除文件: 无
+构建测试: 部分通过（后端全量 strict 类型检查、84 个 TypeScript/Vue/CSS 源码静态扫描、六 Worker prepare_room 烟雾、BOTC 第 14 轮专项回归及 package-lock 依赖树检查通过；正式 npm ci / npm run build 仍受当前容器内部 npm 源缺包阻塞）
+本轮修复:
+  - 修复血染钟楼并行夜间收集器的严重夜序错误：玩家虽然提前提交了行动，但如果在其实际夜序到来前已经死亡，旧行动现在会被取消，不再出现“先被沙巴洛斯等角色杀死、之后仍继续发动能力”的情况；僵怖首次登记死亡以及仍由维格莫提斯保留能力的死亡爪牙继续作为明确例外。
+  - 修复夜间中途换角后旧 payload 被按新角色重新解释的问题：Pit-Hag、Snake Charmer、Barber 等效果若在玩家夜序前改变其角色，服务端会核对提交时 roleId 与结算时有效角色，角色已变化则废弃旧角色行动，避免旧的信息/选人数据被意外解释成新恶魔击杀或其他完全不同的技能。
+  - 收紧 Exorcist（驱魔师）的阻止状态：不再通过扫描“所有已经提交但尚未结算的驱魔师行动”提前阻止恶魔，而是在驱魔师自身行动真实通过夜序、存活/保留能力检查并且能力有效后，才把目标恶魔标记为本夜被驱魔；每个新夜和回到 SETUP 时都会清空该瞬时集合。
+  - 修复复活后仍继承旧角色“一次性能力已使用/目标历史”的状态：Professor、Shabaloth 或说书人复活玩家时，现在会复用 fresh-character 状态清理，恢复 No ability、Seamstress/Fool/Po/Fang Gu/Ravenkeeper 等角色能力使用状态，并清掉 Exorcist/Devil's Advocate/Shabaloth 等角色绑定历史，同时保留中毒/醉酒等玩家级持续效果。
+  - 修正大厅血染钟楼规则帮助中大量会直接误导玩家的角色描述：Trouble Brewing 补正占卜师、酒鬼、隐士、间谍、市长；Bad Moon Rising 重新校正祖母、侍女、驱魔师、酒馆老板、赌徒、八卦、朝臣、教授、吟游诗人、茶女郎、和平主义者、愚者、暴徒、教父、恶魔的拥护者、暗杀者、幕后黑手以及四名恶魔；Sects & Violets 重新校正梦想家、弄蛇人、数学家、花女孩、报信者、学者、女裁缝、哲学家、杂耍演员、智者、变种人、理发师、笨蛋、四名爪牙和四名恶魔。该改动只修正文案，沿用现有 Lobby/Element Plus 布局，没有新建平行 UI 组件。
+审查结果/本轮未改动重点:
+  - 再次扫描 backend/src 与 frontend/src 当前全部 85 个文件（其中 84 个 TypeScript/Vue/CSS 源码文件及 1 个 SVG），并复查六个游戏 Worker、BaseGameWorker、Controller/RoomThreadManager 的既有状态版本与串行任务边界。本轮新发现的最高优先级问题是 BOTC “提交时间与真实夜序分离”后造成的死亡玩家继续行动、换角后旧动作被重新解释，因此优先修复该共用结算边界。
+  - 狼人杀、杀人游戏、一夜狼人、阿瓦隆、德州扑克本轮未发现优先级高于上述夜序错误的新阻断项；继续沿用前十三轮已经修复的角色/阶段推进、投票、断线重连、房主/连接版本、刺杀与德州扑克边池/加注权等逻辑。本轮六个 Worker 均重新通过 prepare_room 初始化烟雾。
+  - 前端继续使用已有各游戏 Room / ActionPanel / PlayerList / Chat 分层和 Element Plus 体系。除规则帮助文案外，本轮没有做跨游戏大规模视觉重构，避免在高优先级规则修复中扩大样式回归面。
+  - BOTC 仍有明确后续工作：Pit-Hag “若制造 Demon，则当夜死亡由说书人任意裁决”的整夜死亡替换链仍未完整实现；Recluse/Spy registration 仍未抽象成通用说书人裁决；从“夜晚开始时已经死亡”状态被 Professor/Shabaloth 复活的角色若应在当夜后续夜序获得新动作/首夜型信息，当前并行预收集架构仍不能动态插入一次全新的玩家交互。本轮先保证已经入队的错误动作不会越权执行，并保证复活后的角色使用状态是新的。
+验证:
+  - backend/src 全部 34 个 TypeScript 文件使用 TypeScript 5.8.3、strict 模式、真实 Node 类型和位于项目目录外的 Express/CORS/Socket.IO/UUID 临时声明桩完成 noEmit 类型检查，0 个错误；同一配置成功生成 34 个 CommonJS 测试文件。
+  - backend/src + frontend/src 静态扫描通过：共 85 个文件，其中 84 个 TypeScript/Vue/CSS 源码、83 个 TypeScript/Vue script 解析单元、27 个 Vue SFC、27 个 style 块、213 个相对/@ 静态导入均无语法、SFC 结构、CSS 花括号或失效导入错误；项目根目录不存在 src/。
+  - 六个实际游戏 Worker 使用本轮 strict 编译产物执行 prepare_room 烟雾全部通过：狼人杀、杀人游戏、一夜狼人、阿瓦隆、血染钟楼、德州扑克均可启动 Worker 并完成房间初始化。
+  - BOTC 第 14 轮专项回归 4 组通过：沙巴洛斯在较早夜序杀死梦想家后，梦想家的预提交行动不再结算；弄蛇人和恶魔换角后，旧恶魔提交的动作不会被重新解释为弄蛇人能力并把身份换回；复活会恢复一次性能力/角色历史但保留中毒；驱魔师只有真正结算后才会产生本夜恶魔阻止状态，单纯排队或中毒不会阻止。
+  - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts 校验；本轮修改通过 diff --check。
+  - 正式 npm run build 在本轮开始时再次执行，但现有不完整 node_modules 缺少多项 @types 包而在后端 tsc 阶段中止；随后 npm ci --ignore-scripts 再次请求当前内部 npm 源的 typescript-5.8.3.tgz 并返回 404，因此无法恢复完整 node_modules，也无法执行正式 vue-tsc/Vite 生产构建。本轮不能声称完整生产构建已在此容器通过，仍需在依赖源可用的本地或 CI 执行 npm ci && npm run build 做最终部署确认。
+备注: 本轮未删除文件，未创建根目录 src/；所有后端源码修改仅位于 backend/src/，所有前端源码修改仅位于 frontend/src/；修复包只包含本轮修改文件及 repair_log.txt，可按相对路径直接覆盖。
