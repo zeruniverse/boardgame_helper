@@ -117,29 +117,29 @@ export abstract class OnuBaseSkill {
 // 狼人技能
 export class OnuWerewolfSkill extends OnuBaseSkill {
   canUse(selection?: OnuWerewolfSelection): boolean {
-    if (!selection || !selection.cards || selection.cards.length === 0) return true;
-    return selection.cards.length === 1 && this.getCenterCard(selection.cards[0]) !== undefined;
+    const werewolves = this.getOtherPlayers().filter(p => onuIsWerewolf(p.initialRole));
+    if (werewolves.length > 0) {
+      return (!selection?.cards || selection.cards.length === 0) &&
+        (!selection?.players || selection.players.length === 0);
+    }
+
+    // 唯一狼人“可以查看一张中心牌”是一次有选择的信息行动。不能由服务端
+    // 悄悄固定为中心牌 0，否则玩家失去了规则赋予的选择权。若不想查看，
+    // 应走 skip_skill；一旦点击“使用技能”，必须明确选择且只能选择一张。
+    return Boolean(
+      selection?.cards &&
+      selection.cards.length === 1 &&
+      (!selection.players || selection.players.length === 0) &&
+      this.getCenterCard(selection.cards[0]) !== undefined
+    );
   }
 
   execute(selection?: OnuWerewolfSelection): OnuSkillResult {
     const werewolves = this.getOtherPlayers().filter(p => onuIsWerewolf(p.initialRole));
-    
+
     if (werewolves.length === 0) {
-      // 如果没有其他狼人，可以选择查看一张中心卡牌；兼容旧客户端或玩家未选择中心卡时，
-      // 缺省给出第一张中心卡，避免唯一狼人完全拿不到该信息。
-      if (!selection || !selection.cards || selection.cards.length === 0) {
-        const defaultCard = this.getCenterCard(0) || this.centerCards[0];
-        if (!defaultCard) {
-          return { success: false, error: '中心卡牌不存在' };
-        }
-        return {
-          success: true,
-          vision: onuCreateVision([], [defaultCard]),
-          message: `你是唯一的狼人，自动查看了中心卡${defaultCard.position}`
-        };
-      }
-      if (selection.cards.length !== 1) {
-        return { success: false, error: '只能查看一张中心卡' };
+      if (!selection?.cards || selection.cards.length !== 1) {
+        return { success: false, error: '唯一狼人使用查看技能时必须选择一张中心卡' };
       }
       const cardPos = selection.cards[0];
       const card = this.getCenterCard(cardPos);

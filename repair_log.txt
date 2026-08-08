@@ -1535,3 +1535,38 @@ Commit: fix(round28): 修复钟楼夜间死亡泄露与赌徒结算
   - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts 校验；本轮两个源码文件相对附件原始版本执行 diff --check 无新增尾随空白错误。
   - 正式 npm ci --ignore-scripts --no-audit --no-fund 已再次执行，当前内部 npm 源对 package-lock 锁定的 typescript-5.8.3.tgz 返回 404。随后正式 npm run build 在依赖未完整安装的工作区执行，后端 tsc 因 Node/Express/Socket.IO/UUID/CORS 等已声明依赖/类型未安装而中止，根构建因此未进入前端 vue-tsc/Vite。故本轮不能声称完整生产 npm 构建已在此容器通过；请在依赖源可用的本地或 CI 执行 npm ci && npm run build 做最终部署确认。
 备注: 本轮未删除文件，未创建根目录 src/；所有后端源码修改仅位于 backend/src/，未修改 frontend/src/；修复包只包含本轮修改文件及 repair_log.txt，可按相对路径直接覆盖。
+
+=== 当前请求第 29 轮修复记录 ===
+时间: 2026-08-08 07:27:04 UTC
+Commit: fix(round29): 修复德州短盲空边池与一夜狼人独狼选择
+修改/新增文件:
+  - backend/src/utils/onuWerewolfSkills.ts
+  - backend/src/workers/onuWerewolfWorker.ts
+  - backend/src/workers/texasHoldemWorker.ts
+  - frontend/src/components/OnuWerewolfActionPanel.vue
+  - doc/onu-werewolf.md
+  - doc/mafia.md
+  - repair_log.txt
+删除文件: 无
+构建测试: 部分通过（85 个源码文件全量静态扫描、backend/src 全量 strict/noEmit、六游戏 Worker prepare_room 烟雾、德州扑克短大盲/空边池与一夜狼人独狼专项回归、package-lock 工作区依赖树检查均通过；正式 npm ci / npm run build 仍受当前容器内部 npm 源缺少 package-lock 锁定 TypeScript 5.8.3 包阻塞）
+本轮修复:
+  - 修复德州扑克 heads-up 短码大盲导致的“空边池强迫下注”问题。旧开局逻辑即使大盲只剩 3，也会把 currentBet 设为名义大盲 10；当其他所有未弃牌玩家都已全下时，唯一仍有筹码的玩家仍可能被要求补到一个无人能够匹配、也不会形成有效边池的下注额，甚至因超时错误弃牌。现在每次请求行动前都会检测是否只剩一个可行动筹码栈：currentBet 会收敛到对手实际本轮最高投入，若该玩家已覆盖全部对手则立即结束本轮并走既有未跟注筹码返还/公共牌跑完流程。
+  - 阻止在其他未弃牌玩家都已全下时继续 raise 或做超过当前有效下注额的 all-in 加注，避免创建无人可响应的空边池；仍允许用 all-in 作为不足额跟注或刚好跟注，保持短码合法行动。
+  - 修复一夜狼人唯一普通狼人“点击使用技能却由服务端固定查看第一张中心牌”的规则/交互错误。现在有狼人同伴时只允许互认且不接受中心牌选择；唯一狼人若选择使用查看能力，必须明确选择恰好一张有效中心牌，不想查看则通过 skip_skill 跳过，不再存在静默默认中心 0 的信息泄露与选择权丢失。
+  - 修复头狼、狼先知作为唯一初始狼人时被默认泄露第一张中心牌的问题，并补齐其两步交互：先可自主选择一张中心牌查看，再继续执行头狼强制换牌或狼先知查看玩家；也可以显式跳过可选的独狼中心牌查看而直接进入角色专属技能。中间步骤在 Worker 的 player.skillData 中持久化 loneWolfCardPosition，断线重连会恢复已查看位置与私有视野，不能重复查看第二张中心牌。
+  - 前端复用现有 selection-options/card-select/player-select 结构统一头狼和狼先知的独狼交互；普通狼人仅在确认为唯一初始狼人时展示中心牌选择。独狼已查看中心牌与其他角色视野继续复用同一私密 vision 数据，不新增平行页面或根目录源码。
+  - 修正文档摘要与当前项目实际规则实现的两处不一致：杀人游戏杀手胜利摘要统一为项目的屠边条件；一夜狼人皮匠改为“只要自己被处决即可个人获胜”，并补充头狼/狼先知唯一狼人可查看中心牌的说明。
+审查结果/本轮未改动重点:
+  - 再次覆盖 backend/src 与 frontend/src 当前全部 85 个 TypeScript/Vue/CSS/SVG 代码文件，并重点复核六个游戏 Worker、BaseGameWorker、RoomThreadManager/Controller 的任务串行、状态版本同步、公开/私密信息边界以及前端 Room / ActionPanel / PlayerList / Store 消费。本轮可稳定复现且优先级最高的新问题集中在德州扑克短大盲下注边界与一夜狼人独狼信息行动，因此修改限制在既有 Texas/ONU Worker、ONU 技能工具和 ActionPanel 内。
+  - 狼人杀继续核对夜间角色链、狼人共识击杀、药剂/守卫/猎人、警长与放逐；杀人游戏继续核对杀手一致击杀、警察/医生/狙击手及项目屠边胜负；血染钟楼继续核对夜序、registration、夜间生命状态保密、提名/投票和说书人裁决；阿瓦隆继续核对组队、任务人数、7 人以上第四任务双失败票、五次否决、刺杀与湖上夫人；一夜狼人继续核对初始身份互认、换牌、并列处决和最终身份胜负；德州扑克继续核对盲注、HU 行动顺序、短码 all-in、最小加注、未跟注筹码返还、边池和摊牌。除本轮问题外，没有发现适合当前批次低风险落地、优先级更高的新确定性主流程阻断项。
+  - Controller/RoomThreadManager/BaseGameWorker 的 Worker messageChain 串行、单房间任务队列、超时隔离以及 workerStateVersion/hostStateVersion/connectionStateVersion 合并继续复核，本轮未发现需要追加修改的新确定性竞态。六个游戏 Worker 均能使用本轮最新严格隔离编译产物完成 prepare_room。
+  - 前端 27 个 Vue SFC 的 script/template/style 结构、CSS 花括号和相对/@ 导入均通过静态扫描；新增 ONU 交互复用既有组件与样式类，没有引入新的页面体系。各游戏仍保留各自主题差异，本轮未进行高风险跨游戏视觉重构。
+  - BOTC 仍保留此前记录的两个高阶边界：自定义夜序中若某次死亡已经在 Pit-Hag 制造 Demon 前真实落地，当前“本夜死亡任意”模型不能安全逆向撤销此前已触发的死亡/被动效果；真人说书人仍没有针对每一次 Recluse/Spy registration 的逐次手工裁决 UI。本轮没有对这两个需要更大状态模型/UI 设计的问题做冒险性重构。
+验证:
+  - backend/src + frontend/src 全量静态扫描通过：共 85 个代码文件、83 个 TypeScript/Vue script 解析单元、27 个 Vue SFC、27 个 style 块、319 个 import/export 路径均无 TypeScript 语法、SFC 顶层结构、CSS 花括号或失效相对/@ 导入错误；项目根目录不存在 src/。
+  - backend/src 全部 34 个 TypeScript 文件使用全局 TypeScript 5.8.3、strict 模式和位于项目目录外的 Node/Express/CORS/Socket.IO/UUID 临时声明桩完成 noEmit 类型检查，0 个错误；同一隔离配置已生成用于专项/烟雾测试的 CommonJS 编译产物。
+  - 六个实际游戏 Worker 使用本轮 strict 编译产物执行 prepare_room 烟雾全部通过：狼人杀、杀人游戏、血染钟楼、一夜狼人、阿瓦隆、德州扑克均能启动 Worker 并完成房间初始化。
+  - 德州扑克第 29 轮专项回归通过：HU 5/10、BB 仅 3 筹码时不再向 SB 发送虚假的补到 10 行动请求，SB 超出 BB 的 2 筹码正确按未跟注筹码返还并自动跑完牌局；BB 仅 8 时 currentBet 收敛到 8，SB 只需再跟 3，尝试加注到 20 会因无人可响应而被拒绝。
+  - 一夜狼人第 29 轮专项回归通过：普通唯一狼人空选择不再合法、可明确选择任意有效中心牌；存在狼先知同伴时普通狼人不能再额外看中心牌。唯一头狼第一步可自主选择中心牌，结果保持 skill open，断线重连恢复 loneWolfCardPosition 与当前 AlphaWolf 操作权，随后仍能正常完成对玩家的中心狼人牌交换。
+  - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts 校验；本轮正式 npm ci --ignore-scripts --no-audit --no-fund 再次执行，但当前内部 npm 源对 package-lock 锁定的 typescript-5.8.3.tgz 返回 404。随后正式 npm run build 在依赖未完整安装的工作区执行，后端 tsc 因 Node/Express/Socket.IO/UUID/CORS 等已声明依赖/类型未安装而中止，根构建因此未进入前端 vue-tsc/Vite。故本轮不能声称完整生产 npm 构建已在此容器通过；仍需在依赖源可用的本地或 CI 执行 npm ci && npm run build 做最终部署确认。
+备注: 本轮未删除文件，未创建根目录 src/；所有后端源码修改仅位于 backend/src/，所有前端源码修改仅位于 frontend/src/；修复包只包含本轮修改文件及 repair_log.txt，可按相对路径直接覆盖。

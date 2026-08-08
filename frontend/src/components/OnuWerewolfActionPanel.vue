@@ -345,43 +345,56 @@
             </el-select>
           </div>
 
-          <!-- 头狼: 将额外中心狼人牌与1名非狼玩家交换 -->
-          <div v-else-if="activeRole === OnuWerewolfRole.AlphaWolf" class="player-select">
-            <p>查看狼人同伴后，选择一名非狼人玩家，与额外的中心狼人牌交换:</p>
-            <el-select v-model="selectedPlayer" placeholder="选择玩家">
-              <el-option
-                v-for="p in alphaWolfTargets"
-                :key="p.seat"
-                :label="`座位${p.seat} - ${displayPlayerName(p)}`"
-                :value="p.seat"
-              />
-            </el-select>
+          <!-- 头狼/狼先知: 唯一狼人可先自主查看一张中心牌，再执行专属技能 -->
+          <div
+            v-else-if="activeRole === OnuWerewolfRole.AlphaWolf || activeRole === OnuWerewolfRole.MysticWolf"
+            class="selection-options"
+          >
+            <div v-if="shouldChooseLoneWolfCardFirst" class="card-select">
+              <p>你是唯一初始狼人，可先选择一张中心卡查看:</p>
+              <el-select v-model="selectedCard" placeholder="选择中心卡" clearable>
+                <el-option
+                  v-for="pos in centerCardOptions"
+                  :key="pos"
+                  :label="getCenterCardLabel(pos)"
+                  :value="pos"
+                />
+              </el-select>
+              <el-button class="skip-button" @click="skipOptionalLoneWolfPeek">
+                不查看中心牌，继续角色技能
+              </el-button>
+            </div>
+
+            <div v-else class="player-select">
+              <p v-if="activeRole === OnuWerewolfRole.AlphaWolf">
+                选择一名非狼人玩家，与额外的中心狼人牌交换:
+              </p>
+              <p v-else>选择一名其他玩家查看其角色:</p>
+              <el-select v-model="selectedPlayer" placeholder="选择玩家">
+                <el-option
+                  v-for="p in activeRole === OnuWerewolfRole.AlphaWolf ? alphaWolfTargets : otherPlayers"
+                  :key="p.seat"
+                  :label="`座位${p.seat} - ${displayPlayerName(p)}`"
+                  :value="p.seat"
+                />
+              </el-select>
+            </div>
           </div>
 
-          <!-- 狼先知: 查看狼人后选择1名其他玩家查看角色 -->
-          <div v-else-if="activeRole === OnuWerewolfRole.MysticWolf" class="player-select">
-            <p>查看狼人同伴后，选择一名其他玩家查看其角色:</p>
-            <el-select v-model="selectedPlayer" placeholder="选择玩家">
-              <el-option
-                v-for="p in otherPlayers"
-                :key="p.seat"
-                :label="`座位${p.seat} - ${displayPlayerName(p)}`"
-                :value="p.seat"
-              />
-            </el-select>
-          </div>
-
-          <!-- 狼人: 可为唯一狼人选择中心卡 -->
+          <!-- 普通狼人: 有同伴时只互认；唯一狼人使用查看时必须明确选择一张 -->
           <div v-else-if="activeRole === OnuWerewolfRole.Werewolf" class="card-select">
-            <p>狼人会先查看同伴；如果你是唯一狼人，可选择一张中心卡查看:</p>
-            <el-select v-model="selectedCard" placeholder="可选：选择中心卡" clearable>
-              <el-option
-                v-for="pos in centerCardOptions"
-                :key="pos"
-                :label="getCenterCardLabel(pos)"
-                :value="pos"
-              />
-            </el-select>
+            <template v-if="isLoneWolf">
+              <p>你是唯一初始狼人，可选择一张中心卡查看；不想查看可直接跳过技能:</p>
+              <el-select v-model="selectedCard" placeholder="选择中心卡" clearable>
+                <el-option
+                  v-for="pos in centerCardOptions"
+                  :key="pos"
+                  :label="getCenterCardLabel(pos)"
+                  :value="pos"
+                />
+              </el-select>
+            </template>
+            <p v-else>你会看到其他初始狼人同伴，无需选择目标。</p>
           </div>
 
           <!-- 爪牙/守夜人/失眠者: 无需选择 -->
@@ -669,6 +682,7 @@ const seerChoice = ref<'player' | 'center'>('player');
 const seerCenterCards = ref<number[]>([]);
 const villageIdiotDirection = ref<'left' | 'right'>('left');
 const skillResult = ref<string>('');
+const skipLoneWolfPeek = ref(false);
 
 // 计算属性
 const configError = computed(() => {
@@ -723,6 +737,23 @@ const centerCardOptions = computed(() => {
 });
 
 const activeRole = computed(() => props.playerSecret?.activeSkillRole ?? props.myRole);
+const initialWolfRoles = new Set<OnuWerewolfRole>([
+  OnuWerewolfRole.Werewolf,
+  OnuWerewolfRole.AlphaWolf,
+  OnuWerewolfRole.MysticWolf
+]);
+const isLoneWolf = computed(() => props.playerSecret?.skillData?.isLoneWolf === true);
+const loneWolfCardPosition = computed(() => {
+  const position = props.playerSecret?.skillData?.loneWolfCardPosition;
+  return typeof position === 'number' ? position : undefined;
+});
+const isLoneSpecialWolf = computed(() =>
+  isLoneWolf.value &&
+  (activeRole.value === OnuWerewolfRole.AlphaWolf || activeRole.value === OnuWerewolfRole.MysticWolf)
+);
+const shouldChooseLoneWolfCardFirst = computed(() =>
+  isLoneSpecialWolf.value && loneWolfCardPosition.value === undefined && !skipLoneWolfPeek.value
+);
 const mandatoryNightRoles = new Set<OnuWerewolfRole>([
   OnuWerewolfRole.AlphaWolf,
   OnuWerewolfRole.Drunk
@@ -742,24 +773,26 @@ const otherPlayers = computed(() => {
   return props.allPlayers?.filter((p: any) => p.id !== props.currentUserId) || [];
 });
 
-// 唯一狼人查看到的中心卡 (Issue i fix)
+// 唯一初始狼人查看到的中心卡：普通狼人、头狼、狼先知共用同一展示。
 const loneWolfCenterCard = computed(() => {
   const vision = props.playerSecret?.vision;
-  if (!vision?.cards || vision.cards.length === 0) return null;
-  // 只在狼人角色且有中心卡视野时显示
-  if (props.myRole === OnuWerewolfRole.Werewolf || props.playerSecret?.activeSkillRole === OnuWerewolfRole.Werewolf) {
-    return vision.cards[0];
+  if (!isLoneWolf.value || !vision?.cards || vision.cards.length === 0) return null;
+
+  const role = activeRole.value ?? props.myRole;
+  if (!role || !initialWolfRoles.has(role)) return null;
+
+  if (loneWolfCardPosition.value !== undefined) {
+    return vision.cards.find(card => card.position === loneWolfCardPosition.value) || null;
   }
-  return null;
+  return vision.cards[0] || null;
 });
 
-// 通用视野卡片展示（学徒预言家/女巫等看到的中心卡）
+// 通用视野卡片展示（学徒预言家/女巫等看到的中心卡）；独狼中心牌已单独展示。
 const visionCards = computed(() => {
   const vision = props.playerSecret?.vision;
   if (!vision?.cards || vision.cards.length === 0) return [];
-  // 排除普通狼人独狼信息（已在loneWolfCenterCard中显示）
-  if (props.myRole === OnuWerewolfRole.Werewolf) return [];
-  return vision.cards;
+  const loneCard = loneWolfCenterCard.value;
+  return loneCard ? vision.cards.filter(card => card.position !== loneCard.position) : vision.cards;
 });
 
 const visionPlayers = computed(() => {
@@ -805,7 +838,6 @@ const canExecuteSkill = computed(() => {
     case OnuWerewolfRole.Revealer:
     case OnuWerewolfRole.Curator:
     case OnuWerewolfRole.Sentinel:
-    case OnuWerewolfRole.MysticWolf:
       return !!selectedPlayer.value;
     case OnuWerewolfRole.Troublemaker:
       return !!selectedPlayer1.value && !!selectedPlayer2.value && selectedPlayer1.value !== selectedPlayer2.value;
@@ -816,8 +848,12 @@ const canExecuteSkill = computed(() => {
     case OnuWerewolfRole.VillageIdiot:
       return true;
     case OnuWerewolfRole.AlphaWolf:
-      return !!selectedPlayer.value;
+    case OnuWerewolfRole.MysticWolf:
+      return shouldChooseLoneWolfCardFirst.value
+        ? selectedCard.value !== undefined
+        : selectedPlayer.value !== undefined;
     case OnuWerewolfRole.Werewolf:
+      return !isLoneWolf.value || selectedCard.value !== undefined;
     case OnuWerewolfRole.Minion:
     case OnuWerewolfRole.Mason:
     case OnuWerewolfRole.Insomniac:
@@ -848,7 +884,6 @@ const buildSkillSelection = (): any => {
     case OnuWerewolfRole.Revealer:
     case OnuWerewolfRole.Curator:
     case OnuWerewolfRole.Sentinel:
-    case OnuWerewolfRole.MysticWolf:
       return { selection: { players: [selectedPlayer.value!] } };
     
     case OnuWerewolfRole.Troublemaker:
@@ -867,6 +902,10 @@ const buildSkillSelection = (): any => {
       return { selection: { cards: [villageIdiotDirection.value === 'right' ? 1 : 0] } };
     
     case OnuWerewolfRole.AlphaWolf:
+    case OnuWerewolfRole.MysticWolf:
+      if (shouldChooseLoneWolfCardFirst.value && selectedCard.value !== undefined) {
+        return { selection: { cards: [selectedCard.value] } };
+      }
       if (selectedPlayer.value !== undefined) {
         return { selection: { players: [selectedPlayer.value] } };
       }
@@ -953,6 +992,12 @@ const skipSkill = () => {
   skillResult.value = '';
 };
 
+const skipOptionalLoneWolfPeek = () => {
+  skipLoneWolfPeek.value = true;
+  selectedCard.value = undefined;
+  skillResult.value = '';
+};
+
 // C2 fix: 传递座位号而非玩家ID
 const vote = (targetSeat: number) => {
   if (targetSeat === undefined || targetSeat === null || targetSeat < 1) {
@@ -985,7 +1030,7 @@ const getSkillDescription = (role: OnuWerewolfRole | null | undefined) => {
 
 const getAutoSkillText = (role: OnuWerewolfRole | null | undefined) => {
   switch (role) {
-    case OnuWerewolfRole.Werewolf: return '你将自动查看其他狼人同伴（如果没有同伴则查看一张中心卡）';
+    case OnuWerewolfRole.Werewolf: return '你将查看其他狼人同伴；如果没有同伴，可自主选择查看一张中心卡';
     case OnuWerewolfRole.Minion: return '你将自动查看狼人的位置';
     case OnuWerewolfRole.Mason: return '你将自动查看是否有其他守夜人';
     case OnuWerewolfRole.ApprenticeTanner: return '你将自动查看本局是否有其他皮匠';
@@ -1037,8 +1082,22 @@ const watchRole = watch(() => activeRole.value, () => {
   seerChoice.value = 'player';
   seerCenterCards.value = [];
   villageIdiotDirection.value = 'left';
+  skipLoneWolfPeek.value = false;
   skillResult.value = '';
 });
+
+// 头狼/狼先知作为唯一初始狼人完成第一步中心牌查看后，服务端持久化位置。
+// 恢复该选择可让两步交互在断线重连后直接进入专属技能目标选择。
+const watchLoneWolfCardPosition = watch(
+  () => props.playerSecret?.skillData?.loneWolfCardPosition,
+  (position) => {
+    if (isLoneSpecialWolf.value && typeof position === 'number') {
+      selectedCard.value = position;
+      skipLoneWolfPeek.value = false;
+    }
+  },
+  { immediate: true }
+);
 
 // 女巫第一步查看中心卡后，服务端会持久化该位置。断线重连时恢复选择，
 // 这样 UI 会直接回到第二步“选择交换玩家”，而不是误导玩家重新选中心卡。
@@ -1064,6 +1123,7 @@ const watchSeerChoice = watch(() => seerChoice.value, () => {
 onUnmounted(() => {
   watchConfig();
   watchRole();
+  watchLoneWolfCardPosition();
   watchWitchCardPosition();
   watchSeerChoice();
   watchDiscussionPhase();

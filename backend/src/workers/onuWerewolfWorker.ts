@@ -793,23 +793,43 @@ class OnuWerewolfWorker extends BaseGameWorker {
     ].includes(role);
   }
 
+  private getOtherInitialWolves(player: OnuWerewolfPlayer): OnuWerewolfPlayer[] {
+    return Object.values(this.gameState.players)
+      .filter(p => p.id !== player.id && this.isInitialWolfRole(p.initialRole));
+  }
+
+  private isLoneInitialWolf(player: OnuWerewolfPlayer): boolean {
+    return this.isInitialWolfRole(player.initialRole) && this.getOtherInitialWolves(player).length === 0;
+  }
+
   private buildInitialWolfVisionFor(player: OnuWerewolfPlayer): OnuWerewolfVision | undefined {
-    const visibleWolves = Object.values(this.gameState.players)
-      .filter(p => p.id !== player.id && this.isInitialWolfRole(p.initialRole))
+    const visibleWolves = this.getOtherInitialWolves(player)
       .map(p => ({
         ...p,
         actualRole: OnuWerewolfRole.Werewolf,
         revealed: true
       }));
 
-    if (visibleWolves.length > 0) {
-      return onuCreateVision(visibleWolves);
+    // 唯一狼人查看哪一张中心牌必须由玩家选择，不能在这里默认泄露固定的第一张。
+    return visibleWolves.length > 0 ? onuCreateVision(visibleWolves) : undefined;
+  }
+
+  private prepareInitialWolfSkillData(player: OnuWerewolfPlayer, role: OnuWerewolfRole): any | undefined {
+    if (!this.isInitialWolfRole(role) || !this.isInitialWolfRole(player.initialRole)) {
+      return undefined;
     }
 
-    // 参考实现允许唯一狼人查看一张中心牌；头狼/狼先知也属于“所有狼人”阶段。
-    // 当前前端没有独立的狼人阶段交互，故至少给唯一头狼/狼先知默认展示一张中心牌，避免关键阵营信息缺失。
-    const defaultCenterCard = this.gameState.centerCards[0];
-    return defaultCenterCard ? onuCreateVision([], [defaultCenterCard]) : undefined;
+    const isLoneWolf = this.isLoneInitialWolf(player);
+    player.skillData = {
+      ...(player.skillData || {}),
+      isLoneWolf
+    };
+
+    const skillData: any = { isLoneWolf };
+    if (typeof player.skillData.loneWolfCardPosition === 'number') {
+      skillData.loneWolfCardPosition = player.skillData.loneWolfCardPosition;
+    }
+    return skillData;
   }
 
   private sendInitialWolfVisionBeforeAction(player: OnuWerewolfPlayer, role: OnuWerewolfRole): void {
@@ -898,13 +918,16 @@ class OnuWerewolfWorker extends BaseGameWorker {
 
     const skillRole = currentSkillItem.skill.getRole();
     this.sendInitialWolfVisionBeforeAction(player, skillRole);
+    const wolfSkillData = this.prepareInitialWolfSkillData(player, skillRole);
 
-    // 通知该玩家可以使用技能
+    // 通知该玩家可以使用技能。狼人阶段额外下发 isLoneWolf，前端才能区分
+    // “有同伴、无需中心牌”与“唯一狼人、可主动选择中心牌”两种合法交互。
     this.sendToPlayer(player.id, 'onu_skill_ready', {
       message: '轮到你使用技能了',
       role: skillRole,
       roleName: ONU_WEREWOLF_ROLE_NAMES[skillRole] || '未知角色',
-      timeLeft: this.getRemainingGameTime()
+      timeLeft: this.getRemainingGameTime(),
+      ...(wolfSkillData ? { skillData: wolfSkillData } : {})
     });
 
     // 设置技能超时（清理上一个定时器）
@@ -957,6 +980,48 @@ class OnuWerewolfWorker extends BaseGameWorker {
       throw new Error('技能选择数据格式无效');
     }
     let selection: OnuWerewolfSelection = rawSelection || {};
+
+    // 头狼/狼先知同样参加“狼人互认”阶段。若其是唯一初始狼人，规则允许
+    // 先自主查看一张中心牌，再继续执行自己的专属技能。这里沿用女巫的两步
+    // 协议并持久化中间状态，断线重连后不会丢失已查看的牌或重复查看。
+    const skillRole = skill.getRole();
+    const isSpecialWolfRole = skillRole === OnuWerewolfRole.AlphaWolf || skillRole === OnuWerewolfRole.MysticWolf;
+    if (isSpecialWolfRole && this.isLoneInitialWolf(player)) {
+      const storedLoneWolfCard = player.skillData?.loneWolfCardPosition as number | undefined;
+      const hasCardOnlySelection = selection.cards?.length === 1 && (!selection.players || selection.players.length === 0);
+
+      if (storedLoneWolfCard === undefined && hasCardOnlySelection) {
+        const position = selection.cards![0];
+        const card = this.gameState.centerCards.find(c => c.position === position);
+        if (!card) {
+          throw new Error('中心卡牌不存在');
+        }
+
+        player.skillData = {
+          ...(player.skillData || {}),
+          isLoneWolf: true,
+          loneWolfCardPosition: position
+        };
+
+        const loneWolfVision = onuCreateVision([], [card]);
+        this.mergePrivateVision(player, loneWolfVision);
+        const skillData = { isLoneWolf: true, loneWolfCardPosition: position };
+        this.sendToPlayer(playerId, 'onu_skill_result', {
+          message: `你作为唯一狼人查看了中心卡${position}（${ONU_WEREWOLF_ROLE_NAMES[card.role] || '未知'}），请继续执行${ONU_WEREWOLF_ROLE_NAMES[skillRole] || '当前角色'}技能`,
+          vision: loneWolfVision,
+          skillData,
+          keepSkillOpen: true
+        });
+        this.sendToPlayer(playerId, 'onu_skill_ready', {
+          message: `已完成唯一狼人查看，请继续执行${ONU_WEREWOLF_ROLE_NAMES[skillRole] || '当前角色'}技能`,
+          role: skillRole,
+          roleName: ONU_WEREWOLF_ROLE_NAMES[skillRole] || '未知角色',
+          timeLeft: this.getRemainingGameTime(),
+          skillData
+        });
+        return;
+      }
+    }
 
     // 女巫参考实现是两步交互：先查看一张中心牌，再选择一名玩家交换。
     // 若旧客户端一次性提交了“中心牌+玩家”，仍兼容为一次完成。
@@ -1022,6 +1087,9 @@ class OnuWerewolfWorker extends BaseGameWorker {
 
     if (skill.getRole() === OnuWerewolfRole.Witch && player.skillData?.witchCardPosition !== undefined) {
       delete player.skillData.witchCardPosition;
+    }
+    if (isSpecialWolfRole && player.skillData?.loneWolfCardPosition !== undefined) {
+      delete player.skillData.loneWolfCardPosition;
     }
 
     this.mergePrivateVision(player, result.vision);

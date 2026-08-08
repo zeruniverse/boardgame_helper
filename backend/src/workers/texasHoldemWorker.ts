@@ -1173,6 +1173,60 @@ class TexasHoldemWorker extends BaseGameWorker {
     return !gs.acted.includes(player.id);
   }
 
+  private hasOtherActivePlayerWithChips(playerId: string): boolean {
+    const gs = this.gameState as TexasHoldemGameState;
+    return this.participants.some((id: string) => {
+      if (id === playerId || gs.folded.includes(id)) return false;
+      const player = this.room.players.find(p => p.id === id);
+      return Boolean(player && Number(player.gameMetadata?.chips || 0) > 0);
+    });
+  }
+
+  /**
+   * 当桌上只剩一名未弃牌玩家还有筹码时，不存在可形成的新边池。此时该玩家
+   * 最多只需要补到其他全下玩家已经实际投入的最高额；若已经达到或超过该额，
+   * 本轮应立即结束并退回未被跟注的筹码。尤其可以修复 HU 大盲短码时仍按名义
+   * 大盲强迫小盲补注、超时甚至错误弃牌的问题。
+   */
+  private closeUncontestedBettingIfPossible(): boolean {
+    const gs = this.gameState as TexasHoldemGameState;
+    const activeIds = this.getActiveParticipantIds();
+    if (activeIds.length < 2) {
+      return false;
+    }
+
+    const activePlayers = activeIds
+      .map(id => this.room.players.find(p => p.id === id))
+      .filter(Boolean) as Player[];
+    const playersWithChips = activePlayers.filter(player => Number(player.gameMetadata?.chips || 0) > 0);
+    if (playersWithChips.length !== 1) {
+      return false;
+    }
+
+    const lonePlayer = playersWithChips[0];
+    const loneBet = Math.max(0, Number(gs.bets[lonePlayer.id]) || 0);
+    const maxOpponentBet = Math.max(
+      0,
+      ...activeIds
+        .filter(id => id !== lonePlayer.id)
+        .map(id => Math.max(0, Number(gs.bets[id]) || 0))
+    );
+
+    // 名义大盲可能高于短码大盲实际投入额。没有第二个可行动筹码栈时，
+    // currentBet 不能继续指向一个无人能够争夺的“空边池”目标。
+    if (gs.currentBet > maxOpponentBet) {
+      gs.currentBet = maxOpponentBet;
+    }
+
+    if (loneBet >= maxOpponentBet) {
+      this.clearActionTimer();
+      this.nextRound();
+      return true;
+    }
+
+    return false;
+  }
+
   private findNextActionPlayerGlobalIndex(startParticipantIdx: number): number {
     const participatingPlayers = this.room.players.filter(p => this.participants.includes(p.id));
     if (participatingPlayers.length === 0) {
@@ -1194,6 +1248,10 @@ class TexasHoldemWorker extends BaseGameWorker {
   private requestActionForCurrentTurn(): void {
     const gs = this.gameState as TexasHoldemGameState;
     if (!this.participants || this.participants.length === 0) {
+      return;
+    }
+
+    if (this.closeUncontestedBettingIfPossible()) {
       return;
     }
 
@@ -1565,6 +1623,9 @@ class TexasHoldemWorker extends BaseGameWorker {
         if (!Number.isFinite(raiseTo) || raiseTo <= gs.currentBet) {
           return this.rejectPlayerAction(playerId, `加注总额必须高于当前下注 ${gs.currentBet}`);
         }
+        if (!this.hasOtherActivePlayerWithChips(playerId)) {
+          return this.rejectPlayerAction(playerId, '其他未弃牌玩家都已全下，不能向无人可响应的边池继续加注');
+        }
 
         const chips = Math.max(0, Number(player.gameMetadata.chips) || 0);
         const allInAmount = currentBet + chips;
@@ -1592,6 +1653,9 @@ class TexasHoldemWorker extends BaseGameWorker {
       case 'allin': {
         const chips = Math.max(0, Number(player.gameMetadata.chips) || 0);
         const allInAmount = currentBet + chips;
+        if (allInAmount > gs.currentBet && !this.hasOtherActivePlayerWithChips(playerId)) {
+          return this.rejectPlayerAction(playerId, '其他未弃牌玩家都已全下，不能向无人可响应的边池继续加注');
+        }
         if ((gs.raiseLocked || []).includes(playerId) && allInAmount > gs.currentBet) {
           return this.rejectPlayerAction(playerId, '短码全下未构成完整加注，不能再次加注');
         }
