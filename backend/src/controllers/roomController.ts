@@ -80,12 +80,12 @@ interface PendingRoomCreation {
 
 // 已有座位迁移在 worker 同步完成前只是“临时绑定”。这段窗口里新 socket 可能断线、
 // 主动离房，甚至恶意抢先发送 game_action。若把临时绑定当成正式连接处理，断线事件
-// 会触发德州扑克自动弃牌/其他游戏离线代操作，产生无法通过连接字段回滚的游戏副作用。
+// 会触发德州扑克超时托管/其他游戏离线代操作，产生无法通过连接字段回滚的游戏副作用。
 // 因此显式记录迁移事务，只有 connectExistingPlayerSeatUnlocked 成功返回后才视为提交。
 const existingSeatMigrationsBySocket: Map<string, ExistingSeatMigration> = new Map();
 // 新建房间/新增座位在 Worker 接受 join_room 之前也只是临时连接。此前只给“已有
 // 座位迁移”建立了事务标记，导致新增玩家在 join_room 的 await 窗口内已经能发送
-// game_action，断线也会被普通 disconnect 当成正式玩家并触发自动弃牌/离线代操作。
+// game_action，断线也会被普通 disconnect 当成正式玩家并触发超时托管/离线代操作。
 // 单独登记新增座位，直到 Controller 与 Worker 都确认加入后才提交。
 const newSeatConnectionsBySocket: Map<string, NewSeatConnection> = new Map();
 // 创建房间从 rooms.set 到 Worker 接纳首位玩家之间仍是事务中的临时房间。若这段
@@ -558,7 +558,7 @@ function markPlayerOnlineForController(room: Room, player: Player, socketId: str
   advancePlayerHeartbeat(player);
   advancePlayerConnectionState(player);
 
-  // 德州扑克 worker 会在玩家离线自动弃牌时把 inGame 置为 false。
+  // 德州扑克 worker 会在玩家离线进入超时托管时把 inGame 置为 false。
   // 玩家成功重连/按原 playerId 重新进入时，主线程快照也要先恢复，
   // 否则随后同步给 worker 的旧状态会覆盖重连状态。
   if (room.type === 'texas-holdem') {
@@ -1627,7 +1627,8 @@ export function roomController(io: Server) {
       !room.players.some(player =>
         player.id !== host.id &&
         player.online &&
-        !isPendingNewSeat(room.id, player.id)
+        !isPendingNewSeat(room.id, player.id) &&
+        !isPendingExistingSeatMigration(room.id, player.id)
       )
     ) {
       clearOfflineHostFailoverTimer(room.id);
@@ -1924,7 +1925,7 @@ export function roomController(io: Server) {
       }
       // 标记“已入队”而不是“已完成”：即使任务自身抛错，Worker 也可能已经执行了
       // player_online 的部分副作用。若随后无法恢复旧在线连接，回滚必须补发
-      // player_offline，把德州扑克自动弃牌/各游戏离线代操作等语义恢复到一致状态。
+      // player_offline，把德州扑克超时托管/各游戏离线代操作等语义恢复到一致状态。
       workerOnlineTaskQueued = true;
       await sendTaskToRoom(joinedRoom.id, 'player_online', { playerId: joinedPlayer.id });
       assertSocketConnected();
@@ -2027,8 +2028,8 @@ export function roomController(io: Server) {
       if (threadManager.getRoomThreadStatus(rollbackRoom.id) !== 'not_found') {
         try {
           // 先把 Controller 权威连接快照恢复给 Worker，再补偿可能被迁移窗口吞掉的
-          // player_offline。特别是德州扑克会在该事件里自动弃牌；仅同步 room 字段不足以
-          // 恢复游戏语义，反过来先发 offline 又可能基于临时 online 快照执行错误逻辑。
+          // player_offline。特别是德州扑克会在该事件里登记超时托管；仅同步 room 字段
+          // 不足以恢复游戏语义，反过来先发 offline 又可能基于临时 online 快照执行错误逻辑。
           await sendTaskToRoom(rollbackRoom.id, 'update_room_data', { room: rollbackRoom });
           const shouldNotifyWorkerOffline = Boolean(
             rollbackEndedOffline &&
@@ -3247,7 +3248,7 @@ export function roomController(io: Server) {
         if (provisionalNewSeat) {
           // 新增座位尚未被 Worker 接纳。这里仅取消加入事务；不能先发送
           // player_offline/kick_out_player，否则一个最终会回滚的临时座位也可能在
-          // 德州扑克等游戏里触发自动弃牌，或影响狼人/杀人游戏的阶段推进。
+          // 德州扑克等游戏里触发超时托管，或影响狼人/杀人游戏的阶段推进。
           provisionalNewSeat.aborted = true;
           socket.emit('room_left', { roomId: room.id });
           await leaveSocketRoomSafely(socket, room.id, '取消进行中的新增座位连接');
@@ -3281,7 +3282,7 @@ export function roomController(io: Server) {
         // 主动离房与 reconnect / disconnect / Cash Out / 踢人都会改变同一座位的
         // 连接或成员归属。必须在任何离线副作用前取得同一把座位锁；否则新连接
         // 正在迁移、但旧 socketId 尚未切走的窗口里，旧页面的 leave_room 可以先让
-        // Worker 自动弃牌/跳过，再在发现座位已被接管后仅停止删除，已发生的游戏
+        // Worker 进入超时托管/跳过，再在发现座位已被接管后仅停止删除，已发生的游戏
         // 副作用却无法回滚。现在由先取得锁的一方完整提交，后取得者基于最新所有权
         // 退化为只清理旧 Socket.IO 订阅。
         await runSeatMutationExclusive(roomId, playerId, async () => {
@@ -3310,7 +3311,7 @@ export function roomController(io: Server) {
           const room = lockedRoom;
           const player = lockedPlayer;
           // 先将玩家标记为离线并通知 worker；多数游戏需要在玩家仍存在于房间时
-          // 处理自动弃牌、死亡/托管、阶段推进等逻辑。主动离房的 socket 仍保持连接，
+          // 处理超时托管、死亡/离线代操作、阶段推进等逻辑。主动离房的 socket 仍保持连接，
           // 需要清空旧 socketId，避免后续私有身份/行动消息继续发到已离开的页面。
           const offlineAt = advancePlayerHeartbeat(player);
           player.online = false;
@@ -4014,7 +4015,7 @@ export function roomController(io: Server) {
       const provisionalNewSeat = getNewSeatConnection(socket.id);
       if (provisionalMigration) {
         // 临时迁移尚未提交时，新 socket 的 disconnect 只负责取消事务。若在这里按正式
-        // 座位断线处理，会提前触发 Worker 的自动弃牌/离线代操作，随后即使旧 socket
+        // 座位断线处理，会提前触发 Worker 的超时托管/离线代操作，随后即使旧 socket
         // 仍健康也无法回滚这些游戏副作用。connectExistingPlayerSeatUnlocked 的 catch
         // 会在确认旧连接可恢复后保留在线，否则统一补发真正的 player_offline。
         provisionalMigration.aborted = true;
@@ -4051,7 +4052,7 @@ export function roomController(io: Server) {
         // 它们必须共享 seatMutationQueues：第 63 轮把 existing-seat migration 提前登记到
         // ensureRoomThreadRunning 的第一次 await 之前后，新迁移可能已经持有座位锁，但旧
         // socketId 尚未切走。若旧连接此时断开而这里继续在锁外发送 player_offline，德州
-        // 会自动弃牌，其他游戏也可能自动跳过当前操作者；随后迁移即使成功，这些游戏副作用
+        // 会进入超时托管，其他游戏也可能自动跳过当前操作者；随后迁移即使成功，这些游戏副作用
         // 也无法靠 online=true 回滚。现在谁先取得座位锁谁先完整提交，后取得者再基于最新
         // socketId 复核所有权，避免迁移与旧连接断线交叉提交。
         await runSeatMutationExclusive(roomId, playerId, async () => {

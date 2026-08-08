@@ -169,6 +169,8 @@ class TexasHoldemWorker extends BaseGameWorker {
         return this.syncPlayerState((task.playerId || task.data.playerId)!, task.socketId);
       case 'player_offline':
         return await this.playerOffline((task.playerId || task.data.playerId)!);
+      case 'change_config':
+        return await this.changeConfig(task.data?.config || task.data || {});
       case 'game_action':
         return await this.executeGameAction(
           (task.playerId || task.data.playerId)!,
@@ -257,17 +259,24 @@ class TexasHoldemWorker extends BaseGameWorker {
     this.sendToRoom('chat_broadcast', { message: '德州扑克房间已准备就绪' });
   }
 
-  async changeConfig(config: TexasHoldemConfig): Promise<void> {
+  async changeConfig(config: unknown): Promise<void> {
+    const gs = this.gameState as TexasHoldemGameState;
+    // 直接 Worker 任务与前端 action 必须遵守同一阶段约束。否则旧控制端或运维脚本
+    // 可以在牌局中途重置盲注/currentBet/加注权，破坏当前下注轮与奖池结算。
+    if (gs.stage !== 'idle' || this.participants.length > 0) {
+      throw new Error('牌局进行中或奖池结算中，不能修改房间配置');
+    }
+
     this.config = this.normalizeConfig(config, this.config);
-    this.gameState.blinds = {
+    gs.blinds = {
       sb: this.config.blinds.smallBlind,
       bb: this.config.blinds.bigBlind
     };
-    this.gameState.currentBet = this.config.blinds.bigBlind;
-    this.gameState.lastRaiseAmount = this.config.blinds.bigBlind;
-    this.gameState.lastFullBet = this.config.blinds.bigBlind;
-    this.gameState.raiseLocked = [];
-    this.gameState.actedAtBet = {};
+    gs.currentBet = this.config.blinds.bigBlind;
+    gs.lastRaiseAmount = this.config.blinds.bigBlind;
+    gs.lastFullBet = this.config.blinds.bigBlind;
+    gs.raiseLocked = [];
+    gs.actedAtBet = {};
 
     if (!this.room.gameMetadata) {
       this.room.gameMetadata = {};
@@ -377,42 +386,22 @@ class TexasHoldemWorker extends BaseGameWorker {
               this.clearActionTimer();
               this.continueToNextPlayer();
             }
-          } else if (isCurrentTurn) {
-            // 是当前回合，通过handleFold统一处理
-            this.sendToRoom('chat_broadcast', { message: `${player.nickname} 离线自动弃牌`, type: 'system' });
-            this.handleFold(playerId);
           } else {
-            // 不是当前回合，直接fold
-            if (!gs.folded.includes(playerId)) {
-              gs.folded.push(playerId);
-            }
-            if (!gs.acted.includes(playerId)) {
-              gs.acted.push(playerId);
-            }
-            // 与正常 handleFold 保持同一套行动权清理。否则短码全下形成的
-            // actedAtBet/raiseLocked 可能在该玩家离线弃牌后残留到本轮结束。
-            delete gs.actedAtBet[playerId];
-            this.unlockRaiseForPlayer(playerId);
-            this.sendToRoom('chat_broadcast', { message: `${player.nickname} 离线自动弃牌`, type: 'system' });
-            // 检查是否只剩一个活跃玩家
-            const activeIds = this.getActiveParticipantIds();
-            if (this.settleSingleActiveOrEmptyPot(activeIds)) {
-              return;
-            }
-            // 如果离线玩家是当前回合之后的下一个应该行动的玩家，
-            // 确保 continueToNextPlayer 能正确跳过他们
-            if (gs.currentTurn >= 0 && gs.currentTurn < this.room.players.length) {
-              // currentTurn 仍然有效，不需要调整
+            // 断线不等同于主动弃牌。立即 Fold 会让尚未轮到的玩家提前暴露牌局结果，
+            // 也会让当前玩家在仍可 Check 时无条件弃牌。保留其本手牌与行动权：当前行动
+            // 继续使用已有倒计时；尚未轮到的玩家在轮到时获得正常倒计时。最终统一由
+            // handleTimeout 在无需跟注时自动 Check、需要跟注时自动 Fold，期间允许重连。
+            const playerBet = Math.max(0, Number(gs.bets[playerId]) || 0);
+            const toCall = Math.max(0, Number(gs.currentBet || 0) - playerBet);
+            let message: string;
+            if (isCurrentTurn) {
+              message = toCall === 0
+                ? `${player.nickname} 已离线，将在行动超时后自动过牌`
+                : `${player.nickname} 已离线，将在行动超时后自动弃牌`;
             } else {
-              // currentTurn 越界，尝试恢复
-              console.log('playerOffline: currentTurn 越界，尝试恢复');
-              this.checkRoundEnd();
+              message = `${player.nickname} 已离线，轮到行动后将按超时规则自动过牌或弃牌`;
             }
-
-            // 非当前行动者不会经过 handleFold/continueToNextPlayer，因此必须在这里
-            // 主动发布公开牌局状态。仅发送 room_update 无法同步 folded，其他客户端会
-            // 一直把离线玩家显示为仍在牌局中，直到下一次有人行动。
-            this.sendToRoom('game_state', this.buildPublicGameState());
+            this.sendToRoom('chat_broadcast', { message, type: 'system' });
           }
         }
       }
