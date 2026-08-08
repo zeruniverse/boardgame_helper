@@ -394,7 +394,26 @@
               </div>
             </div>
           </div>
-          
+
+          <div v-if="shabalothRegurgitation && !shabalothRegurgitation.resolved" class="storyteller-decision">
+            <h5>沙巴洛斯反刍裁决</h5>
+            <p class="hint-text">
+              {{ shabalothRegurgitation.shabalothName || '沙巴洛斯' }} 昨夜选择的以下死亡玩家可以在其本夜行动前复活一人，也可以不反刍。
+            </p>
+            <div class="death-ability-targets">
+              <el-button
+                v-for="target in shabalothRegurgitation.eligiblePlayers || []"
+                :key="target.playerId"
+                size="small"
+                type="warning"
+                @click="resolveShabalothRegurgitation(target.playerId)"
+              >
+                复活 {{ displayPlayerNameById(target.playerId, target.playerName) }}
+              </el-button>
+            </div>
+            <el-button size="small" plain @click="resolveShabalothRegurgitation(null)">本夜不反刍</el-button>
+          </div>
+
           <el-button @click="nextPhase" type="primary" class="next-phase-btn">
             进入白天
           </el-button>
@@ -656,6 +675,10 @@ const barberSwapTargets = computed(() => {
 
 const deathAbilityTargets = computed(() => {
   return deathAbilityPrompt.value?.availableTargets || []
+})
+
+const shabalothRegurgitation = computed(() => {
+  return props.isStoryteller ? props.gameState?.shabalothRegurgitation || null : null
 })
 
 const currentNomination = computed(() => {
@@ -1089,6 +1112,15 @@ const respondToStorytellerQuestion = (answer: string) => {
   storytellerResponseInput.value = ''
 }
 
+const resolveShabalothRegurgitation = (playerId: string | null) => {
+  emit('game-action', {
+    type: 'storytellerAction',
+    data: playerId
+      ? { actionType: 'shabalothRegurgitate', playerId }
+      : { actionType: 'shabalothRegurgitate', skip: true }
+  })
+}
+
 const nextPhase = () => {
   emit('game-action', {
     type: 'storytellerAction',
@@ -1355,6 +1387,18 @@ const formatNightInfo = (info: any) => formatBOTCNightInfo(
 
 .storyteller-night {
   text-align: center;
+}
+
+.storyteller-decision {
+  margin: 16px 0;
+  padding: 12px;
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius);
+  background: var(--app-panel);
+}
+
+.storyteller-decision h5 {
+  margin: 0 0 8px;
 }
 
 .night-order {

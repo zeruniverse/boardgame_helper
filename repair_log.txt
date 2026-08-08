@@ -1055,3 +1055,33 @@ Commit: fix(round12): 校正钟楼小局信息与夜间目标规则
   - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts 校验。
   - 正式 npm run build 已再次执行，但当前项目 node_modules 未安装，后端 tsc 因缺少 Node/Express/Socket.IO/UUID/CORS 等已声明依赖/类型中止；随后 npm ci --ignore-scripts 再次因当前内部 npm 源对锁定的 typescript-5.8.3.tgz 返回 404 而失败，前端 vue-tsc/Vite 无法进入正式生产构建。因此本轮不能声称完整生产构建已在此容器通过，仍需在依赖源可用的本地或 CI 执行 npm ci && npm run build 做最终部署构建确认。
 备注: 本轮未删除文件，未创建根目录 src/；所有后端源码修改仅位于 backend/src/，所有前端源码修改仅位于 frontend/src/；修复包只包含本轮修改文件及 repair_log.txt，可按相对路径直接覆盖。
+
+=== 当前请求第 13 轮修复记录 ===
+时间: 2026-08-08 03:18:57 UTC
+Commit: fix(round13): 补齐钟楼沙巴洛斯反刍与换角能力状态
+修改/新增文件:
+  - backend/src/workers/botcWorker.ts
+  - frontend/src/components/BOTCActionPanel.vue
+  - doc/botc.md
+  - repair_log.txt
+删除文件: 无
+构建测试: 部分通过（后端 strict 类型检查、84 个源码文件静态扫描、六 Worker prepare_room 烟雾、BOTC 第 13 轮专项回归与 package-lock 依赖树检查通过；完整 npm ci / npm run build 仍受当前容器内部 npm 源缺包阻塞）
+本轮修复:
+  - 补齐 Shabaloth（沙巴洛斯）上一轮明确遗留的“反刍”裁决链：仅记录能力实际生效的沙巴洛斯本夜所选目标；下一夜从“昨夜被其选择且当前仍死亡”的玩家中生成合法反刍候选，并把裁决保持为说书人私有状态，不进入普通玩家公开 gameState。
+  - 人类说书人夜晚面板新增沙巴洛斯反刍裁决，可选择复活一个合法候选或明确跳过；选择只先记录，真正复活在统一夜序结算到沙巴洛斯行动前发生，避免并行提交架构把复活提前到错误的夜序位置。未完成裁决时服务端拒绝直接结算/进入白天；自动夜晚计时超时时安全按“不反刍”继续，避免房间永久卡夜。
+  - AI 说书人补齐沙巴洛斯可选反刍：在合法死亡候选中做说书人裁决，并允许本夜不反刍；驱魔师阻止、醉酒或中毒导致沙巴洛斯能力失效时不会错误复活玩家，未应用的裁决在本夜结算后清理，不会串到下一夜。
+  - 修复 Pit-Hag（坑巫）换角后继承旧角色“已用过能力/夜间目标历史”的状态错误：角色改变现在与 Barber 换角统一清理 No ability、Seamstress/Fool/Po/Fang Gu/Ravenkeeper 等角色能力使用标记，以及 Exorcist/Devil's Advocate 目标历史和 Shabaloth 目标历史；同时保留中毒/醉酒、保护、死亡/遗言票等玩家状态。Pit-Hag 结算时保留本夜已经提交动作的 hasActed 标记，避免并行夜间收集器让同一玩家在一夜内重复提交第二次动作。
+  - 同步修正文档中沙巴洛斯描述，明确其每夜选择两名玩家，以及说书人可在下一夜行动前让一名“昨夜被其选择且当前死亡”的玩家反刍复活。
+审查结果/本轮未改动重点:
+  - 继续扫描 backend/src 与 frontend/src 当前全部 84 个 TypeScript/Vue/CSS 源码文件，复查六个游戏 Worker、BaseGameWorker、Controller/RoomThreadManager 的目录、导入、状态边界和既有竞态修复。本轮没有发现优先级高于上述 BOTC 核心能力缺口、且适合在同一批次低风险落地的跨游戏部署阻断项。
+  - 狼人杀、杀人游戏、一夜狼人、阿瓦隆、德州扑克本轮未新增源码修改；继续沿用前十二轮已修复的阶段推进、身份隐私、断线/重连、投票/刺杀、状态版本、边池与加注权等逻辑。本轮六个 Worker 均重新完成 prepare_room 烟雾验证。
+  - 前端继续沿用现有 Room / ActionPanel / PlayerList / Chat 分层和 Element Plus / 全局 app 变量体系；本轮新说书人裁决直接复用 BOTCActionPanel、death-ability 目标按钮和全局边框/圆角/面板变量，没有引入新的平行组件体系。
+  - BOTC 仍有后续高阶规则边界需要专项实现/验证：Recluse/Spy registration 尚未抽象成通用说书人裁决层；Pit-Hag “若制造了 Demon，则当夜死亡由说书人任意裁决”的整夜死亡替换链目前也未完整建模。本轮没有为此做高风险的大范围夜间结算重构。
+验证:
+  - backend/src 全部 34 个 TypeScript 文件使用 TypeScript 5.8.3、strict 模式、真实 Node 类型和位于项目目录外的 Express/CORS/Socket.IO/UUID 临时声明桩完成 noEmit 检查，0 个错误；同一配置成功生成 34 个测试用 CommonJS 文件。
+  - backend/src + frontend/src 共 84 个源码文件完成静态扫描：83 个 TypeScript/Vue script 解析单元、27 个 Vue SFC、27 个 style 块、313 个 import/export 路径检查均通过，无 TypeScript 语法、SFC 标签、CSS 花括号或失效相对/@ 导入错误；项目根目录不存在 src/。
+  - 六个实际游戏 Worker 使用本轮严格编译产物执行 prepare_room 烟雾测试全部通过：狼人杀、杀人游戏、血染钟楼、一夜狼人、阿瓦隆、德州扑克均能启动 Worker 并完成房间初始化。
+  - BOTC 第 13 轮专项回归通过：上一夜沙巴洛斯目标只把当前死亡者列入候选；反刍候选仅进入说书人状态而不进入普通玩家公开状态；人类说书人选择目标后不会提前复活，直到沙巴洛斯夜序结算时才复活；新角色清除旧的角色能力使用标记和目标历史但保留玩家级中毒状态及本夜 hasActed；中毒沙巴洛斯能力判定保持失效。
+  - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts 校验。
+  - 正式 npm ci --ignore-scripts 已再次尝试，但当前内部 npm 源对锁定的 typescript-5.8.3.tgz 返回 404；因此项目 node_modules 仍无法完整安装。随后正式 npm run build 因缺少 Node/Express/Socket.IO/UUID/CORS 等已声明依赖/类型在后端 tsc 阶段中止，前端 vue-tsc/Vite 无法进入正式生产构建。本轮不能声称完整生产构建已在此容器通过，仍需在依赖源可用的本地或 CI 执行 npm ci && npm run build 做最终部署确认。
+备注: 本轮未删除文件，未创建根目录 src/；所有后端源码修改仅位于 backend/src/，所有前端源码修改仅位于 frontend/src/；修复包只包含本轮修改/新增文件及 repair_log.txt，可按相对路径直接覆盖。

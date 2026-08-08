@@ -62,6 +62,19 @@ interface PendingBarberDecision {
   resume: 'startNight' | 'finishNight';
 }
 
+interface PendingShabalothRegurgitation {
+  shabalothId: string;
+  eligiblePlayerIds: string[];
+  selectedPlayerId: string | null;
+  resolved: boolean;
+  nightRound: number;
+}
+
+interface ShabalothTargetHistoryEntry {
+  nightRound: number;
+  targetIds: string[];
+}
+
 interface BOTCGameResultPlayer {
   id: string;
   name: string;
@@ -107,6 +120,9 @@ export class BOTCWorker extends BaseGameWorker {
   // then keep the choice as private player state so reconnects can restore it.
   private barberDeathsPending: string[] = [];
   private pendingBarberDecision: PendingBarberDecision | null = null;
+  // Shabaloth 的“反刍”属于说书人在该恶魔醒来前做出的裁决。当前项目允许玩家
+  // 并行提交夜间动作，因此把裁决单独持久化，在统一结算到 Shabaloth 夜序时才真正复活。
+  private pendingShabalothRegurgitation: PendingShabalothRegurgitation | null = null;
   // 终局结果必须保留在 Worker 权威状态中。仅广播一次 gameEnded 会导致刷新/重连
   // 玩家拿到 phase=ended 却丢失胜方和角色揭晓。
   private lastGameResult: BOTCGameResult | null = null;
@@ -527,10 +543,28 @@ export class BOTCWorker extends BaseGameWorker {
       }));
   }
 
-  private clearFreshCharacterUsageState(player: GamePlayer): void {
-    // Barber-created characters receive a fresh character ability. Keep player-bound
-    // states (poison/drunkenness/protection/death/ghost vote) but remove usage flags
-    // that would incorrectly make the newly received character already spent.
+  private getShabalothTargetHistory(): Record<string, ShabalothTargetHistoryEntry> {
+    if (!this.gameState.grimoire.shabalothTargetHistory) {
+      this.gameState.grimoire.shabalothTargetHistory = {};
+    }
+    return this.gameState.grimoire.shabalothTargetHistory as Record<string, ShabalothTargetHistoryEntry>;
+  }
+
+  private clearRoleBoundHistory(playerId: string): void {
+    const choiceHistory = this.gameState.grimoire.nightChoiceHistory as Record<string, unknown> | undefined;
+    if (choiceHistory) {
+      delete choiceHistory[playerId];
+    }
+    const shabalothHistory = this.gameState.grimoire.shabalothTargetHistory as Record<string, unknown> | undefined;
+    if (shabalothHistory) {
+      delete shabalothHistory[playerId];
+    }
+  }
+
+  private clearFreshCharacterUsageState(player: GamePlayer, resetActionState: boolean = true): void {
+    // A newly created/swapped character receives a fresh character ability. Keep
+    // player-bound states (poison/drunkenness/protection/death/ghost vote) but remove
+    // usage flags and choice history that belong to the old character.
     const characterUsageReminders = new Set([
       'No ability',
       'Seamstress used',
@@ -543,8 +577,169 @@ export class BOTCWorker extends BaseGameWorker {
     player.reminders = player.reminders.filter(reminder =>
       !characterUsageReminders.has(reminder) && !reminder.startsWith(GRANDMOTHER_GRANDCHILD_PREFIX)
     );
-    player.hasActed = false;
+    this.clearRoleBoundHistory(player.playerId);
+    if (resetActionState) {
+      player.hasActed = false;
+    }
     player.nightInfo = null;
+  }
+
+  private prepareShabalothRegurgitationDecision(): void {
+    if (!this.isNightPhase()) {
+      this.pendingShabalothRegurgitation = null;
+      return;
+    }
+    if (this.pendingShabalothRegurgitation?.nightRound === this.nightRound) {
+      return;
+    }
+
+    this.pendingShabalothRegurgitation = null;
+    const history = this.getShabalothTargetHistory();
+    const shabaloths = Array.from(this.gamePlayers.values())
+      .filter(player =>
+        this.getEffectiveRole(player)?.id === 'shabaloth' &&
+        this.isFunctionallyAlive(player)
+      )
+      .sort((a, b) => a.seat - b.seat);
+
+    for (const shabaloth of shabaloths) {
+      const entry = history[shabaloth.playerId];
+      if (!entry || entry.nightRound !== this.nightRound - 1) continue;
+
+      const eligiblePlayerIds = entry.targetIds.filter(targetId => this.gamePlayers.get(targetId)?.isDead === true);
+      if (eligiblePlayerIds.length === 0) continue;
+
+      this.pendingShabalothRegurgitation = {
+        shabalothId: shabaloth.playerId,
+        eligiblePlayerIds,
+        selectedPlayerId: null,
+        resolved: this.isComputerStoryteller(),
+        nightRound: this.nightRound
+      };
+
+      if (!this.isComputerStoryteller()) {
+        this.sendToPlayer(this.gameConfig.storytellerId, 'shabalothRegurgitationPending', {
+          shabalothId: shabaloth.playerId,
+          shabalothName: this.getPlayerName(shabaloth.playerId),
+          eligiblePlayers: eligiblePlayerIds.map(playerId => ({
+            playerId,
+            playerName: this.getPlayerName(playerId)
+          })),
+          message: '沙巴洛斯昨夜选择的死亡玩家中有可反刍目标；请决定复活一人或选择不反刍。'
+        });
+      }
+      break;
+    }
+  }
+
+  private isShabalothDecisionBlockingNight(): boolean {
+    return Boolean(
+      this.pendingShabalothRegurgitation &&
+      !this.pendingShabalothRegurgitation.resolved &&
+      !this.isComputerStoryteller()
+    );
+  }
+
+  private rememberShabalothTargets(action: NightAction): void {
+    const targetIds = Array.isArray(action.targets)
+      ? action.targets.filter((targetId): targetId is string => typeof targetId === 'string')
+      : [];
+    this.getShabalothTargetHistory()[action.playerId] = {
+      nightRound: this.nightRound,
+      targetIds: [...new Set(targetIds)]
+    };
+  }
+
+  private chooseAIShabalothRegurgitation(eligiblePlayerIds: string[]): string | null {
+    if (eligiblePlayerIds.length === 0) return null;
+
+    const candidates = eligiblePlayerIds
+      .map(playerId => this.gamePlayers.get(playerId))
+      .filter((player): player is GamePlayer => Boolean(player?.isDead));
+    if (candidates.length === 0) return null;
+
+    // Regurgitation is a Storyteller choice, not a guaranteed resurrection. Keep
+    // some no-regurgitation nights, while using aiBias only to choose among legal
+    // dead targets rather than changing the underlying Demon ability.
+    if (Math.random() < 0.5) return null;
+
+    const aiBias = this.gameConfig.aiBias || 'neutral';
+    const preferred = candidates.filter(player => {
+      if (aiBias === 'evil') return isEvilPlayer(player);
+      if (aiBias === 'good') return isGoodPlayer(player);
+      return true;
+    });
+    const pool = preferred.length > 0 ? preferred : candidates;
+    return pool[Math.floor(Math.random() * pool.length)]?.playerId || null;
+  }
+
+  private async applyShabalothRegurgitationBeforeAction(shabalothId: string): Promise<void> {
+    const pending = this.pendingShabalothRegurgitation;
+    if (!pending || pending.nightRound !== this.nightRound || pending.shabalothId !== shabalothId) {
+      return;
+    }
+
+    let selectedPlayerId = pending.selectedPlayerId;
+    if (this.isComputerStoryteller()) {
+      selectedPlayerId = this.chooseAIShabalothRegurgitation(pending.eligiblePlayerIds);
+      pending.selectedPlayerId = selectedPlayerId;
+      pending.resolved = true;
+    }
+
+    if (!pending.resolved) {
+      return;
+    }
+
+    if (selectedPlayerId) {
+      const target = this.gamePlayers.get(selectedPlayerId);
+      if (target?.isDead && pending.eligiblePlayerIds.includes(selectedPlayerId)) {
+        await this.revivePlayer(selectedPlayerId);
+        this.notifyStoryteller(`${this.getPlayerName(selectedPlayerId)} 被沙巴洛斯反刍并复活`, 'warning');
+      } else {
+        this.notifyStoryteller('沙巴洛斯反刍目标在结算前已不再是合法死亡目标，本夜未反刍', 'warning');
+      }
+    } else {
+      this.notifyStoryteller('本夜沙巴洛斯没有反刍昨夜目标', 'info');
+    }
+
+    this.pendingShabalothRegurgitation = null;
+  }
+
+  private async resolveShabalothRegurgitationDecision(playerId: string, data: any): Promise<void> {
+    const pending = this.pendingShabalothRegurgitation;
+    if (!pending || pending.nightRound !== this.nightRound) {
+      this.sendToPlayer(playerId, 'actionError', { message: '当前没有待处理的沙巴洛斯反刍裁决' });
+      return;
+    }
+    if (pending.resolved) {
+      this.sendToPlayer(playerId, 'actionError', { message: '本夜沙巴洛斯反刍裁决已经完成' });
+      return;
+    }
+
+    const skip = data?.skip === true || data?.playerId == null;
+    const selectedPlayerId = skip ? null : String(data.playerId);
+    if (selectedPlayerId && !pending.eligiblePlayerIds.includes(selectedPlayerId)) {
+      this.sendToPlayer(playerId, 'actionError', { message: '该玩家不是沙巴洛斯昨夜选择且当前死亡的合法反刍目标' });
+      return;
+    }
+    if (selectedPlayerId && this.gamePlayers.get(selectedPlayerId)?.isDead !== true) {
+      this.sendToPlayer(playerId, 'actionError', { message: '该玩家当前并非死亡状态，不能被反刍' });
+      return;
+    }
+
+    pending.selectedPlayerId = selectedPlayerId;
+    pending.resolved = true;
+    this.sendToPlayer(playerId, 'shabalothRegurgitationResolved', {
+      shabalothId: pending.shabalothId,
+      selectedPlayerId,
+      skipped: selectedPlayerId === null
+    });
+    this.broadcastGameState();
+
+    const allNightActorsDone = this.gameState.nightOrder.every(actorId => this.gamePlayers.get(actorId)?.hasActed === true);
+    if (allNightActorsDone) {
+      this.scheduleNightTask('pendingNightActions', 0, () => this.processNightActions());
+    }
   }
 
   private beginNextBarberDecision(resume: PendingBarberDecision['resume']): boolean {
@@ -1672,6 +1867,7 @@ export class BOTCWorker extends BaseGameWorker {
     this.firstNightInfoPlayerIds.clear();
     this.barberDeathsPending = [];
     this.pendingBarberDecision = null;
+    this.pendingShabalothRegurgitation = null;
     this.lastGameResult = null;
     this.gameState = initializeGameState(this.gameConfig.storytellerId);
     this.gameState.grimoire.startTime = Date.now();
@@ -2587,6 +2783,7 @@ export class BOTCWorker extends BaseGameWorker {
     this.refreshNoDashiiPoison();
     this.refreshVigormortisEffects();
     this.gameState.nightOrder = getNightOrder(Array.from(this.gamePlayers.values()), isFirstNight);
+    this.prepareShabalothRegurgitationDecision();
 
     // 进入夜晚后补发每名玩家自己的私有能力状态。
     // 只包含玩家已知且提交行动必需的信息（例如珀是否已蓄力），避免公开魔典提醒标记。
@@ -2647,6 +2844,13 @@ export class BOTCWorker extends BaseGameWorker {
         type: 'warning'
       });
       this.notifyStoryteller(`夜晚计时结束，已跳过 ${skippedPlayerIds.length} 名未行动玩家并结算本夜`, 'warning');
+    }
+
+    if (this.isShabalothDecisionBlockingNight() && this.pendingShabalothRegurgitation) {
+      this.pendingShabalothRegurgitation.resolved = true;
+      this.pendingShabalothRegurgitation.selectedPlayerId = null;
+      this.notifyStoryteller('夜晚计时结束，沙巴洛斯反刍裁决超时，本夜按“不反刍”继续结算', 'warning');
+      this.broadcastGameState();
     }
 
     await this.processNightActions();
@@ -3916,7 +4120,14 @@ export class BOTCWorker extends BaseGameWorker {
           this.sendToPlayer(playerId, 'actionError', { message: '请等待恶魔先处理理发师换角' });
           return;
         }
+        if (this.isShabalothDecisionBlockingNight()) {
+          this.sendToPlayer(playerId, 'actionError', { message: '请先完成沙巴洛斯本夜是否反刍的裁决' });
+          return;
+        }
         await this.processNightActions();
+        break;
+      case 'shabalothRegurgitate':
+        await this.resolveShabalothRegurgitationDecision(playerId, data);
         break;
       case 'startDay':
         if (!this.isNightPhase()) {
@@ -3925,6 +4136,10 @@ export class BOTCWorker extends BaseGameWorker {
         }
         if (this.pendingBarberDecision) {
           this.sendToPlayer(playerId, 'actionError', { message: '请等待恶魔先处理理发师换角' });
+          return;
+        }
+        if (this.isShabalothDecisionBlockingNight()) {
+          this.sendToPlayer(playerId, 'actionError', { message: '请先完成沙巴洛斯本夜是否反刍的裁决' });
           return;
         }
         await this.startDay();
@@ -3962,6 +4177,10 @@ export class BOTCWorker extends BaseGameWorker {
         } else if (this.gameState.phase === GamePhase.NIGHT || this.gameState.phase === GamePhase.FIRST_NIGHT) {
           if (this.pendingBarberDecision) {
             this.sendToPlayer(playerId, 'actionError', { message: '请等待恶魔先处理理发师换角' });
+            return;
+          }
+          if (this.isShabalothDecisionBlockingNight()) {
+            this.sendToPlayer(playerId, 'actionError', { message: '请先完成沙巴洛斯本夜是否反刍的裁决' });
             return;
           }
           await this.processNightActions();
@@ -4166,6 +4385,11 @@ export class BOTCWorker extends BaseGameWorker {
     if (this.pendingBarberDecision) {
       return;
     }
+    if (this.isShabalothDecisionBlockingNight()) {
+      this.notifyStoryteller('请先完成沙巴洛斯本夜是否反刍的裁决，再结算夜晚', 'warning');
+      this.broadcastGameState();
+      return;
+    }
 
     // 夜晚结算包含死亡、角色晋升和被动能力等不可重复副作用。定时器、玩家最后一次行动和
     // 说书人按钮可能在同一时间触发结算，必须保证整个结算阶段只执行一次。
@@ -4219,14 +4443,22 @@ export class BOTCWorker extends BaseGameWorker {
       }
 
       try {
+        const effectiveRole = this.getEffectiveRole(player) || player.role;
+        const abilityWorks = this.playerAbilityWorks(player);
+
+        // Shabaloth regurgitation is resolved immediately before the Shabaloth
+        // wakes/acts. A poisoned, drunk or Exorcised Shabaloth has no functioning
+        // Demon ability, so the stored Storyteller choice must not resurrect anyone.
+        if (abilityWorks && effectiveRole?.id === 'shabaloth') {
+          await this.applyShabalothRegurgitationBeforeAction(player.playerId);
+        }
+
         const result = processNightAction(action, allPlayers, this.gameState.phase === GamePhase.FIRST_NIGHT, {
           outsiderDiedToday: this.didOutsiderDieToday(),
           anyoneDiedToday: this.didAnyoneDieToday()
         });
         
         if (result.success) {
-          const abilityWorks = this.playerAbilityWorks(player);
-          const effectiveRole = this.getEffectiveRole(player) || player.role;
 
           // A chosen Demon learns the Exorcist even when that Demon would not
           // otherwise have a submitted action this night (for example a
@@ -4320,6 +4552,12 @@ export class BOTCWorker extends BaseGameWorker {
           });
         }
       }
+    }
+
+    // 若 Shabaloth 因驱魔、醉毒或超时没有真正行动，本夜也已经完成结算；
+    // 丢弃尚未应用的裁决，不能让它串到下一夜。
+    if (this.pendingShabalothRegurgitation?.nightRound === this.nightRound) {
+      this.pendingShabalothRegurgitation = null;
     }
 
     // 清空夜晚行动数组
@@ -4493,6 +4731,11 @@ export class BOTCWorker extends BaseGameWorker {
       : [];
     const killCause = this.getNightKillCause(action);
     const roleId = this.getNightActionRoleId(action);
+    if (roleId === 'shabaloth') {
+      // Eligibility next night is based on whom the functioning Shabaloth chose,
+      // not merely on which targets successfully died through protection effects.
+      this.rememberShabalothTargets(action);
+    }
     if (effects.killed) {
       for (const playerId of effects.killed) {
         const killTarget = this.gamePlayers.get(playerId);
@@ -4606,10 +4849,12 @@ export class BOTCWorker extends BaseGameWorker {
         const newRole = getRoleById(change.roleId);
         if (!player || !newRole) continue;
 
+        // Character changes receive a fresh character ability. Keep this night's
+        // submitted-action marker so the parallel night collector cannot accept a
+        // second action from the same player, but clear old character usage/history.
+        this.clearFreshCharacterUsageState(player, false);
         player.role = { ...newRole };
         player.displayRole = undefined;
-        player.nightInfo = null;
-        player.reminders = player.reminders.filter(reminder => !reminder.startsWith(GRANDMOTHER_GRANDCHILD_PREFIX));
         if (change.poison) {
           this.applyDebuff(player, 'Poisoned', 'pithag');
         }
@@ -5696,7 +5941,17 @@ export class BOTCWorker extends BaseGameWorker {
         playerName: this.getPlayerName(playerId),
         roleName: getRoleName(this.getEffectiveRole(this.gamePlayers.get(playerId)!)?.id || ''),
         hasActed: this.gamePlayers.get(playerId)?.hasActed || false
-      }))
+      })),
+      shabalothRegurgitation: this.pendingShabalothRegurgitation ? {
+        shabalothId: this.pendingShabalothRegurgitation.shabalothId,
+        shabalothName: this.getPlayerName(this.pendingShabalothRegurgitation.shabalothId),
+        resolved: this.pendingShabalothRegurgitation.resolved,
+        selectedPlayerId: this.pendingShabalothRegurgitation.selectedPlayerId,
+        eligiblePlayers: this.pendingShabalothRegurgitation.eligiblePlayerIds.map(playerId => ({
+          playerId,
+          playerName: this.getPlayerName(playerId)
+        }))
+      } : undefined
     };
   }
 
