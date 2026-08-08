@@ -99,10 +99,16 @@ const pendingRoomCreations: Map<string, PendingRoomCreation> = new Map();
 // 两个 reconnect_room 在第一个事务 await Worker 时交错执行，单纯检查 room.players
 // 还不足以阻止同一连接最终占用多个房间。这里先做 socket 级 claim，再由房间/座位
 // 自己的事务锁负责更细粒度的一致性。
-const socketRoomConnectionClaims: Set<string> = new Set();
+const socketRoomConnectionClaims: Map<string, string | undefined> = new Map();
+// 房间清理一旦开始终止 Worker，就不能再让 join/reconnect 在 terminate() 的 await 窗口
+// 里把 lastActiveTime 改成新值并等待线程重启。那样虽然 cleanup 最终会因为房间已活跃而
+// 放弃 rooms.delete，却已经永久丢掉 Worker 内只存在于内存中的身份、夜间阶段、牌局等状态。
+// 同时记录“已开始不可撤销 Worker 停止”的房间，并让清理在任何已开始的连接事务前退出。
+const roomCleanupStops: Set<string> = new Set();
 const INVALID_PLAYER_SESSION_MESSAGE = '重连身份校验失败，请使用原设备或原链接重新进入';
 const SOCKET_ROOM_CONNECTION_BUSY_MESSAGE = '房间连接操作正在处理中，请稍后重试';
 const SOCKET_ALREADY_IN_OTHER_ROOM_MESSAGE = '当前连接已在其他房间中，请先离开原房间';
+const ROOM_CLEANUP_IN_PROGRESS_MESSAGE = '房间正在清理中，请刷新大厅后重试';
 
 class InvalidPlayerSessionError extends Error {
   constructor() {
@@ -205,18 +211,33 @@ function beginSocketRoomConnection(
     return false;
   }
 
+  // Worker termination is not reversible. If cleanup won the race and already
+  // quarantined/stopped the room thread, do not let a reconnect make the room look
+  // active and then restart from an incomplete Room snapshot after state was lost.
+  if (targetRoomId && roomCleanupStops.has(targetRoomId)) {
+    sendErrorResponse(socket, ROOM_CLEANUP_IN_PROGRESS_MESSAGE, ack);
+    return false;
+  }
+
   const ownedSeat = findSocketOwnedSeat(socket.id);
   if (ownedSeat && (!targetRoomId || ownedSeat.room.id !== targetRoomId)) {
     sendErrorResponse(socket, SOCKET_ALREADY_IN_OTHER_ROOM_MESSAGE, ack);
     return false;
   }
 
-  socketRoomConnectionClaims.add(socket.id);
+  socketRoomConnectionClaims.set(socket.id, targetRoomId);
   return true;
 }
 
 function endSocketRoomConnection(socket: Socket): void {
   socketRoomConnectionClaims.delete(socket.id);
+}
+
+function hasRoomConnectionClaim(roomId: string): boolean {
+  for (const claimedRoomId of socketRoomConnectionClaims.values()) {
+    if (claimedRoomId === roomId) return true;
+  }
+  return false;
 }
 
 function getExistingSeatMigration(socketId: string, roomId?: string, playerId?: string): ExistingSeatMigration | undefined {
@@ -1121,6 +1142,7 @@ export function roomController(io: Server) {
       newSeatConnectionsBySocket.clear();
       pendingRoomCreations.clear();
       socketRoomConnectionClaims.clear();
+      roomCleanupStops.clear();
       
       // 6. 重新初始化线程管理器。若进程已开始关闭，不再创建新的 Worker 管理器。
       if (controllerShuttingDown) {
@@ -1933,43 +1955,72 @@ export function roomController(io: Server) {
     ) {
       return false;
     }
-
-    if (roomBeforeStop.cleanupTimer) {
-      clearTimeout(roomBeforeStop.cleanupTimer);
-      roomBeforeStop.cleanupTimer = undefined;
+    if (hasRoomConnectionClaim(roomId)) {
+      // The fired timer must not remain as a dead handle when a claimed connection
+      // later fails before it ever marks the seat online (for example an invalid
+      // reconnect token). A valid join/reconnect will clear this replacement timer
+      // as soon as it advances the room activity timestamp.
+      if (!expectedTimer || roomBeforeStop.cleanupTimer === expectedTimer) {
+        if (roomBeforeStop.cleanupTimer) {
+          clearTimeout(roomBeforeStop.cleanupTimer);
+        }
+        roomBeforeStop.cleanupTimer = undefined;
+        scheduleRoomCleanupIfNoOnlinePlayers(roomBeforeStop);
+      }
+      return false;
     }
 
-    let stopped = false;
+    // There is no await between the last connection-claim check and this marker, so
+    // either a join/reconnect already owns the room and cleanup returns above, or cleanup
+    // wins the race and subsequent connection attempts are rejected until the irreversible
+    // Worker stop has finished. This prevents a reconnect from preserving the Controller
+    // Room object after its in-memory game Worker has already been destroyed.
+    if (roomCleanupStops.has(roomId)) {
+      return false;
+    }
+    roomCleanupStops.add(roomId);
+
     try {
-      stopped = await threadManager.stopRoomThread(roomId);
-    } catch (error) {
-      console.error(`${reason}时停止线程失败: ${roomId}`, error);
-    }
+      if (roomBeforeStop.cleanupTimer) {
+        clearTimeout(roomBeforeStop.cleanupTimer);
+        roomBeforeStop.cleanupTimer = undefined;
+      }
 
-    // stopRoomThread yields. A join/reconnect may have started meanwhile, so
-    // always re-read and compare the authoritative room after it resolves.
-    const roomAfterStop = rooms.get(roomId);
-    if (!roomAfterStop) return false;
-    if (
-      roomAfterStop.players.some(player => player.online) ||
-      Number(roomAfterStop.lastActiveTime || 0) !== expectedLastActiveTime
-    ) {
-      return false;
-    }
+      let stopped = false;
+      try {
+        stopped = await threadManager.stopRoomThread(roomId);
+      } catch (error) {
+        console.error(`${reason}时停止线程失败: ${roomId}`, error);
+      }
 
-    if (!stopped) {
-      console.warn(`${reason}时房间线程未能停止，保留房间并稍后重试: ${roomId}`);
-      scheduleRoomCleanupIfNoOnlinePlayers(roomAfterStop);
-      return false;
-    }
+      const roomAfterStop = rooms.get(roomId);
+      if (!roomAfterStop) return false;
 
-    clearOfflineHostFailoverTimer(roomId);
-    rooms.delete(roomId);
-    hostKickVotes.delete(roomId);
-    clearRoomSessionTokens(roomId);
-    broadcastLobbyUpdate();
-    console.log(`${reason}: ${roomId}`);
-    return true;
+      // Existing connections that claimed the room before cleanup are filtered above.
+      // Keep the defensive state comparison for non-connection mutations and future code.
+      if (
+        roomAfterStop.players.some(player => player.online) ||
+        Number(roomAfterStop.lastActiveTime || 0) !== expectedLastActiveTime
+      ) {
+        return false;
+      }
+
+      if (!stopped) {
+        console.warn(`${reason}时房间线程未能停止，保留房间并稍后重试: ${roomId}`);
+        scheduleRoomCleanupIfNoOnlinePlayers(roomAfterStop);
+        return false;
+      }
+
+      clearOfflineHostFailoverTimer(roomId);
+      rooms.delete(roomId);
+      hostKickVotes.delete(roomId);
+      clearRoomSessionTokens(roomId);
+      broadcastLobbyUpdate();
+      console.log(`${reason}: ${roomId}`);
+      return true;
+    } finally {
+      roomCleanupStops.delete(roomId);
+    }
   }
 
   function scheduleRoomCleanupIfNoOnlinePlayers(room: Room): void {
@@ -3849,6 +3900,7 @@ export function roomController(io: Server) {
     newSeatConnectionsBySocket.clear();
     pendingRoomCreations.clear();
     socketRoomConnectionClaims.clear();
+    roomCleanupStops.clear();
   }
 
   console.log('房间控制器初始化完成');
