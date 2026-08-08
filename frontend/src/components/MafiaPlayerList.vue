@@ -437,8 +437,8 @@ const getKnownIdentity = (playerId: string): { label: string; role?: string } | 
     return { label: getRoleName(props.playerSecret.role), role: props.playerSecret.role }
   }
 
-  if (props.playerSecret?.teammates?.includes(playerId)) {
-    return { label: getRoleName(props.playerSecret.role), role: props.playerSecret.role }
+  if (props.playerSecret?.role === 'KILLER' && props.playerSecret.teammates?.includes(playerId)) {
+    return { label: getRoleName('KILLER'), role: 'KILLER' }
   }
 
   const inspect = props.playerSecret?.inspectResults?.find(result => result.target === playerId)

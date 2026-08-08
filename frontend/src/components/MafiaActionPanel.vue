@@ -348,24 +348,9 @@ const getVoteCandidates = (): Player[] => {
 }
 
 const isTeammate = (playerId: string): boolean => {
-  if (!props.playerSecret) return false
-  // 杀手之间是队友
-  if (props.playerSecret.role === 'KILLER') {
-    return props.playerSecret.teammates?.includes(playerId) ?? false
-  }
-  // 警察之间是队友
-  if (props.playerSecret.role === 'COP') {
-    return props.playerSecret.teammates?.includes(playerId) ?? false
-  }
-  // 医生之间是队友
-  if (props.playerSecret.role === 'DOCTOR') {
-    return props.playerSecret.teammates?.includes(playerId) ?? false
-  }
-  // 狙击手之间是队友
-  if (props.playerSecret.role === 'SNIPER') {
-    return props.playerSecret.teammates?.includes(playerId) ?? false
-  }
-  return false
+  // 本规则中只有杀手需要互相确认并协同行动；蓝方身份不能由 teammates 暴露。
+  return props.playerSecret?.role === 'KILLER' &&
+    (props.playerSecret.teammates?.includes(playerId) ?? false)
 }
 
 const getPlayerName = (playerId: string): string => {

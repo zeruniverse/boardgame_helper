@@ -456,10 +456,10 @@ function processDeathChain(gameState: WerewolfGameState, context: any, dyingPlay
     return;
   }
 
-  // 否则进入遗言阶段
-  // 白天被投票放逐的玩家始终有遗言，夜晚死亡的只有第一天有遗言
+  // 否则进入遗言阶段。项目规则只允许白天被投票放逐的玩家留遗言；
+  // 夜晚死亡、女巫毒杀、猎人带走都没有遗言，首夜也不例外。
   const isExiled = dyingPlayer.die?.fromCharacter === 'VILLAGER';
-  if (isExiled || gameState.currentDay <= 1) {
+  if (isExiled) {
     gameState.nextStateOfDieCheck = GameStatus.LEAVE_MSG;
     LeaveMsgHandler.startOfState(gameState, context);
     return;
@@ -1022,13 +1022,8 @@ export const BeforeDayDiscussHandler: StateHandler = {
       });
     } else {
       const dyingIndices = dyingPlayers.map(p => p.index);
-      const canLeaveMsg = gameState.currentDay <= 1; // 只有第一天有遗言
-      const message = canLeaveMsg
-        ? renderPlayersHTML('昨晚死亡的玩家如下，请发表遗言:', dyingIndices)
-        : renderPlayersHTML('昨晚死亡的玩家如下:', dyingIndices);
-
       context.sendToRoom('show_message', {
-        message,
+        message: renderPlayersHTML('昨晚死亡的玩家如下:', dyingIndices),
         showTime: TIMEOUT[GameStatus.BEFORE_DAY_DISCUSS]
       });
 
@@ -1380,8 +1375,7 @@ export const HunterShootHandler: StateHandler = {
 
     const hunterNeedsFollowUp = !!hunter && (
       hunter.isSheriff ||
-      hunter.die?.fromCharacter === 'VILLAGER' ||
-      gameState.currentDay <= 1
+      hunter.die?.fromCharacter === 'VILLAGER'
     );
 
     // 如果猎人开枪带走了其他玩家，优先处理被带走者；当前猎人仍需警徽/遗言时，
@@ -1411,7 +1405,7 @@ export const HunterShootHandler: StateHandler = {
     }
 
     // 检查遗言
-    if (hunter && (hunter.die?.fromCharacter === 'VILLAGER' || gameState.currentDay <= 1)) {
+    if (hunter && hunter.die?.fromCharacter === 'VILLAGER') {
       scheduleStateTask(gameState, context, () => {
         LeaveMsgHandler.startOfState(gameState, context);
       }, 3000);

@@ -47,7 +47,7 @@ interface MafiaGameState {
     doctor: string[];
     sniper: string[];
     civilian: string[];
-    copVersion: [string, boolean, number][];   // 警察验人记录 [被验者ID, 是否是杀手, 查验天数]
+    copVersion: [string, string, boolean, number][]; // 警察验人记录 [警察ID, 被验者ID, 是否是杀手, 查验天数]
   };
   operators: string[];                // 当前操作者
   operateEndTime: Date;               // 操作截止时间
@@ -795,7 +795,7 @@ class MafiaWorker extends BaseGameWorker {
         playerId,
         role: 'KILLER',
         team: 'RED',
-        teammates: gameState.topSecret.killer,
+        teammates: gameState.topSecret.killer.filter(id => id !== playerId),
         canOperate: this.canPlayerOperate(playerId),
         actionLock: gameState.killerActionLock,
         wantToKill: gameState.wantToKill
@@ -805,22 +805,23 @@ class MafiaWorker extends BaseGameWorker {
         playerId,
         role: 'COP',
         team: 'BLUE',
-        teammates: gameState.topSecret.cop,
+        teammates: [],
         canOperate: this.canPlayerOperate(playerId),
         actionLock: gameState.copActionLock,
-        inspectResults: gameState.topSecret.copVersion.map(([target, result, day]) => ({
-          target,
-          result: result ? 'RED' : 'BLUE',
-          day
-        })),
-        inspect: gameState.inspect
+        inspectResults: gameState.topSecret.copVersion
+          .filter(([copId]) => copId === playerId)
+          .map(([, target, result, day]) => ({
+            target,
+            result: result ? 'RED' : 'BLUE',
+            day
+          }))
       };
     } else if (gameState.topSecret.doctor.includes(playerId)) {
       return {
         playerId,
         role: 'DOCTOR',
         team: 'BLUE',
-        teammates: gameState.topSecret.doctor,
+        teammates: [],
         canOperate: this.canPlayerOperate(playerId),
         actionLock: gameState.doctorActionLock
       };
@@ -829,7 +830,7 @@ class MafiaWorker extends BaseGameWorker {
         playerId,
         role: 'SNIPER',
         team: 'BLUE',
-        teammates: gameState.topSecret.sniper,
+        teammates: [],
         canOperate: this.canPlayerOperate(playerId),
         actionLock: gameState.sniperActionLock,
         sniperShot: gameState.sniperShot
@@ -1163,7 +1164,7 @@ class MafiaWorker extends BaseGameWorker {
 
     // 执行验人（每个警察独立查验，无需达成一致）
     const result = gameState.topSecret.killer.includes(suspectId);
-    gameState.topSecret.copVersion.push([suspectId, result, gameState.day]);
+    gameState.topSecret.copVersion.push([playerId, suspectId, result, gameState.day]);
 
     const message = `经查证${this.getPlayerName(suspectId)}是${result ? '<span class="red text">坏人!</span>' : '<span class="blue text">好人!</span>'}`;
     this.sendToPlayer(playerId, 'inspect_result', {
@@ -2122,29 +2123,36 @@ class MafiaWorker extends BaseGameWorker {
       return;
     }
 
+    // 只有“被杀手杀害”的玩家享有夜晚遗言资格；狙击手击杀不触发遗言。
+    // 多人同时死亡时也不能因此剥夺杀手受害者本应拥有的遗言。
+    const killerDeath = killerTargetDies && killerTarget
+      ? deaths.find(death => death.playerId === killerTarget)
+      : undefined;
+    const killerVictimCanLeaveLastWord = !!killerDeath && gameState.lastWordCount > 0;
+
     // 处理死亡情况
     if (deaths.length === 1) {
-      // 只有一人死亡
       const death = deaths[0];
       const message = `昨夜${this.getPlayerName(death.playerId)}遇害`;
       
-      // 记录死亡
       gameState.deathQueue.push({
         playerId: death.playerId,
         deathReason: death.reason,
         deathDay: gameState.day
       });
 
-      if (gameState.lastWordCount > 0) {
-        // 遗言
+      if (killerVictimCanLeaveLastWord && death.playerId === killerDeath!.playerId) {
         gameState.personWillDie = null;
         gameState.sniperTarget = null;
         gameState.personSaved = [];
         this.enterLastWord(death.playerId, message, GameStatus.LAST_WORD);
       } else {
-        // 直接进入白天
+        // 狙击手击杀从规则上就没有遗言；杀手击杀则只在遗言轮数耗尽后直接进入白天。
         const speaker = this.getNextPlayer(death.playerId);
-        const fullMessage = `${message}, 本轮已没有遗言, 下面请${this.getPlayerName(speaker)}发言`;
+        const noLastWordMessage = gameState.lastWordCount > 0
+          ? '该死亡不触发遗言'
+          : '本轮已没有遗言';
+        const fullMessage = `${message}, ${noLastWordMessage}, 下面请${this.getPlayerName(speaker)}发言`;
         
         gameState.status = GameStatus.SPEAK;
         gameState.operators = [speaker];
@@ -2163,8 +2171,6 @@ class MafiaWorker extends BaseGameWorker {
         this.skipOfflineOperators();
       }
     } else if (deaths.length >= 2) {
-      // 多人死亡（杀手杀了一个，狙击手杀了另一个）
-      // 记录所有死亡
       for (const death of deaths) {
         gameState.deathQueue.push({
           playerId: death.playerId,
@@ -2173,11 +2179,28 @@ class MafiaWorker extends BaseGameWorker {
         });
       }
 
-      // 多人死亡不进入遗言，直接进入白天
-      const deadNames = deaths.map(d => this.getPlayerName(d.playerId)).join('、');
-      const message = `昨夜多人遇害: ${deadNames}`;
-      
-      // 标记所有死亡玩家
+      const deathSummary = deaths
+        .map(death => `${this.getPlayerName(death.playerId)}${death.reason}`)
+        .join('、');
+      const message = `昨夜多人遇害: ${deathSummary}`;
+
+      if (killerVictimCanLeaveLastWord) {
+        // 先结算其他（例如狙击手）死亡，再让杀手受害者发表遗言。
+        // 更新 alivePlayersOrder，确保遗言结束后能从受害者的正确座次继续发言。
+        for (const death of deaths) {
+          if (death.playerId !== killerDeath!.playerId) {
+            gameState.players[death.playerId].alive = false;
+          }
+        }
+        gameState.alivePlayersOrder = this.getAlivePlayers();
+        gameState.personWillDie = null;
+        gameState.sniperTarget = null;
+        gameState.personSaved = [];
+        this.enterLastWord(killerDeath!.playerId, message, GameStatus.LAST_WORD);
+        return;
+      }
+
+      // 没有符合规则的遗言对象，直接进入白天。
       for (const death of deaths) {
         gameState.players[death.playerId].alive = false;
       }
@@ -2188,7 +2211,6 @@ class MafiaWorker extends BaseGameWorker {
       gameState.personSaved = [];
       gameState.status = GameStatus.SPEAK;
       
-      // 从存活玩家中选出第一个发言者
       const alivePlayers = gameState.alivePlayersOrder;
       const firstPlayer = alivePlayers[0] || '';
       gameState.operators = [firstPlayer];
@@ -2198,9 +2220,7 @@ class MafiaWorker extends BaseGameWorker {
 
       this.setTimer(this.config.speakTime * 1000, () => this.handleTimeout());
 
-      const fullMessage = deaths.length >= 2 
-        ? `${message}, 多人死亡无遗言, 请${this.getPlayerName(firstPlayer)}发言`
-        : `${message}, 本轮已没有遗言, 请${this.getPlayerName(firstPlayer)}发言`;
+      const fullMessage = `${message}, 本轮无可用遗言, 请${this.getPlayerName(firstPlayer)}发言`;
       this.sendToRoom('day_start', { message: fullMessage, gameInfo: this.getGameInfo() });
       this.skipOfflineOperators();
     }
@@ -2391,8 +2411,8 @@ class MafiaWorker extends BaseGameWorker {
       const expelledPlayer = maxVotedPlayers[0];
       const message = `${this.getPlayerName(expelledPlayer)}被投票放逐, 得票数: ${maxVotes}\n`;
 
-      // 游戏继续，检查是否有遗言（杀手被票出无遗言）
-      if (gameState.lastWordCount > 0 && !gameState.topSecret.killer.includes(expelledPlayer)) {
+      // 游戏继续，白天被投票放逐的玩家在遗言轮数内都有遗言，身份不影响资格。
+      if (gameState.lastWordCount > 0) {
         this.enterLastWord(expelledPlayer, message, GameStatus.LAST_WORD_DAYTIME);
       } else {
         // 没有遗言了，先标记玩家死亡，再检查游戏结束
@@ -2499,9 +2519,9 @@ class MafiaWorker extends BaseGameWorker {
       .join(', ');
 
     const copVersion = gameState.topSecret.copVersion
-      .map(([uuid, result]) => {
+      .map(([copId, targetId, result, day]) => {
         const icon = result ? '👎' : '👍';
-        return `${this.getPlayerName(uuid)} ${icon}`;
+        return `第${day}天 ${this.getPlayerName(copId)}→${this.getPlayerName(targetId)} ${icon}`;
       })
       .join(', ');
 

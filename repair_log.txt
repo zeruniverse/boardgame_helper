@@ -735,3 +735,38 @@ Commit: fix(round14): 防止连接快照回滚并修正德州终局重连状态
   - 前端 48 个 TypeScript/Vue script 单元、128 个相对导入及 Vue SFC 基本结构完成静态检查，无错误；package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts；差异空白检查未报告新增问题；根目录不存在 src/。
   - 完整 npm run build 已再次执行，但附件内 node_modules 仍是不完整的空目录集合，正式后端 tsc 因缺少 body-parser、connect、express、node、uuid 等已声明类型文件中止，前端 vue-tsc/Vite 未进入执行。源码已通过上述 strict 编译、实际 Worker、专项回归和前端静态检查；仍需在依赖完整的本地或 CI 环境执行 npm ci && npm run build 做最终生产构建确认。
 备注: 所有后端源码修改均位于 backend/src/，所有前端源码修改均位于 frontend/src/；本轮未删除文件，未创建根目录 src/；修复包只包含本轮修改文件，可按相对路径直接覆盖。
+
+=== 当前请求第 3 轮修复记录 ===
+时间: 2026-08-08 UTC
+Commit: fix(round3): 修正狼人遗言与杀人游戏隐私结算
+修改/新增文件:
+  - backend/src/utils/werewolfStateHandlers.ts (56909 bytes)
+  - backend/src/workers/mafiaWorker.ts (98999 bytes)
+  - frontend/src/components/MafiaActionPanel.vue (14864 bytes)
+  - frontend/src/components/MafiaPlayerList.vue (20883 bytes)
+  - repair_log.txt
+删除文件: 无
+构建测试: 部分通过（完整 npm build 受当前容器依赖不可用阻塞）
+本轮修复:
+  - 狼人杀按 doc/werewolf.md 修正遗言资格：只有白天被投票放逐的玩家进入遗言；首夜/其他夜晚被狼人杀死、女巫毒死、猎人带走均不再因为 currentDay<=1 获得遗言。
+  - 狼人杀同步修正天亮死亡公告，不再在第一夜错误提示夜间死亡玩家“请发表遗言”；猎人夜死后的后续死亡链也移除首夜遗言例外，同时保留警徽传递与白天放逐遗言。
+  - 杀人游戏修复警察信息串线：验人历史增加执行警察 ID，重连/secret_update 只返回当前警察自己的查验记录，不再把其他警察的查验结果和当前 inspect 映射泄露给所有警察。
+  - 杀人游戏修复蓝方身份泄露：警察、医生、狙击手不再通过 teammates 获知同角色玩家身份；杀手仍保留协同行动所需的杀手队友信息，并去掉自己。前端身份标记与行动候选过滤同时收紧为仅杀手使用 teammates。
+  - 杀人游戏修复白天遗言规则：在遗言轮数内，被投票放逐的玩家无论是否为杀手都可发表遗言，不再对杀手身份做额外排除。
+  - 杀人游戏修复夜间遗言规则：只有“被杀手杀害”的玩家享有夜间遗言，狙击手单独击杀不再错误进入遗言；杀手和狙击手同夜分别造成多人死亡时，先结算狙击手死亡，再保留杀手受害者应有的遗言与正确发言座次。
+  - 杀人游戏终局复盘中的警察验人记录改为“天数 + 警察 -> 目标 + 结果”，与新的按警察隔离存储结构一致。
+审查结果/本轮未改动重点:
+  - 对 backend/src 与 frontend/src 全部 84 个文件继续做静态检查，并复查六种游戏的主要流程、Worker/Controller 房间状态同步、终局/重连路径与前端状态消费。本轮最重要且可稳定复现的问题集中在狼人杀遗言和杀人游戏私密信息/遗言结算。
+  - 阿瓦隆任务人数、第四任务双失败（7 人及以上）、连续 5 次组队否决、湖中仙女、梅林/派西维尔/奥伯伦可见性等主流程与当前文档一致；Worker 中仍保留旧 requestAssassinate/approveAssassination 兼容路径，而当前前端走直接 assassinate，本轮未做破坏性移除，建议后续继续确认是否需要清理旧协议。
+  - 一夜狼人参考角色范围、玩家+3 中心牌、AlphaWolf 额外中心狼牌、夜间角色顺序、禁自投/禁弃票、并列最高票处决及按最终角色判胜的关键路径未发现本轮必须修改的问题。
+  - 德州扑克盲注/行动轮、短码 all-in 加注重开、边池、弃牌终局、断线自动弃牌/全下保留摊牌资格等关键路径未发现新的高优先级问题；血染钟楼角色/状态机规模较大，本轮完成公开状态过滤、阶段计时与终局重连路径复查，但未声称逐角色穷举验证全部剧本边界。
+  - 前端 27 个 Vue SFC 的 script 语法和相对导入均通过检查；各游戏仍存在一定视觉差异，但没有发现需要冒险进行跨游戏大规模样式重构的功能性阻塞。本轮只收紧杀人游戏两个既有组件中的身份复用逻辑，保持原组件和目录结构。
+验证:
+  - backend/src 全部 34 个 TypeScript 文件使用 TypeScript 5.8.3、strict 模式、真实 Node 类型与临时外部模块声明完成完整类型检查，0 个错误。
+  - backend/src + frontend/src 共 55 个 .ts、27 个 Vue script 块使用 TypeScript 解析检查，0 个语法错误；全部源码相对导入检查 0 个失效路径；根目录不存在 src/。
+  - 六个实际游戏 Worker 的 prepare_room 烟雾测试通过：狼人杀、杀人游戏、一夜狼人、阿瓦隆、血染钟楼、德州扑克均能由本轮源码转译后加载并完成房间初始化。
+  - 狼人杀专项回归通过：currentDay=1 的夜间狼人击杀不会进入 LEAVE_MSG，而白天 VILLAGER 投票放逐仍进入 LEAVE_MSG。
+  - 杀人游戏实际 Worker 集成回归通过：9 人局角色分配后蓝方 teammates 不泄露；杀手 teammates 排除自己；白天被放逐的杀手仍获得遗言；两名警察分别查验后重连只恢复各自结果；杀手+狙击手同夜分别击杀时仅杀手受害者进入遗言，狙击手受害者提前正确标记死亡。
+  - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts。
+  - 完整 npm ci --offline 无法完成：当前容器缓存中没有锁定的 TypeScript 包，内部 npm 源包不可用；完整 npm run build 因项目 node_modules 未安装，在后端正式 tsc 阶段缺少 Node/Express/Socket.IO/UUID/CORS 等已声明依赖及类型而中止，前端 vue-tsc/Vite 未进入执行。该失败属于环境依赖缺失，不是本轮源码 strict 检查错误；仍需在依赖源可用的本地或 CI 执行 npm ci && npm run build 做最终生产构建确认。
+备注: 本轮未删除文件，未创建根目录 src/；所有后端源码改动均位于 backend/src/，所有前端源码改动均位于 frontend/src/；修复包只包含本轮修改文件及 repair_log.txt，可按相对路径直接覆盖。
