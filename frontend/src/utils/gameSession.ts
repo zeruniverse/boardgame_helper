@@ -54,6 +54,27 @@ export function hasStoredRoomSession(gameType: string, roomId?: string): boolean
   return !roomId || !storedRoomId || storedRoomId === roomId;
 }
 
+/**
+ * 房间路由只能自动恢复一个已经由后端确认过的精确会话。
+ * 与 hasStoredRoomSession 的旧数据兼容语义不同，这里故意要求 playerId、
+ * sessionToken 和 roomId 三者同时存在且房间完全一致，避免仅凭“玩过这个游戏”
+ * 的旧 playerId 直接进入另一个公开房间并占用新座位。
+ */
+export function hasExactStoredRoomSession(gameType: string, roomId: string): boolean {
+  const meta = getGameMeta(gameType);
+  if (!meta?.storage.room || !roomId) return false;
+
+  const playerId = localStorage.getItem(meta.storage.id);
+  const token = getStoredSessionToken(gameType);
+  const storedRoomId = localStorage.getItem(meta.storage.room);
+  return Boolean(
+    playerId
+    && token
+    && storedRoomId
+    && storedRoomId.trim().toUpperCase() === roomId.trim().toUpperCase()
+  );
+}
+
 export function ensureGameSession(gameType: string, nickname?: string, roomId?: string): GameSession {
   const meta = getGameMeta(gameType);
   if (!meta) {
@@ -76,9 +97,10 @@ export function ensureGameSession(gameType: string, nickname?: string, roomId?: 
   const finalNickname = normalizeUserVisibleNickname(nickname || storedNickname, fallbackNickname);
   localStorage.setItem(meta.storage.nickname, finalNickname);
 
-  if (meta.storage.room && roomId) {
-    localStorage.setItem(meta.storage.room, roomId);
-  }
+  // roomId 只作为本次请求参数返回，不能在服务端确认加入前写入持久会话。
+  // 否则尝试加入另一个满员/锁定/昵称冲突的房间失败后，会把原房间号覆盖掉，
+  // 使仍然有效的 sessionToken 无法再与原座位匹配。成功加入统一由
+  // rememberGameSession(room, player, token) 原子提交 roomId + token。
 
   return {
     playerId,
@@ -112,6 +134,32 @@ export function clearGameSession(gameType: GameType | string): void {
   if (keys.room) localStorage.removeItem(keys.room);
   const tokenKey = getSessionTokenKey(gameType);
   if (tokenKey) localStorage.removeItem(tokenKey);
+}
+
+/**
+ * 异步离房确认只能清理它自己发起时的那一份会话。
+ * 用户可能在旧 leave_room acknowledgement 返回前已经重新加入房间；通过房间号
+ * 和旧 token 双重比对，避免迟到回执把新会话从 localStorage 擦掉。
+ */
+export function clearGameSessionIfMatches(
+  gameType: GameType | string,
+  roomId: string | undefined,
+  sessionToken?: string
+): boolean {
+  if (!roomId) return false;
+
+  const storedRoomId = getStoredRoomId(gameType);
+  if (!storedRoomId
+    || storedRoomId.trim().toUpperCase() !== roomId.trim().toUpperCase()) {
+    return false;
+  }
+
+  if (sessionToken && getStoredSessionToken(gameType) !== sessionToken) {
+    return false;
+  }
+
+  clearGameSession(gameType);
+  return true;
 }
 
 export function clearAllGameSessions(): void {

@@ -174,8 +174,7 @@ import TexasHoldemChat from './TexasHoldemChat.vue';
 import TexasHoldemPlayerList from './TexasHoldemPlayerList.vue';
 import TexasHoldemActionBar from './TexasHoldemActionBar.vue';
 import { emitGameAction } from '../utils/gameSocket';
-import { GAME_STORAGE_KEYS } from '../utils/gameMeta';
-import { ensureGameSession, rememberGameSession } from '../utils/gameSession';
+import { clearGameSession, ensureGameSession, rememberGameSession } from '../utils/gameSession';
 import { formatPlayerName } from '../utils/playerName';
 
 const store = useTexasHoldemStore();
@@ -350,7 +349,9 @@ function onCashOut() {
     // 只有服务端确认玩家已退出房间后才清理本地状态，避免请求被拒绝时客户端误退房。
     // Cash Out 已由 Worker/Controller 完成实际移除，此处只脱离德州页面监听，不再重复发 leave_room。
     store.detachFromRoom();
-    localStorage.removeItem(GAME_STORAGE_KEYS['texas-holdem'].room || 'texas_currentRoom');
+    // Worker/Controller 已权威移除座位并销毁该 room-scoped sessionToken；
+    // 本地也必须完整清理，不能只删 roomId 后留下一个已失效 token。
+    clearGameSession('texas-holdem');
     roomLeaveRequested = true;
     router.push({ name: 'Lobby' });
   });

@@ -14,23 +14,34 @@ export interface DisconnectableSocket extends SocketEmitter {
  * Socket。直接 emit 后立刻 disconnect 可能让 disconnect 事件先于 leave_room 落地，
  * 导致等待阶段玩家被错误保留为离线席位；只移除监听器而不断开则会泄漏僵尸连接。
  */
+export interface LeaveRoomResponse {
+  success?: boolean;
+  error?: string;
+  clearSession?: boolean;
+}
+
 export function leaveRoomAndDisconnect(
   socket: DisconnectableSocket | null | undefined,
   roomId: string | null | undefined,
+  onComplete?: (response?: LeaveRoomResponse) => void,
   timeoutMs = 12000
 ): void {
   if (!socket) return;
 
   let finished = false;
   let fallbackTimer: ReturnType<typeof setTimeout> | null = null;
-  const finish = (): void => {
+  const finish = (response?: LeaveRoomResponse): void => {
     if (finished) return;
     finished = true;
     if (fallbackTimer) {
       clearTimeout(fallbackTimer);
       fallbackTimer = null;
     }
-    socket.disconnect();
+    try {
+      onComplete?.(response);
+    } finally {
+      socket.disconnect();
+    }
   };
 
   if (!roomId || socket.connected === false) {
@@ -38,9 +49,9 @@ export function leaveRoomAndDisconnect(
     return;
   }
 
-  fallbackTimer = setTimeout(finish, Math.max(100, timeoutMs));
+  fallbackTimer = setTimeout(() => finish(), Math.max(100, timeoutMs));
   try {
-    socket.emit('leave_room', { roomId }, finish);
+    socket.emit('leave_room', { roomId }, (response?: LeaveRoomResponse) => finish(response));
   } catch {
     finish();
   }

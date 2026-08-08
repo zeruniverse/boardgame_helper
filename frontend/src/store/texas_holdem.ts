@@ -3,7 +3,7 @@ import { useMainStore } from './index';
 import { emitGameAction, emitRoomReconnect } from '../utils/gameSocket';
 import { appendLimitedMessage, normalizeIncomingMessage } from '../utils/messages';
 import { GAME_STORAGE_KEYS } from '../utils/gameMeta';
-import { clearGameSession, ensureGameSession, rememberGameSession } from '../utils/gameSession';
+import { clearGameSession, clearGameSessionIfMatches, ensureGameSession, getStoredSessionToken, rememberGameSession } from '../utils/gameSession';
 import { getForcedExitMessage, redirectToLobbyAfterForcedExit, shouldClearSessionOnForcedExit } from '../utils/forcedExit';
 
 const TEXAS_STORAGE = GAME_STORAGE_KEYS['texas-holdem'];
@@ -380,7 +380,8 @@ export const useTexasHoldemStore = defineStore('texas_holdem', {
       this.nickname = nickname;
       if (rememberedPlayerId) this.playerId = rememberedPlayerId;
       localStorage.setItem(TEXAS_STORAGE.nickname, nickname);
-      localStorage.setItem(TEXAS_ROOM_KEY, roomId);
+      // 房间号必须等 room_joined 后由 rememberGameSession/setNicknameAndRoom 提交。
+      // 预写会让失败的跨房加入覆盖仍然有效的旧房间重连信息。
 
       // 设置新加入标记，避免Room组件重复reconnect
       sessionStorage.setItem('texas_newJoin', 'true');
@@ -408,7 +409,7 @@ export const useTexasHoldemStore = defineStore('texas_holdem', {
       this.nickname = nickname;
       if (rememberedPlayerId) this.playerId = rememberedPlayerId;
       localStorage.setItem(TEXAS_STORAGE.nickname, nickname);
-      localStorage.setItem(TEXAS_ROOM_KEY, roomName);
+      // 同 joinRoom：失败请求不能提前覆盖已确认房间号。
 
       // 设置新加入标记，避免Room组件重复reconnect
       sessionStorage.setItem('texas_newJoin', 'true');
@@ -515,11 +516,17 @@ export const useTexasHoldemStore = defineStore('texas_holdem', {
     leaveRoom() {
       const departingSocket = this.socket;
       const departingRoomId = this.currentRoom;
+      const departingSessionToken = getStoredSessionToken('texas-holdem');
 
       this.detachFromRoom();
 
       if (departingSocket && departingRoomId) {
-        departingSocket.emit('leave_room', { roomId: departingRoomId }, (response: { success?: boolean; error?: string } = {}) => {
+        departingSocket.emit('leave_room', { roomId: departingRoomId }, (response: { success?: boolean; error?: string; clearSession?: boolean } = {}) => {
+          // clearSession 表示旧 token 已由服务端权威销毁，即使离房后续广播/清理步骤
+          // 返回失败，也必须先清掉与本次离房完全匹配的本地旧会话。
+          if (response.clearSession === true) {
+            clearGameSessionIfMatches('texas-holdem', departingRoomId, departingSessionToken);
+          }
           if (response.success === false) {
             console.warn('德州扑克离开房间未被服务端确认:', response.error || '未知错误');
           }

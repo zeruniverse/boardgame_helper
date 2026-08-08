@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia';
 import { io, Socket } from 'socket.io-client';
 import { SOCKET_URL } from '../config';
-import { clearGameSession, ensureGameSession, rememberGameSession } from '../utils/gameSession';
+import { clearGameSession, clearGameSessionIfMatches, ensureGameSession, getStoredSessionToken, rememberGameSession } from '../utils/gameSession';
 import { emitChatAction, emitGameAction, emitRoomReconnect, leaveRoomAndDisconnect } from '../utils/gameSocket';
 import { appendLimitedMessage, createSystemMessage, normalizeErrorMessage, normalizeIncomingMessage, normalizeSystemMessage } from '../utils/messages';
 import { getForcedExitMessage, redirectToLobbyAfterForcedExit, shouldClearSessionOnForcedExit } from '../utils/forcedExit';
@@ -548,10 +548,15 @@ export const useMafiaStore = defineStore('mafia', {
     disconnectFromRoom() {
       const departingSocket = this.socket;
       const departingRoomId = this.currentRoomId;
+      const departingSessionToken = getStoredSessionToken('mafia');
       this.cleanup(false);
       this.socket = null;
       this.connected = false;
-      leaveRoomAndDisconnect(departingSocket, departingRoomId);
+      leaveRoomAndDisconnect(departingSocket, departingRoomId, (response) => {
+        if (response?.clearSession === true) {
+          clearGameSessionIfMatches('mafia', departingRoomId, departingSessionToken);
+        }
+      });
     },
 
     cleanup(disconnectSocket: boolean = true) {

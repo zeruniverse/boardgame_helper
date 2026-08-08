@@ -2445,9 +2445,12 @@ export function roomController(io: Server) {
     // 离开房间
     socket.on('leave_room', async (
       data: { roomId: string },
-      ack?: (response: { success: boolean; error?: string }) => void
+      ack?: (response: { success: boolean; error?: string; clearSession?: boolean }) => void
     ) => {
-      let ackResponse: { success: boolean; error?: string } = { success: true };
+      let ackResponse: { success: boolean; error?: string; clearSession?: boolean } = {
+        success: true,
+        clearSession: false
+      };
       try {
         if (!data || !isValidRoomId(data.roomId)) {
           console.warn(`leave_room: invalid roomId from socket ${socket.id}`);
@@ -2456,6 +2459,8 @@ export function roomController(io: Server) {
         }
         const room = rooms.get(data.roomId);
         if (!room) {
+          // 房间已经不存在时，任何该房间的本地 sessionToken 都不再可能合法重连。
+          ackResponse.clearSession = true;
           return;
         }
 
@@ -2585,6 +2590,7 @@ export function roomController(io: Server) {
         let committedRoom: Room | undefined = rooms.get(room.id);
         if (!committedRoom) {
           clearPlayerSessionToken(room.id, player.id);
+          ackResponse.clearSession = true;
           socket.emit('room_left', { roomId: room.id });
           return;
         }
@@ -2594,6 +2600,9 @@ export function roomController(io: Server) {
           committedRoom.players.splice(playerIndex, 1);
         }
         clearPlayerSessionToken(committedRoom.id, player.id);
+        // 从这里开始该旧 sessionToken 已在服务端失效；即使后续房间清理/广播失败，
+        // acknowledgement 仍应指示客户端只清理这一次离房对应的本地会话。
+        ackResponse.clearSession = true;
         committedRoom.lastActiveTime = Date.now();
 
         // 如果房间为空，停止线程；停止期间可能有新玩家加入，因此删除前必须再次检查。
@@ -2649,9 +2658,13 @@ export function roomController(io: Server) {
         console.log(`玩家 ${player.nickname} 离开了房间 ${room.name}`);
       } catch (error) {
         console.error('离开房间失败:', error);
+        // clearSession 一旦变成 true，就表示旧 token 已经在服务端失效；后续广播、
+        // 线程清理等步骤即使报错，也不能把这个事实从 acknowledgement 中抹掉。
+        // 否则客户端会保留一个服务端已撤销、永远无法重连的幽灵会话。
         ackResponse = {
           success: false,
-          error: error instanceof Error ? error.message : '离开房间失败'
+          error: error instanceof Error ? error.message : '离开房间失败',
+          clearSession: ackResponse.clearSession === true
         };
       } finally {
         if (typeof ack === 'function') {

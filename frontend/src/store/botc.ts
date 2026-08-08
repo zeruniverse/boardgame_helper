@@ -3,7 +3,7 @@ import { ref } from 'vue'
 import { io, Socket } from 'socket.io-client'
 import { ElMessage } from 'element-plus'
 import { SOCKET_URL } from '../config'
-import { clearGameSession, ensureGameSession, rememberGameSession } from '../utils/gameSession'
+import { clearGameSession, clearGameSessionIfMatches, ensureGameSession, getStoredSessionToken, rememberGameSession } from '../utils/gameSession'
 import { emitChatAction, emitGameAction, emitRoomReconnect, leaveRoomAndDisconnect } from '../utils/gameSocket'
 import { appendLimitedMessage, normalizeErrorMessage, normalizeIncomingMessage } from '../utils/messages'
 import { getForcedExitMessage, redirectToLobbyAfterForcedExit, shouldClearSessionOnForcedExit } from '../utils/forcedExit'
@@ -541,6 +541,7 @@ export const useBOTCGameStore = defineStore('botc', () => {
   const leaveRoom = () => {
     const departingSocket = socket.value
     const departingRoomId = currentRoomId.value
+    const departingSessionToken = getStoredSessionToken('blood-on-the-clocktower')
 
     for (const [event, handler] of socketListeners.value) {
       departingSocket?.off(event, handler)
@@ -550,7 +551,11 @@ export const useBOTCGameStore = defineStore('botc', () => {
     connected.value = false
     resetRoomState()
 
-    leaveRoomAndDisconnect(departingSocket, departingRoomId)
+    leaveRoomAndDisconnect(departingSocket, departingRoomId, (response) => {
+      if (response?.clearSession === true) {
+        clearGameSessionIfMatches('blood-on-the-clocktower', departingRoomId, departingSessionToken)
+      }
+    })
   }
 
   // 断开房间连接

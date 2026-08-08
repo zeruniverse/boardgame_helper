@@ -1986,3 +1986,46 @@ Commit: fix(round42): 修复德州共享Socket离房泄漏与一夜狼人并列�
   - 第 42 轮一夜狼人专项规则回归通过：构造最终身份为狼人、皮匠、村民且狼人+皮匠同时死亡，onuCalculateWinner 仍返回兼容主胜方 villager；逐玩家 onuIsPlayerWinner 同时判定皮匠与村民胜利，从而 winningTeams 得到 Tanner + Villager 两个阵营，符合文档规则并验证新结果协议的数据来源。
   - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts 校验（仅 optional 原生依赖提示）。正式 npm run build 已尝试，但该提取工作区没有完整 node_modules，backend tsc 首先因 fs/path/crypto/Express/Socket.IO/UUID/Node 类型等声明依赖无法解析而中止；相同 backend/src 已通过上述全量 strict/noEmit 与六 Worker 实际运行烟雾，因此没有把依赖未安装环境下的构建失败误判为源码错误。完整生产构建/直接部署仍需在 npm ci 完整成功的本地或 CI 再执行 npm run build 最终确认。
 备注: 本轮未删除文件，未创建根目录 src/；所有后端源码修改仅位于 backend/src/，所有前端源码修改仅位于 frontend/src/；修复包只包含本轮修改源码文件与更新后的 repair_log.txt，可按相对路径直接覆盖。
+
+=== 当前请求第 43 轮修复记录 ===
+时间: 2026-08-08 11:01:27 UTC
+Commit: fix(round43): 修复跨房会话覆盖与离房令牌状态同步
+修改/新增文件:
+  - backend/src/controllers/roomController.ts
+  - frontend/src/components/TexasHoldemRoom.vue
+  - frontend/src/router/index.ts
+  - frontend/src/store/avalon.ts
+  - frontend/src/store/botc.ts
+  - frontend/src/store/mafia.ts
+  - frontend/src/store/onuWerewolf.ts
+  - frontend/src/store/texas_holdem.ts
+  - frontend/src/store/werewolf.ts
+  - frontend/src/utils/gameSession.ts
+  - frontend/src/utils/gameSocket.ts
+  - repair_log.txt
+删除文件: 无
+构建测试: 部分通过（backend/src + frontend/src 当前全部 85 个代码文件全量静态扫描、backend/src 全量 strict/noEmit 与隔离 CommonJS 编译、六游戏 Worker prepare_room 烟雾、会话提交/迟到离房回执/socket acknowledgement 专项回归、前端本轮核心工具/路由 targeted strict/noEmit、package-lock 工作区依赖树检查均通过；正式 npm ci / npm run build 仍受当前容器内部 npm 源缺失 package-lock 锁定 TypeScript 5.8.3 包与工作区未安装依赖阻塞）
+本轮修复:
+  - 修复“曾经玩过某游戏即可直接打开该游戏任意房间 URL”的跨房会话漏洞。旧路由守卫只检查该游戏是否存在 playerId，所以用户保存着 A 房间会话时直接打开同类型 B 房间链接会绕过大厅确认，Room 组件随后自动 join_room，占用 B 的新席位并可能覆盖 A 的重连信息。现在房间路由只自动放行 playerId + sessionToken + 已确认 roomId 三者齐全且 roomId 精确匹配的会话；其他直接链接统一回到 Lobby，并通过既有 redirect 流程打开加入对话框。
+  - 修复 ensureGameSession 在服务端确认加入前就写入 roomId 的事务性错误。尝试加入满员、锁定、昵称冲突或其他失败房间时，旧实现会先覆盖仍然有效的原房间号，却保留原 sessionToken，导致原座位无法正常重连。现在 ensureGameSession 只生成/读取请求身份，不再预提交 roomId；只有 room_joined 成功后的 rememberGameSession 才一次性写入服务端确认的 roomId + sessionToken。德州扑克 store 中两个遗留 join 方法也移除了同类预写。
+  - 为离房 acknowledgement 增加 clearSession 权威语义，统一 Controller 与客户端对“座位是否真正移除”的认知。等待阶段/Worker 允许移除时，Controller 在销毁 room-scoped sessionToken 后返回 clearSession=true；进行中游戏拒绝移除、仅把玩家保留为离线座位时返回 false，客户端因此保留合法重连凭证。房间已经不存在时也返回 true。clearSession 一旦已经成立，即使后续广播/线程清理报错，catch 也不会再把该事实抹掉。
+  - 修复五个专用游戏 Socket store（狼人杀、杀人游戏、一夜狼人、阿瓦隆、血染钟楼）主动离房后的本地 token 生命周期。现在离房前捕获旧 roomId/token，等待服务端回执后仅在 clearSession=true 时清理；若 Worker 因对局进行中保留席位则不清理。新增 clearGameSessionIfMatches 以“旧房间 + 旧 token”双重比对，防止用户已经重新加入/重连后，迟到的旧 leave_room ACK 把新会话擦掉。
+  - 修复共享大厅 Socket 的德州扑克离房路径同类状态分叉。Texas store 现在处理 clearSession 回执，并同样使用旧 roomId/token 代际校验；即使 acknowledgement 同时报告后续清理失败，只要服务端已销毁旧 token 就先清除匹配的本地旧会话。进行中牌局若只保留离线座位则继续保留重连 token。
+  - 修复德州扑克 Cash Out 后只删除 texas_currentRoom、却残留 playerId/nickname/sessionToken 的幽灵会话。由于兼容逻辑允许“有 token、无 roomId”的旧会话存在，大厅可能把其他德州房间错误显示为“重连”。Cash Out 成功后现在完整 clearGameSession('texas-holdem')，与 Worker/Controller 已实际移除座位并销毁 token 的事实一致。
+  - 扩展 leaveRoomAndDisconnect：将服务端离房 ACK 传给调用方，同时仍保证 ACK 或 12 秒兜底只会触发一次完成并最终断开 Socket；超时不会凭空假定 clearSession，避免网络不确定时误删仍可能有效的重连凭证。
+审查结果/本轮未改动重点:
+  - 再次覆盖 backend/src 与 frontend/src 当前全部 85 个 TypeScript/Vue/CSS/SVG 源文件，并重点交叉检查 roomController、RoomThreadManager、BaseGameWorker、六个游戏 Worker、MainStore、各游戏 Store/Room/ActionPanel/PlayerList 的加入、重连、主动离房、掉线保留、Cash Out、共享/专用 Socket 监听和状态事实源。本轮最高优先级的确定性问题集中在“请求未成功就写会话”和“服务端已移除/未移除座位但客户端无法区分”这两个跨游戏生命周期缺口，因此没有扩大为高风险规则重构。
+  - 六游戏主规则继续复核：狼人杀的狼人共识、预言家/女巫/守卫/猎人夜序、警长竞选/1.5 票与放逐一次 PK；杀人游戏的杀手共识、警察/医生/狙击手、医生空救、一次 PK 与项目屠边胜负；一夜狼人的玩家+3 中心牌、独狼、换牌后最终身份、并列处决/猎人/皮匠胜负；阿瓦隆的标准任务人数、7 人以上第 4 任务双失败、五次否决、刺杀、Oberon 与湖上夫人；德州扑克的盲注/HU 行动顺序、短码 all-in、加注权、未跟注返还、边池/奇数筹码及线上/线下结算。本轮没有发现优先级高于当前跨游戏会话破坏、且适合低风险当前批次落地的新确定性主流程错误。
+  - 血染钟楼继续复核角色分配、说书人/AI 权限、夜序、registration、提名投票与公开/私密状态。仍保留此前 repair_log 已记录、需要更大状态模型或真人说书人逐次裁决 UI 才能完整解决的架构级边界：特殊自定义夜序下 Pit-Hag 创建 Demon 后无法安全逆向更早已真实落地并触发被动的死亡；真人说书人缺少每一次 Recluse/Spy registration 的逐次手工裁决 UI；自由文本/多重效果抵消等 Mathematician 极端情况仍缺统一逐次最终基准审计。本轮没有用不完整近似逻辑修改这些边界。
+  - Controller/Worker 的单房间任务串行、workerStateVersion/hostStateVersion/connectionStateVersion 合并模型本轮未发现新的底层确定性竞态；修复集中在异步 leave ACK 的客户端代际保护和“服务端 token 是否已销毁”的显式契约，避免生命周期竞态越过既有 Worker 串行边界。
+  - 前端 27 个 Vue SFC 继续复用现有 Room / ActionPanel / PlayerList / Chat、Element Plus 以及共享 gameSession/gameSocket/messages/playerName 工具。本轮没有新增平行视觉组件或新的样式体系；TexasHoldemRoom 仅收敛会话清理，路由与各 Store 统一复用新增的共享会话工具，各游戏原有主题差异保持不变。
+验证:
+  - backend/src + frontend/src 全量静态扫描通过：共 85 个源码文件、83 个 TypeScript/Vue script 解析单元、27 个 Vue SFC；无 TypeScript 解析错误、SFC 基本结构异常、真实合并冲突标记或失效相对导入；项目根目录不存在 src/。
+  - backend/src 全部 34 个 TypeScript 文件使用全局 TypeScript 5.8.3、strict 模式、真实全局 Node 类型与位于项目目录外的 Express/CORS/Socket.IO/UUID 临时声明桩完成 noEmit 类型检查，0 个源码类型错误；同一严格配置成功生成 34 个隔离 CommonJS 测试编译文件。临时声明与编译产物均位于 /mnt/data/round43_validation，不进入修复包。
+  - 六个实际游戏 Worker 使用本轮最新严格隔离编译产物执行 prepare_room 烟雾全部通过：狼人杀、杀人游戏、血染钟楼、一夜狼人、阿瓦隆、德州扑克均能启动 Worker 并完成房间初始化。
+  - 第 43 轮会话专项回归通过：已确认 ROOMA/token-old 后尝试 ensureGameSession(ROOMB) 不再覆盖 ROOMA；精确会话只允许同房间；room_joined 成功后才提交 ROOMB/token-new；旧 token 的迟到离房 ACK、错误房间 ACK 都不会擦除新会话，只有 roomId + token 都匹配时才清理；仅有 playerId 不再足以直接通过房间路由。
+  - leaveRoomAndDisconnect acknowledgement 专项回归通过：服务端 ACK 只触发一次 callback/一次 disconnect；重复 ACK 被忽略；超时兜底只断开并以 undefined response 完成，不会伪造 clearSession=true。
+  - 本轮核心前端 gameMeta/gameSession/gameSocket/router 使用 TypeScript strict/noEmit 与临时 vue-router/*.vue 声明完成 targeted 类型检查，0 个类型错误。完整 Vue SFC/vue-tsc 构建仍需要项目依赖实际安装。
+  - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts 校验（仅 optional 原生依赖提示）。正式 npm ci --ignore-scripts --no-audit --no-fund 已执行，但当前内部 npm 源请求 package-lock 锁定的 frontend TypeScript 5.8.3 tarball 返回 404；因此工作区没有完整 node_modules。
+  - 正式 npm run build 已再次执行；backend tsc 因 fs/path/crypto/worker_threads/Node 类型以及 Express/CORS/Socket.IO/UUID 等已声明依赖未安装而中止，未进入完整 frontend vue-tsc/Vite。相同 backend/src 已通过上述全量 strict/noEmit、隔离 CommonJS 编译和六 Worker 实际运行烟雾，因此没有把依赖源/安装环境失败误判为源码错误；完整生产构建与直接部署仍需在 npm ci 能完整成功的本地或 CI 再执行 npm run build 最终确认。
+备注: 本轮未删除文件，未创建根目录 src/；后端源码修改仅位于 backend/src/，前端源码修改仅位于 frontend/src/；修复包只包含本轮修改源码文件与更新后的 repair_log.txt，可按相对路径直接覆盖。
