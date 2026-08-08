@@ -442,7 +442,10 @@ export const useOnuWerewolfStore = defineStore('onuWerewolf', {
           this.playerSecret.canVote = data.canVote === true;
         }
         this.skipDiscussionCount = 0;
-        this.skipDiscussionTotal = this.room?.players.length || 0;
+        const activeGamePlayerIds = new Set((this.gameState?.players || []).map(player => player.id));
+        this.skipDiscussionTotal = (this.room?.players || []).filter(player =>
+          player.online !== false && activeGamePlayerIds.has(player.id)
+        ).length;
       });
 
       on('onu_voting_started', (data: any) => {

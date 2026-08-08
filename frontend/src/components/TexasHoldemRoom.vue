@@ -303,9 +303,11 @@ let onRoomJoinedHandler: ((data: any) => void) | null = null;
 let roomLeaveRequested = false;
 
 function leaveCurrentRoom() {
-  if (roomLeaveRequested || !store.socket || !store.currentRoom) return;
+  if (roomLeaveRequested) return;
   roomLeaveRequested = true;
-  store.socket.emit('leave_room', { roomId: store.currentRoom });
+  // 德州使用大厅共享 Socket，必须由 store 统一移除德州专属监听器并保留主连接。
+  // 旧实现只 emit leave_room，导致返回大厅后这些监听继续消费其他游戏的房间事件。
+  store.leaveRoom();
 }
 
 onUnmounted(() => {
@@ -324,7 +326,6 @@ onUnmounted(() => {
 // 返回大厅
 function goToLobby() {
   leaveCurrentRoom();
-  store.resetGameState();
   router.push({ name: 'Lobby' });
 }
 
@@ -347,9 +348,10 @@ function onCashOut() {
     }
 
     // 只有服务端确认玩家已退出房间后才清理本地状态，避免请求被拒绝时客户端误退房。
-    store.resetGameState();
+    // Cash Out 已由 Worker/Controller 完成实际移除，此处只脱离德州页面监听，不再重复发 leave_room。
+    store.detachFromRoom();
     localStorage.removeItem(GAME_STORAGE_KEYS['texas-holdem'].room || 'texas_currentRoom');
-    store.currentRoom = null;
+    roomLeaveRequested = true;
     router.push({ name: 'Lobby' });
   });
 

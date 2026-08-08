@@ -258,6 +258,11 @@ export const useTexasHoldemStore = defineStore('texas_holdem', {
 
       // 房间更新 - 使用Room数据结构中的正确字段
       on('room_update', (data: any) => {
+        // 德州复用大厅主 Socket；离开页面后若旧监听未及时移除，主 Socket 还可能
+        // 收到其他游戏的 room_update。即使生命周期出现异常，也绝不能用别的房间
+        // 快照覆盖当前德州状态。
+        if (data?.type && data.type !== 'texas-holdem') return;
+        if (data?.id && this.currentRoom && data.id !== this.currentRoom) return;
         if (data.players) {
           this.players = data.players;
         }
@@ -311,6 +316,9 @@ export const useTexasHoldemStore = defineStore('texas_holdem', {
 
       // 监听加入房间成功事件，获取后端分配的playerId
       on('room_joined', (data: { room: any; player: any; isHost: boolean; sessionToken?: string }) => {
+        // Lobby 也通过同一个主 Socket 加入其他游戏。德州监听器只接受德州房间，
+        // 否则从德州返回大厅后再加入阿瓦隆等游戏会污染德州 store。
+        if (data.room?.type !== 'texas-holdem') return;
         if (data.room?.id) {
           this.currentRoom = data.room.id;
         }
@@ -458,17 +466,23 @@ export const useTexasHoldemStore = defineStore('texas_holdem', {
       }
     },
 
-    // 清理所有状态和监听器
-    cleanup() {
+    // 只从当前德州页面脱离：主 Socket 属于大厅，不能像其他游戏的专用
+    // Socket 那样断开；同时保留 localStorage 会话，以便牌局中离开后仍可凭
+    // sessionToken 恢复被 Worker 保留的离线座位。
+    detachFromRoom() {
       this.removeSocketListeners();
       this.resetGameState();
       this.messages = [];
       this.currentRoom = null;
       this.nickname = '';
       this.playerId = '';
-      
-      clearGameSession('texas-holdem');
       sessionStorage.removeItem('texas_newJoin');
+    },
+
+    // 完整清理用于明确废弃本地会话的场景。
+    cleanup() {
+      this.detachFromRoom();
+      clearGameSession('texas-holdem');
     },
 
     setNicknameAndRoom(
@@ -495,20 +509,21 @@ export const useTexasHoldemStore = defineStore('texas_holdem', {
       }
     },
 
-    // 退出房间或断开连接时清理状态
+    // 德州复用大厅主 Socket：离房只能移除德州监听/状态，不能 disconnect 主
+    // Socket。先捕获房间再脱离页面，确保后续大厅 room_joined/room_update 不会
+    // 被残留德州监听器消费；本地 sessionToken 保留给“进行中离房、座位保留”重连。
     leaveRoom() {
-      if (this.socket) {
-        if (this.currentRoom) {
-          this.socket.emit('leave_room', { roomId: this.currentRoom, playerId: this.playerId });
-        }
-        
-        this.removeSocketListeners();
-        this.currentRoom = null;
-        this.nickname = '';
-        this.playerId = '';
-        
-        clearGameSession('texas-holdem');
-        sessionStorage.removeItem('texas_newJoin');
+      const departingSocket = this.socket;
+      const departingRoomId = this.currentRoom;
+
+      this.detachFromRoom();
+
+      if (departingSocket && departingRoomId) {
+        departingSocket.emit('leave_room', { roomId: departingRoomId }, (response: { success?: boolean; error?: string } = {}) => {
+          if (response.success === false) {
+            console.warn('德州扑克离开房间未被服务端确认:', response.error || '未知错误');
+          }
+        });
       }
     },
 

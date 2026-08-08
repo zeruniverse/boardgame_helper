@@ -1619,6 +1619,12 @@ class OnuWerewolfWorker extends BaseGameWorker {
       team: onuGetRoleTeam(player.actualRole),
       won: onuIsPlayerWinner(player, winner, lynched, this.gameState.players)
     }));
+    // winner 是为兼容既有协议保留的“主胜方”。一夜狼人允许皮匠与村民
+    // 在狼人、皮匠同时死亡时同时满足胜利条件，因此最终结果必须从逐玩家
+    // 的权威 won 判定派生完整获胜阵营集合，不能只广播单一 winner。
+    const winningTeams = Array.from(new Set(
+      players.filter(player => player.won).map(player => player.team)
+    ));
 
     const votes = Object.entries(this.gameState.votes).map(([voterId, targetId]) => {
       const voter = this.gameState.players[voterId];
@@ -1631,6 +1637,7 @@ class OnuWerewolfWorker extends BaseGameWorker {
 
     return {
       winner,
+      winningTeams,
       players,
       centerCards: this.gameState.centerCards,
       votes,

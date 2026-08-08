@@ -280,7 +280,10 @@ export interface OnuWerewolfVoteResult {
 
 // 游戏结果
 export interface OnuWerewolfGameResult {
+  /** 兼容旧客户端的主胜方；皮匠可与村民阵营同时达成胜利条件。 */
   winner: OnuWerewolfTeam;
+  /** 最终实际获胜阵营集合，用于表达狼人和皮匠同时死亡等并列胜利。 */
+  winningTeams: OnuWerewolfTeam[];
   players: Array<{
     seat: number;
     name: string;

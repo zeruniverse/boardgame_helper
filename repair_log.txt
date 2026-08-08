@@ -1951,3 +1951,38 @@ Commit: fix(round41): 收紧钟楼说书人终局裁定并统一开局入口
   - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts 校验，仅有 optional 原生依赖提示。
   - 正式 npm run build 已在附件源码目录执行；由于该提取工作区本身没有完整 node_modules，backend tsc 首先因 @types/node、Express、CORS、Socket.IO、UUID 等已声明依赖/类型无法解析而中止，未进入完整 frontend vue-tsc/Vite。相同 backend/src 已通过上述全量 strict/noEmit，BOTC Worker 也已实际编译并执行专项回归，因此当前无法把依赖未安装环境下的正式构建失败归因于源码；完整生产构建/直接部署仍需在 npm ci 完整成功的本地或 CI 再执行 npm run build 最终确认。
 备注: 本轮未删除文件，未创建根目录 src/；所有后端源码修改仅位于 backend/src/，所有前端源码修改仅位于 frontend/src/；修复包仅包含本轮修改文件、BOTC 文档及 repair_log.txt，可按相对路径直接覆盖。
+
+=== 当前请求第 42 轮修复记录 ===
+时间: 2026-08-08 10:44:04 UTC
+Commit: fix(round42): 修复德州共享Socket离房泄漏与一夜狼人并列胜负展示
+修改/新增文件:
+  - backend/src/utils/onuWerewolfTypes.ts
+  - backend/src/workers/onuWerewolfWorker.ts
+  - frontend/src/components/OnuWerewolfActionPanel.vue
+  - frontend/src/store/onuWerewolf.ts
+  - frontend/src/store/texas_holdem.ts
+  - frontend/src/components/TexasHoldemRoom.vue
+  - repair_log.txt
+删除文件: 无
+构建测试: 部分通过（backend/src + frontend/src 当前全部 85 个代码文件全量静态扫描、backend/src 全量 strict/noEmit、六游戏 Worker prepare_room 烟雾、一夜狼人“狼人+皮匠同时死亡”专项规则回归、package-lock 依赖树检查均通过；正式 npm run build 因附件提取工作区没有安装完整 node_modules，被缺失 Node/Express/Socket.IO/UUID/CORS 等声明依赖阻塞）
+本轮修复:
+  - 修复德州扑克复用大厅主 Socket 时的页面生命周期监听泄漏。旧 TexasHoldemRoom 返回大厅/组件卸载只直接 emit leave_room，却没有调用 Texas store 的 removeSocketListeners；因此德州的 room_joined、room_update、game_state、error 等监听会继续挂在大厅主 Socket 上。之后从大厅加入阿瓦隆等其他游戏时，同一个主 Socket 的 room_joined/room_update 可能继续被旧德州监听消费，污染 Texas store 的 players/currentRoom/playerId/房间配置；若快速切换回德州，还存在旧房间广播覆盖新房间状态的窗口。
+  - 新增 Texas store 的 detachFromRoom 统一页面脱离路径：只清理德州专属监听器、计时器、牌局状态和内存身份，不断开大厅主 Socket；leaveRoom 先捕获旧房间和 Socket，再同步 detach，最后发送 leave_room。这样不会破坏 Lobby 的主连接，也不会让旧德州监听继续消费其他游戏事件。
+  - 修正 Texas leaveRoom 过去无条件 clearGameSession 的语义。进行中牌局离房时 Worker 可能按规则保留该玩家为离线座位，后端 sessionToken 仍是其合法重连凭证；旧 store 方法若被使用会把本地凭证提前删除，导致玩家无法恢复被保留座位。现在普通离房保留本地会话，只有明确完整 cleanup 才清除；Cash Out 已经由 Worker/Controller 权威移除座位，因此前端只 detach 并清除房间号，不重复发送离房任务。
+  - 为 Texas room_joined / room_update 增加房间类型与当前房间防御性过滤。即使未来某条路由生命周期再次遗漏清理，德州监听也不会接受非 texas-holdem 房间或其他德州房间的快照，进一步降低共享 Socket 跨房间串状态风险。
+  - 修复一夜狼人最终结果协议不能完整表达并列胜利的问题。规则已经支持“狼人和皮匠同时死亡时村民阵营获胜，皮匠个人也获胜”，players[].won 也会正确标记，但 gameResult 只有单一 winner，前端标题始终只显示“村民阵营获胜”，与逐玩家胜负和项目规则自相矛盾。OnuWerewolfGameResult 现在保留兼容字段 winner，同时新增 winningTeams，并由 Worker 从逐玩家权威 won 结果派生完整获胜阵营集合。
+  - 一夜狼人结果面板优先使用 winningTeams，并兼容旧 Worker/旧存档：缺少新字段时会从 gameResult.players[].won/team 反推。狼人和皮匠同时死亡时明确显示“村民阵营获胜，皮匠也达成个人胜利”，不再漏报皮匠胜利条件。
+  - 修复一夜狼人讨论阶段“跳过讨论 0/N”初始分母使用 room.players 总席位的问题。Worker 的实际跳过判定只统计当前局内且在线的玩家；离线保留席位不应进入 N。前端 onu_night_ended 现在使用“当前局参与者 ID ∩ 在线房间成员”计算，与 Worker 的 getOnlineGamePlayerIds 保持一致，避免第一名玩家点击前 UI 就显示错误门槛。
+审查结果/本轮未改动重点:
+  - 再次覆盖 backend/src 与 frontend/src 当前全部 85 个 TypeScript/Vue/CSS/SVG 源文件，重点复核六个游戏 Worker、BaseGameWorker、RoomThreadManager、roomController、各 Store/Room/ActionPanel/PlayerList/Chat 的任务串行、Controller/Worker 房间快照合并、共享/专用 Socket 生命周期、公开/私密状态边界与断线重连。当前最明确且低风险可落地的问题集中在 Texas 共享主 Socket 的残留监听以及 ONU 最终胜负/跳过讨论事实源分叉，因此本轮没有扩大到新的状态架构。
+  - 六游戏规则流继续交叉检查：狼人杀的狼人共识、预言家/女巫/守卫/猎人夜序、警长竞选/1.5 票/放逐一次 PK；杀人游戏的杀手共识、警察/医生/狙击手、医生空救、一次 PK 与项目定义屠边；一夜狼人的玩家+3 中心牌、独狼/换牌后最终身份、平票至少 2 票处决、猎人连带和皮匠并列胜利；阿瓦隆的任务人数、7 人以上第 4 任务双失败、五次组队否决、刺杀与湖上夫人；德州扑克的盲注/HU 顺序、短码 all-in、加注权、未跟注返还、边池/奇数筹码与线上/线下结算。未发现比本轮确定性状态串扰/结果矛盾更适合当前批次低风险修复的新主流程阻断项。
+  - Controller/RoomThreadManager/BaseGameWorker 的单房间消息链、game_action acknowledgement、workerStateVersion/hostStateVersion/connectionStateVersion 合并继续复核；本轮未发现需要修改这些底层串行机制的新竞态。Texas 问题发生在前端“共享大厅 Socket 与游戏专属监听”的生命周期边界，ONU 问题发生在 Worker 最终结果协议与前端展示语义。
+  - 前端 27 个 Vue SFC 继续复用现有 Room / ActionPanel / PlayerList / Chat、Element Plus 与共享 store/socket/session 工具。本轮没有新建重复视觉组件；Texas 只收敛到既有 store 生命周期，ONU 只修正结果标题和讨论人数事实源，各游戏现有主题差异保持不变。
+  - 血染钟楼仍保留此前 repair_log 已记录、需要更大状态模型或真人说书人逐次裁决 UI 才能完整解决的高阶边界：特殊自定义夜序下 Pit-Hag 创建 Demon 后无法安全逆向更早已真实落地并触发被动的死亡；真人说书人仍缺每次 Recluse/Spy registration 的逐次手工裁决 UI；自由文本/多重效果抵消等 Mathematician 极端情况仍缺统一逐次最终基准审计。本轮没有用不完整近似逻辑修改这些架构级问题。
+验证:
+  - backend/src + frontend/src 全量静态扫描通过：共 85 个源码文件、83 个 TypeScript/Vue script 解析单元、27 个 Vue SFC、27 个 style 块、214 个静态相对/@ import/export 路径均无 TypeScript 语法、SFC 基本结构、CSS 花括号、真实合并冲突标记或失效相对导入错误；项目根目录不存在 src/。
+  - backend/src 全部 34 个 TypeScript 文件使用全局 TypeScript 5.8.3、strict 模式及项目目录外的 Node/Express/CORS/Socket.IO/UUID 临时声明桩完成 noEmit 类型检查，0 个源码类型错误；同一严格配置成功生成隔离 CommonJS 测试产物。临时声明与测试产物均位于 /mnt/data/bg42_tscheck，不进入修复包。
+  - 六个实际游戏 Worker 使用本轮最新严格隔离编译产物执行 prepare_room 烟雾全部通过：狼人杀、杀人游戏、血染钟楼、一夜狼人、阿瓦隆、德州扑克均能启动 Worker 并完成房间初始化。
+  - 第 42 轮一夜狼人专项规则回归通过：构造最终身份为狼人、皮匠、村民且狼人+皮匠同时死亡，onuCalculateWinner 仍返回兼容主胜方 villager；逐玩家 onuIsPlayerWinner 同时判定皮匠与村民胜利，从而 winningTeams 得到 Tanner + Villager 两个阵营，符合文档规则并验证新结果协议的数据来源。
+  - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts 校验（仅 optional 原生依赖提示）。正式 npm run build 已尝试，但该提取工作区没有完整 node_modules，backend tsc 首先因 fs/path/crypto/Express/Socket.IO/UUID/Node 类型等声明依赖无法解析而中止；相同 backend/src 已通过上述全量 strict/noEmit 与六 Worker 实际运行烟雾，因此没有把依赖未安装环境下的构建失败误判为源码错误。完整生产构建/直接部署仍需在 npm ci 完整成功的本地或 CI 再执行 npm run build 最终确认。
+备注: 本轮未删除文件，未创建根目录 src/；所有后端源码修改仅位于 backend/src/，所有前端源码修改仅位于 frontend/src/；修复包只包含本轮修改源码文件与更新后的 repair_log.txt，可按相对路径直接覆盖。

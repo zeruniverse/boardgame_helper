@@ -510,7 +510,7 @@
 
       <div v-if="gameResult" class="game-result">
         <div class="winner-announcement">
-          <h4>{{ getWinnerText(gameResult.winner) }}</h4>
+          <h4>{{ getWinnerText(gameResult) }}</h4>
         </div>
 
         <div class="final-roles">
@@ -632,6 +632,7 @@ interface PlayerSecret {
   };
   gameResult?: {
     winner: OnuWerewolfTeam;
+    winningTeams?: OnuWerewolfTeam[];
     players: Array<{
       seat: number;
       name: string;
@@ -1038,19 +1039,30 @@ const getAutoSkillText = (role: OnuWerewolfRole | null | undefined) => {
   }
 };
 
-const getWinnerText = (winner: OnuWerewolfTeam) => {
-  switch (winner) {
-    case OnuWerewolfTeam.Villager:
-      return '村民阵营获胜！';
-    case OnuWerewolfTeam.Werewolf:
-      return '狼人阵营获胜！';
-    case OnuWerewolfTeam.Tanner:
-      return '皮匠获胜！';
-    case OnuWerewolfTeam.None:
-      return '无人获胜';
-    default:
-      return '游戏结束';
+const getWinnerText = (result: NonNullable<PlayerSecret['gameResult']>) => {
+  // 新后端会显式返回完整获胜阵营；兼容旧存档/旧 Worker 时，从逐玩家 won
+  // 结果反推，避免“狼人和皮匠同时死亡”只显示村民获胜而漏报皮匠个人胜利。
+  const winningTeams = result.winningTeams?.length
+    ? result.winningTeams
+    : Array.from(new Set(result.players.filter(player => player.won).map(player => player.team)));
+
+  if (winningTeams.includes(OnuWerewolfTeam.Villager) && winningTeams.includes(OnuWerewolfTeam.Tanner)) {
+    return '村民阵营获胜，皮匠也达成个人胜利！';
   }
+  if (winningTeams.length === 1) {
+    switch (winningTeams[0]) {
+      case OnuWerewolfTeam.Villager:
+        return '村民阵营获胜！';
+      case OnuWerewolfTeam.Werewolf:
+        return '狼人阵营获胜！';
+      case OnuWerewolfTeam.Tanner:
+        return '皮匠获胜！';
+    }
+  }
+  if (winningTeams.length > 1) {
+    return `${winningTeams.map(getTeamName).join('、')}同时获胜！`;
+  }
+  return result.winner === OnuWerewolfTeam.None ? '无人获胜' : '游戏结束';
 };
 
 const getTeamName = (team: OnuWerewolfTeam) => {
