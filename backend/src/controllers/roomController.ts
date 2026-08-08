@@ -51,7 +51,10 @@ const HOST_DISCONNECT_FAILOVER_GRACE_MS = 15000;
 // 每个房间座位的服务端会话令牌。令牌只通过 room_joined 返回给本人，
 // 不进入 room_update / player.gameMetadata，避免房间内其他玩家凭公开 playerId 冒用座位。
 const playerSessionTokens: Map<string, string> = new Map();
-const existingSeatConnectionQueues: Map<string, Promise<void>> = new Map();
+// 已有座位重连以及会改变该座位归属/权限的房主管理操作必须共用同一把座位锁。
+// 否则 kick/transfer 在 Worker await 窗口内可与 reconnect 交错，导致旧 Socket 未退房、
+// 被踢玩家继续收到房间广播，或把房主转让给最终回滚为离线的临时连接。
+const seatMutationQueues: Map<string, Promise<void>> = new Map();
 
 interface ExistingSeatMigration {
   roomId: string;
@@ -112,27 +115,27 @@ function playerSessionKey(roomId: string, playerId: string): string {
   return `${roomId}:${playerId}`;
 }
 
-async function runExistingSeatConnectionExclusive<T>(
+async function runSeatMutationExclusive<T>(
   roomId: string,
   playerId: string,
   operation: () => Promise<T>
 ): Promise<T> {
   const key = playerSessionKey(roomId, playerId);
-  const previous = existingSeatConnectionQueues.get(key) || Promise.resolve();
+  const previous = seatMutationQueues.get(key) || Promise.resolve();
   let release!: () => void;
   const gate = new Promise<void>(resolve => {
     release = resolve;
   });
   const queued = previous.catch(() => undefined).then(() => gate);
-  existingSeatConnectionQueues.set(key, queued);
+  seatMutationQueues.set(key, queued);
 
   await previous.catch(() => undefined);
   try {
     return await operation();
   } finally {
     release();
-    if (existingSeatConnectionQueues.get(key) === queued) {
-      existingSeatConnectionQueues.delete(key);
+    if (seatMutationQueues.get(key) === queued) {
+      seatMutationQueues.delete(key);
     }
   }
 }
@@ -1095,7 +1098,7 @@ export function roomController(io: Server) {
       rooms.clear();
       hostKickVotes.clear();
       playerSessionTokens.clear();
-      existingSeatConnectionQueues.clear();
+      seatMutationQueues.clear();
       existingSeatMigrationsBySocket.clear();
       newSeatConnectionsBySocket.clear();
       pendingRoomCreations.clear();
@@ -1601,7 +1604,7 @@ export function roomController(io: Server) {
     socket: Socket,
     options: ExistingSeatConnectionOptions = {}
   ): Promise<ExistingSeatConnectionResult> {
-    return runExistingSeatConnectionExclusive(room.id, existingPlayer.id, async () => {
+    return runSeatMutationExclusive(room.id, existingPlayer.id, async () => {
       const latestRoom = rooms.get(room.id);
       const latestPlayer = latestRoom?.players.find(player => player.id === existingPlayer.id);
       if (!latestRoom || !latestPlayer) {
@@ -2120,61 +2123,107 @@ export function roomController(io: Server) {
 
   async function transferHostInRoom(room: Room, actor: Player, newHostId: string): Promise<any> {
     if (!newHostId) return { success: false, error: '缺少新房主ID' };
-    if (room.hostId !== actor.id) return { success: false, error: '只有房主可以转让房主' };
     if (newHostId === actor.id) return { success: false, error: '您已经是房主' };
-    const newHost = room.players.find(p => p.id === newHostId);
-    if (!newHost) return { success: false, error: '目标玩家不存在' };
-    if (isPendingNewSeat(room.id, newHost.id)) return { success: false, error: '目标玩家仍在加入房间，请稍后重试' };
-    if (!newHost.online) return { success: false, error: '不能转让给离线玩家' };
 
-    const pendingVote = hostKickVotes.get(room.id);
-    if (pendingVote?.resolving) {
-      return { success: false, error: '踢出房主投票正在结算，请稍候' };
-    }
+    // 与目标座位的 reconnect 共用同一把锁。若迁移先开始，就等它提交/回滚后再基于
+    // 最新快照判断在线状态；若转让先开始，则 reconnect 必须等房主变更完整同步后再接管。
+    // 这样不会把 transient online=true 的迁移中连接误当成稳定的新房主。
+    const roomId = room.id;
+    const actorId = actor.id;
+    const actorSocketId = actor.socketId;
+    return runSeatMutationExclusive(roomId, newHostId, async () => {
+      const latestRoom = rooms.get(roomId);
+      if (!latestRoom) return { success: false, error: '房间已不存在' };
 
-    clearOfflineHostFailoverTimer(room.id);
-    setRoomHost(room, newHost.id);
-    room.lastActiveTime = Date.now();
+      const latestActor = latestRoom.players.find(player =>
+        player.id === actorId &&
+        player.socketId === actorSocketId &&
+        player.online !== false
+      );
+      if (!latestActor) return { success: false, error: '您的房间连接已变化，请重试' };
+      if (latestRoom.hostId !== latestActor.id) return { success: false, error: '只有房主可以转让房主' };
 
-    // 针对旧房主的踢出投票不能继承到新房主。
-    if (pendingVote) {
-      clearTimeout(pendingVote.timer);
-      hostKickVotes.delete(room.id);
-    }
+      const newHost = latestRoom.players.find(player => player.id === newHostId);
+      if (!newHost) return { success: false, error: '目标玩家不存在' };
+      if (isPendingNewSeat(latestRoom.id, newHost.id)) {
+        return { success: false, error: '目标玩家仍在加入房间，请稍后重试' };
+      }
+      if (!newHost.online) return { success: false, error: '不能转让给离线玩家' };
 
-    rooms.set(room.id, room);
-    threadManager.updateRoomData(room.id, room);
-    try {
-      await sendTaskToRoom(room.id, 'update_room_data', { room });
-    } catch (error) {
-      console.error(`同步转让房主后的房间状态失败: ${room.id}`, error);
-    }
+      const pendingVote = hostKickVotes.get(latestRoom.id);
+      if (pendingVote?.resolving) {
+        return { success: false, error: '踢出房主投票正在结算，请稍候' };
+      }
 
-    const committedRoom = rooms.get(room.id);
-    if (!committedRoom) {
-      return { success: false, error: '房间已不存在' };
-    }
-    io.to(room.id).emit('chat_broadcast', { message: `${actor.nickname} 将房主转让给 ${newHost.nickname}`, type: 'system' });
-    io.to(room.id).emit('room_update', toClientRoom(committedRoom));
-    if (!committedRoom.private) broadcastLobbyUpdate();
-    return { success: true, room: toClientRoom(committedRoom) };
+      clearOfflineHostFailoverTimer(latestRoom.id);
+      setRoomHost(latestRoom, newHost.id);
+      latestRoom.lastActiveTime = Date.now();
+
+      // 针对旧房主的踢出投票不能继承到新房主。
+      if (pendingVote) {
+        clearTimeout(pendingVote.timer);
+        hostKickVotes.delete(latestRoom.id);
+      }
+
+      rooms.set(latestRoom.id, latestRoom);
+      threadManager.updateRoomData(latestRoom.id, latestRoom);
+      try {
+        await sendTaskToRoom(latestRoom.id, 'update_room_data', { room: latestRoom });
+      } catch (error) {
+        console.error(`同步转让房主后的房间状态失败: ${latestRoom.id}`, error);
+      }
+
+      const committedRoom = rooms.get(latestRoom.id);
+      if (!committedRoom) {
+        return { success: false, error: '房间已不存在' };
+      }
+      io.to(latestRoom.id).emit('chat_broadcast', {
+        message: `${latestActor.nickname} 将房主转让给 ${newHost.nickname}`,
+        type: 'system'
+      });
+      io.to(latestRoom.id).emit('room_update', toClientRoom(committedRoom));
+      if (!committedRoom.private) broadcastLobbyUpdate();
+      return { success: true, room: toClientRoom(committedRoom) };
+    });
   }
 
   async function kickPlayerFromRoom(room: Room, actor: Player, targetId: string): Promise<any> {
     if (!targetId) return { success: false, error: '缺少目标玩家ID' };
-    const targetPlayer = room.players.find(p => p.id === targetId);
-    if (!targetPlayer) return { success: false, error: '目标玩家不存在' };
-    if (isPendingNewSeat(room.id, targetPlayer.id)) {
-      return { success: false, error: '目标玩家仍在加入房间，请稍后重试' };
-    }
-    if (room.hostId === actor.id && targetId !== actor.id) {
-      const kickResponse = await sendTaskToRoom(room.id, 'kick_out_player', { targetId });
+
+    // 踢人从 Worker 判定到 Controller 清理 Socket 会跨越多个 await。整个区间锁住目标
+    // 座位，避免 reconnect 在中途把 socketId 改成新连接，最终只踢掉新 Socket、却让旧
+    // Socket 继续留在 Socket.IO 房间中接收聊天/游戏广播。
+    const roomId = room.id;
+    const actorId = actor.id;
+    const actorSocketId = actor.socketId;
+    return runSeatMutationExclusive(roomId, targetId, async () => {
+      const latestRoom = rooms.get(roomId);
+      if (!latestRoom) return { success: false, error: '房间已不存在' };
+
+      const latestActor = latestRoom.players.find(player =>
+        player.id === actorId &&
+        player.socketId === actorSocketId &&
+        player.online !== false
+      );
+      if (!latestActor) return { success: false, error: '您的房间连接已变化，请重试' };
+
+      const targetPlayer = latestRoom.players.find(player => player.id === targetId);
+      if (!targetPlayer) return { success: false, error: '目标玩家不存在' };
+      if (isPendingNewSeat(latestRoom.id, targetPlayer.id)) {
+        return { success: false, error: '目标玩家仍在加入房间，请稍后重试' };
+      }
+      if (latestRoom.hostId !== latestActor.id || targetId === latestActor.id) {
+        return { success: false, error: '只有房主可以踢出其他玩家' };
+      }
+
+      const kickResponse = await sendTaskToRoom(latestRoom.id, 'kick_out_player', { targetId });
       const kickResult = readKickResult(kickResponse);
-      if (!kickResult.kicked) return { success: false, error: kickResult.reason || '当前状态不允许踢出该玩家' };
-      await finalizeKickedPlayer(room.id, targetPlayer, `您被房主${actor.nickname}踢出房间`);
+      if (!kickResult.kicked) {
+        return { success: false, error: kickResult.reason || '当前状态不允许踢出该玩家' };
+      }
+      await finalizeKickedPlayer(latestRoom.id, targetPlayer, `您被房主${latestActor.nickname}踢出房间`);
       return { success: true };
-    }
-    return { success: false, error: '只有房主可以踢出其他玩家' };
+    });
   }
 
   // Socket连接处理
@@ -3371,18 +3420,16 @@ export function roomController(io: Server) {
           return;
         }
 
-        // 如果是房主踢出其他人
+        // 如果是房主踢出其他人。兼容事件也必须走统一 helper，确保与目标座位的
+        // reconnect 共享互斥锁；否则旧协议会绕过 game_action 路径的新并发保护。
         if (room.hostId === player.id && targetId !== player.id) {
-          // 房主可以直接踢出其他玩家；最终是否允许由具体游戏 worker 决定。
-          const kickResponse = await sendTaskToRoom(room.id, 'kick_out_player', { targetId });
-          const kickResult = readKickResult(kickResponse);
-          if (!kickResult.kicked) {
-            socket.emit('error', { message: kickResult.reason || '当前状态不允许踢出该玩家' });
-            ack?.({ success: false, error: kickResult.reason || '当前状态不允许踢出该玩家' });
+          const result = await kickPlayerFromRoom(room, player, targetId);
+          if (!result.success) {
+            socket.emit('error', { message: result.error || '当前状态不允许踢出该玩家' });
+            ack?.(result);
             return;
           }
 
-          await finalizeKickedPlayer(room.id, targetPlayer, `您被房主${player.nickname}踢出房间`);
           ack?.({ success: true });
           console.log(`房主 ${player.nickname} 踢出了玩家 ${targetPlayer.nickname}`);
           return;
@@ -3390,6 +3437,14 @@ export function roomController(io: Server) {
 
         // 如果是其他人想踢出房主
         if (targetId === room.hostId && player.id !== room.hostId) {
+          // 现有座位 reconnect 会先临时改写 online/socketId，再异步同步 Worker；新增座位
+          // 也有类似提交窗口。此时继续统计在线多数票会使用瞬时人数，甚至可能在房主
+          // 自己迁移时把其旧 Socket 留在房间。等待连接事务结束后再发起/追加投票。
+          if (hasPendingRoomSeatConnection(room.id)) {
+            sendErrorResponse(socket, '有玩家的房间连接仍在确认中，请稍后再发起踢出房主投票', ack);
+            return;
+          }
+
           // 投票踢出房主
           let voteData = hostKickVotes.get(room.id);
 
@@ -3487,39 +3542,64 @@ export function roomController(io: Server) {
             voteData.resolving = true;
             clearTimeout(voteData.timer);
 
-            const oldHost = latestRoom.players.find(candidate => candidate.id === voteData.targetHostId);
-            if (!oldHost) {
-              if (hostKickVotes.get(room.id) === voteData) {
-                hostKickVotes.delete(room.id);
-              }
-              sendErrorResponse(socket, '房主已离开，投票已取消', ack);
-              return;
-            }
-
             try {
-              const kickResponse = await sendTaskToRoom(room.id, 'kick_out_player', { targetId: oldHost.id });
-              const kickResult = readKickResult(kickResponse);
-              if (!kickResult.kicked) {
+              // 票数达到门槛后仍要锁住房主座位直到 Worker 踢人 + Controller 退订完成。
+              // 仅在计票前检查 migration 不够：reconnect 可能恰好在下一次 await 前开始，
+              // 把目标 socketId 换成新连接并留下旧连接继续订阅房间。
+              const resolution: {
+                success: boolean;
+                error?: string;
+                roomChanged?: boolean;
+                oldHost?: Player;
+              } = await runSeatMutationExclusive(room.id, voteData.targetHostId, async () => {
+                const resolutionRoom = rooms.get(room.id);
+                if (!resolutionRoom || resolutionRoom.hostId !== voteData.targetHostId) {
+                  return { success: false, error: '房主已变更，投票已取消', roomChanged: true };
+                }
+
+                const oldHost = resolutionRoom.players.find(candidate => candidate.id === voteData.targetHostId);
+                if (!oldHost) {
+                  return { success: false, error: '房主已离开，投票已取消', roomChanged: true };
+                }
+
+                const kickResponse = await sendTaskToRoom(room.id, 'kick_out_player', { targetId: oldHost.id });
+                const kickResult = readKickResult(kickResponse);
+                if (!kickResult.kicked) {
+                  return {
+                    success: false,
+                    error: kickResult.reason || '当前状态不允许踢出房主'
+                  };
+                }
+
+                await finalizeKickedPlayer(room.id, oldHost, '您被投票踢出房间');
+                return { success: true, oldHost };
+              });
+
+              if (!resolution.success || !resolution.oldHost) {
                 if (hostKickVotes.get(room.id) === voteData) {
                   hostKickVotes.delete(room.id);
                 }
-                io.to(room.id).emit('chat_broadcast', {
-                  message: kickResult.reason || '当前状态不允许踢出房主',
-                  type: 'system'
-                });
-                ack?.({ success: false, error: kickResult.reason || '当前状态不允许踢出房主' });
+                const errorMessage = resolution.error || '踢出房主失败';
+                if (resolution.roomChanged) {
+                  sendErrorResponse(socket, errorMessage, ack);
+                } else {
+                  io.to(room.id).emit('chat_broadcast', {
+                    message: errorMessage,
+                    type: 'system'
+                  });
+                  ack?.({ success: false, error: errorMessage });
+                }
                 return;
               }
 
-              await finalizeKickedPlayer(room.id, oldHost, '您被投票踢出房间');
               ack?.({ success: true });
 
               io.to(room.id).emit('chat_broadcast', {
-                message: `房主 ${oldHost.nickname} 被投票踢出房间`,
+                message: `房主 ${resolution.oldHost.nickname} 被投票踢出房间`,
                 type: 'system'
               });
 
-              console.log(`房主 ${oldHost.nickname} 被投票踢出`);
+              console.log(`房主 ${resolution.oldHost.nickname} 被投票踢出`);
               return;
             } catch (error) {
               if (hostKickVotes.get(room.id) === voteData) {
@@ -3727,7 +3807,7 @@ export function roomController(io: Server) {
     rooms.clear();
     hostKickVotes.clear();
     playerSessionTokens.clear();
-    existingSeatConnectionQueues.clear();
+    seatMutationQueues.clear();
     existingSeatMigrationsBySocket.clear();
     newSeatConnectionsBySocket.clear();
     pendingRoomCreations.clear();

@@ -2325,3 +2325,31 @@ Commit: fix(round54): 封堵座位连接事务与开局动作竞态
   - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts 校验。
   - 正式 npm run build 已在本轮最终源码上执行；由于 npm ci 未能形成完整 node_modules，backend tsc 报缺失 Node 内建类型以及 Express/CORS/Socket.IO/UUID 等 package.json 已声明依赖，未进入 frontend vue-tsc/Vite。此前本轮 npm ci --ignore-scripts --no-audit --no-fund 请求当前内部镜像中的 typescript-5.8.3.tgz 返回 404。构建尝试产生的 backend/dist/frontend/dist 已清理；完整生产构建与“可直接部署”仍需在依赖可正常安装的本地或 CI 执行 npm ci && npm run build 最终确认。
 备注: 本轮未删除文件，未创建根目录 src/；所有后端源码修改仅位于 backend/src/，本轮没有 frontend/src/ 源码修改；修复包只包含本轮修改文件与更新后的 repair_log.txt，可按相对路径直接覆盖。
+
+=== 当前请求第 55 轮修复记录 ===
+时间: 2026-08-08 14:40:40 UTC
+Commit: fix(round55): 隔离座位迁移期间的踢人投票与房主转让
+修改/新增文件:
+  - backend/src/controllers/roomController.ts
+  - repair_log.txt
+删除文件: 无
+构建测试: 部分通过（backend/src + frontend/src 当前全部 86 个源文件静态扫描、backend/src 全部 35 个 TypeScript strict/noEmit 与隔离 CommonJS 编译、六游戏 Worker prepare_room 烟雾、座位重连/踢人/转让互斥专项回归、package-lock 工作区依赖树检查均通过；正式 npm ci 仍被当前内部 npm 镜像缺失 TypeScript 5.8.3 tarball 的 404 阻塞，正式 npm run build 因而在 backend tsc 的 Node/Express/CORS/Socket.IO/UUID 等已声明依赖/类型解析阶段中止，未进入 frontend vue-tsc/Vite，完整生产构建与直接部署仍需在依赖镜像正常的本地或 CI 终验）
+本轮修复:
+  - 修复“已有座位 reconnect”与房主踢人并发时可能留下旧 Socket 继续订阅房间的高风险竞态。已有座位迁移会先把 Controller 中 player.socketId 临时切到新 Socket，再异步同步 Worker，最后才让旧 Socket 退房；旧踢人路径只在调用前检查新座位事务，没有和已有座位迁移共享互斥。如果房主踢人在 Worker await 窗口与 reconnect 交错，Controller 最终可能只向当前新 socketId 发送 kicked_out/leave，而迁移尚未处理的旧 Socket 仍留在 Socket.IO 房间接收聊天或游戏广播。现在把原“已有座位连接队列”提升为 seatMutationQueues：同一 roomId/playerId 的 reconnect、直接踢人、房主转让和投票踢房主最终结算统一串行化，整个 Worker 判定 + Controller 清理/同步区间都持有座位锁。
+  - 房主直接踢人和房主转让现在进入座位锁后重新读取 rooms 的最新权威快照，并用最初发起动作的 actorId + actorSocketId 复核操作者仍由原连接在线持有、仍是房主；目标玩家也重新读取后才判断存在/在线/是否仍在新增座位事务中。这样即使操作排队等待了目标 reconnect，也不会继续使用 await 前的旧 Room/Player 引用完成过期授权或把最终回滚为离线的临时连接设为房主。
+  - 旧版 socket.on('kick_player') 的“房主直接踢人”兼容入口不再复制一套 sendTaskToRoom + finalizeKickedPlayer 逻辑，而是统一调用 kickPlayerFromRoom，避免旧协议绕过新座位锁；game_action 的 kick_player/kickPlayer 路径继续复用同一 helper。
+  - 修复踢出房主投票在座位连接事务期间使用瞬时在线人数的问题。已有座位迁移和新增座位都会在提交前短暂造成 Controller/Worker 对 online/socketId/参局集合的不同视图；现在只要房间仍有 pending new-seat 或 existing-seat migration，就暂时拒绝发起/追加踢房主投票，等事务提交或回滚后再按稳定人数重新计算门槛。
+  - 即使计票时没有 pending migration，投票达到门槛后的真正踢房主流程仍会锁住房主座位直到 Worker kick_out_player 和 Controller finalizeKickedPlayer 全部结束，封住“计票检查完成后、下一个 await 前恰好开始 reconnect”的窄竞态。若锁等待期间房主已经变化或离房，则基于最新房间快照取消旧投票，不会把旧 targetHostId 的授权继承给新房主。
+审查结果/本轮未改动重点:
+  - 继续覆盖 backend/src 与 frontend/src 当前全部 86 个源码文件，并结合前 54 轮修复记录复核 roomController、RoomThreadManager、BaseGameWorker、六个游戏 Worker、六套前端 Store/Room/ActionPanel/PlayerList/Chat 及共享 session/socket/config/random 工具。本轮最高优先级、且此前修复仍未完全覆盖的新确定性问题是“目标座位自身的 reconnect 与另一连接发起的房主管理操作并发”；本轮以已有座位级事务锁扩展解决，没有引入新的房间级全局状态源。
+  - 狼人杀、杀人游戏、一夜狼人、阿瓦隆、德州扑克主流程继续结合项目文档和累计专项修复复核；此前已修正的狼人死亡链/职业夜序、杀人游戏职业与 PK、一夜狼人女巫强制交换及爪牙/皮匠胜负、阿瓦隆任务/双失败/五次否决/刺杀、德州 HU/短码 all-in/加注权/未跟注返还/边池/奇数筹码/burn card 等路径本轮未发现优先级高于连接管理竞态、且适合当前小批次安全合入的新确定性阻断错误。
+  - 前端 27 个 Vue SFC 继续复用现有 Room / ActionPanel / PlayerList / Chat 分层、Element Plus 和共享 gameSession/gameSocket/playerName/messages 等工具。本轮问题属于后端权威并发边界，不需要让六套页面各自复制“目标正在重连”的状态，也未新增平行组件或视觉体系，因此 frontend/src 无修改。
+  - 血染钟楼仍保留 repair_log 已记录、需要更大状态模型或真人说书人逐次裁决 UI 才能完整解决的架构级边界：特殊自定义夜序下 Pit-Hag 创建 Demon 后无法安全逆向更早已真实落地并触发被动的死亡；真人说书人缺每次 Recluse/Spy registration 的逐次人工裁决 UI；自由文本/多重效果抵消等 Mathematician 极端情况缺统一逐次最终基准审计。本轮没有用近似实现冒险覆盖这些边界。
+验证:
+  - backend/src + frontend/src 全量静态扫描通过：共 86 个源文件、84 个 TypeScript/Vue script 解析单元、28 个 style/CSS 单元、222 个本地相对/@ 导入；未发现 TypeScript 解析错误、CSS 花括号错误、真实合并冲突标记或失效本地导入；项目根目录不存在 src/。
+  - backend/src 全部 35 个 TypeScript 文件使用全局 TypeScript 5.8.3、strict 模式、真实全局 Node 类型与项目目录外的 Express/CORS/Socket.IO/UUID 临时声明桩完成 noEmit 类型检查，0 个源码类型错误；同一严格配置成功生成隔离 CommonJS 测试产物。临时声明、测试脚本和编译产物仅位于 /mnt/data/round55_validation，不进入修复包。
+  - 六个实际游戏 Worker 使用本轮最新隔离编译产物执行 prepare_room 烟雾全部通过：狼人杀、杀人游戏、血染钟楼、一夜狼人、阿瓦隆、德州扑克均可启动 Worker 并完成合法房间配置初始化。
+  - 座位互斥专项回归直接从本轮 roomController.ts AST 提取实际 runSeatMutationExclusive 执行：同一 room/player 的 reconnect 与后续 kick 严格按 reconnect:start -> reconnect:end -> kick:start -> kick:end 串行；不同 player 的座位操作可并发，证明没有退化成房间级串行。静态保护检查同时确认已有座位 reconnect、transferHostInRoom、kickPlayerFromRoom、旧 kick_player 兼容入口、踢房主投票 pending 门禁及最终结算均接入本轮保护。
+  - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts 校验，仅有 ws 的可选原生依赖提示。
+  - 正式 npm ci --ignore-scripts --no-audit --no-fund 已执行，当前内部 npm 镜像请求 package-lock 锁定的 typescript-5.8.3.tgz 返回 404。正式 npm run build 也已执行；由于 npm ci 无法形成完整 node_modules，backend tsc 在 Node 内建类型及 Express/CORS/Socket.IO/UUID 等 package.json 已声明依赖解析处中止，未进入 frontend vue-tsc/Vite。构建尝试产生的 backend/dist/frontend/dist 和失败安装残留 node_modules 已清理。完整生产构建与“可直接部署”仍需在依赖可正常安装的本地或 CI 执行 npm ci && npm run build 最终确认。
+备注: 本轮未删除文件，未创建根目录 src/；所有后端源码修改仅位于 backend/src/，本轮没有 frontend/src/ 源码修改；修复包只包含本轮修改文件与更新后的 repair_log.txt，可按相对路径直接覆盖。
