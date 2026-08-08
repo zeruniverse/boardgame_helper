@@ -1538,7 +1538,8 @@ export function roomController(io: Server) {
     roomId: string,
     expectedHostId: string,
     expectedOfflineAt: number,
-    reason: 'disconnect' | 'leave'
+    reason: 'disconnect' | 'leave',
+    seatLockAlreadyHeld = false
   ): Promise<Room | undefined> {
     clearOfflineHostFailoverTimer(roomId);
 
@@ -1546,7 +1547,7 @@ export function roomController(io: Server) {
     // 但仍在 ensure worker / socket.join 的 await 窗口里，故障切换会先看到旧的
     // offline 快照并把房主权限转走；随后重连成功也无法恢复。锁内重新校验离线
     // 代际，让“先开始的座位事务”决定顺序，并避免定时器基于瞬时连接状态提交。
-    return runSeatMutationExclusive(roomId, expectedHostId, async () => {
+    const commitFailover = async (): Promise<Room | undefined> => {
       const latestRoom = rooms.get(roomId);
       if (!latestRoom || latestRoom.hostId !== expectedHostId) {
         return latestRoom;
@@ -1609,7 +1610,13 @@ export function roomController(io: Server) {
       }
       io.to(roomId).emit('room_update', toClientRoom(committedRoom));
       return committedRoom;
-    });
+    };
+
+    // leave_room 已持有同一 room/player 座位锁；再次入队会等待自己释放而永久死锁。
+    // 其他调用方仍通过统一队列串行化 reconnect / disconnect / 房主故障切换。
+    return seatLockAlreadyHeld
+      ? commitFailover()
+      : runSeatMutationExclusive(roomId, expectedHostId, commitFailover);
   }
 
   function scheduleOfflineHostFailoverIfNeeded(room: Room): void {
@@ -3267,194 +3274,230 @@ export function roomController(io: Server) {
           return;
         }
 
-        // 先将玩家标记为离线并通知 worker；多数游戏需要在玩家仍存在于房间时
-        // 处理自动弃牌、死亡/托管、阶段推进等逻辑。主动离房的 socket 仍保持连接，
-        // 需要清空旧 socketId，避免后续私有身份/行动消息继续发到已离开的页面。
-        const offlineAt = advancePlayerHeartbeat(player);
-        player.online = false;
-        player.socketId = '';
-        advancePlayerConnectionState(player);
-        room.lastActiveTime = Date.now();
-        rooms.set(room.id, room);
-        threadManager.updateRoomData(room.id, room);
+        const roomId = room.id;
+        const playerId = player.id;
+        const actorSocketId = socket.id;
 
-        let canRemovePlayer = true;
-        if (threadManager.getRoomThreadStatus(room.id) !== 'not_found') {
-          // 两个离线任务都要在首次 await 前入队，避免同昵称接管在两次 await 之间
-          // 完成后，又被旧连接迟到的 player_offline 覆盖成离线状态。
-          const updateRoomTask = sendTaskToRoom(room.id, 'update_room_data', { room });
-          const playerOfflineTask = sendTaskToRoom(room.id, 'player_offline', { playerId: player.id });
-          const [updateRoomResult, playerOfflineResult] = await Promise.allSettled([
-            updateRoomTask,
-            playerOfflineTask
-          ]);
+        // 主动离房与 reconnect / disconnect / Cash Out / 踢人都会改变同一座位的
+        // 连接或成员归属。必须在任何离线副作用前取得同一把座位锁；否则新连接
+        // 正在迁移、但旧 socketId 尚未切走的窗口里，旧页面的 leave_room 可以先让
+        // Worker 自动弃牌/跳过，再在发现座位已被接管后仅停止删除，已发生的游戏
+        // 副作用却无法回滚。现在由先取得锁的一方完整提交，后取得者基于最新所有权
+        // 退化为只清理旧 Socket.IO 订阅。
+        await runSeatMutationExclusive(roomId, playerId, async () => {
+          const lockedRoom = rooms.get(roomId);
+          const lockedPlayer = lockedRoom?.players.find(candidate => candidate.id === playerId);
 
-          if (updateRoomResult.status === 'rejected') {
-            console.error(`通知房间线程同步离房状态失败: ${room.id}`, updateRoomResult.reason);
-            canRemovePlayer = false;
-          }
-          if (playerOfflineResult.status === 'rejected') {
-            console.error(`通知房间线程玩家离线失败: ${room.id}`, playerOfflineResult.reason);
-            canRemovePlayer = false;
+          if (!lockedRoom || !lockedPlayer) {
+            // 房间/座位已被其他已提交操作移除，本地令牌也不再可用。
+            ackResponse.clearSession = true;
+            socket.emit('room_left', { roomId });
+            await leaveSocketRoomSafely(socket, roomId, '清理已失效离房座位的旧订阅');
+            return;
           }
 
-          const currentSeat = rooms.get(room.id)?.players.find(p => p.id === player.id);
-          const seatWasTakenOver = Boolean(currentSeat && (
-            currentSeat.online !== false ||
-            currentSeat.socketId !== '' ||
-            Number(currentSeat.lastHeartbeat || 0) !== offlineAt
+          if (
+            lockedPlayer.socketId !== actorSocketId ||
+            lockedPlayer.online === false
+          ) {
+            // reconnect 或 disconnect 已先提交。不能清除令牌：新连接可能已经轮换并
+            // 写入同一浏览器存储；迟到的旧页面 acknowledgement 不应抹掉新会话。
+            socket.emit('room_left', { roomId });
+            await leaveSocketRoomSafely(socket, roomId, '清理已失去所有权连接的旧订阅');
+            return;
+          }
+
+          const room = lockedRoom;
+          const player = lockedPlayer;
+          // 先将玩家标记为离线并通知 worker；多数游戏需要在玩家仍存在于房间时
+          // 处理自动弃牌、死亡/托管、阶段推进等逻辑。主动离房的 socket 仍保持连接，
+          // 需要清空旧 socketId，避免后续私有身份/行动消息继续发到已离开的页面。
+          const offlineAt = advancePlayerHeartbeat(player);
+          player.online = false;
+          player.socketId = '';
+          advancePlayerConnectionState(player);
+          room.lastActiveTime = Date.now();
+          rooms.set(room.id, room);
+          threadManager.updateRoomData(room.id, room);
+
+          let canRemovePlayer = true;
+          if (threadManager.getRoomThreadStatus(room.id) !== 'not_found') {
+            // 两个离线任务都要在首次 await 前入队，避免同昵称接管在两次 await 之间
+            // 完成后，又被旧连接迟到的 player_offline 覆盖成离线状态。
+            const updateRoomTask = sendTaskToRoom(room.id, 'update_room_data', { room });
+            const playerOfflineTask = sendTaskToRoom(room.id, 'player_offline', { playerId: player.id });
+            const [updateRoomResult, playerOfflineResult] = await Promise.allSettled([
+              updateRoomTask,
+              playerOfflineTask
+            ]);
+
+            if (updateRoomResult.status === 'rejected') {
+              console.error(`通知房间线程同步离房状态失败: ${room.id}`, updateRoomResult.reason);
+              canRemovePlayer = false;
+            }
+            if (playerOfflineResult.status === 'rejected') {
+              console.error(`通知房间线程玩家离线失败: ${room.id}`, playerOfflineResult.reason);
+              canRemovePlayer = false;
+            }
+
+            const currentSeat = rooms.get(room.id)?.players.find(p => p.id === player.id);
+            const seatWasTakenOver = Boolean(currentSeat && (
+              currentSeat.online !== false ||
+              currentSeat.socketId !== '' ||
+              Number(currentSeat.lastHeartbeat || 0) !== offlineAt
+            ));
+            if (seatWasTakenOver) {
+              socket.emit('room_left', { roomId: room.id });
+              await leaveSocketRoomSafely(socket, room.id, '旧连接离房');
+              console.log(`玩家 ${player.nickname} 的旧连接离房期间座位已被重新接管，跳过移除新连接`);
+              return;
+            }
+
+            if (canRemovePlayer) {
+              try {
+                // 是否能从房间中真正移除玩家必须由对应游戏 worker 决定。
+                // 进行中的局通常只能把玩家置为离线，否则 room.players 与 worker 内的
+                // gameState/座位/手牌/角色列表会错位，导致流程卡死或私有信息错发。
+                const kickResponse = await sendTaskToRoom(room.id, 'kick_out_player', { targetId: player.id });
+                const kickResult = readKickResult(kickResponse);
+                canRemovePlayer = kickResult.kicked;
+              } catch (error) {
+                console.error(`通知房间线程玩家离开失败: ${room.id}`, error);
+                canRemovePlayer = false;
+              }
+            }
+          }
+
+          // 离开房间频道
+          await leaveSocketRoomSafely(socket, room.id, '玩家主动离房');
+
+          // kick_out_player 和 socket.leave 都会让出事件循环；这期间同昵称连接可能已完成座位接管。
+          // 在任何离线回写或实际移除前再次核对快照，避免旧连接把新连接重新置离线或删掉。
+          const latestSeatAfterLeave = rooms.get(room.id)?.players.find(p => p.id === player.id);
+          const seatWasTakenOverAfterLeave = Boolean(latestSeatAfterLeave && (
+            latestSeatAfterLeave.online !== false ||
+            latestSeatAfterLeave.socketId !== '' ||
+            Number(latestSeatAfterLeave.lastHeartbeat || 0) !== offlineAt
           ));
-          if (seatWasTakenOver) {
+          if (seatWasTakenOverAfterLeave) {
             socket.emit('room_left', { roomId: room.id });
-            await leaveSocketRoomSafely(socket, room.id, '旧连接离房');
             console.log(`玩家 ${player.nickname} 的旧连接离房期间座位已被重新接管，跳过移除新连接`);
             return;
           }
 
-          if (canRemovePlayer) {
-            try {
-              // 是否能从房间中真正移除玩家必须由对应游戏 worker 决定。
-              // 进行中的局通常只能把玩家置为离线，否则 room.players 与 worker 内的
-              // gameState/座位/手牌/角色列表会错位，导致流程卡死或私有信息错发。
-              const kickResponse = await sendTaskToRoom(room.id, 'kick_out_player', { targetId: player.id });
-              const kickResult = readKickResult(kickResponse);
-              canRemovePlayer = kickResult.kicked;
-            } catch (error) {
-              console.error(`通知房间线程玩家离开失败: ${room.id}`, error);
-              canRemovePlayer = false;
+          // worker 拒绝移除时，保持玩家为离线状态，使用与断线相同的重连/清理模型。
+          if (!canRemovePlayer) {
+            let activeRoom: Room | undefined = rooms.get(room.id);
+            if (!activeRoom) {
+              socket.emit('room_left', { roomId: room.id });
+              return;
+            }
+
+            const latestPlayer = activeRoom.players.find(p => p.id === player.id);
+            if (latestPlayer) {
+              latestPlayer.online = false;
+              latestPlayer.socketId = '';
+              latestPlayer.lastHeartbeat = offlineAt;
+            }
+            activeRoom.lastActiveTime = Date.now();
+            threadManager.updateRoomData(activeRoom.id, activeRoom);
+
+            if (activeRoom.hostId === player.id) {
+              await reassignOfflineHost(activeRoom.id, player.id, offlineAt, 'leave', true);
+              activeRoom = rooms.get(room.id);
+            }
+            if (!activeRoom) {
+              socket.emit('room_left', { roomId: room.id });
+              return;
+            }
+
+            io.to(activeRoom.id).emit('room_update', toClientRoom(activeRoom));
+            if (!activeRoom.private) {
+              broadcastLobbyUpdate();
+            }
+            scheduleRoomCleanupIfNoOnlinePlayers(activeRoom);
+
+            socket.emit('room_left', { roomId: room.id });
+            console.log(`玩家 ${player.nickname} 在游戏进行中离开了房间 ${room.name}，已保留为离线玩家`);
+            return;
+          }
+
+          // worker 可能在 player_offline / kick_out_player 中推进了状态，因此移除前重新读取最新房间快照。
+          let committedRoom: Room | undefined = rooms.get(room.id);
+          if (!committedRoom) {
+            clearPlayerSessionToken(room.id, player.id);
+            ackResponse.clearSession = true;
+            socket.emit('room_left', { roomId: room.id });
+            return;
+          }
+
+          const playerIndex = committedRoom.players.findIndex(p => p.id === player.id);
+          if (playerIndex !== -1) {
+            committedRoom.players.splice(playerIndex, 1);
+          }
+          clearPlayerSessionToken(committedRoom.id, player.id);
+          // 从这里开始该旧 sessionToken 已在服务端失效；即使后续房间清理/广播失败，
+          // acknowledgement 仍应指示客户端只清理这一次离房对应的本地会话。
+          ackResponse.clearSession = true;
+          committedRoom.lastActiveTime = Date.now();
+
+          // 最后一名玩家离房时，Worker stop 与新 join/reconnect 必须使用同一房间级互斥。
+          // 仅在 await terminate() 之后再检查 players 已经太晚，因为 Worker 私有游戏状态
+          // 可能已经不可逆地丢失。
+          if (committedRoom.players.length === 0) {
+            const deleted = await deleteRoomIfStillEmpty(
+              committedRoom.id,
+              '最后一名玩家离房后清理空房间'
+            );
+            if (deleted) {
+              socket.emit('room_left', { roomId: room.id });
+              console.log(`玩家 ${player.nickname} 离开了房间 ${room.name}`);
+              return;
+            }
+
+            committedRoom = rooms.get(room.id);
+            if (!committedRoom) {
+              socket.emit('room_left', { roomId: room.id });
+              return;
+            }
+            if (committedRoom.players.length === 0) {
+              scheduleRoomCleanupIfNoOnlinePlayers(committedRoom);
+              socket.emit('room_left', { roomId: room.id });
+              console.log(`玩家 ${player.nickname} 离开了房间 ${room.name}`);
+              return;
             }
           }
-        }
 
-        // 离开房间频道
-        await leaveSocketRoomSafely(socket, room.id, '玩家主动离房');
-
-        // kick_out_player 和 socket.leave 都会让出事件循环；这期间同昵称连接可能已完成座位接管。
-        // 在任何离线回写或实际移除前再次核对快照，避免旧连接把新连接重新置离线或删掉。
-        const latestSeatAfterLeave = rooms.get(room.id)?.players.find(p => p.id === player.id);
-        const seatWasTakenOverAfterLeave = Boolean(latestSeatAfterLeave && (
-          latestSeatAfterLeave.online !== false ||
-          latestSeatAfterLeave.socketId !== '' ||
-          Number(latestSeatAfterLeave.lastHeartbeat || 0) !== offlineAt
-        ));
-        if (seatWasTakenOverAfterLeave) {
-          socket.emit('room_left', { roomId: room.id });
-          console.log(`玩家 ${player.nickname} 的旧连接离房期间座位已被重新接管，跳过移除新连接`);
-          return;
-        }
-
-        // worker 拒绝移除时，保持玩家为离线状态，使用与断线相同的重连/清理模型。
-        if (!canRemovePlayer) {
-          let activeRoom: Room | undefined = rooms.get(room.id);
-          if (!activeRoom) {
-            socket.emit('room_left', { roomId: room.id });
-            return;
+          // 如果离开的是房主，优先指定在线玩家为新房主。旧房主投票不得沿用。
+          if (committedRoom.hostId === player.id) {
+            clearOfflineHostFailoverTimer(committedRoom.id);
+            const nextHost = findCommittedHostCandidate(committedRoom, player.id);
+            setRoomHost(committedRoom, nextHost?.id || '');
+            const pendingVote = hostKickVotes.get(committedRoom.id);
+            if (pendingVote) {
+              clearTimeout(pendingVote.timer);
+              hostKickVotes.delete(committedRoom.id);
+            }
           }
 
-          const latestPlayer = activeRoom.players.find(p => p.id === player.id);
-          if (latestPlayer) {
-            latestPlayer.online = false;
-            latestPlayer.socketId = '';
-            latestPlayer.lastHeartbeat = offlineAt;
-          }
-          activeRoom.lastActiveTime = Date.now();
-          threadManager.updateRoomData(activeRoom.id, activeRoom);
-
-          if (activeRoom.hostId === player.id) {
-            await reassignOfflineHost(activeRoom.id, player.id, offlineAt, 'leave');
-            activeRoom = rooms.get(room.id);
-          }
-          if (!activeRoom) {
-            socket.emit('room_left', { roomId: room.id });
-            return;
+          threadManager.updateRoomData(committedRoom.id, committedRoom);
+          try {
+            await sendTaskToRoom(committedRoom.id, 'update_room_data', { room: committedRoom });
+          } catch (error) {
+            console.error(`同步玩家离开后的房间状态失败: ${committedRoom.id}`, error);
           }
 
-          io.to(activeRoom.id).emit('room_update', toClientRoom(activeRoom));
-          if (!activeRoom.private) {
-            broadcastLobbyUpdate();
+          const broadcastRoom = rooms.get(room.id);
+          if (broadcastRoom) {
+            io.to(broadcastRoom.id).emit('room_update', toClientRoom(broadcastRoom));
+            if (!broadcastRoom.private) {
+              broadcastLobbyUpdate();
+            }
           }
-          scheduleRoomCleanupIfNoOnlinePlayers(activeRoom);
 
           socket.emit('room_left', { roomId: room.id });
-          console.log(`玩家 ${player.nickname} 在游戏进行中离开了房间 ${room.name}，已保留为离线玩家`);
-          return;
-        }
-
-        // worker 可能在 player_offline / kick_out_player 中推进了状态，因此移除前重新读取最新房间快照。
-        let committedRoom: Room | undefined = rooms.get(room.id);
-        if (!committedRoom) {
-          clearPlayerSessionToken(room.id, player.id);
-          ackResponse.clearSession = true;
-          socket.emit('room_left', { roomId: room.id });
-          return;
-        }
-
-        const playerIndex = committedRoom.players.findIndex(p => p.id === player.id);
-        if (playerIndex !== -1) {
-          committedRoom.players.splice(playerIndex, 1);
-        }
-        clearPlayerSessionToken(committedRoom.id, player.id);
-        // 从这里开始该旧 sessionToken 已在服务端失效；即使后续房间清理/广播失败，
-        // acknowledgement 仍应指示客户端只清理这一次离房对应的本地会话。
-        ackResponse.clearSession = true;
-        committedRoom.lastActiveTime = Date.now();
-
-        // 最后一名玩家离房时，Worker stop 与新 join/reconnect 必须使用同一房间级互斥。
-        // 仅在 await terminate() 之后再检查 players 已经太晚，因为 Worker 私有游戏状态
-        // 可能已经不可逆地丢失。
-        if (committedRoom.players.length === 0) {
-          const deleted = await deleteRoomIfStillEmpty(
-            committedRoom.id,
-            '最后一名玩家离房后清理空房间'
-          );
-          if (deleted) {
-            socket.emit('room_left', { roomId: room.id });
-            console.log(`玩家 ${player.nickname} 离开了房间 ${room.name}`);
-            return;
-          }
-
-          committedRoom = rooms.get(room.id);
-          if (!committedRoom) {
-            socket.emit('room_left', { roomId: room.id });
-            return;
-          }
-          if (committedRoom.players.length === 0) {
-            scheduleRoomCleanupIfNoOnlinePlayers(committedRoom);
-            socket.emit('room_left', { roomId: room.id });
-            console.log(`玩家 ${player.nickname} 离开了房间 ${room.name}`);
-            return;
-          }
-        }
-
-        // 如果离开的是房主，优先指定在线玩家为新房主。旧房主投票不得沿用。
-        if (committedRoom.hostId === player.id) {
-          clearOfflineHostFailoverTimer(committedRoom.id);
-          const nextHost = findCommittedHostCandidate(committedRoom, player.id);
-          setRoomHost(committedRoom, nextHost?.id || '');
-          const pendingVote = hostKickVotes.get(committedRoom.id);
-          if (pendingVote) {
-            clearTimeout(pendingVote.timer);
-            hostKickVotes.delete(committedRoom.id);
-          }
-        }
-
-        threadManager.updateRoomData(committedRoom.id, committedRoom);
-        try {
-          await sendTaskToRoom(committedRoom.id, 'update_room_data', { room: committedRoom });
-        } catch (error) {
-          console.error(`同步玩家离开后的房间状态失败: ${committedRoom.id}`, error);
-        }
-
-        const broadcastRoom = rooms.get(room.id);
-        if (broadcastRoom) {
-          io.to(broadcastRoom.id).emit('room_update', toClientRoom(broadcastRoom));
-          if (!broadcastRoom.private) {
-            broadcastLobbyUpdate();
-          }
-        }
-
-        socket.emit('room_left', { roomId: room.id });
-        console.log(`玩家 ${player.nickname} 离开了房间 ${room.name}`);
+          console.log(`玩家 ${player.nickname} 离开了房间 ${room.name}`);
+        });
       } catch (error) {
         console.error('离开房间失败:', error);
         // clearSession 一旦变成 true，就表示旧 token 已经在服务端失效；后续广播、
