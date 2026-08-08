@@ -5730,14 +5730,30 @@ export class BOTCWorker extends BaseGameWorker {
         }
 
         else if (roleId === 'undertaker') {
-          const executedPlayerId = this.gameState.execution?.playerId;
+          // Undertaker learns a character only when somebody actually died by execution.
+          // gameState.execution also records executions where the target survived (Fool,
+          // Devil's Advocate, Tea Lady, Sailor) or was already dead, so it cannot be used
+          // as the source of truth for this information ability. deathsToday is populated
+          // only when a real daytime death lands, and also preserves the character that
+          // died in case a custom-script Pit-Hag changes the dead player's character before
+          // the Undertaker wakes later that night.
+          const executionDeath = this.deathsToday.find(entry => entry.cause === 'execution');
+          const executedPlayerId = executionDeath?.playerId;
           const executedPlayer = executedPlayerId ? this.gamePlayers.get(executedPlayerId) : undefined;
-          const executedRegistration = executedPlayer ? this.getRegisteredIdentity(executedPlayer) : null;
+
+          let learnedRole = executionDeath?.roleId ? getRoleById(executionDeath.roleId) || null : null;
+          if (executedPlayer && executionDeath?.roleId && executedPlayer.role?.id === executionDeath.roleId) {
+            // Recluse/Spy registration is resolved per information check while they still
+            // have that character. If their character changed after death, reveal the
+            // recorded character-at-death rather than the replacement character.
+            learnedRole = this.getRegisteredIdentity(executedPlayer).role || learnedRole;
+          }
+
           sendInfo(playerId, player, roleId, {
             playerId: executedPlayerId || null,
             playerName: executedPlayerId ? this.getPlayerName(executedPlayerId) : null,
-            roleId: executedRegistration?.role?.id || null,
-            roleName: executedRegistration?.role?.name || null
+            roleId: learnedRole?.id || null,
+            roleName: learnedRole?.name || null
           });
         }
 

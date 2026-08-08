@@ -1269,3 +1269,34 @@ Commit: fix(round19): 支持钟楼夜间动态唤醒并封堵坑巫裁决竞态
   - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts；本轮源码 git diff --check 通过。
   - 正式 npm ci --ignore-scripts 已再次尝试，但当前内部 npm 源对 package-lock 锁定的 typescript-5.8.3.tgz 返回 404，无法完整安装 node_modules。正式 npm run build 在现有工作区执行时，后端 tsc 因 Node/Express/Socket.IO/UUID/CORS 等依赖/类型未安装而中止，前端 vue-tsc/Vite 因此未进入生产构建。本轮不能声称完整生产构建已在此容器通过；请在依赖源可用的本地或 CI 执行 npm ci && npm run build 做最终部署确认。
 备注: 本轮未删除文件，未创建根目录 src/；所有源码修改仅位于既有 backend/src/，未修改 frontend/src/；修复包只包含本轮修改文件及 repair_log.txt，可按相对路径直接覆盖。
+
+=== 当前请求第 20 轮修复记录 ===
+时间: 2026-08-08 05:10:00 UTC
+Commit: fix(round20): 修正钟楼殡仪员处决死亡判定与一夜狼人皮匠提示
+修改/新增文件:
+  - backend/src/workers/botcWorker.ts
+  - frontend/src/components/Lobby.vue
+  - frontend/src/components/OnuWerewolfActionPanel.vue
+  - repair_log.txt
+删除文件: 无
+构建测试: 部分通过（后端 34 个 TypeScript strict/noEmit 与隔离测试编译、85 个源码文件静态扫描、六 Worker prepare_room 烟雾、BOTC 殡仪员 4 场景专项回归、一夜狼人皮匠平票回归及 package-lock 依赖树检查通过；正式 npm ci / npm run build 仍受当前容器内部 npm 源缺少锁定 TypeScript 5.8.3 包阻塞）
+本轮修复:
+  - 修复 Blood on the Clocktower 殡仪员（Undertaker）把“发生过处决”错误等同于“有人因处决死亡”的规则错误。旧逻辑直接读取 gameState.execution，因此愚者首次免死、恶魔律师/茶艺师/水手防死，以及处决本来已经死亡的玩家时，殡仪员仍会被错误告知该目标角色；现在改为只读取当天真实落地、cause=execution 的死亡记录，没有处决死亡时返回空信息。
+  - 殡仪员信息改用死亡当时保存的角色快照作为基础。自定义剧本中若 Pit-Hag 在殡仪员较晚夜序前改变了当天被处决死者的角色，殡仪员不会错误看到换角后的新角色；若死者仍保持原角色，则继续复用统一 Recluse/Spy 单次 registration 判定，不旁路第 16-17 轮建立的登记规则。
+  - 同步修正大厅 Trouble Brewing 殡仪员规则帮助，明确“因处决而死亡”而不是“只要被处决”，避免前端文案继续诱导错误主持流程。
+  - 修正一夜狼人角色选择面板中皮匠（Tanner）“必须唯一最高票才获胜”的错误描述。当前后端本来就按最终死亡结果结算皮匠个人胜利，平票达到处决门槛或被猎人连带死亡时同样可达成；前端现在明确为“只要自己死亡就达成个人胜利条件”，与大厅说明和后端结算一致。
+审查结果/本轮未改动重点:
+  - 继续覆盖 backend/src 与 frontend/src 当前全部 85 个 TypeScript/Vue/CSS/SVG 代码文件；复查六个游戏 Worker、BaseGameWorker、RoomThreadManager/Controller 状态同步入口、前端 Room/ActionPanel/PlayerList/Chat 分层和相对/@ 导入。未发现优先级高于本轮殡仪员错误、且适合当前批次低风险落地的跨游戏阻断项。
+  - 狼人杀、杀人游戏、阿瓦隆、德州扑克本轮未新增源码修改；对应 Worker 仍重新通过严格测试编译产物的 prepare_room 初始化烟雾。一夜狼人除皮匠说明外，投票最高票至少 2 才处决、并列最高票同时死亡及皮匠个人胜利的现有后端路径重新做了专项回归。
+  - 前端没有引入新页面或平行组件体系，只在现有 Lobby 与 OnuWerewolfActionPanel 中修正规则提示；既有 Element Plus / Room / ActionPanel / PlayerList / Chat 结构继续沿用，避免为了文案问题制造新的复用分支。
+  - 后端 Worker/Controller/RoomThreadManager 本轮没有发现新的高优先级状态竞态，继续沿用前轮的房间任务串行、Worker 超时隔离、状态版本过滤、session/座位归属校验和游戏 action acknowledgement 一致性修复。
+  - 仍保留第 19 轮记录的 BOTC 高阶边界：自定义夜序若死亡在 Pit-Hag 制造 Demon 之前已经真正落地，当前“本夜死亡任意”机制不能逆向撤销早先死亡；真人说书人仍没有每一次 Recluse/Spy registration 的逐次手工裁决 UI；AI 说书人对高度主观裁决角色仍采用保守自动化/组局限制。
+验证:
+  - backend/src 全部 34 个 TypeScript 文件使用 TypeScript 5.8.3、strict 模式、真实 Node 类型和项目目录外的 Express/CORS/Socket.IO/UUID 临时声明桩完成 noEmit 检查，0 个错误；同一配置成功生成 34 个 CommonJS 隔离测试文件。
+  - backend/src + frontend/src 静态扫描通过：共 85 个代码文件、83 个 TypeScript/Vue script 解析单元、27 个 Vue SFC、27 个 style 块、213 个相对/@ 静态导入均无 TypeScript 语法、SFC 标签、CSS 花括号或失效导入错误；项目根目录不存在 src/。
+  - 六个实际游戏 Worker 使用本轮最新 strict 编译产物执行 prepare_room 烟雾全部通过：狼人杀、杀人游戏、血染钟楼、一夜狼人、阿瓦隆、德州扑克均能启动 Worker 并完成房间初始化。
+  - BOTC 殡仪员专项回归 4/4 通过：发生处决但无人因处决死亡时返回空信息；真实处决死亡能学习死者角色；其他白天死亡不会被误认成处决死亡；自定义剧本中死者随后被换角时仍读取死亡时角色快照。
+  - 一夜狼人皮匠平票专项回归通过：皮匠与狼人各 2 票并列最高时两者同时死亡，村民阵营获胜的同时皮匠本人仍被判定为个人胜利，与新前端说明一致。
+  - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts 校验。
+  - 正式 npm run build 已在本轮最终源码上执行，但当前工作区 node_modules 是之前失败安装留下的空/不完整目录，后端 tsc 因多个 @types 包内容缺失中止；随后 npm ci --ignore-scripts 再次尝试安装，当前内部 npm 源对 package-lock 锁定的 typescript-5.8.3.tgz 返回 404。因此本轮不能声称完整生产 npm 构建已在此容器通过；请在依赖源可用的本地或 CI 执行 npm ci && npm run build 做最终部署构建确认。
+备注: 本轮未删除文件，未创建根目录 src/；所有后端源码修改仅位于 backend/src/，所有前端源码修改仅位于 frontend/src/；修复包只包含本轮修改文件及 repair_log.txt，可按相对路径直接覆盖。

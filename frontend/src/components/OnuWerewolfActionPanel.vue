@@ -554,7 +554,7 @@ const availableRoles = [
   { value: OnuWerewolfRole.Drunk, label: '酒鬼', description: '必须与一张中心卡牌交换角色' },
   { value: OnuWerewolfRole.Mason, label: '守夜人', description: '必须成对加入（0个或2个）；可查看是否有其他守夜人' },
   { value: OnuWerewolfRole.Villager, label: '村民', description: '没有夜间技能，属于好人阵营' },
-  { value: OnuWerewolfRole.Tanner, label: '皮匠', description: '只有自己成为唯一得票最多并被处决时获胜' }
+  { value: OnuWerewolfRole.Tanner, label: '皮匠', description: '只要自己死亡就达成个人胜利条件（包括平票处决等情况）' }
 ];
 
 const referenceRoleSet = new Set<OnuWerewolfRole>(availableRoles.map(role => role.value));
