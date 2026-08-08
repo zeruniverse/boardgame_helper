@@ -210,7 +210,7 @@
     <!-- 警长竞选阶段 -->
     <div v-else-if="gameState.status === 'SHERIFF_ELECT'" class="action-section">
       <h4>警长竞选</h4>
-      <div v-if="isAlive" class="sheriff-elect-section">
+      <div v-if="isAlive && canOperate" class="sheriff-elect-section">
         <p>是否参与警长竞选？</p>
         <div class="action-buttons">
           <el-button type="primary" @click="handleSheriffElect(true)">上警</el-button>
@@ -218,7 +218,8 @@
         </div>
       </div>
       <div v-else class="waiting-section">
-        <p>你已死亡，无法参与警长竞选</p>
+        <p v-if="!isAlive">你已死亡，无法参与警长竞选</p>
+        <p v-else>你已完成警长竞选选择，等待其他玩家...</p>
       </div>
     </div>
 
@@ -278,7 +279,7 @@
         <div v-if="gameState.currentSpeaker" class="current-speaker">
           <p>
             当前发言者: {{ getPlayerDisplayName(gameState.currentSpeaker) }}
-            <span v-if="gameState.currentSpeaker === playerSecret?.playerId" class="your-turn">（你）</span>
+            <span v-if="gameState.currentSpeaker === currentUserId" class="your-turn">（你）</span>
           </p>
         </div>
         <div v-else class="free-discuss">
@@ -374,7 +375,7 @@
     <!-- 警长指派阶段 -->
     <div v-else-if="gameState.status === 'SHERIFF_ASSIGN'" class="action-section">
       <h4>警长指派</h4>
-      <div v-if="canOperate && playerSecret?.role && gameState.players[playerSecret.playerId]?.isSheriff" class="sheriff-assign-section">
+      <div v-if="canOperate && gameState.players[currentUserId]?.isSheriff" class="sheriff-assign-section">
         <p>你是警长，请选择一名玩家继承警徽（不选则销毁警徽）：</p>
         <div class="player-selection">
           <div
@@ -458,7 +459,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { formatPlayerName } from '../utils/playerName'
 
 interface GamePlayer {
@@ -508,6 +509,7 @@ interface PlayerSecret {
 const props = defineProps<{
   gameState: GameState
   playerSecret: PlayerSecret | null
+  currentUserId: string
   roomId: string
   isReady?: boolean
   isHost?: boolean
@@ -522,9 +524,33 @@ const emit = defineEmits<{
 const selectedTarget = ref<string>('')
 const leaveMsg = ref<string>('')
 
+// 公开会话身份必须独立于私密角色信息。重开/重连时 secret 可能短暂为空，
+// 但准备、发言、投票、警徽传递等公开操作仍应由 currentUserId 正确识别。
+watch(
+  () => [props.gameState.status, props.gameState.day] as const,
+  () => {
+    selectedTarget.value = ''
+    leaveMsg.value = ''
+  }
+)
+
+// 平票 PK 可以在不改变 status/day 的情况下收窄候选人；清掉旧选择，
+// 避免上一轮已选目标被带入新的投票轮次。
+const votableSignature = computed(() =>
+  Object.values(props.gameState.players || {})
+    .filter(player => player.alive && player.canBeVoted)
+    .map(player => player.id)
+    .sort()
+    .join('|')
+)
+
+watch(votableSignature, () => {
+  selectedTarget.value = ''
+})
+
 // 计算属性
 const canOperate = computed(() => {
-  const playerId = props.playerSecret?.playerId
+  const playerId = props.currentUserId
   if (!playerId) return false
 
   const roleBySecretPhase: Record<string, string> = {
@@ -543,14 +569,14 @@ const canOperate = computed(() => {
 })
 
 const isCurrentSpeaker = computed(() => {
-  return props.gameState.currentSpeaker === props.playerSecret?.playerId
+  return props.gameState.currentSpeaker === props.currentUserId
 })
 
 const isAlive = computed(() => {
-  if (!props.gameState || !props.playerSecret?.playerId) return true
+  if (!props.gameState || !props.currentUserId) return true
   // 游戏未开始时默认活着
   if (props.gameState.status === 'WAITING' || props.gameState.status === 'preparing') return true
-  return props.gameState.players[props.playerSecret.playerId]?.alive ?? true
+  return props.gameState.players[props.currentUserId]?.alive ?? true
 })
 
 const canStartGame = computed(() => {
@@ -571,7 +597,7 @@ const canStartGame = computed(() => {
 const displayPlayerName = (player?: Partial<GamePlayer> | null): string => {
   return formatPlayerName(
     { id: player?.id, name: player?.name, nickname: player?.nickname },
-    props.playerSecret?.playerId
+    props.currentUserId
   )
 }
 
@@ -600,7 +626,7 @@ const getDisplayedVoteCount = (targetId: string): number => {
 
 // 获取存活的其他玩家（排除自己）
 const getAliveOtherPlayers = (): any[] => {
-  const playerId = props.playerSecret?.playerId
+  const playerId = props.currentUserId
   if (!props.gameState.players || !playerId) return []
   return (Object.values(props.gameState.players) as any[]).filter((p: any) =>
     p.alive && p.id !== playerId

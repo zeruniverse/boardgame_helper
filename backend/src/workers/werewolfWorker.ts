@@ -1753,6 +1753,12 @@ class WerewolfWorker extends BaseGameWorker {
     if (!this.gameState.sheriffElectResponses) {
       this.gameState.sheriffElectResponses = {};
     }
+    if (this.gameState.sheriffElectResponses[playerId] !== undefined) {
+      this.sendToPlayer(playerId, 'error', { message: '你已经完成警长竞选选择，不能重复修改' });
+      return;
+    }
+    if (!this.claimSingleUseAction(playerId)) return;
+
     this.gameState.sheriffElectResponses[playerId] = participate;
     gamePlayer.canBeVoted = participate;
 
