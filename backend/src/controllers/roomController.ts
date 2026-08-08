@@ -1099,6 +1099,10 @@ export function roomController(io: Server) {
   let idleCleanupInterval: NodeJS.Timeout | null = null;
   let controllerShuttingDown = false;
   let resetInProgress = false;
+  // 德州扑克的 Worker 会在一手牌结束 1 秒后请求自动开下一手。Controller 必须
+  // 把这个请求与尚未提交的 join/reconnect 事务串起来，避免 Worker 用旧座位快照开局。
+  const texasAutoStartRetryTimers = new Map<string, NodeJS.Timeout>();
+  const TEXAS_AUTO_START_RETRY_DELAY_MS = 250;
 
   function clearRoomAndVoteTimers(): void {
     for (const room of rooms.values()) {
@@ -1116,6 +1120,11 @@ export function roomController(io: Server) {
       clearTimeout(failoverData.timer);
     }
     offlineHostFailoverTimers.clear();
+
+    for (const timer of texasAutoStartRetryTimers.values()) {
+      clearTimeout(timer);
+    }
+    texasAutoStartRetryTimers.clear();
   }
 
   // 重置服务器函数
@@ -1306,6 +1315,64 @@ export function roomController(io: Server) {
     return mergedRoom;
   }
 
+  function scheduleTexasAutoStart(roomId: string, delayMs = 0): void {
+    if (controllerShuttingDown || resetInProgress || texasAutoStartRetryTimers.has(roomId)) {
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      texasAutoStartRetryTimers.delete(roomId);
+      void tryTexasAutoStart(roomId);
+    }, Math.max(0, delayMs));
+    texasAutoStartRetryTimers.set(roomId, timer);
+  }
+
+  async function tryTexasAutoStart(roomId: string): Promise<void> {
+    if (controllerShuttingDown || resetInProgress) return;
+
+    const room = rooms.get(roomId);
+    if (!room || room.type !== 'texas-holdem' || room.gameMetadata?.autoStart !== true) {
+      return;
+    }
+
+    // 若连接事务已经先开始，则自动开局必须让它先提交/回滚。不能在这里 await
+    // 事务本身，因为当前调用可能来自 Worker 事件队列，而连接事务又可能在等 Worker。
+    if (hasPendingRoomSeatConnection(roomId) || roomCleanupStops.has(roomId)) {
+      scheduleTexasAutoStart(roomId, TEXAS_AUTO_START_RETRY_DELAY_MS);
+      return;
+    }
+
+    try {
+      // Worker 的 auto-start 请求来自它自己的 1 秒定时器。在这 1 秒内可能已有玩家
+      // 正常加入/重连完成，因此开局前主动把 Controller 的最新权威房间快照再同步一次。
+      threadManager.updateRoomData(roomId, room);
+      await sendTaskToRoom(roomId, 'update_room_data', { room });
+
+      const latestRoom = rooms.get(roomId);
+      if (
+        !latestRoom ||
+        latestRoom.type !== 'texas-holdem' ||
+        latestRoom.gameMetadata?.autoStart !== true ||
+        roomCleanupStops.has(roomId)
+      ) {
+        return;
+      }
+
+      // update_room_data 的 await 期间也可能刚好开始新的座位事务。再次检查后才给
+      // Worker 开局授权；若事务先取得连接 claim，则本次自动开局退让并短暂重试。
+      if (hasPendingRoomSeatConnection(roomId)) {
+        scheduleTexasAutoStart(roomId, TEXAS_AUTO_START_RETRY_DELAY_MS);
+        return;
+      }
+
+      await sendTaskToRoom(roomId, 'auto_start_game', {});
+    } catch (error) {
+      // 房间/Worker 可能在定时器触发前已被删除或进入清理。此时不循环重试，
+      // 下一次真实 game_over 会重新发起请求。
+      console.warn(`德州扑克房间 ${roomId} 自动开局请求失败:`, error);
+    }
+  }
+
   // 处理来自worker线程的消息
   async function handleThreadMessage(data: any) {
     try {
@@ -1315,6 +1382,14 @@ export function roomController(io: Server) {
         event: data?.event
       });
       if (data.type === 'emit') {
+        // 德州扑克自动开下一手是 Worker -> Controller 的内部生命周期请求。
+        // 必须在这里截获，不能广播给客户端；实际开局异步排到当前 Worker 消息处理完成后，
+        // 避免在 RoomThreadManager 的 messageChain 内等待同一个 Worker 的 task_response。
+        if (data.event === 'texas_auto_start_request') {
+          scheduleTexasAutoStart(data.roomId);
+          return;
+        }
+
         // 不记录事件正文：其中可能包含手牌、角色、查验结果等私有游戏信息。
         console.log(`广播事件到房间 ${data.roomId}: ${data.event}`);
         const outgoingData = await applyWorkerRoomUpdate(data.event, data.data);

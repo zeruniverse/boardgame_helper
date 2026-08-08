@@ -159,6 +159,10 @@ class TexasHoldemWorker extends BaseGameWorker {
       case 'update_room_data':
         this.syncRoom(task.data.room);
         return;
+      case 'auto_start_game':
+        // 自动开局必须由 Controller 在确认没有尚未提交的加入/重连事务后触发。
+        // Worker 仍负责最终检查牌桌阶段、autoStart 开关与可参赛人数。
+        return this.attemptAutoStart();
       case 'player_online':
         return await this.playerOnline((task.playerId || task.data.playerId)!);
       case 'sync_player_state':
@@ -1449,14 +1453,16 @@ class TexasHoldemWorker extends BaseGameWorker {
     // 游戏结束时检查并踢出离线玩家
     this.checkAndKickOfflinePlayers();
 
-    // 自动开始下一局逻辑
+    // 自动开始下一局逻辑。不能让 Worker 在自己的定时器里直接 startGame：
+    // Controller 可能正在提交一个新座位或已有座位重连，此时 Worker 还只有旧房间快照。
+    // 先发内部请求给 Controller，由它跨过连接事务屏障并同步最新权威房间后，再回送
+    // auto_start_game 任务。该内部事件不会广播到客户端。
     this.clearAutoStartTimer();
     if (this.room.gameMetadata?.autoStart) {
-      // 延迟到下一个事件循环执行自动开始逻辑
       this.autoStartTimer = setTimeout(() => {
         this.autoStartTimer = null;
-        this.attemptAutoStart();
-      }, 1000); // 1秒后尝试自动开始
+        this.sendToRoom('texas_auto_start_request', {});
+      }, 1000); // 1秒后请求 Controller 尝试自动开始
     }
   }
 
