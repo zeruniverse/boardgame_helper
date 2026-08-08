@@ -273,11 +273,6 @@ export const useAvalonStore = defineStore('avalon', {
         }
       });
 
-      // 刺杀投票开始
-      on('assassinate_vote_start', (data: any) => {
-        this.addSystemMessage(data.message || '刺客请求进行刺杀');
-      });
-
       // 错误事件：房间控制器使用 error，阿瓦隆 worker 使用 game_error。
       // 两种事件必须走同一处理逻辑，否则被后端拒绝的关键操作在前端会表现为“点击无反应”。
       const handleServerError = (error: unknown) => {
@@ -423,14 +418,6 @@ export const useAvalonStore = defineStore('avalon', {
 
     takeAction(success: boolean) {
       this.sendGameAction('takeAction', { success });
-    },
-
-    requestAssassinate() {
-      this.sendGameAction('requestAssassinate', {});
-    },
-
-    approveAssassination(agree: boolean) {
-      this.sendGameAction('approveAssassination', { agree });
     },
 
     assassinate(targetId: string) {

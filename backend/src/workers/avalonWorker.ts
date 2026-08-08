@@ -73,7 +73,6 @@ interface AvalonGameState {
   endReason?: string;                  // 游戏结束原因，供前端展示
   // 阿瓦隆特有属性
   roles: [Role[], Role[]];            // [蓝方角色, 红方角色]
-  assassinateInfo: AssassinateInfo;   // 刺杀投票信息
   ladys: string[];                    // 湖上夫人历史
   ladyLog: [string, string][];        // 湖上夫人验人记录 [验人者, 被验者]
 }
@@ -83,17 +82,6 @@ interface AvalonPlayer {
   index: number;
   ready?: boolean;
   online?: boolean;
-}
-
-interface AssassinateInfo {
-  lastRequestTime?: Date;
-  approveEndTimes?: number;
-  votes: {
-    true: string[];
-    false: string[];
-  };
-  approvers: string[];
-  reds: string[];
 }
 
 // 阿瓦隆配置接口
@@ -174,7 +162,6 @@ const OFFLINE_TIMER_RETRY_MS = 1000;
 class AvalonWorker extends BaseGameWorker {
   private config!: AvalonConfig;
   private actionTimer: NodeJS.Timeout | null = null;
-  private assassinationTimer: NodeJS.Timeout | null = null;
   private skippingOfflineOperators = false;
 
   constructor() {
@@ -199,11 +186,6 @@ class AvalonWorker extends BaseGameWorker {
       actionFailed: 0,
       consecutiveRejections: 0,
       roles: [[], []],
-      assassinateInfo: {
-        votes: { true: [], false: [] },
-        approvers: [],
-        reds: []
-      },
       ladys: [],
       ladyLog: []
     } as AvalonGameState;
@@ -405,7 +387,7 @@ class AvalonWorker extends BaseGameWorker {
         this.autoPickTeam(playerId);
         break;
       case GameStatus.VOTE:
-        this.handleVote(playerId, false);
+        this.handleVote(playerId, false, true);
         break;
       case GameStatus.ACTION:
         this.handleTakeAction(playerId, true);
@@ -499,11 +481,11 @@ class AvalonWorker extends BaseGameWorker {
           this.handleTakeAction(playerId, actionData?.success);
           break;
         case 'requestAssassinate':
-          this.handleRequestAssassinate(playerId);
-          break;
         case 'approveAssassination':
-          this.handleApproveAssassination(playerId, actionData?.agree);
-          break;
+          // 旧版曾在正式刺杀阶段之外再套一层“红方同意刺杀”投票。
+          // 标准阿瓦隆没有这一步，而且旧流程会重启刺杀倒计时，让旧客户端
+          // 可以反复延长终局。保留明确错误仅用于兼容旧客户端的可理解反馈。
+          throw new Error('刺杀表决协议已废弃，请由刺客直接选择刺杀目标');
         case 'assassinate':
           this.handleAssassinate(playerId, actionData?.targetId);
           break;
@@ -966,7 +948,7 @@ class AvalonWorker extends BaseGameWorker {
     this.sendGameMessage(`队长${this.getPlayerName(playerId)}提名队伍: ${teamNames}，请所有玩家投票`);
   }
 
-  private handleVote(playerId: string, agree: unknown): void {
+  private handleVote(playerId: string, agree: unknown, systemVote = false): void {
     if (!this.gameState || !this.room) return;
     const state = this.gameState as AvalonGameState;
     if (state.status !== GameStatus.VOTE || !state.operators.includes(playerId)) {
@@ -984,8 +966,11 @@ class AvalonWorker extends BaseGameWorker {
       return;
     }
 
-    // 记录投票
+    // 记录投票。断线/超时由系统代投时单独记录来源，最终公开票型仍可区分真人操作与自动处理。
     state.voteResult[agree ? 'true' : 'false'].push(playerId);
+    if (systemVote && !state.voteResult.system.includes(playerId)) {
+      state.voteResult.system.push(playerId);
+    }
 
     // 从operators中移除已投票的玩家
     state.operators = state.operators.filter(id => id !== playerId);
@@ -1007,6 +992,9 @@ class AvalonWorker extends BaseGameWorker {
       Object.keys(state.players).forEach(id => {
         if (!votedPlayers.has(id)) {
           state.voteResult.false.push(id);
+          if (!state.voteResult.system.includes(id)) {
+            state.voteResult.system.push(id);
+          }
         }
       });
       this.processVoteResult();
@@ -1054,77 +1042,6 @@ class AvalonWorker extends BaseGameWorker {
       this.processMissionResult();
     } else {
       this.sendToRoom('game_update', this.getGameInfo());
-    }
-  }
-
-  private handleRequestAssassinate(playerId: string): void {
-    const state = this.gameState as AvalonGameState;
-    if (state.topSecret.red[playerId] !== Role.ASSASSIN || state.status !== GameStatus.ASSASSINATE) {
-      this.sendToPlayer(playerId, 'game_error', { message: '当前不能发起刺杀请求' });
-      return;
-    }
-
-    // 检查请求间隔
-    const now = new Date();
-    if (state.assassinateInfo.lastRequestTime) {
-      const timeDiff = now.getTime() - state.assassinateInfo.lastRequestTime.getTime();
-      if (timeDiff < 30000) { // 30秒间隔
-        this.sendToPlayer(playerId, 'game_error', {
-          message: '请求刺杀过于频繁，请稍后再试'
-        });
-        return;
-      }
-    }
-
-    // 设置刺杀投票
-    const redPlayers = this.getRedPlayers().filter(id => id !== playerId);
-    state.assassinateInfo = {
-      lastRequestTime: now,
-      approveEndTimes: 10, // 10秒投票时间
-      votes: { true: [playerId], false: [] }, // 刺客自动同意
-      approvers: redPlayers,
-      reds: this.getRedPlayers()
-    };
-
-    // 清除之前的刺杀定时器（如果有）
-    if (this.assassinationTimer) {
-      clearTimeout(this.assassinationTimer);
-      this.assassinationTimer = null;
-    }
-
-    // 10秒后自动通过
-    this.setAssassinationTimer(10000, () => this.autoApproveAssassination());
-
-    this.sendToRoom('assassinate_vote_start', {
-      message: '刺客请求进行刺杀，红方成员请投票',
-      approvers: redPlayers
-    });
-  }
-
-  private handleApproveAssassination(playerId: string, agree: unknown): void {
-    const state = this.gameState as AvalonGameState;
-    const info = state.assassinateInfo;
-
-    if (!info.approvers.includes(playerId) || state.status === GameStatus.OVER) {
-      this.sendToPlayer(playerId, 'game_error', { message: '当前不能参与刺杀表决或你已经完成表决' });
-      return;
-    }
-    if (typeof agree !== 'boolean') {
-      this.sendToPlayer(playerId, 'game_error', { message: '刺杀表决参数无效' });
-      return;
-    }
-    if (info.approvers.length === 0) {
-      this.sendToPlayer(playerId, 'game_error', { message: '刺杀表决已经结束' });
-      return;
-    }
-
-    // 记录投票
-    info.votes[agree ? 'true' : 'false'].push(playerId);
-    info.approvers = info.approvers.filter(id => id !== playerId);
-
-    // 检查是否所有人都投票了
-    if (info.approvers.length === 0) {
-      this.processAssassinationVote();
     }
   }
 
@@ -1257,10 +1174,6 @@ class AvalonWorker extends BaseGameWorker {
     if (this.actionTimer) {
       clearTimeout(this.actionTimer);
       this.actionTimer = null;
-    }
-    if (this.assassinationTimer) {
-      clearTimeout(this.assassinationTimer);
-      this.assassinationTimer = null;
     }
 
     // 重置所有玩家准备状态
@@ -1539,45 +1452,6 @@ class AvalonWorker extends BaseGameWorker {
     schedule(durationMs);
   }
 
-  private setAssassinationTimer(ms: number, callback: () => void): void {
-    if (this.assassinationTimer) {
-      clearTimeout(this.assassinationTimer);
-      this.assassinationTimer = null;
-    }
-
-    let timer: NodeJS.Timeout;
-    let pausedForNoOnlinePlayers = false;
-
-    const schedule = (delay: number): void => {
-      timer = setTimeout(run, delay);
-      this.assassinationTimer = timer;
-    };
-
-    const run = (): void => {
-      if (this.assassinationTimer !== timer) {
-        return;
-      }
-      this.assassinationTimer = null;
-
-      const state = this.gameState as AvalonGameState;
-      if (state.status === GameStatus.ASSASSINATE && !this.hasOnlineGamePlayers()) {
-        pausedForNoOnlinePlayers = true;
-        schedule(OFFLINE_TIMER_RETRY_MS);
-        return;
-      }
-
-      if (pausedForNoOnlinePlayers && state.status === GameStatus.ASSASSINATE) {
-        pausedForNoOnlinePlayers = false;
-        schedule(ms);
-        return;
-      }
-
-      callback();
-    };
-
-    schedule(ms);
-  }
-
   private hasOnlineGamePlayers(): boolean {
     return this.hasOnlinePlayers(Object.keys((this.gameState as AvalonGameState).players));
   }
@@ -1606,6 +1480,9 @@ class AvalonWorker extends BaseGameWorker {
         state.operators.forEach(playerId => {
           if (!state.voteResult.true.includes(playerId) && !state.voteResult.false.includes(playerId)) {
             state.voteResult.false.push(playerId);
+            if (!state.voteResult.system.includes(playerId)) {
+              state.voteResult.system.push(playerId);
+            }
           }
         });
         this.processVoteResult();
@@ -1687,11 +1564,6 @@ class AvalonWorker extends BaseGameWorker {
     // 初始化任务配置
     state.scoreBoard = JSON.parse(JSON.stringify(MISSIONS_CONFIG[players.length]));
     state.topSecret = { blue: {}, red: {} };
-    state.assassinateInfo = {
-      votes: { true: [], false: [] },
-      approvers: [],
-      reds: []
-    };
 
     // 随机选择第一个队长
     const playerIds = Object.keys(state.players);
@@ -1746,12 +1618,6 @@ class AvalonWorker extends BaseGameWorker {
       state.topSecret.red[shuffledPlayers[blueCount + i]] = shuffledRedRoles[i];
     }
 
-    // 初始化刺杀信息
-    state.assassinateInfo = {
-      votes: { true: [], false: [] },
-      approvers: this.getRedPlayers(),
-      reds: this.getRedPlayers()
-    };
   }
 
   private startNewRound(): void {
@@ -1885,37 +1751,6 @@ class AvalonWorker extends BaseGameWorker {
     this.sendGameMessage(`湖上夫人${this.getPlayerName(currentLady)}查验玩家`);
   }
 
-  private processAssassinationVote(): void {
-    if (this.assassinationTimer) {
-      clearTimeout(this.assassinationTimer);
-      this.assassinationTimer = null;
-    }
-
-    const state = this.gameState as AvalonGameState;
-    const info = state.assassinateInfo;
-    const agreeCount = info.votes.true.length;
-    const totalCount = info.votes.true.length + info.votes.false.length;
-
-    if (agreeCount > totalCount / 2) {
-      // 刺杀通过
-      this.startAssassinatePhase();
-      this.sendGameMessage('红方同意刺杀，刺客开始行动');
-    } else {
-      // 刺杀被拒绝
-      this.sendGameMessage('红方拒绝刺杀请求');
-    }
-  }
-
-  private autoApproveAssassination(): void {
-    const state = this.gameState as AvalonGameState;
-
-    // handleApproveAssassination 会修改 approvers，必须先复制，避免遍历时跳过玩家。
-    const pendingApprovers = [...state.assassinateInfo.approvers];
-    pendingApprovers.forEach(playerId => {
-      this.handleApproveAssassination(playerId, true);
-    });
-  }
-
   private endGame(winner: Team, reason: string): void {
     const state = this.gameState as AvalonGameState;
 
@@ -1973,10 +1808,6 @@ class AvalonWorker extends BaseGameWorker {
     if (this.actionTimer) {
       clearTimeout(this.actionTimer);
       this.actionTimer = null;
-    }
-    if (this.assassinationTimer) {
-      clearTimeout(this.assassinationTimer);
-      this.assassinationTimer = null;
     }
   }
 }

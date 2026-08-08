@@ -770,3 +770,34 @@ Commit: fix(round3): 修正狼人遗言与杀人游戏隐私结算
   - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts。
   - 完整 npm ci --offline 无法完成：当前容器缓存中没有锁定的 TypeScript 包，内部 npm 源包不可用；完整 npm run build 因项目 node_modules 未安装，在后端正式 tsc 阶段缺少 Node/Express/Socket.IO/UUID/CORS 等已声明依赖及类型而中止，前端 vue-tsc/Vite 未进入执行。该失败属于环境依赖缺失，不是本轮源码 strict 检查错误；仍需在依赖源可用的本地或 CI 执行 npm ci && npm run build 做最终生产构建确认。
 备注: 本轮未删除文件，未创建根目录 src/；所有后端源码改动均位于 backend/src/，所有前端源码改动均位于 frontend/src/；修复包只包含本轮修改文件及 repair_log.txt，可按相对路径直接覆盖。
+
+=== 当前请求第 4 轮修复记录 ===
+时间: 2026-08-08 UTC
+Commit: fix(round4): 清理阿瓦隆旧刺杀投票并标记系统代投
+修改/新增文件:
+  - backend/src/workers/avalonWorker.ts
+  - frontend/src/store/avalon.ts
+  - frontend/src/components/AvalonActionPanel.vue
+  - repair_log.txt
+删除文件: 无
+构建测试: 部分通过（完整 npm build 受当前容器依赖安装失败阻塞）
+本轮修复:
+  - 阿瓦隆移除旧版“刺客请求刺杀 -> 红方再投票批准”的非标准支线状态、定时器和处理函数。标准流程保持为亚瑟方完成 3 个任务后直接进入 ASSASSINATE，由刺客一次性选择目标。
+  - 旧 requestAssassinate / approveAssassination 动作改为明确拒绝并返回失败 acknowledgement；不再创建第二套 assassinationTimer，也不会重新调用 startAssassinatePhase 重置权威刺杀倒计时，关闭旧客户端反复延长终局窗口的入口。
+  - 阿瓦隆前端 Store 移除已废弃的刺杀表决事件监听和发送方法，当前前后端协议统一只保留 assassinate 目标选择。
+  - 阿瓦隆自动投票来源补全：断线操作者、全体在线玩家已投后为剩余掉线玩家补票、投票超时三条路径都会把代投玩家写入 voteResult.system；最终票型不再把系统反对票伪装成玩家主动投票。
+  - 阿瓦隆投票结果 UI 复用现有结果列表，在系统代投玩家名称后显示“系统代投”，不新增重复组件或独立样式体系。
+审查结果/本轮未改动重点:
+  - 继续复查 backend/src 与 frontend/src 的全部源码以及六种游戏的主流程、Worker/Controller 状态同步和终局/重连路径。本轮最高优先级且可稳定复现的问题是阿瓦隆残留的双刺杀协议与双计时器，以及自动票来源丢失。
+  - 狼人杀、杀人游戏、一夜狼人、德州扑克沿用前几轮已经修复的遗言/隐私、权威计时、掉线/终局恢复与边池/加注权路径；本轮未发现优先级高于阿瓦隆旧刺杀协议、且适合在本批次安全落地的新阻断项。
+  - 血染钟楼仍是角色交互规模最大的模块；本轮复查了公开状态过滤、提名/投票/处决、阶段计时与终局恢复关键路径，但未声称穷举验证三个剧本中每一种角色组合的全部边界交互。
+  - 前端继续使用现有各游戏 Room / ActionPanel / PlayerList / Chat 组件分层与全局主题变量；各游戏仍有少量视觉差异，本轮没有进行风险较高的大规模 UI 重构。
+验证:
+  - backend/src 全部 TypeScript 源码使用 TypeScript 5.8.3、strict 模式、真实 Node 类型与临时外部模块声明桩完成类型检查，0 个错误。
+  - backend/src + frontend/src 共 83 个 TypeScript/Vue/CSS 源码文件完成静态检查：82 个 TypeScript/Vue script 解析单元、27 个 Vue SFC、27 个 style 块及 216 个相对/@导入路径均通过，无语法、SFC 结构或失效导入错误；根目录不存在 src/。
+  - 六个实际游戏 Worker 的 prepare_room 烟雾测试通过：狼人杀、杀人游戏、一夜狼人、阿瓦隆、血染钟楼、德州扑克均可由当前源码通过 ts-node 加载并完成房间初始化。
+  - 阿瓦隆实际 Worker 全流程专项回归通过：5 人局连续完成 3 个成功任务后进入 ASSASSINATE；旧 requestAssassinate 返回“已废弃”失败且不发送 assassinate_vote_start、不改变阶段、不重置 operateEndTime；随后直接 assassinate 仍可正常结束游戏。
+  - 阿瓦隆断线投票专项回归通过：掉线玩家自动反对时，投票进行中仍隐藏真实赞成/反对票型，但 voteResult.system 正确记录系统代投；投票结束后最终 false 与 system 同时保留该玩家，4:1 组队结果正确进入任务阶段。
+  - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts 校验。
+  - 完整 npm ci 已尝试但当前内部依赖源对锁定的 typescript-5.8.3.tgz 返回 404；随后 npm run build 因 node_modules 未成功安装，在后端正式 tsc 阶段缺少 Node/Express/Socket.IO/UUID/CORS 等已声明依赖/类型而中止，前端 vue-tsc/Vite 未进入执行。该失败属于当前容器依赖源/安装环境问题；源码已通过上述 strict 检查、六 Worker 烟雾测试与阿瓦隆实际流程回归，仍需在依赖源可用的本地或 CI 执行 npm ci && npm run build 做最终生产构建确认。
+备注: 本轮未删除文件，未创建根目录 src/；后端源码修改仅位于 backend/src/，前端源码修改仅位于 frontend/src/；修复包只包含本轮修改文件及 repair_log.txt，可按相对路径直接覆盖。

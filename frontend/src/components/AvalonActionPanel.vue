@@ -407,18 +407,24 @@ const getPlayerName = (playerId: string): string => {
   return displayPlayerName(playerId, player?.name)
 }
 
+const getVotePlayerName = (playerId: string): string => {
+  const name = getPlayerName(playerId)
+  const systemVotes = props.gameState?.voteResult?.system || []
+  return systemVotes.includes(playerId) ? `${name}（系统代投）` : name
+}
+
 // 获取同意组队的玩家名称列表
 const getVoteAgreeNames = (): string => {
   const agreeIds = props.gameState?.voteResult?.true || []
   if (agreeIds.length === 0) return '无'
-  return agreeIds.map((id: string) => getPlayerName(id)).join('、')
+  return agreeIds.map((id: string) => getVotePlayerName(id)).join('、')
 }
 
 // 获取反对组队的玩家名称列表
 const getVoteDisagreeNames = (): string => {
   const disagreeIds = props.gameState?.voteResult?.false || []
   if (disagreeIds.length === 0) return '无'
-  return disagreeIds.map((id: string) => getPlayerName(id)).join('、')
+  return disagreeIds.map((id: string) => getVotePlayerName(id)).join('、')
 }
 
 const getAssassinateTargets = () => {
