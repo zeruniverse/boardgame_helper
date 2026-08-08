@@ -967,12 +967,10 @@ const updateConfig = () => {
     return;
   }
 
-  // C3 fix: 不再嵌套config层
+  // 只提交当前面板实际可编辑的字段。房间创建页允许单独配置夜晚/讨论/投票时长，
+  // 这里若继续附带旧默认值，会在房主仅修改角色时静默覆盖已经选择的计时配置。
   emit('game-action', 'change_config', {
     roles: selectedRoles.value,
-    nightTime: 300,
-    discussTime: 180,
-    votingTime: 300,
     allowRoleReveal: allowRoleReveal.value
   });
 };

@@ -237,14 +237,19 @@ onMounted(() => {
     return
   }
 
-  // 连接到房间
-  store.connectToRoom(roomId, 'avalon')
+  // 先创建 socket 并注册页面级监听，再发送 join_room。服务端可能在加入成功后立即
+  // 回送 room_ready/game_state_sync；若先 connectToRoom 再挂监听，首次响应会丢失，
+  // 页面只能等后续轮询才关闭准备遮罩。
+  store.initSocket()
 
   // 监听房间准备完成事件
   store.socket?.on('room_ready', onRoomReady)
 
   // 监听游戏状态更新
   store.socket?.on('game_state_sync', onGameStateSync)
+
+  // 所有监听器就绪后再连接到房间
+  store.connectToRoom(roomId, 'avalon')
 
   // 开始定时检查房间状态
   statusCheckInterval = setInterval(checkRoomStatus, 3000)

@@ -1570,3 +1570,30 @@ Commit: fix(round29): 修复德州短盲空边池与一夜狼人独狼选择
   - 一夜狼人第 29 轮专项回归通过：普通唯一狼人空选择不再合法、可明确选择任意有效中心牌；存在狼先知同伴时普通狼人不能再额外看中心牌。唯一头狼第一步可自主选择中心牌，结果保持 skill open，断线重连恢复 loneWolfCardPosition 与当前 AlphaWolf 操作权，随后仍能正常完成对玩家的中心狼人牌交换。
   - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts 校验；本轮正式 npm ci --ignore-scripts --no-audit --no-fund 再次执行，但当前内部 npm 源对 package-lock 锁定的 typescript-5.8.3.tgz 返回 404。随后正式 npm run build 在依赖未完整安装的工作区执行，后端 tsc 因 Node/Express/Socket.IO/UUID/CORS 等已声明依赖/类型未安装而中止，根构建因此未进入前端 vue-tsc/Vite。故本轮不能声称完整生产 npm 构建已在此容器通过；仍需在依赖源可用的本地或 CI 执行 npm ci && npm run build 做最终部署确认。
 备注: 本轮未删除文件，未创建根目录 src/；所有后端源码修改仅位于 backend/src/，所有前端源码修改仅位于 frontend/src/；修复包只包含本轮修改文件及 repair_log.txt，可按相对路径直接覆盖。
+
+=== 当前请求第 30 轮修复记录 ===
+时间: 2026-08-08 07:48:26 UTC
+Commit: fix(round30): 保留一夜狼人计时配置并消除阿瓦隆入房监听竞态
+修改/新增文件:
+  - frontend/src/components/OnuWerewolfActionPanel.vue
+  - frontend/src/components/AvalonRoom.vue
+  - repair_log.txt
+删除文件: 无
+构建测试: 部分通过（85 个源码文件全量静态扫描、backend/src 全量 strict/noEmit 与隔离 CommonJS 编译、六游戏 Worker prepare_room 烟雾、一夜狼人配置保持与阿瓦隆监听顺序专项回归、package-lock 工作区依赖树检查均通过；正式 npm run build 仍受当前工作区 node_modules 类型依赖不完整阻塞）
+本轮修复:
+  - 修复一夜狼人房主在游戏内配置面板只修改角色或“允许展示身份”时，会把房间创建页已经设置好的夜晚/讨论/投票时长静默覆盖回 300/180/300 秒的问题。OnuWerewolfActionPanel 现在只提交该面板实际可编辑的 roles 与 allowRoleReveal；后端 changeConfig 原本已经按“未提交字段保持当前值”合并，因此前后端配置语义重新一致，不会发生无关配置回退。
+  - 修复 AvalonRoom 首次进入房间的监听注册竞态。旧顺序先调用 connectToRoom 发送 join_room，再注册 room_ready/game_state_sync 页面监听；服务端若立即回包，首个准备完成/状态同步事件会被页面漏掉，只能等待 500ms/3s 的兜底轮询才关闭准备遮罩。现在先 initSocket、注册两个页面级监听，最后再 connectToRoom，保证首次 join_room 响应不会落在监听空窗中。
+审查结果/本轮未改动重点:
+  - 再次覆盖 backend/src 与 frontend/src 当前全部 85 个代码文件，复核六个游戏 Worker、RoomThreadManager/BaseGameWorker/Controller 的任务串行、错误 acknowledgement、workerStateVersion/connectionStateVersion/hostStateVersion 合并，以及前端 Room / ActionPanel / PlayerList / Store 的公开/私密状态消费。本轮没有发现优先级高于上述确定性配置覆盖和入房竞态、且适合低风险当前批次落地的新通用状态同步缺陷。
+  - 六个游戏主流程继续核对：狼人杀的夜序、狼人共识、女巫/守卫/猎人和放逐；杀人游戏的杀手一致击杀、警察/医生/狙击手、PK 与屠边胜负；一夜狼人的角色配置、夜间换牌、独狼选择、并列处决及最终身份胜负；阿瓦隆的组队、任务人数、7 人以上第四任务双失败票、五次否决、刺杀和湖上夫人；德州扑克的盲注、HU 行动顺序、短码 all-in、加注权、未跟注返还、边池与摊牌；血染钟楼的夜序、registration、夜间信息边界、提名/投票和说书人裁决。本轮未发现另一项能够在不扩大回归面的前提下安全合并的更高优先级主流程阻断错误。
+  - 前端 27 个 Vue SFC 继续沿用 Room / ActionPanel / PlayerList / Chat、Element Plus 与既有公共工具/本地玩家标识；本轮两处改动均复用现有 store/socket 和配置事件协议，没有新增平行组件体系。各游戏保留有意的主题差异，未做高风险跨游戏视觉重构。
+  - BOTC 新确认一项仍待架构性修复的规则缺口：Mathematician 当前通过 Poisoned/Mad/Drunk/Protected 等状态/提醒数量近似计算结果，而正确语义需要跟踪“自黎明起因另一角色导致能力实际异常工作”的具体能力执行事件。现有 Worker 尚无统一的逐次能力异常审计轨迹，直接用状态位替换会在未实际发生能力异常、保护/registration/说书人裁决等路径继续给出错误数字，因此本轮只记录问题，没有做不完整的局部修补。
+  - BOTC 此前两个高阶边界仍存在：自定义夜序中若死亡已经在 Pit-Hag 制造 Demon 前真实落地，当前“本夜死亡任意”模型不能安全逆向撤销此前触发的死亡/被动效果；真人说书人仍没有针对每次 Recluse/Spy registration 的逐次手工裁决 UI。本轮未对这些需要更大状态模型/UI 设计的问题做冒险性重构。
+验证:
+  - backend/src + frontend/src 全量静态扫描通过：共 85 个代码文件、83 个 TypeScript/Vue script 解析单元、27 个 Vue SFC、27 个 style 块、218 个相对/@ 静态导入均无 TypeScript 语法、SFC 顶层结构、CSS 花括号或失效导入错误；项目根目录不存在 src/。
+  - backend/src 全部 TypeScript 源码使用全局 TypeScript 5.8.3、strict 模式、真实 Node 类型和位于项目目录外的 Express/CORS/Socket.IO/UUID 临时声明桩完成 noEmit 类型检查，0 个错误；同一严格配置成功生成隔离 CommonJS 测试编译产物。
+  - 六个实际游戏 Worker 使用本轮最新隔离编译产物执行 prepare_room 烟雾全部通过：狼人杀、杀人游戏、血染钟楼、一夜狼人、阿瓦隆、德州扑克均能启动 Worker 并完成房间初始化。
+  - 第 30 轮专项回归通过：OnuWerewolfActionPanel 的 change_config payload 不再包含 nightTime/votingTime/discussTime；Worker 以 480/180/420 自定义计时准备房间后，只更新 roles + allowRoleReveal，onu_config_changed 仍保持 480/180/420；AvalonRoom 的 onMounted 顺序静态契约确认 initSocket 与 room_ready/game_state_sync 监听均先于 connectToRoom。
+  - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts 校验。
+  - 正式 npm run build 已在本轮最终源码上执行，但当前 node_modules 不完整，后端 tsc 因 body-parser/connect/cors/estree/express/express-serve-static-core/http-errors/lodash/lodash-es/node/qs/range-parser/send/serve-static/uuid/web-bluetooth/ws 等类型定义缺失而中止，根构建因此没有进入前端 vue-tsc/Vite；单独执行 npm --prefix frontend run build 也因 vue-tsc 未安装而无法启动。由于相同 backend/src 已在严格隔离类型检查中通过、前端源码静态解析与专项契约检查通过，本轮没有把环境依赖缺失误判为源码编译错误；完整生产构建仍需在依赖安装完整的本地或 CI 执行 npm ci && npm run build 最终确认。
+备注: 本轮未删除文件，未创建根目录 src/；未修改 backend/src/；所有前端源码修改仅位于 frontend/src/；修复包只包含本轮修改文件及 repair_log.txt，可按相对路径直接覆盖。
