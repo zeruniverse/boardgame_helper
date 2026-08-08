@@ -111,6 +111,7 @@
               :room-id="roomId"
               :is-ready="isReady"
               :is-host="isHost"
+              :can-start-game="canStartGame"
               :time-left="timeLeft"
               @game-action="handleGameAction"
             />
@@ -190,6 +191,7 @@ const timeLeft = computed(() => store.timeLeft)
 const messages = computed(() => store.messages)
 const isHost = computed(() => store.isHost)
 const isReady = computed(() => store.isReady)
+const canStartGame = computed(() => store.canStartGame)
 const isAlive = computed(() => store.isAlive)
 
 const currentUserNickname = computed(() => {

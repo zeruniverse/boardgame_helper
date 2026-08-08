@@ -36,7 +36,7 @@
         <el-button type="primary" @click="handleStartGame" :disabled="!canStartGame">
           开始游戏
         </el-button>
-        <p v-if="!canStartGame" class="hint-text">需要至少6名玩家准备才能开始</p>
+        <p v-if="!canStartGame" class="hint-text">所有在线玩家准备且人数符合角色配置后才能开始</p>
       </div>
     </div>
 
@@ -511,6 +511,7 @@ const props = defineProps<{
   roomId: string
   isReady?: boolean
   isHost?: boolean
+  canStartGame?: boolean
   timeLeft?: number
 }>()
 
@@ -554,6 +555,10 @@ const isAlive = computed(() => {
 
 const canStartGame = computed(() => {
   if (!props.isHost) return false
+  if (typeof props.canStartGame === 'boolean') return props.canStartGame
+
+  // 兼容单独挂载 ActionPanel 的旧调用方；正常房间页面会由 store 基于 room.players
+  // （含 online 状态）计算并传入 canStartGame，避免仅凭公开 gameState 猜测在线人数。
   const players = Object.values(props.gameState.players || {})
   const readyCount = players.filter((p: any) => p.ready).length
   // 需要至少角色配置所需人数的玩家准备

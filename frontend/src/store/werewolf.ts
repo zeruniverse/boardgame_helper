@@ -124,9 +124,16 @@ export const useWerewolfStore = defineStore('werewolf', {
       const activePlayers = this.room.players.filter(p => p.online !== false);
       const readyCount = activePlayers.filter(p => p.ready).length;
       const requiredCount = this.gameState?.needingCharacters?.length || this.room.config?.playerCount || 6;
+
+      // 后端要求所有在线玩家都进入本局；这里提前采用同一条件，避免房主看到一个
+      // 实际会被服务端拒绝（或旧服务端会把未准备者变成“房内旁观者”）的开始按钮。
+      if (activePlayers.length === 0 || readyCount !== activePlayers.length) {
+        return false;
+      }
+
       return this.gameState?.config?.autoCharacters === true
-        ? readyCount >= 6
-        : readyCount === requiredCount;
+        ? activePlayers.length >= 6
+        : activePlayers.length === requiredCount;
     },
 
     canOperate(): boolean {

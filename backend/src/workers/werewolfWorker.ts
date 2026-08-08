@@ -849,10 +849,20 @@ class WerewolfWorker extends BaseGameWorker {
       return;
     }
 
-    const readyPlayers = this.room.players.filter(p => p.online !== false && p.gameMetadata?.ready);
+    const onlinePlayers = this.room.players.filter(p => p.online !== false);
+    const readyPlayers = onlinePlayers.filter(p => p.gameMetadata?.ready);
+
+    // 狼人杀没有中途旁观/候补席语义。若允许“只取已准备玩家”开局，房间内未准备但仍
+    // 在线的玩家会继续收到公开房间事件，却不在 gameState.players 中：前端看起来像
+    // 一个 0 号/死亡玩家，也可能在不知情的情况下被排除出本局。与杀人游戏、阿瓦隆、
+    // 一夜狼人保持一致，开局必须等所有在线玩家都准备；离线保留席位不阻塞新局。
+    if (readyPlayers.length !== onlinePlayers.length) {
+      this.sendToPlayer(playerId, 'error', { message: '所有在线玩家都必须准备才能开始游戏' });
+      return;
+    }
 
     if (this.config.autoCharacters) {
-      this.config.characters = defaultWerewolfCharacters(readyPlayers.length);
+      this.config.characters = defaultWerewolfCharacters(onlinePlayers.length);
       this.gameState.needingCharacters = this.config.characters;
     }
 

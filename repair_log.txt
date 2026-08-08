@@ -1722,3 +1722,36 @@ Commit: fix(round34): 修复跨游戏房间人数污染与容量校验
   - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts 校验（仅有可选原生依赖未安装提示）；三个源码修改文件相对附件原始版本执行 git diff --no-index --check 均无新增尾随空白错误。
   - 正式 npm run build 已在最终源码路径执行，但当前解包工作区没有安装 Node/Express/Socket.IO/UUID/CORS 等后端依赖与类型，backend tsc 因模块/类型无法解析而中止；单独 npm --prefix frontend run build 也因 vue-tsc 未安装而无法启动。相同 backend/src 已通过上述严格隔离类型检查和 Worker 运行烟雾，因此没有把“依赖未安装”误判为源码编译错误；完整生产 npm 构建/直接部署仍需在依赖源可用、npm ci 完整成功的本地或 CI 执行 npm run build 做最终确认。
 备注: 本轮未删除文件，未创建根目录 src/；所有后端源码修改仅位于 backend/src/，所有前端源码修改仅位于 frontend/src/；修复包只包含本轮修改文件及 repair_log.txt，可按相对路径直接覆盖。
+
+=== 当前请求第 35 轮修复记录 ===
+时间: 2026-08-08 09:05:06 UTC
+Commit: fix(round35): 阻止狼人杀跳过未准备在线玩家开局
+修改/新增文件:
+  - backend/src/workers/werewolfWorker.ts
+  - frontend/src/store/werewolf.ts
+  - frontend/src/components/WerewolfRoom.vue
+  - frontend/src/components/WerewolfActionPanel.vue
+  - doc/werewolf.md
+  - repair_log.txt
+删除文件: 无
+构建测试: 部分通过（85 个源码文件全量静态扫描、backend/src 全量 strict/noEmit 与隔离 CommonJS 编译、六游戏 Worker prepare_room 烟雾、狼人杀在线玩家准备条件专项回归及 package-lock 工作区依赖树检查均通过；正式 npm ci / npm run build 仍受当前容器依赖源缺包/工作区 node_modules 不完整阻塞）
+本轮修复:
+  - 修复狼人杀可由房主只选择“已准备玩家子集”直接开局的问题。旧 handleStartGame 只收集 online && ready 玩家并按该人数自动生成角色；当房间内仍有在线但未准备玩家时，只要已准备人数满足角色数（自动角色模式只需至少 6 人），服务端仍会开始。startGame 随后清空 gameState.players 并仅写入已准备者，导致未准备但在线的房间成员继续收到公开房间事件，却不是本局玩家，表现为被静默排除/伪旁观，且与项目其他准备制游戏的开局语义不一致。
+  - WerewolfWorker 现在先计算全部在线玩家并要求其全部准备，再生成自动角色和校验角色人数；离线保留席位仍不阻塞新局。该约束在 Worker 权威层执行，旧客户端或手工 Socket 请求也无法绕过。
+  - 修复狼人杀前端开始按钮与后端开局条件不一致。werewolf store 的 canStartGame 现在要求所有在线玩家准备，并在自动角色模式按实际在线人数检查至少 6 人；WerewolfRoom 将这一基于 room.players/online 的权威 UI 条件显式传给 ActionPanel，避免 ActionPanel 仅凭缺少完整连接语义的 gameState 自行猜测人数。
+  - 更新狼人杀准备阶段提示与规则文档，明确“所有在线玩家准备后开局；离线保留席位不参与本局且不阻塞开局”，避免 UI 继续显示旧的“至少 6 名玩家准备即可”误导信息。
+审查结果/本轮未改动重点:
+  - 再次覆盖 backend/src 与 frontend/src 当前全部 85 个 TypeScript/Vue/CSS/SVG 源文件，并重点复核六游戏 Worker、BaseGameWorker、RoomThreadManager、roomController、各 Store/Room/ActionPanel/PlayerList/Chat 的任务串行、房间状态同步和公开/私密状态消费。本轮新增且可稳定复现的最高优先级问题是狼人杀准备子集开局造成的房间成员/本局成员分叉，因此修复集中在既有狼人杀 Worker 与前端组件/store，没有扩大目录结构。
+  - 狼人杀继续核对狼人→预言家→女巫→守卫夜序、狼人共识击杀、女巫双药限制/不可自救、守卫连续守护限制与同守同救、毒死猎人不可开枪、警长 1.5 票、警长/放逐一次 PK；本轮开局准备条件修复后，所有在线房间成员与本局角色集合重新一致。
+  - 杀人游戏继续核对杀手共识、警察/医生/狙击手、第一天投票限制、一次 PK 与项目文档定义的屠边胜负；一夜狼人继续核对 player+3 角色牌、初始身份夜序、独狼中心牌选择、交换后的最终身份投票/胜负；阿瓦隆继续核对标准任务人数、7 人以上第四任务需 2 张失败、五次组队否决、刺杀与湖上夫人；德州扑克继续核对 HU 盲位/行动顺序、短码 all-in、完整/不足额加注、未跟注筹码返还、边池/奇数筹码及摊牌；本轮未发现比狼人杀开局成员分叉更适合低风险当前批次落地的新确定性主流程阻断项。
+  - 血染钟楼继续复核角色分配、5-6 人邪恶信息、夜序、registration、夜间公开生命状态、提名/投票和说书人/AI 路径。仍保留前轮已记录的架构级高阶边界：特殊自定义夜序下 Pit-Hag 创建 Demon 后无法安全逆向更早已真实落地并触发被动的死亡；真人说书人仍缺少每一次 Recluse/Spy registration 的逐次手工裁决 UI；自由输入/多重效果抵消等 Mathematician 极端情况仍缺统一的逐次最终基准审计。本轮未对这些需要更大状态模型/UI 设计的区域做冒险性局部修改。
+  - Controller/RoomThreadManager/BaseGameWorker 的单房间 Worker 任务队列、messageChain、game_action acknowledgement、workerStateVersion/hostStateVersion/connectionStateVersion 合并继续复核；六个具体 Worker 的主线程消息入口均保留任务串行处理，本轮未发现新的确定性跨线程竞态需要修改。
+  - 前端 27 个 Vue SFC 继续复用各游戏既有 Room / ActionPanel / PlayerList / Chat、Element Plus 与共享 gameSession/gameSocket/playerName/messages 等工具；各游戏有意的主题差异保持不变。本轮狼人杀只把已有 store 的开局判断上提为 Room→ActionPanel 单一事实源，没有新建平行组件或样式体系。
+验证:
+  - backend/src + frontend/src 全量静态扫描通过：共 85 个源码文件、83 个 TypeScript/Vue script 解析单元、27 个 Vue SFC、28 个 CSS/style 块、314 个静态 import/export 路径均无 TypeScript 语法、SFC 基本结构、CSS 花括号、合并冲突标记或失效相对/@ 导入错误；项目根目录不存在 src/。
+  - backend/src 全部 34 个 TypeScript 文件使用全局 TypeScript 5.8.3、strict 模式、真实全局 Node 类型与位于项目目录外的 Express/CORS/Socket.IO/UUID 临时声明桩完成 noEmit 类型检查，0 个源码类型错误；同一严格配置成功生成 34 个隔离 CommonJS 测试编译文件。
+  - 六个实际游戏 Worker 使用本轮最新 strict 编译产物执行 prepare_room 烟雾全部通过：狼人杀、杀人游戏、血染钟楼、一夜狼人、阿瓦隆、德州扑克均能启动 Worker 并完成房间初始化。
+  - 第 35 轮狼人杀专项回归通过：7 名在线玩家中仅 6 名准备时，房主 startGame acknowledgement 明确失败并返回“所有在线玩家都必须准备才能开始游戏”，且不会广播 game_started；第 7 名玩家准备后同一房间可正常开始，game_started 中包含完整 7 名本局玩家。
+  - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts 校验。
+  - 正式 npm ci --ignore-scripts --no-audit --no-fund 已尝试，当前内部 npm 源对 package-lock 锁定的 typescript-5.8.3.tgz 返回 404。随后在最终源码路径执行 npm run build，因 node_modules 未完整安装，backend tsc 缺少 Node/Express/Socket.IO/UUID/CORS 等已声明依赖/类型而中止，根构建因此未进入前端 vue-tsc/Vite。相同 backend/src 已通过上述严格隔离类型检查与 Worker 实际运行烟雾；完整生产构建/直接部署仍需在依赖源可用、npm ci 完整成功的本地或 CI 执行 npm run build 做最终确认。
+备注: 本轮未删除文件，未创建根目录 src/；所有后端源码修改仅位于 backend/src/，所有前端源码修改仅位于 frontend/src/；修复包只包含本轮修改文件、规则文档及 repair_log.txt，可按相对路径直接覆盖。
