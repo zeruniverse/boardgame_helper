@@ -79,7 +79,7 @@ export const useAvalonStore = defineStore('avalon', {
     isHost(): boolean {
       return this.room?.hostId === this.currentUserId;
     },
-    
+
     isReady(): boolean {
       const player = this.room?.players.find(p => p.id === this.currentUserId);
       return player?.ready ?? false;
@@ -207,6 +207,9 @@ export const useAvalonStore = defineStore('avalon', {
         if (!this.playerSecret || !this.playerSecret.role) {
           this.playerSecret = {
             ...(this.playerSecret || {}),
+            // role_assigned 是 secret_update 丢失时的兜底，因此必须补齐身份键；
+            // 否则会构造出不满足 AvalonSecret 契约的“有角色但没有 playerId”对象。
+            playerId: data.playerId || this.currentUserId,
             role: data.role,
             team: data.team,
             visions: data.visions

@@ -231,8 +231,8 @@
       </div>
     </div>
 
-    <!-- 任务破坏结果显示 -->
-    <div v-if="showMissionSabotage" class="action-section sabotage-result-section">
+    <!-- 最近一次已完成任务结果 -->
+    <div v-if="showMissionResult" class="action-section sabotage-result-section">
       <h4>任务结果</h4>
       <div class="sabotage-result">
         <p class="sabotage-count">
@@ -263,12 +263,13 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { formatPlayerNameById } from '../utils/playerName'
 
 const props = defineProps<{
   gameState: any
   playerSecret: any
+  currentUserId: string
   roomId: string
 }>()
 
@@ -279,18 +280,28 @@ const emit = defineEmits<{
 const selectedTeam = ref<string[]>([])
 const selectedTarget = ref<string>('')
 
+// 操作超时/掉线代操作会在本地没有点击确认时推进阶段。清掉上一阶段的临时选择，
+// 避免玩家下一次获得队长、湖上夫人或刺客操作权时误带旧选择。
+watch(
+  () => [props.gameState?.status, props.gameState?.mission, props.gameState?.step, props.gameState?.captain],
+  () => {
+    selectedTeam.value = []
+    selectedTarget.value = ''
+  }
+)
+
 // 计算属性
 const canOperate = computed(() => {
-  return props.gameState.operators?.includes(props.playerSecret?.playerId)
+  return props.gameState.operators?.includes(props.currentUserId)
 })
 
 const canVote = computed(() => {
-  return props.gameState.operators?.includes(props.playerSecret?.playerId) && 
+  return props.gameState.operators?.includes(props.currentUserId) &&
          !hasVoted.value
 })
 
 const canTakeAction = computed(() => {
-  return props.gameState.operators?.includes(props.playerSecret?.playerId)
+  return props.gameState.operators?.includes(props.currentUserId)
 })
 
 const canAssassinate = computed(() => {
@@ -299,7 +310,7 @@ const canAssassinate = computed(() => {
 
 // isReady: 从gameState.players中查找当前玩家的ready状态
 const isReady = computed(() => {
-  const playerId = props.playerSecret?.playerId
+  const playerId = props.currentUserId
   if (!playerId || !props.gameState?.players) return false
   // 从玩家数据中读取ready状态
   const player = props.gameState.players[playerId]
@@ -307,7 +318,7 @@ const isReady = computed(() => {
 })
 
 const isHost = computed(() => {
-  const playerId = props.playerSecret?.playerId
+  const playerId = props.currentUserId
   if (!playerId) return false
   return props.gameState.hostId === playerId
 })
@@ -332,7 +343,7 @@ const canStartGame = computed(() => {
 })
 
 const hasVoted = computed(() => {
-  const playerId = props.playerSecret?.playerId
+  const playerId = props.currentUserId
   if (!playerId || !props.gameState?.voteResult) return false
   return props.gameState.voteResult.true?.includes(playerId) || 
          props.gameState.voteResult.false?.includes(playerId)
@@ -348,49 +359,25 @@ const showVoteResult = computed(() => {
   return voteCompleted
 })
 
-// 是否显示任务破坏结果（行动阶段结束后显示）
-const showMissionSabotage = computed(() => {
-  // actionFailed > 0 表示当前任务刚结束且有人破坏
-  // 或者从 scoreBoard 中查看已完成任务的结果
-  if (props.gameState?.actionFailed > 0 && props.gameState.status !== 5) {
-    return true
-  }
-  // 从 scoreBoard 中检查已完成的任务
-  const scoreBoard = props.gameState?.scoreBoard || []
-  for (let i = 0; i < scoreBoard.length; i++) {
-    if (scoreBoard[i][2] > 0) {
-      return true
-    }
-  }
-  return false
-})
-
-// 最近一次任务的破坏数
-const lastMissionSabotageCount = computed(() => {
-  // 优先使用 actionFailed（当前任务刚结束时）
-  if (props.gameState?.actionFailed > 0 && props.gameState.status !== 5) {
-    return props.gameState.actionFailed
-  }
-  // 从 scoreBoard 中找到最后一个有结果的任务
+// 最近一次已完成任务。scoreBoard 的第三项约定为 -1 未执行、0 成功、>0 失败票数。
+// 统一从同一条记录派生“是否显示 / 失败票数 / 成败”，避免完成一个成功任务后
+// 仍拿更早失败任务的破坏票数与最新成功结果拼在一起。
+const latestMissionResult = computed(() => {
   const scoreBoard = props.gameState?.scoreBoard || []
   for (let i = scoreBoard.length - 1; i >= 0; i--) {
-    if (scoreBoard[i][2] > 0) {
-      return scoreBoard[i][2]
+    const result = Number(scoreBoard[i]?.[2])
+    if (Number.isFinite(result) && result >= 0) {
+      return { failedVotes: result }
     }
   }
-  return 0
+  return null
 })
 
-// 最近一次任务是否成功
-const lastMissionSuccess = computed(() => {
-  const scoreBoard = props.gameState?.scoreBoard || []
-  for (let i = scoreBoard.length - 1; i >= 0; i--) {
-    if (scoreBoard[i][2] >= 0) {
-      return scoreBoard[i][2] === 0
-    }
-  }
-  return true
-})
+const showMissionResult = computed(() => latestMissionResult.value !== null)
+
+const lastMissionSabotageCount = computed(() => latestMissionResult.value?.failedVotes ?? 0)
+
+const lastMissionSuccess = computed(() => latestMissionResult.value?.failedVotes === 0)
 
 // 方法
 const getTeamSize = (): number => {
@@ -399,7 +386,7 @@ const getTeamSize = (): number => {
 }
 
 const displayPlayerName = (playerId: string | number, name?: string): string => {
-  return formatPlayerNameById(String(playerId), name, props.playerSecret?.playerId, '未知玩家')
+  return formatPlayerNameById(String(playerId), name, props.currentUserId, '未知玩家')
 }
 
 const getPlayerName = (playerId: string): string => {
@@ -429,7 +416,7 @@ const getVoteDisagreeNames = (): string => {
 
 const getAssassinateTargets = () => {
   const targets: Record<string, any> = {}
-  const assassinId = props.playerSecret?.playerId
+  const assassinId = props.currentUserId
   // 刺客只能指认另一名玩家；错误目标会直接结束刺杀，不能重试。
   Object.keys(props.gameState.players).forEach(playerId => {
     if (playerId !== assassinId) {
@@ -441,7 +428,7 @@ const getAssassinateTargets = () => {
 
 const getLadyTargets = () => {
   const targets: Record<string, any> = {}
-  const playerId = props.playerSecret?.playerId
+  const playerId = props.currentUserId
   const ladys = props.gameState.ladys || []
   Object.keys(props.gameState.players).forEach(pid => {
     // 不能验自己，不能验已经持有/被传递过湖上夫人的玩家

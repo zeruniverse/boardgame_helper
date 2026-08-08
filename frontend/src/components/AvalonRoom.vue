@@ -126,6 +126,7 @@
               v-if="gameState"
               :game-state="gameState"
               :player-secret="playerSecret"
+              :current-user-id="currentUserId"
               :room-id="roomId"
               @game-action="handleGameAction"
             />

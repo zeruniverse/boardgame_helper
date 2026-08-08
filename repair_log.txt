@@ -1797,3 +1797,33 @@ Commit: fix(round36): 统一钟楼说书人与跨游戏在线开局状态
   - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts 校验（仅可选原生依赖提示）。所有本轮修改源码相对附件原始版本均未发现新增尾随空白/冲突标记。
   - 正式 npm ci --ignore-scripts --no-audit --no-fund 已执行，但当前内部 npm 源请求 package-lock 锁定的 typescript-5.8.3.tgz 返回 404。随后 npm run build 在依赖未完整安装的工作区执行，backend tsc 因 Node/Express/Socket.IO/UUID/CORS 等已声明依赖/类型不可解析而中止，根构建无法进入完整 frontend vue-tsc/Vite。相同 backend/src 已通过上述严格隔离类型检查与 Worker 实际运行烟雾；完整生产构建/直接部署仍需在依赖源可用、npm ci 完整成功的本地或 CI 执行 npm run build 最终确认。
 备注: 本轮未删除文件，未创建根目录 src/；所有后端源码修改仅位于 backend/src/，所有前端源码修改仅位于 frontend/src/；修复包只包含本轮修改文件、规则文档及 repair_log.txt，可按相对路径直接覆盖。
+
+=== 当前请求第 37 轮修复记录 ===
+时间: 2026-08-08 09:30:42 UTC
+Commit: fix(round37): 修复阿瓦隆重开身份与任务结果状态
+修改/新增文件:
+  - frontend/src/components/AvalonActionPanel.vue
+  - frontend/src/components/AvalonRoom.vue
+  - frontend/src/store/avalon.ts
+  - repair_log.txt
+删除文件: 无
+构建测试: 部分通过（backend/src + frontend/src 全部 85 个代码文件全量静态扫描、backend/src 全量 strict/noEmit 与隔离 CommonJS 编译、六游戏 Worker prepare_room 烟雾、阿瓦隆第 37 轮专项回归、package-lock 工作区依赖树检查均通过；正式 npm ci / npm run build 仍受当前容器内部 npm 源缺失 package-lock 锁定 TypeScript 5.8.3 包与工作区依赖不完整阻塞）
+本轮修复:
+  - 修复阿瓦隆一局结束后“重新开始”会清空 playerSecret，ActionPanel 却继续用 playerSecret.playerId 识别当前玩家的问题。旧流程在 game_reset 后不会重新发送角色秘密（等待阶段本来就没有新角色），因此房主会永久丢失“开始游戏”入口，玩家的准备状态也无法在操作面板正确反映，第二局实际上会卡在等待阶段。现在 AvalonRoom 将 store.currentUserId 作为公开会话身份显式传给 ActionPanel；准备、房主、operators、投票、自身排除、姓名“你”标记等公开身份判断统一使用 currentUserId，playerSecret 只负责角色/阵营/视野等秘密信息。
+  - 修复 Avalon store 的 role_assigned 兜底对象缺少 playerId。该事件原本用于 secret_update 丢失时保证角色仍可到达，但从 null 构造 AvalonSecret 时只写 role/team/visions，形成“有角色但没有 playerId”的不完整秘密对象。现在会写入事件 playerId 或当前会话 currentUserId，使兜底真正满足 AvalonSecret 契约。
+  - 修复阿瓦隆最近任务结果面板可能把两轮不同任务拼成矛盾结果的问题。旧代码“是否显示/破坏人数”只寻找最近一次失败任务，而“成功/失败”寻找最近一次任何已完成任务；例如第 1 轮失败、第 2 轮成功后会同时显示“1 人破坏”和“任务成功”。现在三项展示都由同一个 latestMissionResult 派生，成功任务显示 0 张失败票，失败任务显示该轮真实失败票数。
+  - 修复阿瓦隆操作超时或离线代操作推进阶段后，本地 selectedTeam/selectedTarget 仍跨阶段残留的问题。现在 status/mission/step/captain 变化时会清理临时选择，避免玩家下一次成为队长、湖上夫人或刺客时误带上一轮未提交的旧目标。
+审查结果/本轮未改动重点:
+  - 再次覆盖 backend/src 与 frontend/src 当前全部 85 个 TypeScript/Vue/CSS/SVG 源文件，并复核六个游戏 Worker、BaseGameWorker、RoomThreadManager、roomController、各 Store/Room/ActionPanel/PlayerList 的消息串行、公开/私密状态边界与房间同步。狼人杀、杀人游戏、一夜狼人、德州扑克和血染钟楼本轮未发现优先级高于上述阿瓦隆“第二局卡死”和结果展示矛盾、且适合当前低风险批次落地的新确定性主流程阻断项。
+  - 阿瓦隆后端继续核对 5-10 人开局、在线玩家全准备、任务人数、7 人以上第 4 任务需 2 张失败、五次组队否决、任务秘密牌、三次成功后的刺杀、湖上夫人传递与离线代操作。当前发现的最高优先级问题位于前端身份事实源和结果展示；Worker 权威规则校验本轮未需要改动。
+  - Controller/RoomThreadManager/BaseGameWorker 的 game_action acknowledgement、单 Worker task/message 串行、workerStateVersion/hostStateVersion/connectionStateVersion 合并继续复核；本轮没有发现新的确定性跨线程竞态需要修改。
+  - 前端继续复用现有 Room / ActionPanel / PlayerList / Chat、Element Plus 与共享 session/socket/playerName/messages 工具；本轮把 AvalonActionPanel 的身份输入改成与 BOTC/ONU 等组件一致的显式 currentUserId 方式，没有新增平行组件或新的视觉体系，各游戏原有主题差异保持不变。
+  - BOTC 仍保留前轮已记录、需要更大状态模型或人工裁决 UI 才能完整处理的高阶边界：特殊自定义夜序下 Pit-Hag 创建 Demon 后无法安全逆向更早已经真实落地并触发被动的死亡；真人说书人仍缺少每一次 Recluse/Spy registration 的逐次手工裁决 UI；自由文本和多重效果互相抵消等 Mathematician 极端情况仍缺统一的逐次最终基准审计。本轮没有用不完整的局部近似逻辑冒险修改这些架构级问题。
+验证:
+  - backend/src + frontend/src 全量静态扫描通过：共 85 个源码文件、83 个 TypeScript/Vue script 解析单元、27 个 Vue SFC、28 个 CSS/style 块、314 个静态 import/export 路径均无 TypeScript 语法、SFC 基本结构、CSS 花括号、合并冲突标记或失效相对/@ 导入错误；项目根目录不存在 src/。
+  - backend/src 全部 34 个 TypeScript 文件使用全局 TypeScript 5.8.3、strict 模式、真实全局 Node 类型与位于项目目录外的 Express/CORS/Socket.IO/UUID 临时声明桩完成 noEmit 类型检查，0 个源码类型错误；同一严格配置成功生成 34 个隔离 CommonJS 测试编译文件。
+  - 六个实际游戏 Worker 使用本轮最新 strict 编译产物执行 prepare_room 烟雾全部通过：狼人杀、杀人游戏、血染钟楼、一夜狼人、阿瓦隆、德州扑克均能启动 Worker 并完成房间初始化。
+  - 第 37 轮阿瓦隆专项回归通过：ActionPanel 不再从 playerSecret.playerId 派生公开身份；AvalonRoom 已显式传 currentUserId；role_assigned 兜底补齐 playerId；任务结果序列“失败→成功”会选择最新成功任务并得到 0 张失败票，不再沿用更早失败轮的破坏数；尚无已完成任务时不会显示伪结果。
+  - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts 校验（仅可选原生依赖未安装提示）。
+  - 正式 npm ci --ignore-scripts --no-audit --no-fund 已执行，但当前内部 npm 源请求 package-lock 锁定的 typescript-5.8.3.tgz 返回 404。随后 npm run build 在依赖未完整安装的工作区执行，backend tsc 因 Node/Express/Socket.IO/UUID/CORS 等已声明依赖/类型不可解析而中止；单独 npm --prefix frontend run build 也因 vue-tsc 未安装而无法启动。相同 backend/src 已通过上述严格隔离类型检查与 Worker 实际运行烟雾，因此没有把依赖安装缺失误判为源码错误；完整生产构建/直接部署仍需在依赖源可用、npm ci 完整成功的本地或 CI 执行 npm run build 最终确认。
+备注: 本轮未删除文件，未创建根目录 src/；本轮没有修改 backend/src/，所有前端源码修改仅位于 frontend/src/；修复包只包含本轮修改文件及 repair_log.txt，可按相对路径直接覆盖。
