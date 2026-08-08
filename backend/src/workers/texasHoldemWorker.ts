@@ -613,6 +613,9 @@ class TexasHoldemWorker extends BaseGameWorker {
       currentBet: gs.currentBet,
       lastRaiseAmount: gs.lastRaiseAmount,
       minRaiseTo: this.getMinimumFullRaiseTo(),
+      // raiseLocked 是公开的下注行动权状态：短码全下不足完整下注/加注时，
+      // 已行动玩家仍可补齐差额，但不能再次加注，直到累计新增下注达到完整加注额。
+      raiseLocked: [...(gs.raiseLocked || [])],
       stage: gs.stage,
       winners: [...gs.winners],
       allowSystemDealing: !this.isManualDealing()
@@ -1957,11 +1960,11 @@ class TexasHoldemWorker extends BaseGameWorker {
   }
 
   /**
-   * 短码全下不会自动构成完整加注。已经行动过的玩家仍需补齐差额，但只有当其自上次行动后
-   * 面对的累计新增下注达到一个完整加注额时，才重新获得加注权。首个不足最低下注的全下
-   * 发生在多人已 check 之后时，check 玩家仍可正常加注。
+   * 短码全下不会自动构成完整下注/加注。已经行动过的玩家仍需补齐差额，但只有当其自上次
+   * 行动后面对的累计新增下注达到一个完整下注/加注额时，才重新获得加注权。这个限制同样
+   * 适用于此前已经 check 的玩家：不足最低下注的 opening all-in 不能单独重新开放加注。
    */
-  private updateActionRightsAfterShortAllIn(playerId: string, previousCurrentBet: number, allInAmount: number): void {
+  private updateActionRightsAfterShortAllIn(playerId: string, allInAmount: number): void {
     const gs = this.gameState as TexasHoldemGameState;
     const locks = new Set(gs.raiseLocked || []);
 
@@ -1976,9 +1979,8 @@ class TexasHoldemWorker extends BaseGameWorker {
       if (!hadClosedAction || !Number.isFinite(Number(actedAt)) || (gs.bets[id] || 0) >= allInAmount) continue;
 
       gs.acted = gs.acted.filter(actedId => actedId !== id);
-      const checkedBeforeOpeningBet = previousCurrentBet === 0 && Number(actedAt) === 0;
       const cumulativeIncrease = allInAmount - Number(actedAt);
-      if (checkedBeforeOpeningBet || cumulativeIncrease >= gs.lastRaiseAmount) {
+      if (cumulativeIncrease >= gs.lastRaiseAmount) {
         locks.delete(id);
       } else {
         locks.add(id);
@@ -2152,7 +2154,7 @@ class TexasHoldemWorker extends BaseGameWorker {
         gs.acted = [playerId];
         gs.actedAtBet = { [playerId]: allInAmount };
       } else {
-        this.updateActionRightsAfterShortAllIn(playerId, previousCurrentBet, allInAmount);
+        this.updateActionRightsAfterShortAllIn(playerId, allInAmount);
       }
     } else {
       this.markPlayerActed(playerId);

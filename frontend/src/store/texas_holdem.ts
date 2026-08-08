@@ -29,6 +29,7 @@ export const useTexasHoldemStore = defineStore('texas_holdem', {
     currentBet: 0,
     lastRaiseAmount: 0,
     minRaiseTo: 0,
+    raiseLocked: [] as string[],
     timeLeft: 0,
     timerId: null as ReturnType<typeof setInterval> | null,
     gameActive: false,
@@ -130,6 +131,7 @@ export const useTexasHoldemStore = defineStore('texas_holdem', {
         currentBet: number; 
         lastRaiseAmount?: number;
         minRaiseTo?: number;
+        raiseLocked?: string[];
         currentTurn: number | string;
         dealerPlayerId?: string;
         folded?: string[];
@@ -149,6 +151,9 @@ export const useTexasHoldemStore = defineStore('texas_holdem', {
         this.currentBet = data.currentBet;
         this.lastRaiseAmount = data.lastRaiseAmount ?? this.lastRaiseAmount;
         this.minRaiseTo = data.minRaiseTo ?? (this.currentBet + this.lastRaiseAmount);
+        this.raiseLocked = Array.isArray(data.raiseLocked)
+          ? data.raiseLocked.filter((playerId): playerId is string => typeof playerId === 'string')
+          : [];
         this.dealerPlayerId = typeof data.dealerPlayerId === 'string' ? data.dealerPlayerId : '';
         this.folded = Array.isArray(data.folded)
           ? data.folded.filter((playerId): playerId is string => typeof playerId === 'string')
@@ -202,6 +207,7 @@ export const useTexasHoldemStore = defineStore('texas_holdem', {
         this.currentBet = 0;
         this.lastRaiseAmount = 0;
         this.minRaiseTo = 0;
+        this.raiseLocked = [];
         this.gameActive = true;
         this.distributionActive = false;
         this.stage = 'playing';
@@ -218,6 +224,7 @@ export const useTexasHoldemStore = defineStore('texas_holdem', {
         this.distributionActive = true;
         this.stage = 'distribution';
         this.currentTurn = '';
+        this.raiseLocked = [];
       });
 
       // 游戏结束
@@ -233,6 +240,7 @@ export const useTexasHoldemStore = defineStore('texas_holdem', {
         }
         this.distributionActive = false;
         this.stage = 'idle';
+        this.raiseLocked = [];
         this.currentTurn = '';
         // 最终 game_state 已携带本手 folded；保留到下一次 game_started，便于终局复盘。
         if (!this.allowSystemDealing) {
@@ -452,6 +460,7 @@ export const useTexasHoldemStore = defineStore('texas_holdem', {
       this.currentBet = 0;
       this.lastRaiseAmount = 0;
       this.minRaiseTo = 0;
+      this.raiseLocked = [];
       this.timeLeft = 0;
       this.gameActive = false;
       this.autoStart = false;

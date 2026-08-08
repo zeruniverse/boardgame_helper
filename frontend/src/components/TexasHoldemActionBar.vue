@@ -17,7 +17,7 @@
     </el-button>
     <div class="raise-row">
       <el-input v-model.number="raiseAmount" type="number" placeholder="额外加注"
-                :disabled="!store.gameActive || !isMyTurn || !isInGame" />
+                :disabled="!canRaise" />
       <el-button type="warning"
                  :disabled="!store.gameActive || !canRaise"
                  @click="raise"
@@ -26,9 +26,9 @@
       </el-button>
     </div>
     <el-button type="primary"
-               :disabled="!store.gameActive || !isMyTurn || !isInGame"
+               :disabled="!canAllIn"
                @click="action('allin')"
-               :class="{ 'colored-border': store.gameActive && isMyTurn && isInGame, 'disabled-border': !store.gameActive || !isMyTurn || !isInGame }">
+               :class="{ 'colored-border': canAllIn, 'disabled-border': !canAllIn }">
       All-in
     </el-button>
     <el-button type="danger"
@@ -57,13 +57,39 @@ const isMyTurn = computed(() => store.currentTurn === store.playerId && isInGame
 // canCall: 需要跟注金额 > 0 且有筹码即可call（筹码不足时自动转为all-in call）
 const canCall = computed(() => isMyTurn.value && toCall.value > 0 && (ownPlayer.value?.gameMetadata?.chips || 0) > 0);
 const canCheck = computed(() => isMyTurn.value && toCall.value === 0);
+const isRaiseLocked = computed(() => store.raiseLocked.includes(store.playerId));
 const minRaiseTo = computed(() => Math.max(store.minRaiseTo || 0, store.currentBet + 1));
 const minRaiseDelta = computed(() => {
   const currentBet = store.bets[store.playerId] || 0;
   const callAmount = toCall.value;
   return Math.max(1, minRaiseTo.value - currentBet - callAmount);
 });
-const canRaise = computed(() => isMyTurn.value && ((ownPlayer.value?.gameMetadata?.chips || 0) > Math.max(toCall.value, 0)));
+const hasOtherActivePlayerWithChips = computed(() =>
+  store.participants.some((playerId) => {
+    if (playerId === store.playerId || store.folded.includes(playerId)) return false;
+    const player = store.players.find((candidate: any) => candidate.id === playerId);
+    return Number(player?.gameMetadata?.chips || 0) > 0;
+  })
+);
+const canRaise = computed(() => {
+  const chips = Number(ownPlayer.value?.gameMetadata?.chips || 0);
+  return store.gameActive &&
+    isMyTurn.value &&
+    !isRaiseLocked.value &&
+    hasOtherActivePlayerWithChips.value &&
+    chips >= toCall.value + minRaiseDelta.value;
+});
+const canAllIn = computed(() => {
+  if (!store.gameActive || !isMyTurn.value) return false;
+  const chips = Number(ownPlayer.value?.gameMetadata?.chips || 0);
+  if (chips <= 0) return false;
+  const ownBet = Number(store.bets[store.playerId] || 0);
+  const allInTotal = ownBet + chips;
+  if (allInTotal <= store.currentBet) return true;
+  // 高于当前注额的 All-in 属于加注；后端要求拥有加注权，且至少还有一名
+  // 未弃牌、仍有筹码的对手能够继续行动，避免产生无人可跟的“空边池”。
+  return !isRaiseLocked.value && hasOtherActivePlayerWithChips.value;
+});
 
 // 使用game_action统一格式发送玩家操作
 function action(type: string) {

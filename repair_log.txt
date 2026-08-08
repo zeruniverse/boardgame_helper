@@ -2380,3 +2380,34 @@ Commit: fix(round56): 封堵房主重连与自动接替竞态
   - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts 校验，仅有 ws 的可选原生依赖提示。
   - 正式 npm ci --ignore-scripts --no-audit --no-fund 已在最终源码工作区执行，当前内部 npm 镜像请求 package-lock 锁定的 typescript-5.8.3.tgz 返回 404。正式 npm run build 也已执行；因安装失败没有完整 node_modules，backend tsc 在 Node 内建类型及 Express/CORS/Socket.IO/UUID 等 package.json 已声明依赖解析处中止，未进入 frontend vue-tsc/Vite。构建/安装残留的 backend/dist、frontend/dist、node_modules 已清理。完整生产构建与“可直接部署”仍需在依赖可正常安装的本地或 CI 执行 npm ci && npm run build 最终确认。
 备注: 本轮未删除文件，未创建根目录 src/；所有后端源码修改仅位于 backend/src/，本轮没有 frontend/src/ 源码修改；修复包只包含 backend/src/controllers/roomController.ts 与更新后的 repair_log.txt，可按相对路径直接覆盖。
+
+=== 当前请求第 57 轮修复记录 ===
+时间: 2026-08-08 15:05:59 UTC
+Commit: fix(round57): 修正德州短码全下加注权同步
+修改/新增文件:
+  - backend/src/workers/texasHoldemWorker.ts
+  - frontend/src/store/texas_holdem.ts
+  - frontend/src/components/TexasHoldemActionBar.vue
+  - doc/texas-holdem.md
+  - repair_log.txt
+删除文件: 无
+构建测试: 部分通过（backend/src + frontend/src 当前全部 86 个源文件静态扫描、backend/src 全部 35 个 TypeScript strict/noEmit 与隔离 CommonJS 编译、六游戏 Worker prepare_room 烟雾、德州扑克短码 All-in 加注权专项回归、package-lock 工作区依赖树检查均通过；正式 npm ci 仍被当前内部 npm 镜像缺失 TypeScript 5.8.3 tarball 的 404 阻塞，正式 npm run build 因而在 backend tsc 的 Node/Express/CORS/Socket.IO/UUID 等已声明依赖/类型解析阶段中止，未进入 frontend vue-tsc/Vite，完整生产构建与直接部署仍需在依赖镜像正常的本地或 CI 终验）
+本轮修复:
+  - 修复德州扑克在翻牌后等“无人下注、已有玩家 Check”场景中，首个不足最低下注额的短码 opening All-in 会错误重新开放已 Check 玩家 Raise 权利的问题。旧 updateActionRightsAfterShortAllIn 对 previousCurrentBet=0 且 actedAtBet=0 做了特殊解锁；这与无限注/底池限注中“短码 All-in 不足一个完整下注/加注不会重新开放已行动玩家加注权”的规则相反。现在所有已行动玩家统一按“自其上次行动后累计面对的新增下注”与 lastRaiseAmount 比较：未达到完整下注/加注额时只能补齐/弃牌，达到后才恢复 Raise。
+  - 保留并验证多个短码 All-in 的累计重新开放语义：例如最低完整下注 100，A/B 已 Check，C All-in 到 40 时 A/B 均被锁定加注；A 跟到 40 后，D 再 All-in 到 100，仍按 0 作为上次行动点的 B 已累计面对 100，恢复加注权，而 A 自 40 只新增面对 60，仍保持锁定。
+  - 修复 Worker 与前端对“当前玩家是否拥有加注权”的状态不同步。buildPublicGameState 现在发布公开 raiseLocked 快照，Texas store 接收并在开局/分池/结束/重置时清理；重连与普通 game_state 同步因此能恢复真实下注行动权，而不是只依赖 currentBet/minRaiseTo 猜测。
+  - 修复德州操作栏仍允许点击后端必然拒绝的 Raise / All-in。Raise 现在同时要求：轮到本人、未被 raiseLocked、至少还有一名未弃牌且有筹码的对手、本人筹码足够完成一个合法的最小完整加注；不足完整加注的短码玩家改走 All-in。All-in 若只是全下跟注仍允许；若会抬高 currentBet，则同样要求拥有加注权且还有可继续行动的有筹码对手，避免通过 All-in 绕过加注锁或制造无人可跟的空边池。Raise 输入框也随真实 canRaise 禁用。
+  - 更新德州扑克规则文档的 All-in 小节，明确短码 All-in、已 Check 玩家以及多个短码 All-in 累计恢复加注权的语义，使文档、Worker 和前端操作权限保持一致。
+审查结果/本轮未改动重点:
+  - 本轮继续覆盖 backend/src 与 frontend/src 当前全部 86 个源码文件，并结合前 56 轮 repair_log 重点复核 roomController、RoomThreadManager、BaseGameWorker、六个游戏 Worker、六套前端 Store/Room/ActionPanel/PlayerList/Chat 与共享 session/socket/config/random 工具。本轮最高优先级的新确定性规则问题集中在德州扑克短码 opening All-in 的加注权及其前后端展示不一致，因此以一个闭环批次修正，没有扩大为跨游戏高风险重构。
+  - 狼人杀、杀人游戏、一夜狼人、阿瓦隆继续按项目规则文档与累计专项修复复核主流程；本轮未发现优先级高于上述德州规则问题、且适合当前批次安全合入的新确定性阻断项。血染钟楼仍保留 repair_log 已记录的架构级边界：特殊自定义夜序下 Pit-Hag 创建 Demon 后无法安全逆向更早已经真实落地并触发被动的死亡；真人说书人缺每次 Recluse/Spy registration 的逐次人工裁决 UI；自由文本/多重效果抵消等 Mathematician 极端情况缺统一逐次最终基准审计。本轮没有用近似逻辑强行覆盖这些边界。
+  - Worker/Controller 仍使用单房间串行任务链以及 workerStateVersion、connectionStateVersion、hostStateVersion 进行事实源合并。本轮只给德州公开游戏状态增加 raiseLocked，不改变线程协议、座位事务或 Controller 权威字段；复核中未发现需要本批次再修改的新确定性竞态。
+  - 前端 27 个 Vue SFC 继续统一使用 Element Plus，并保持现有 Room + PlayerList + ActionPanel/ActionBar + Chat 分层及共享 gameSocket/gameSession/playerName/messages/forcedExit 工具。本轮只修正 TexasHoldemActionBar 与 store 的权限同步，没有新增平行组件体系或新的视觉风格，现有各游戏主题差异保持不变。
+验证:
+  - backend/src + frontend/src 全量静态扫描通过：共 86 个源文件（57 个 .ts、27 个 Vue SFC、1 个 CSS、1 个 SVG）；84 个 TypeScript/Vue script 解析单元、28 个 style/CSS 单元、222 个静态相对/@ 本地导入均未发现 TypeScript 语法错误、CSS 花括号错误、真实合并冲突标记或失效本地导入；SVG 可正常 XML 解析；项目根目录不存在 src/。
+  - backend/src 全部 35 个 TypeScript 文件使用全局 TypeScript 5.8.3、strict 模式、真实全局 Node 类型与项目目录外的 Express/CORS/Socket.IO/UUID 临时声明桩完成 noEmit 类型检查，0 个源码类型错误；同一严格配置成功生成 35 个隔离 CommonJS 测试文件。临时声明、脚本和编译产物只位于 /mnt/data/round57_validation，不进入修复包。
+  - 六个实际游戏 Worker 使用本轮最新隔离编译产物执行 prepare_room 烟雾全部通过：狼人杀、杀人游戏、血染钟楼、一夜狼人、阿瓦隆、德州扑克均能启动 Worker 并完成合法房间配置初始化。
+  - 德州扑克短码 All-in 专项回归直接运行本轮最新隔离编译后的 TexasHoldemWorker 私有状态方法：opening All-in 40/完整下注 100 时此前已 Check 的 A/B 都进入 raiseLocked；A 跟到 40 后第二个短码 All-in 累计到 100 时，B 从 0 累计面对完整 100 后解锁，而 A 只面对新增 60 仍锁定；buildPublicGameState 同步携带 raiseLocked。
+  - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts 校验，仅有 ws 的可选原生依赖提示。
+  - 正式 npm ci --ignore-scripts --no-audit --no-fund 已在最终源码工作区执行，当前内部 npm 镜像请求 package-lock 锁定的 typescript-5.8.3.tgz 返回 404。正式 npm run build 也已执行；因安装失败没有完整 node_modules，backend tsc 在 Node 内建类型及 Express/CORS/Socket.IO/UUID 等 package.json 已声明依赖解析处中止，未进入 frontend vue-tsc/Vite。构建/安装残留的 backend/dist、frontend/dist、node_modules 已清理。完整生产构建与“可直接部署”仍需在依赖可正常安装的本地或 CI 执行 npm ci && npm run build 最终确认。
+备注: 本轮未删除文件，未创建根目录 src/；所有后端源码修改仅位于 backend/src/，所有前端源码修改仅位于 frontend/src/；修复包只包含本轮修改文件与更新后的 repair_log.txt，可按相对路径直接覆盖。
