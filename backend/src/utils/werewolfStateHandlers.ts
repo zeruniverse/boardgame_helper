@@ -462,7 +462,10 @@ function checkAndHandleGameEnd(gameState: WerewolfGameState, context: any): bool
 }
 
 // 工具函数 - 处理死亡玩家队列中的下一个玩家（支持多死亡玩家依次处理）
-const MAX_DEATH_CHAIN_DEPTH = 10;
+// 自定义配置最多允许 18 名玩家且可以包含多名猎人。一次合法死亡链中，同一玩家
+// 最多经历“遗言/猎人/警徽”三个结算步骤，因此 10 层会截断完全合法的猎人连锁。
+// 64 仍提供异常递归保险，同时覆盖 18 人局的最坏合法结算长度。
+const MAX_DEATH_CHAIN_DEPTH = 64;
 
 function removePendingDeath(gameState: WerewolfGameState, playerId: string): void {
   if (!gameState.pendingDeaths) return;
@@ -498,6 +501,17 @@ function processDeathChain(gameState: WerewolfGameState, context: any, dyingPlay
   gameState.curDyingPlayer = dyingPlayer;
   dyingPlayer.isDying = true;
 
+  // 白天被投票处决的玩家先留遗言，再处理猎人开枪/警徽移交。
+  // 项目规则文档明确规定“处决者遗言 -> 猎人开枪 -> 胜负判定”；旧流程把猎人
+  // 开枪放在遗言之前，并且普通处决者可能在胜负判定后完全跳过遗言。
+  const isExiled = dyingPlayer.die?.fromCharacter === 'VILLAGER';
+  const lastWordsDone = gameState.deathLastWordsDone?.[dyingPlayer.id] === true;
+  if (isExiled && !lastWordsDone) {
+    gameState.nextStateOfDieCheck = GameStatus.LEAVE_MSG;
+    LeaveMsgHandler.startOfState(gameState, context);
+    return;
+  }
+
   // 如果是猎人，进入开枪阶段（被女巫毒死的猎人不能开枪）
   if (dyingPlayer.character === 'HUNTER') {
     const diedByPoison = dyingPlayer.die?.fromCharacter === 'WITCH';
@@ -516,16 +530,10 @@ function processDeathChain(gameState: WerewolfGameState, context: any, dyingPlay
     return;
   }
 
-  // 否则进入遗言阶段。项目规则只允许白天被投票放逐的玩家留遗言；
-  // 夜晚死亡、女巫毒杀、猎人带走都没有遗言，首夜也不例外。
-  const isExiled = dyingPlayer.die?.fromCharacter === 'VILLAGER';
-  if (isExiled) {
-    gameState.nextStateOfDieCheck = GameStatus.LEAVE_MSG;
-    LeaveMsgHandler.startOfState(gameState, context);
-    return;
-  }
-
   // 无后续处理，继续到下一个正常状态
+  // 普通夜死玩家过去会一直残留 isDying=true，导致后续公开快照仍把已结算死亡
+  // 显示为“正在死亡”。所有死亡后续都完成后在这里统一清理该瞬时状态。
+  dyingPlayer.isDying = false;
   continueToNightOrDay(gameState, context);
 }
 
@@ -1294,17 +1302,9 @@ export const ExileVoteHandler: StateHandler = {
           message: renderPlayersHTML('被放逐的玩家为:', highestVotes)
         });
 
-        // 放逐结算后应立即检查胜负，避免最后一名狼人出局后客户端等待无意义的死亡链。
-        // 但猎人被放逐且仍可开枪时，必须先完成猎人死亡技能再做狼队人数胜负判定。
-        const exiledHunterCanShoot = target.character === 'HUNTER'
-          && target.die?.fromCharacter !== 'WITCH'
-          && !target.characterStatus.hasUsedSkill
-          && (!target.characterStatus.shootAt || target.characterStatus.shootAt.day < 0);
-        if (!exiledHunterCanShoot && checkAndHandleGameEnd(gameState, context)) {
-          return;
-        }
-
-        // 处理死亡链（猎人、遗言、警长传递）
+        // 先完整处理处决者死亡链，再判定胜负。遗言是项目规则定义的处决流程一部分，
+        // 不能因为处决的是最后一名狼人/形成狼队人数优势就直接跳过；猎人也必须在
+        // 胜负判定前获得开枪机会。
         gameState.deathContext = 'day';
         scheduleStateTask(gameState, context, () => {
           processDeathChain(gameState, context, target);
@@ -1453,12 +1453,13 @@ export const HunterShootHandler: StateHandler = {
       }
 
       hunter.characterStatus.hasUsedSkill = true;
-      hunter.isDying = false; // 标记当前猎人死亡处理完成
     }
 
     const hunterNeedsFollowUp = !!hunter && (
-      hunter.isSheriff ||
-      hunter.die?.fromCharacter === 'VILLAGER'
+      hunter.isSheriff || (
+        hunter.die?.fromCharacter === 'VILLAGER' &&
+        gameState.deathLastWordsDone?.[hunter.id] !== true
+      )
     );
 
     // 如果猎人开枪带走了其他玩家，优先处理被带走者；当前猎人仍需警徽/遗言时，
@@ -1472,27 +1473,28 @@ export const HunterShootHandler: StateHandler = {
         ...remainingDeaths
       ];
 
+      if (hunter && !hunterNeedsFollowUp) {
+        hunter.isDying = false;
+      }
+
       scheduleStateTask(gameState, context, () => {
         processDeathChain(gameState, context, gameState.pendingDeaths![0]);
       }, 3000);
       return;
     }
 
-    // 检查警长传递
-    if (hunter && hunter.isSheriff) {
+    // 统一回到死亡链继续剩余步骤。正常新流程里白天处决遗言已经在开枪前完成，
+    // 这里通常只剩警徽移交；保留 lastWordsDone 检查也能兼容旧快照直接恢复在
+    // HUNTER_SHOOT 的情况，不会永远丢失处决遗言。
+    if (hunter && hunterNeedsFollowUp) {
       scheduleStateTask(gameState, context, () => {
-        gameState.curDyingPlayer = hunter;
-        SheriffAssignHandler.startOfState(gameState, context);
+        processDeathChain(gameState, context, hunter);
       }, 3000);
       return;
     }
 
-    // 检查遗言
-    if (hunter && hunter.die?.fromCharacter === 'VILLAGER') {
-      scheduleStateTask(gameState, context, () => {
-        LeaveMsgHandler.startOfState(gameState, context);
-      }, 3000);
-      return;
+    if (hunter) {
+      hunter.isDying = false;
     }
 
     // 继续处理队列中的下一个死亡玩家，或进入正常流程
@@ -1562,16 +1564,17 @@ export const LeaveMsgHandler: StateHandler = {
 
     const dyingPlayer = gameState.curDyingPlayer;
 
-    // 标记当前死亡玩家为已处理（设置isDying为false）
+    // 记录遗言已经完成。不能在这里把 isDying 提前清掉：同一个处决者随后可能
+    // 还要执行猎人开枪或警徽移交，整个死亡结算完成后再统一清理。
     if (dyingPlayer) {
-      dyingPlayer.isDying = false;
+      gameState.deathLastWordsDone = {
+        ...(gameState.deathLastWordsDone || {}),
+        [dyingPlayer.id]: true
+      };
     }
 
-    // 如果是警长死亡，传递警徽
-    if (dyingPlayer && dyingPlayer.isSheriff) {
-      scheduleStateTask(gameState, context, () => {
-        SheriffAssignHandler.startOfState(gameState, context);
-      }, 1000);
+    if (dyingPlayer) {
+      processDeathChain(gameState, context, dyingPlayer);
       return;
     }
 

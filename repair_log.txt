@@ -2239,3 +2239,33 @@ Commit: fix(round50): 加固游戏随机性并消除可预测洗牌
   - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts 校验。
   - 正式 npm run build 已在本轮最终源码上执行并进入 backend tsc；由于提取工作区的 node_modules、backend/node_modules、frontend/node_modules 均不存在，fs/path/crypto/worker_threads 的 Node 类型及 Express/CORS/Socket.IO/UUID 等 package.json 已声明依赖无法解析，构建在 backend 阶段中止，未进入 frontend vue-tsc/Vite。构建尝试产生的 backend/dist/frontend/dist 已清理。相同 backend/src 已通过上述全量 strict/noEmit、隔离 CommonJS 编译和六 Worker 实际运行烟雾；但“完整生产构建并直接部署”仍需在 npm ci 可完整成功的本地或 CI 执行 npm run build 做最终确认。
 备注: 本轮未删除文件，未创建根目录 src/；所有源码修改均位于 backend/src/，本轮没有 frontend/src/ 源码修改；修复包只包含本轮修改/新增源码文件与更新后的 repair_log.txt，可按相对路径直接覆盖。
+
+=== 当前请求第 51 轮修复记录 ===
+时间: 2026-08-08 13:14:35 UTC
+Commit: fix(round51): 修正狼人杀遗言顺序与死亡状态结算
+修改/新增文件:
+  - backend/src/utils/werewolfStateHandlers.ts
+  - backend/src/utils/werewolfTypes.ts
+  - repair_log.txt
+删除文件: 无
+构建测试: 部分通过（backend/src + frontend/src 当前全部 86 个源文件静态扫描、backend/src 全部 35 个 TypeScript strict/noEmit 与隔离 CommonJS 编译、六游戏 Worker prepare_room 烟雾、狼人杀死亡链专项回归、package-lock 工作区依赖树检查均通过；正式 npm run build 已执行，但附件提取工作区没有 node_modules，backend tsc 被缺失 Node/Express/CORS/Socket.IO/UUID 等已声明依赖/类型阻塞，未进入 frontend vue-tsc/Vite，因此完整生产构建与直接部署仍需在依赖可正常安装的本地或 CI 终验）
+本轮修复:
+  - 修复狼人杀白天处决猎人的死亡结算顺序与项目规则文档相反的问题。旧 processDeathChain 会先进入 HUNTER_SHOOT，之后才处理 LEAVE_MSG；文档明确规定白天“处决者遗言 -> 猎人开枪 -> 胜负判定”。现在白天由投票处决的玩家统一先完成遗言，再处理猎人开枪，若仍持有警徽则继续移交警徽，整个死亡链完成后才进入胜负判定/下一夜。
+  - 修复处决最后一名狼人或处决后立即形成狼队胜利人数条件时，会在死亡链之前直接 game_end，从而普通处决者完全没有遗言的问题。ExileVote 现在不再为非猎人提前结束游戏，所有处决者均先走权威死亡链；最后一名狼人遗言完成后仍会立即正确结算好人胜利，猎人则仍可在最终胜负判定前开枪改变局面。
+  - 修复普通夜间死亡玩家在死亡链没有猎人/警长/遗言后续时 isDying 永久残留为 true 的状态同步错误。公开 gameInfo 会携带 isDying，旧状态因此可能在后续白天乃至后续回合仍把早已结算完成的死人标记成“正在死亡”。现在所有死亡后续步骤完成时统一清除该瞬时标记；处决猎人在遗言、开枪、警徽等步骤尚未完成期间则继续保持 isDying=true，避免提前结束死亡态。
+  - 为处决遗言增加 deathLastWordsDone 内部进度标记。LeaveMsg 完成后重新进入同一死亡链只会继续猎人/警徽后续，不会重复触发遗言；HunterShoot 的后续也统一回到死亡链，因此既覆盖正常新流程，也兼容直接恢复在 HUNTER_SHOOT 的旧状态，不会因状态恢复遗漏遗言。
+  - 将死亡链异常递归保险从 10 层提高到 64 层。自定义狼人杀允许最多 18 人且没有限制猎人只能一个，合法的多猎人连锁本身就可能超过 10 次结算；64 层覆盖 18 人局每名玩家最多“遗言/猎人/警徽”三个步骤的最坏合法长度，同时仍保留异常递归保护。
+审查结果/本轮未改动重点:
+  - 再次覆盖 backend/src 与 frontend/src 当前全部 86 个 TypeScript/Vue/CSS/SVG 源文件，并结合前 50 轮修复记录重点交叉检查 roomController、RoomThreadManager、BaseGameWorker、六个游戏 Worker、各游戏 Store/Room/ActionPanel/PlayerList/Chat、共享 session/socket/random/config 工具及本地导入关系。本轮最高优先级且可低风险落地的确定性问题集中在狼人杀处决死亡链的规则顺序和 isDying 生命周期，因此没有扩大为高风险跨游戏重构。
+  - 六游戏主流程继续复核：狼人杀的狼人共识、预言家/女巫/守卫夜序、警长、放逐、遗言与猎人链；杀人游戏的杀手/警察/医生/狙击手、一次 PK 与项目胜负；一夜狼人的玩家+3 中心牌/头狼扩展中心牌、换牌最终身份、猎人/皮匠/爪牙胜负与女巫强制交换；阿瓦隆的任务人数、7 人以上第 4 任务双失败、五次否决、刺杀和湖上夫人；德州扑克的盲注/HU、短码 all-in、加注权、未跟注返还、边池/奇数筹码和 burn card。本轮未发现优先级高于已修死亡链问题、且适合当前批次安全合入的新确定性主流程阻断项。
+  - Worker/Controller 状态同步继续使用单房间串行任务链以及 workerStateVersion、connectionStateVersion、hostStateVersion 的事实源合并。本轮没有改变线程协议或 Controller 房间事实源；复核中未发现需要本批次修改的新确定性跨线程竞态。
+  - 前端 27 个 Vue SFC 继续复用既有 Room / ActionPanel / PlayerList / Chat、Element Plus 和共享 gameSession/gameSocket/playerName/messages 等工具；本轮修复是后端死亡状态机纠正，无需新增前端组件或样式，现有各游戏主题差异与组件边界保持不变。
+  - 血染钟楼仍保留此前 repair_log 已记录、需要更大状态模型或真人说书人逐次裁决 UI 才能完整解决的架构级边界：特殊自定义夜序下 Pit-Hag 创建 Demon 后无法安全逆向更早已经真实落地并触发被动的死亡；真人说书人仍缺每次 Recluse/Spy registration 的逐次手工裁决 UI；自由文本/多重效果抵消等 Mathematician 极端情况仍缺统一逐次最终基准审计。本轮没有用不完整近似逻辑修改这些边界。
+验证:
+  - backend/src + frontend/src 全量静态扫描通过：共 86 个源文件、84 个 TypeScript/Vue script 解析单元、27 个 Vue SFC、28 个 style/CSS 单元、227 个静态相对/@ 本地导入；未发现 TypeScript 语法错误、CSS 花括号错误、真实合并冲突标记或失效本地导入；SVG 可正常 XML 解析；项目根目录不存在 src/。
+  - backend/src 全部 35 个 TypeScript 文件使用全局 TypeScript 5.8.3、strict 模式、真实全局 Node 类型与位于项目目录外的 Express/CORS/Socket.IO/UUID 临时声明桩完成 noEmit 类型检查，0 个源码类型错误；同一严格配置成功生成 35 个隔离 CommonJS 测试文件。临时声明、测试脚本和编译产物只位于 /mnt/data/round51_validation，不进入修复包。
+  - 六个实际游戏 Worker 使用本轮最新隔离编译产物执行 prepare_room 烟雾全部通过：狼人杀、杀人游戏、血染钟楼、一夜狼人、阿瓦隆、德州扑克均能启动 Worker 并完成合法房间配置初始化。
+  - 狼人杀死亡链专项回归通过：白天处决“猎人+警长”先进入 LEAVE_MSG，遗言结束后才进入 HUNTER_SHOOT，不开枪后继续 SHERIFF_ASSIGN；普通夜死玩家死亡链结束后 isDying 被清为 false；处决最后一名狼人后先进入遗言且不会提前发 game_end，遗言完成后立即进入 OVER 并判好人胜利。
+  - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts 校验。
+  - 正式 npm run build 已在本轮最终源码上执行并进入 backend tsc；由于提取工作区没有 node_modules，Node 内建类型以及 Express/CORS/Socket.IO/UUID 等 package.json 已声明依赖/类型无法解析，backend 阶段中止，未进入 frontend vue-tsc/Vite。构建尝试产生的 backend/dist/frontend/dist 已清理。相同 backend/src 已通过上述全量 strict/noEmit、隔离 CommonJS 编译和六 Worker 实际运行烟雾；完整生产构建与“可直接部署”仍需在 npm ci 可完整成功的本地或 CI 执行 npm run build 做最终确认。
+备注: 本轮未删除文件，未创建根目录 src/；所有后端源码修改仅位于 backend/src/，本轮没有 frontend/src/ 源码修改；修复包只包含本轮修改源码文件与更新后的 repair_log.txt，可按相对路径直接覆盖。

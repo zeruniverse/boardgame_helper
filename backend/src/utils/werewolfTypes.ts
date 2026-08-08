@@ -38,6 +38,7 @@ export interface WerewolfGameState {
   operators?: string[];  // 当前可操作玩家ID列表
   pendingDeaths?: WerewolfPlayerState[];  // 待处理的死亡玩家队列（支持多死亡玩家依次处理）
   deathContext?: 'night' | 'day';  // 当前死亡链来自夜晚还是白天，用于死亡链结束后的流转
+  deathLastWordsDone?: Record<string, boolean>;  // 白天处决遗言完成标记，避免猎人/警徽后续重复触发遗言
   nightActions?: {
     wolfKillTarget?: number;   // 狼人击杀目标index
     wolfKillFromIndex?: number[]; // 参与击杀的狼人index列表
