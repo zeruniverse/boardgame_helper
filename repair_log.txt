@@ -2353,3 +2353,30 @@ Commit: fix(round55): 隔离座位迁移期间的踢人投票与房主转让
   - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts 校验，仅有 ws 的可选原生依赖提示。
   - 正式 npm ci --ignore-scripts --no-audit --no-fund 已执行，当前内部 npm 镜像请求 package-lock 锁定的 typescript-5.8.3.tgz 返回 404。正式 npm run build 也已执行；由于 npm ci 无法形成完整 node_modules，backend tsc 在 Node 内建类型及 Express/CORS/Socket.IO/UUID 等 package.json 已声明依赖解析处中止，未进入 frontend vue-tsc/Vite。构建尝试产生的 backend/dist/frontend/dist 和失败安装残留 node_modules 已清理。完整生产构建与“可直接部署”仍需在依赖可正常安装的本地或 CI 执行 npm ci && npm run build 最终确认。
 备注: 本轮未删除文件，未创建根目录 src/；所有后端源码修改仅位于 backend/src/，本轮没有 frontend/src/ 源码修改；修复包只包含本轮修改文件与更新后的 repair_log.txt，可按相对路径直接覆盖。
+
+=== 当前请求第 56 轮修复记录 ===
+时间: 2026-08-08 14:55:05 UTC
+Commit: fix(round56): 封堵房主重连与自动接替竞态
+修改/新增文件:
+  - backend/src/controllers/roomController.ts
+  - repair_log.txt
+删除文件: 无
+构建测试: 部分通过（backend/src + frontend/src 当前全部 86 个源文件静态扫描、backend/src 全部 35 个 TypeScript strict/noEmit 与隔离 CommonJS 编译、六游戏 Worker prepare_room 烟雾、离线房主自动接替/已有座位重连专项竞态回归、package-lock 工作区依赖树检查均通过；正式 npm ci 仍被当前内部 npm 镜像缺失 TypeScript 5.8.3 tarball 的 404 阻塞，正式 npm run build 因而在 backend tsc 的 Node/Express/CORS/Socket.IO/UUID 等已声明依赖/类型解析阶段中止，未进入 frontend vue-tsc/Vite，完整生产构建与直接部署仍需在依赖镜像正常的本地或 CI 终验）
+本轮修复:
+  - 修复“离线房主自动接替”与同一房主座位 reconnect 并发时的权限竞态。第 55 轮已经让 reconnect、直接踢人、房主转让和投票踢房主结算共享 roomId/playerId 座位锁，但超时自动接替仍在锁外运行。若房主重连已经开始、只是正停在 Worker 启动/同步或 socket.join 的 await 窗口，Controller 仍可能短暂看到旧 offline 快照并把房主转给其他人；重连随后成功也不会自动恢复权限。现在 reassignOfflineHost 与该房主座位使用同一个 runSeatMutationExclusive，并在真正获得锁后重新校验当前 hostId、online 状态和 lastHeartbeat 离线代际，使先开始的座位事务决定顺序。
+  - 修复已有座位迁移的临时 online/socketId 被错误当作稳定房主候选的问题。existing-seat migration 在 Worker 确认前会暂时把 Controller 玩家标成在线；若此时原房主离开/被踢/超时，旧选择逻辑可能把房主交给一个随后回滚成离线的迁移中座位。新增 isPendingExistingSeatMigration；通用 findCommittedHostCandidate 现在优先选择未处于迁移事务的稳定成员（稳定在线优先，即使只有稳定离线席位也先于瞬时在线迁移），自动超时接替则完全排除 pending new-seat 和 pending existing-seat migration，等迁移提交/回滚后再由既有调度重新判断。
+  - 修复自动接替在等待 Worker update_room_data 期间新房主再次主动转让后仍广播旧“X 成为新房主”系统消息的问题。接替提交时记录 hostStateVersion；await 返回后仅当 hostId 和该 revision 都仍属于本次接替时发送聊天提示，room_update 始终发送当前权威快照，避免聊天与紧随其后的房间状态自相矛盾。
+审查结果/本轮未改动重点:
+  - 本轮继续覆盖 backend/src 与 frontend/src 当前全部 86 个源码文件，并结合前 55 轮累计修复复核 roomController、RoomThreadManager、BaseGameWorker、六个游戏 Worker、六套前端 Store/Room/ActionPanel/PlayerList/Chat 及共享 gameSocket/gameSession/playerName/messages/forcedExit 等工具。当前最高优先级的新确定性问题集中在第 55 轮座位锁尚未覆盖的“自动房主故障切换”路径，因此本轮集中补齐该事务边界，没有新增平行状态源。
+  - 六游戏规则继续按项目规则与实现交叉复核：狼人杀的狼人共识、夜间神职/死亡链/警长与放逐；杀人游戏的杀手/警察/医生/狙击手与 PK；一夜狼人的三张基础中心牌、头狼额外中心牌、换牌后的最终身份、平票/猎人/皮匠/爪牙；阿瓦隆的标准任务人数、7 人以上第 4 任务双失败、五次否决、刺杀和湖上夫人；德州扑克的 HU 盲注与行动顺序、短盲、burn card、短码 all-in/加注权、未跟注返还、边池和奇数筹码；血染钟楼的基础剧本、夜序、提名投票、说书人信息与终局。本轮未发现优先级高于上述房主竞态、且适合当前小批次安全落地的新确定性主流程规则错误。
+  - 前端 27 个 Vue SFC 仍统一使用 Element Plus 和现有 Room + PlayerList + ActionPanel/ActionBar + Chat 分层，并复用共享 session/socket/messages 等工具；各游戏保留自己的主题和专属状态面板。本轮没有发现需要通过高风险大重构才能解决的视觉/复用问题，因此 frontend/src 无修改。
+  - Worker/Controller 状态同步继续以 workerStateVersion、connectionStateVersion、hostStateVersion 及单房间 Worker 任务串行为事实源；本轮只让自动房主接替加入既有座位事务锁并用 hostStateVersion 抑制过期广播，没有改变游戏 Worker 协议。
+  - 血染钟楼仍保留 repair_log 已记录、需要更大状态模型或真人说书人逐次裁决 UI 才能完整解决的架构级边界：特殊自定义夜序下 Pit-Hag 创建 Demon 后无法安全逆向更早已真实落地并触发被动的死亡；真人说书人缺每次 Recluse/Spy registration 的逐次人工裁决 UI；自由文本/多重效果抵消等 Mathematician 极端情况缺统一逐次最终基准审计。本轮没有用近似逻辑冒险覆盖这些边界。
+验证:
+  - backend/src + frontend/src 全量静态扫描通过：共 86 个源文件（57 个 .ts、27 个 Vue SFC、1 个 CSS、1 个 SVG）；TypeScript/Vue script 解析、本地相对/@ 导入解析、CSS 花括号、真实合并冲突标记均通过，SVG 可正常 XML 解析；项目根目录不存在 src/。
+  - backend/src 全部 35 个 TypeScript 文件使用全局 TypeScript 5.8.3、strict 模式与项目目录外临时依赖声明完成 noEmit 类型检查，0 个源码类型错误；同一严格配置成功生成隔离 CommonJS 测试产物。临时声明、脚本与产物只位于 /mnt/data/round56_validation，不进入修复包。
+  - 六个实际游戏 Worker 使用本轮最新隔离编译产物执行 prepare_room 烟雾全部通过：狼人杀、杀人游戏、血染钟楼、一夜狼人、阿瓦隆、德州扑克均能启动 Worker 并完成合法房间配置初始化。
+  - 房主接替专项回归直接从本轮 roomController.ts AST 提取实际 helper 执行通过：房主 reconnect 先取得座位锁时，超时接替会等待并在重连成功后保持原房主；通用房主候选会优先稳定在线成员，也会优先稳定离线成员而不是迁移中的瞬时在线成员；自动接替会跳过 pending existing-seat migration；接替后若在 Worker 同步 await 期间权限又转给第三人，不再发送已经过期的“中间房主”聊天提示，最终 room_update 发布当前房主。
+  - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts 校验，仅有 ws 的可选原生依赖提示。
+  - 正式 npm ci --ignore-scripts --no-audit --no-fund 已在最终源码工作区执行，当前内部 npm 镜像请求 package-lock 锁定的 typescript-5.8.3.tgz 返回 404。正式 npm run build 也已执行；因安装失败没有完整 node_modules，backend tsc 在 Node 内建类型及 Express/CORS/Socket.IO/UUID 等 package.json 已声明依赖解析处中止，未进入 frontend vue-tsc/Vite。构建/安装残留的 backend/dist、frontend/dist、node_modules 已清理。完整生产构建与“可直接部署”仍需在依赖可正常安装的本地或 CI 执行 npm ci && npm run build 最终确认。
+备注: 本轮未删除文件，未创建根目录 src/；所有后端源码修改仅位于 backend/src/，本轮没有 frontend/src/ 源码修改；修复包只包含 backend/src/controllers/roomController.ts 与更新后的 repair_log.txt，可按相对路径直接覆盖。

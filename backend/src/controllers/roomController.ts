@@ -290,6 +290,15 @@ function isPendingNewSeat(roomId: string, playerId: string): boolean {
   return false;
 }
 
+function isPendingExistingSeatMigration(roomId: string, playerId: string): boolean {
+  for (const migration of existingSeatMigrationsBySocket.values()) {
+    if (migration.roomId === roomId && migration.playerId === playerId) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function isCommittedRoomMember(room: Room, player: Player): boolean {
   return !isPendingNewSeat(room.id, player.id);
 }
@@ -335,7 +344,16 @@ function findCommittedHostCandidate(room: Room, excludePlayerId?: string): Playe
     player.id !== excludePlayerId &&
     !isPendingNewSeat(room.id, player.id)
   );
-  return candidates.find(player => player.online) || candidates[0];
+  // 已有座位迁移会在 Worker 确认前临时把 online/socketId 切到新连接。优先选择
+  // 没有处于迁移事务中的稳定成员（稳定在线者优先），避免房主离开/被踢时把权限
+  // 交给一个随后可能回滚为离线的瞬时连接。若房间确实只剩迁移中的成员，仍保留旧兜底。
+  const stableCandidates = candidates.filter(player =>
+    !isPendingExistingSeatMigration(room.id, player.id)
+  );
+  return stableCandidates.find(player => player.online) ||
+    stableCandidates[0] ||
+    candidates.find(player => player.online) ||
+    candidates[0];
 }
 
 function rejectProvisionalSeatAction(
@@ -1397,55 +1415,74 @@ export function roomController(io: Server) {
   ): Promise<Room | undefined> {
     clearOfflineHostFailoverTimer(roomId);
 
-    const latestRoom = rooms.get(roomId);
-    if (!latestRoom || latestRoom.hostId !== expectedHostId) {
-      return latestRoom;
-    }
+    // 自动接替与同一房主座位的 reconnect 共用座位锁。否则重连可能已经开始、
+    // 但仍在 ensure worker / socket.join 的 await 窗口里，故障切换会先看到旧的
+    // offline 快照并把房主权限转走；随后重连成功也无法恢复。锁内重新校验离线
+    // 代际，让“先开始的座位事务”决定顺序，并避免定时器基于瞬时连接状态提交。
+    return runSeatMutationExclusive(roomId, expectedHostId, async () => {
+      const latestRoom = rooms.get(roomId);
+      if (!latestRoom || latestRoom.hostId !== expectedHostId) {
+        return latestRoom;
+      }
 
-    const offlineHost = latestRoom.players.find(player => player.id === expectedHostId);
-    if (!offlineHost || offlineHost.online !== false || Number(offlineHost.lastHeartbeat || 0) !== expectedOfflineAt) {
-      return latestRoom;
-    }
+      const offlineHost = latestRoom.players.find(player => player.id === expectedHostId);
+      if (!offlineHost || offlineHost.online !== false || Number(offlineHost.lastHeartbeat || 0) !== expectedOfflineAt) {
+        return latestRoom;
+      }
 
-    const nextHost = latestRoom.players.find(player =>
-      player.id !== expectedHostId &&
-      player.online &&
-      !isPendingNewSeat(latestRoom.id, player.id)
-    );
-    if (!nextHost) {
-      return latestRoom;
-    }
+      // existing-seat migration 会临时写入 online=true；在事务真正提交前不能把这种
+      // 瞬时状态选为自动接替者。若迁移最终成功，其成功/回滚路径会再次调用
+      // scheduleOfflineHostFailoverIfNeeded，并在事务清除后立即重新触发本检查。
+      const nextHost = latestRoom.players.find(player =>
+        player.id !== expectedHostId &&
+        player.online &&
+        !isPendingNewSeat(latestRoom.id, player.id) &&
+        !isPendingExistingSeatMigration(latestRoom.id, player.id)
+      );
+      if (!nextHost) {
+        return latestRoom;
+      }
 
-    setRoomHost(latestRoom, nextHost.id);
-    latestRoom.lastActiveTime = Math.max(Date.now(), Number(latestRoom.lastActiveTime || 0) + 1);
+      setRoomHost(latestRoom, nextHost.id);
+      const failoverHostStateVersion = getHostStateVersion(latestRoom);
+      latestRoom.lastActiveTime = Math.max(Date.now(), Number(latestRoom.lastActiveTime || 0) + 1);
 
-    const pendingVote = hostKickVotes.get(roomId);
-    if (pendingVote) {
-      clearTimeout(pendingVote.timer);
-      hostKickVotes.delete(roomId);
-    }
+      const pendingVote = hostKickVotes.get(roomId);
+      if (pendingVote) {
+        clearTimeout(pendingVote.timer);
+        hostKickVotes.delete(roomId);
+      }
 
-    rooms.set(roomId, latestRoom);
-    threadManager.updateRoomData(roomId, latestRoom);
-    try {
-      await sendTaskToRoom(roomId, 'update_room_data', { room: latestRoom });
-    } catch (error) {
-      // 控制层仍保留新房主，避免前端继续被离线房主锁死；后续房间同步会再次
-      // 把该状态送入 worker。这里记录错误，不把断线回调升级为未处理异常。
-      console.error(`同步离线房主接替状态失败: ${roomId}`, error);
-    }
+      rooms.set(roomId, latestRoom);
+      threadManager.updateRoomData(roomId, latestRoom);
+      try {
+        await sendTaskToRoom(roomId, 'update_room_data', { room: latestRoom });
+      } catch (error) {
+        // 控制层仍保留新房主，避免前端继续被离线房主锁死；后续房间同步会再次
+        // 把该状态送入 worker。这里记录错误，不把断线回调升级为未处理异常。
+        console.error(`同步离线房主接替状态失败: ${roomId}`, error);
+      }
 
-    const committedRoom = rooms.get(roomId);
-    if (!committedRoom) {
-      return undefined;
-    }
-    const reasonText = reason === 'leave' ? '已离开房间' : '断线超时';
-    io.to(roomId).emit('chat_broadcast', {
-      message: `房主 ${offlineHost.nickname} ${reasonText}，${nextHost.nickname} 成为新的房主`,
-      type: 'system'
+      const committedRoom = rooms.get(roomId);
+      if (!committedRoom) {
+        return undefined;
+      }
+      // Worker 同步会让出事件循环；新房主可能已经主动转让给第三人。只在这次
+      // 故障切换仍是当前 host revision 时广播“X 成为房主”，避免聊天提示与紧随其后
+      // 的 room_update 相互矛盾。
+      if (
+        committedRoom.hostId === nextHost.id &&
+        getHostStateVersion(committedRoom) === failoverHostStateVersion
+      ) {
+        const reasonText = reason === 'leave' ? '已离开房间' : '断线超时';
+        io.to(roomId).emit('chat_broadcast', {
+          message: `房主 ${offlineHost.nickname} ${reasonText}，${nextHost.nickname} 成为新的房主`,
+          type: 'system'
+        });
+      }
+      io.to(roomId).emit('room_update', toClientRoom(committedRoom));
+      return committedRoom;
     });
-    io.to(roomId).emit('room_update', toClientRoom(committedRoom));
-    return committedRoom;
   }
 
   function scheduleOfflineHostFailoverIfNeeded(room: Room): void {
