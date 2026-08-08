@@ -233,8 +233,9 @@ function endSocketRoomConnection(socket: Socket): void {
   socketRoomConnectionClaims.delete(socket.id);
 }
 
-function hasRoomConnectionClaim(roomId: string): boolean {
-  for (const claimedRoomId of socketRoomConnectionClaims.values()) {
+function hasRoomConnectionClaim(roomId: string, ignoreSocketId?: string): boolean {
+  for (const [socketId, claimedRoomId] of socketRoomConnectionClaims.entries()) {
+    if (socketId === ignoreSocketId) continue;
     if (claimedRoomId === roomId) return true;
   }
   return false;
@@ -2045,6 +2046,78 @@ export function roomController(io: Server) {
     }
   }
 
+  async function deleteRoomIfStillEmpty(
+    roomId: string,
+    reason: string,
+    ignoreConnectionSocketId?: string
+  ): Promise<boolean> {
+    const roomBeforeStop = rooms.get(roomId);
+    if (!roomBeforeStop || roomBeforeStop.players.length !== 0) {
+      return false;
+    }
+
+    // Immediate empty-room teardown has the same irreversible Worker-stop boundary as
+    // delayed cleanup. A join/reconnect that already claimed this room must win the race;
+    // otherwise we could terminate the Worker while the new connection is committing and
+    // keep a Controller room whose in-memory game state has already been destroyed.
+    if (hasRoomConnectionClaim(roomId, ignoreConnectionSocketId)) {
+      scheduleRoomCleanupIfNoOnlinePlayers(roomBeforeStop);
+      return false;
+    }
+    if (roomCleanupStops.has(roomId)) {
+      scheduleRoomCleanupIfNoOnlinePlayers(roomBeforeStop);
+      return false;
+    }
+
+    const expectedLastActiveTime = Number(roomBeforeStop.lastActiveTime || 0);
+    roomCleanupStops.add(roomId);
+    try {
+      // The marker is installed without an await after the final connection-claim check,
+      // so beginSocketRoomConnection cannot enter this room until teardown finishes.
+      if (roomBeforeStop.cleanupTimer) {
+        clearTimeout(roomBeforeStop.cleanupTimer);
+        roomBeforeStop.cleanupTimer = undefined;
+      }
+
+      let stopped = false;
+      try {
+        stopped = await threadManager.stopRoomThread(roomId);
+      } catch (error) {
+        console.error(`${reason}时停止线程失败: ${roomId}`, error);
+      }
+
+      const roomAfterStop = rooms.get(roomId);
+      if (!roomAfterStop) {
+        return true;
+      }
+
+      if (
+        roomAfterStop.players.length !== 0 ||
+        Number(roomAfterStop.lastActiveTime || 0) !== expectedLastActiveTime
+      ) {
+        // Defensive fallback for non-connection mutations. Connection transactions are
+        // already excluded by the roomCleanupStops barrier above.
+        return false;
+      }
+
+      if (!stopped) {
+        console.warn(`${reason}时房间线程未能停止，保留房间并稍后重试: ${roomId}`);
+        scheduleRoomCleanupIfNoOnlinePlayers(roomAfterStop);
+        return false;
+      }
+
+      clearOfflineHostFailoverTimer(roomId);
+      rooms.delete(roomId);
+      hostKickVotes.delete(roomId);
+      clearRoomSessionTokens(roomId);
+      broadcastLobbyUpdate();
+      console.log(`${reason}: ${roomId}`);
+      return true;
+    } finally {
+      roomCleanupStops.delete(roomId);
+    }
+  }
+
   function scheduleRoomCleanupIfNoOnlinePlayers(room: Room): void {
     if (room.players.some(player => player.online)) {
       return;
@@ -2144,21 +2217,26 @@ export function roomController(io: Server) {
     latestRoom.lastActiveTime = Date.now();
 
     if (latestRoom.players.length === 0) {
-      await threadManager.stopRoomThread(roomId);
-      const roomAfterStop = rooms.get(roomId);
-      if (!roomAfterStop) {
+      const deleted = await deleteRoomIfStillEmpty(
+        roomId,
+        '回滚失败的新玩家加入后清理空房间',
+        socket.id
+      );
+      if (deleted) {
         return;
       }
-      if (roomAfterStop.players.length === 0) {
-        clearOfflineHostFailoverTimer(roomId);
-        rooms.delete(roomId);
-        hostKickVotes.delete(roomId);
-        clearRoomSessionTokens(roomId);
-        broadcastLobbyUpdate();
+
+      const roomAfterCleanupAttempt = rooms.get(roomId);
+      if (!roomAfterCleanupAttempt) {
         return;
       }
-      // 停止线程期间可能已有玩家加入并触发重启；后续一律使用当前快照。
-      threadManager.updateRoomData(roomId, roomAfterStop);
+      if (roomAfterCleanupAttempt.players.length === 0) {
+        // 另一个连接事务已经先取得该房间的 claim；让它负责成员同步，当前
+        // 回滚只保留兜底清理计时器，不能用空成员快照覆盖正在提交的新座位。
+        scheduleRoomCleanupIfNoOnlinePlayers(roomAfterCleanupAttempt);
+        return;
+      }
+      threadManager.updateRoomData(roomId, roomAfterCleanupAttempt);
     } else {
       rooms.set(roomId, latestRoom);
       threadManager.updateRoomData(roomId, latestRoom);
@@ -2209,18 +2287,20 @@ export function roomController(io: Server) {
     }
 
     if (committedRoom.players.length === 0) {
-      await threadManager.stopRoomThread(roomId);
+      const deleted = await deleteRoomIfStillEmpty(
+        roomId,
+        'Worker移除最后一名玩家后清理空房间'
+      );
+      if (deleted) {
+        return;
+      }
+
       committedRoom = rooms.get(roomId);
       if (!committedRoom) {
         return;
       }
-      // 停止线程期间可能已有新玩家加入；只删除仍为空的当前房间。
       if (committedRoom.players.length === 0) {
-        clearOfflineHostFailoverTimer(roomId);
-        rooms.delete(roomId);
-        hostKickVotes.delete(roomId);
-        clearRoomSessionTokens(roomId);
-        broadcastLobbyUpdate();
+        scheduleRoomCleanupIfNoOnlinePlayers(committedRoom);
         return;
       }
     }
@@ -3219,22 +3299,27 @@ export function roomController(io: Server) {
         ackResponse.clearSession = true;
         committedRoom.lastActiveTime = Date.now();
 
-        // 如果房间为空，停止线程；停止期间可能有新玩家加入，因此删除前必须再次检查。
+        // 最后一名玩家离房时，Worker stop 与新 join/reconnect 必须使用同一房间级互斥。
+        // 仅在 await terminate() 之后再检查 players 已经太晚，因为 Worker 私有游戏状态
+        // 可能已经不可逆地丢失。
         if (committedRoom.players.length === 0) {
-          await threadManager.stopRoomThread(committedRoom.id);
+          const deleted = await deleteRoomIfStillEmpty(
+            committedRoom.id,
+            '最后一名玩家离房后清理空房间'
+          );
+          if (deleted) {
+            socket.emit('room_left', { roomId: room.id });
+            console.log(`玩家 ${player.nickname} 离开了房间 ${room.name}`);
+            return;
+          }
+
           committedRoom = rooms.get(room.id);
           if (!committedRoom) {
             socket.emit('room_left', { roomId: room.id });
             return;
           }
           if (committedRoom.players.length === 0) {
-            clearOfflineHostFailoverTimer(committedRoom.id);
-            rooms.delete(committedRoom.id);
-            hostKickVotes.delete(committedRoom.id);
-            clearRoomSessionTokens(committedRoom.id);
-            if (!committedRoom.private) {
-              broadcastLobbyUpdate();
-            }
+            scheduleRoomCleanupIfNoOnlinePlayers(committedRoom);
             socket.emit('room_left', { roomId: room.id });
             console.log(`玩家 ${player.nickname} 离开了房间 ${room.name}`);
             return;
