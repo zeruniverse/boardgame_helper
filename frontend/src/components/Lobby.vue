@@ -414,6 +414,8 @@
         title="加入房间"
         width="400px"
         center
+        :close-on-click-modal="!joiningRoom"
+        :close-on-press-escape="!joiningRoom"
       >
         <el-form :model="joinRoomForm" label-width="80px">
           <el-form-item label="房间号">
@@ -433,8 +435,8 @@
         </el-form>
         <template #footer>
           <span class="dialog-footer">
-            <el-button @click="joinRoomDialogVisible = false">取消</el-button>
-            <el-button type="primary" @click="confirmJoinRoom">加入</el-button>
+            <el-button :disabled="joiningRoom" @click="joinRoomDialogVisible = false">取消</el-button>
+            <el-button type="primary" :loading="joiningRoom" @click="confirmJoinRoom">加入</el-button>
           </span>
         </template>
       </el-dialog>
@@ -834,6 +836,7 @@ const helpDialogVisible = ref(false);
 
 // 加入房间相关状态
 const joinRoomDialogVisible = ref(false);
+const joiningRoom = ref(false);
 const joinRoomForm = ref({
   roomName: '',
   nickname: ''
@@ -1002,6 +1005,10 @@ function showCreateRoomDialog() {
 
 // 确认加入房间
 function confirmJoinRoom() {
+  if (joiningRoom.value) {
+    return;
+  }
+
   if (!joinRoomForm.value.roomName.trim()) {
     ElMessage.error('请输入房间号');
     return;
@@ -1029,15 +1036,21 @@ function confirmJoinRoom() {
     return;
   }
 
+  joiningRoom.value = true;
   // Bug L4: 参数名使用roomId与后端期望一致（用户输入的是房间号）。
   // 等待后端确认后再关闭对话框，昵称重复等拒绝原因能直接展示给用户。
-  store.socket.emit('join_room', {
+  store.socket.timeout(12000).emit('join_room', {
     roomId,
     nickname,
     playerId,
     userId: playerId,
     sessionToken: session?.sessionToken
-  }, (response: any) => {
+  }, (timeoutError: Error | null, response: any) => {
+    joiningRoom.value = false;
+    if (timeoutError) {
+      ElMessage.error('加入房间超时，请稍后重试');
+      return;
+    }
     if (!response?.success) {
       ElMessage.error(response?.error || '加入房间失败');
       return;

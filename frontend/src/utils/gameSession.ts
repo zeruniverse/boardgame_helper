@@ -146,7 +146,12 @@ export function clearGameSessionIfMatches(
   roomId: string | undefined,
   sessionToken?: string
 ): boolean {
-  if (!roomId) return false;
+  // leave_room 是异步回执；没有发起时的 token 就没有可靠的“会话代际”可比。
+  // 仅凭 roomId 清理会有一个真实竞态：旧请求发出时本地还没有 token（旧版本数据、
+  // 存储被清理等），用户随后重新加入同一个房间获得新 token，迟到的旧 ACK 若只匹配
+  // 房间号就会把新会话整个擦掉。无 token 时宁可保留无效旧记录，路由/重连本来就会
+  // 要求 token 并由服务端做最终校验，也不能误删一个已经确认的新会话。
+  if (!roomId || !sessionToken) return false;
 
   const storedRoomId = getStoredRoomId(gameType);
   if (!storedRoomId
@@ -154,7 +159,7 @@ export function clearGameSessionIfMatches(
     return false;
   }
 
-  if (sessionToken && getStoredSessionToken(gameType) !== sessionToken) {
+  if (getStoredSessionToken(gameType) !== sessionToken) {
     return false;
   }
 

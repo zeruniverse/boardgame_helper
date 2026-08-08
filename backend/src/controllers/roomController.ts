@@ -52,7 +52,15 @@ const HOST_DISCONNECT_FAILOVER_GRACE_MS = 15000;
 // 不进入 room_update / player.gameMetadata，避免房间内其他玩家凭公开 playerId 冒用座位。
 const playerSessionTokens: Map<string, string> = new Map();
 const existingSeatConnectionQueues: Map<string, Promise<void>> = new Map();
+// 同一个 Socket 在任一时刻只允许执行一次“占用/迁移房间座位”的异步事务。
+// Socket.IO 会并发调用 async 事件处理器；如果用户双击加入、同时创建/加入，或
+// 两个 reconnect_room 在第一个事务 await Worker 时交错执行，单纯检查 room.players
+// 还不足以阻止同一连接最终占用多个房间。这里先做 socket 级 claim，再由房间/座位
+// 自己的事务锁负责更细粒度的一致性。
+const socketRoomConnectionClaims: Set<string> = new Set();
 const INVALID_PLAYER_SESSION_MESSAGE = '重连身份校验失败，请使用原设备或原链接重新进入';
+const SOCKET_ROOM_CONNECTION_BUSY_MESSAGE = '房间连接操作正在处理中，请稍后重试';
+const SOCKET_ALREADY_IN_OTHER_ROOM_MESSAGE = '当前连接已在其他房间中，请先离开原房间';
 
 class InvalidPlayerSessionError extends Error {
   constructor() {
@@ -125,6 +133,48 @@ function clearRoomSessionTokens(roomId: string): void {
 function rejectInvalidPlayerSession(socket: Socket, ack?: (response: any) => void): void {
   socket.emit('error', { message: INVALID_PLAYER_SESSION_MESSAGE });
   ack?.({ success: false, error: INVALID_PLAYER_SESSION_MESSAGE });
+}
+
+function findSocketOwnedSeat(socketId: string): { room: Room; player: Player } | undefined {
+  for (const room of rooms.values()) {
+    const player = room.players.find(candidate => candidate.socketId === socketId && candidate.online !== false);
+    if (player) return { room, player };
+  }
+  return undefined;
+}
+
+/**
+ * 为 create/join/reconnect 建立 socket 级互斥，并阻止一个连接跨房间占多个在线座位。
+ * `targetRoomId` 存在时允许当前连接已经占用目标房间自己的座位（例如幂等重连）；
+ * 创建新房间没有目标 ID，因此只要已有在线座位就必须先离房。
+ */
+function beginSocketRoomConnection(
+  socket: Socket,
+  targetRoomId?: string,
+  ack?: (response: any) => void
+): boolean {
+  if (!socket.connected) {
+    sendErrorResponse(socket, '连接已断开，请重新连接后重试', ack);
+    return false;
+  }
+
+  if (socketRoomConnectionClaims.has(socket.id)) {
+    sendErrorResponse(socket, SOCKET_ROOM_CONNECTION_BUSY_MESSAGE, ack);
+    return false;
+  }
+
+  const ownedSeat = findSocketOwnedSeat(socket.id);
+  if (ownedSeat && (!targetRoomId || ownedSeat.room.id !== targetRoomId)) {
+    sendErrorResponse(socket, SOCKET_ALREADY_IN_OTHER_ROOM_MESSAGE, ack);
+    return false;
+  }
+
+  socketRoomConnectionClaims.add(socket.id);
+  return true;
+}
+
+function endSocketRoomConnection(socket: Socket): void {
+  socketRoomConnectionClaims.delete(socket.id);
 }
 
 // 广播大厅更新函数，将在 roomController 中被赋值
@@ -1390,6 +1440,16 @@ export function roomController(io: Server) {
     socket: Socket,
     previousSocketMessage: string
   ): Promise<ExistingSeatConnectionResult> {
+    const assertSocketConnected = (): void => {
+      // reconnect/join 的第一段会先 await Worker 启动。新 socket 可能恰好在这段
+      // 等待期间断开，而 disconnect 处理器此时还看不到它拥有任何座位。如果随后
+      // 继续 markPlayerOnline，就会把一个已经死亡的 socket 写成 online=true，且不再
+      // 有第二次 disconnect 事件负责清理，形成永久“在线”的幽灵座位。
+      if (!socket.connected) {
+        throw new Error('连接已断开，请重新连接后重试');
+      }
+    };
+
     const assertSeatCanMove = (candidateRoom: Room): void => {
       const occupiedSeat = candidateRoom.players.find(player =>
         player.id !== existingPlayer.id && player.socketId === socket.id
@@ -1423,12 +1483,14 @@ export function roomController(io: Server) {
     room.lastActiveTime = Math.max(Date.now(), Number(room.lastActiveTime || 0) + 1);
 
     try {
+      assertSocketConnected();
       // 先确保 worker 可用，再改写控制层座位；启动失败时旧用户仍保持完整连接。
       const gameConfig = getRoomGameConfig(room);
       const workerReady = await threadManager.ensureRoomThreadRunning(room, gameConfig);
       if (!workerReady) {
         throw new Error('房间游戏线程启动失败');
       }
+      assertSocketConnected();
 
       // prepare_room 可能在启动过程中回传新的 room 快照；后续必须基于最新对象提交，
       // 否则旧引用会覆盖 worker 已初始化的游戏状态。房间若已被清理则直接失败，
@@ -1450,6 +1512,7 @@ export function roomController(io: Server) {
       markPlayerOnlineForController(transactionRoom, transactionPlayer, socket.id, nickname);
       transactionRoom.lastActiveTime = Date.now();
       await socket.join(transactionRoom.id);
+      assertSocketConnected();
 
       // socket.join 也会让出事件循环。使用此时仍在 rooms 中的当前快照继续提交；
       // 不再调用 rooms.set(transactionRoom)，以免清理定时器在 join 期间删除房间后被复活。
@@ -1462,6 +1525,7 @@ export function roomController(io: Server) {
       threadManager.updateRoomData(joinedRoom.id, joinedRoom);
       await sendTaskToRoom(joinedRoom.id, 'update_room_data', { room: joinedRoom });
       await sendTaskToRoom(joinedRoom.id, 'player_online', { playerId: joinedPlayer.id });
+      assertSocketConnected();
 
       let latestRoom = rooms.get(joinedRoom.id);
       let latestPlayer = latestRoom?.players.find(p => p.id === joinedPlayer.id);
@@ -1471,12 +1535,14 @@ export function roomController(io: Server) {
 
       // 只有控制层和 worker 都确认新连接后，才移除旧连接。离房会让出事件循环，
       // 因此轮换令牌前还要再次确认房间没有被清理、座位也没有被踢出。
+      assertSocketConnected();
       previousSocketInvalidated = await detachSeatSocketById(
         latestRoom.id,
         previousSocketId,
         socket,
         previousSocketMessage
       );
+      assertSocketConnected();
       latestRoom = rooms.get(transactionRoom.id);
       latestPlayer = latestRoom?.players.find(p => p.id === transactionPlayer.id);
       if (!latestRoom || !latestPlayer || latestPlayer.socketId !== socket.id || latestPlayer.online === false) {
@@ -1905,6 +1971,7 @@ export function roomController(io: Server) {
       gameConfig: any;
       isPrivate?: boolean
     }, ack?: (response: any) => void) => {
+      let connectionClaimed = false;
       try {
         // Validate input
         if (!data || !data.gameType || typeof data.gameType !== 'string') {
@@ -1929,6 +1996,11 @@ export function roomController(io: Server) {
           sendErrorResponse(socket, sanitizedConfigResult.error, ack);
           return;
         }
+
+        if (!beginSocketRoomConnection(socket, undefined, ack)) {
+          return;
+        }
+        connectionClaimed = true;
 
         // 创建玩家。身份字段只用于建立座位，不进入会广播并持久化的游戏配置。
         const rawRequestedPlayerId = data.gameConfig?.playerId ?? data.gameConfig?.userId;
@@ -2040,11 +2112,16 @@ export function roomController(io: Server) {
         console.error('创建房间失败:', error);
         socket.emit('error', { message: '创建房间失败' });
         ack?.({ success: false, error: error instanceof Error ? error.message : '创建房间失败' });
+      } finally {
+        if (connectionClaimed) {
+          endSocketRoomConnection(socket);
+        }
       }
     });
 
     // 重连房间
     socket.on('reconnect_room', async (data: { roomId: string; playerId: string; sessionToken?: string }) => {
+      let connectionClaimed = false;
       try {
         if (!data || !isValidRoomId(data.roomId) || !isValidPlayerId(data.playerId)) {
           socket.emit('error', { message: '重连失败，无效的房间ID或玩家ID' });
@@ -2055,6 +2132,11 @@ export function roomController(io: Server) {
         const player = room?.players.find(p => p.id === playerId);
 
         if (room && player) {
+          if (!beginSocketRoomConnection(socket, room.id)) {
+            return;
+          }
+          connectionClaimed = true;
+
           if (!isValidPlayerSessionToken(room.id, player.id, data.sessionToken)) {
             rejectInvalidPlayerSession(socket);
             return;
@@ -2091,11 +2173,16 @@ export function roomController(io: Server) {
       } catch (error) {
         console.error('重连房间失败:', error);
         socket.emit('error', { message: '重连房间时发生服务器错误' });
+      } finally {
+        if (connectionClaimed) {
+          endSocketRoomConnection(socket);
+        }
       }
     });
 
     // 加入房间
     socket.on('join_room', async (data: { roomId?: string; roomName?: string; nickname?: string; playerId?: string; userId?: string; gameType?: string; sessionToken?: string }, ack?: (response: any) => void) => {
+      let connectionClaimed = false;
       try {
         if (!data || (!isValidRoomId(data.roomId) && !data.roomName)) {
           sendErrorResponse(socket, '无效的房间ID或房间名', ack);
@@ -2115,6 +2202,11 @@ export function roomController(io: Server) {
           sendErrorResponse(socket, '房间不存在', ack);
           return;
         }
+
+        if (!beginSocketRoomConnection(socket, room.id, ack)) {
+          return;
+        }
+        connectionClaimed = true;
 
         const rawRequestedPlayerId = data.playerId ?? data.userId;
         if (rawRequestedPlayerId !== undefined && !isValidPlayerId(rawRequestedPlayerId)) {
@@ -2269,11 +2361,16 @@ export function roomController(io: Server) {
         console.error('加入房间失败:', error);
         socket.emit('error', { message: '加入房间失败' });
         ack?.({ success: false, error: error instanceof Error ? error.message : '加入房间失败' });
+      } finally {
+        if (connectionClaimed) {
+          endSocketRoomConnection(socket);
+        }
       }
     });
 
     // 通过房间名或ID加入房间（用于直接链接）
     socket.on('join_room_by_name', async (data: { roomName: string; nickname?: string; playerId?: string; userId?: string; sessionToken?: string }, ack?: (response: any) => void) => {
+      let connectionClaimed = false;
       try {
         if (!data || !data.roomName || typeof data.roomName !== 'string') {
           sendErrorResponse(socket, '无效的房间名', ack);
@@ -2286,6 +2383,11 @@ export function roomController(io: Server) {
           sendErrorResponse(socket, '房间不存在', ack);
           return;
         }
+
+        if (!beginSocketRoomConnection(socket, room.id, ack)) {
+          return;
+        }
+        connectionClaimed = true;
 
         const rawRequestedPlayerId = data.playerId ?? data.userId;
         if (rawRequestedPlayerId !== undefined && !isValidPlayerId(rawRequestedPlayerId)) {
@@ -2439,6 +2541,10 @@ export function roomController(io: Server) {
         console.error('通过链接加入房间失败:', error);
         socket.emit('error', { message: '加入房间失败' });
         ack?.({ success: false, error: error instanceof Error ? error.message : '加入房间失败' });
+      } finally {
+        if (connectionClaimed) {
+          endSocketRoomConnection(socket);
+        }
       }
     });
 
@@ -3065,8 +3171,10 @@ export function roomController(io: Server) {
     // 处理断开连接
     socket.on('disconnect', async () => {
       console.log(`客户端断开连接: ${socket.id}`);
-      
-      // 同一个 socket 可能同时加入多个房间；断线时必须同步清理所有房间中的席位。
+
+      // 断线后不再需要保留尚未完成的 socket 级连接 claim；正在 await 的处理器
+      // 最终也会在 finally 中重复删除。仍扫描全部房间以兼容升级前已经产生的多房幽灵席位。
+      socketRoomConnectionClaims.delete(socket.id);
       const memberships = Array.from(rooms.values()).flatMap(room => {
         const player = room.players.find(p => p.socketId === socket.id);
         return player ? [{ room, player }] : [];
