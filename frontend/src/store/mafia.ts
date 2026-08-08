@@ -603,6 +603,10 @@ export const useMafiaStore = defineStore('mafia', {
       this.sendGameAction('doctor_save', { targetId });
     },
 
+    skipDoctorSave() {
+      this.sendGameAction('doctor_skip', {});
+    },
+
     sniperShoot(targetId: string) {
       this.sendGameAction('sniper_shoot', { targetId });
     },

@@ -132,7 +132,7 @@
             <el-input-number v-model="editableConfig.speakTime" :min="0" :max="600" :step="15" size="small" @change="emitTimingConfigChange" />
           </div>
           <div class="config-item">
-            <label>行动时间</label>
+            <label>投票时间</label>
             <el-input-number v-model="editableConfig.actionTime" :min="0" :max="600" :step="15" size="small" @change="emitTimingConfigChange" />
           </div>
           <div class="config-item">
@@ -178,7 +178,7 @@
       </template>
       <template v-else>
         <div class="readonly-config">
-          发言 {{ speakTime }}秒 / 行动 {{ actionTime }}秒 / 夜晚 {{ nightTime }}秒 / 遗言 {{ lastWordRound }}轮
+          发言 {{ speakTime }}秒 / 投票 {{ actionTime }}秒 / 夜晚 {{ nightTime }}秒 / 遗言 {{ lastWordRound }}轮
         </div>
       </template>
     </div>

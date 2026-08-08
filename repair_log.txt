@@ -1827,3 +1827,36 @@ Commit: fix(round37): 修复阿瓦隆重开身份与任务结果状态
   - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts 校验（仅可选原生依赖未安装提示）。
   - 正式 npm ci --ignore-scripts --no-audit --no-fund 已执行，但当前内部 npm 源请求 package-lock 锁定的 typescript-5.8.3.tgz 返回 404。随后 npm run build 在依赖未完整安装的工作区执行，backend tsc 因 Node/Express/Socket.IO/UUID/CORS 等已声明依赖/类型不可解析而中止；单独 npm --prefix frontend run build 也因 vue-tsc 未安装而无法启动。相同 backend/src 已通过上述严格隔离类型检查与 Worker 实际运行烟雾，因此没有把依赖安装缺失误判为源码错误；完整生产构建/直接部署仍需在依赖源可用、npm ci 完整成功的本地或 CI 执行 npm run build 最终确认。
 备注: 本轮未删除文件，未创建根目录 src/；本轮没有修改 backend/src/，所有前端源码修改仅位于 frontend/src/；修复包只包含本轮修改文件及 repair_log.txt，可按相对路径直接覆盖。
+
+=== 当前请求第 38 轮修复记录 ===
+时间: 2026-08-08 09:44:29 UTC
+Commit: fix(round38): 补齐杀人游戏医生空救并统一投票计时语义
+修改/新增文件:
+  - backend/src/workers/mafiaWorker.ts
+  - frontend/src/components/Lobby.vue
+  - frontend/src/components/MafiaActionPanel.vue
+  - frontend/src/components/MafiaPlayerList.vue
+  - frontend/src/store/mafia.ts
+  - doc/mafia.md
+  - repair_log.txt
+删除文件: 无
+构建测试: 部分通过（85 个源码文件全量静态扫描、backend/src 全量 strict/noEmit 与隔离 CommonJS 编译、六游戏 Worker prepare_room 烟雾、杀人游戏双医生主动空救专项回归、package-lock 工作区依赖树检查均通过；正式 npm ci / npm run build 仍受当前容器内部 npm 源缺失 package-lock 锁定 TypeScript 5.8.3 包与工作区依赖不完整阻塞）
+本轮修复:
+  - 修复杀人游戏医生没有“本夜不救”操作、必须等整个 nightTime 超时才能主动空救的问题。后端新增 doctor_skip 行动并使用逐医生 doctorSkipped 状态记录本夜已完成的空救；前端 ActionPanel 与 mafia store 增加对应按钮/事件，使医生可以明确放弃救治且不会阻塞其他夜间角色。
+  - 补齐多医生并发语义：一名医生跳过后只锁定自己的再次操作，其他在线医生仍可继续独立救人；所有在线医生都“救治或跳过”后才关闭医生行动锁。离线医生的尚未结算救治/跳过会按既有离线策略撤销，重连后可在夜晚仍未结算时重新行动；夜晚初始化、超时和结算都会清理 doctorSkipped，避免跨夜污染。
+  - 修复医生空救与“不可连续两晚救同一人”历史互相污染的问题。主动跳过不会写 doctorSaves，因此真实救治记录仍只按实际发生的救治夜晚计算；跳过一晚后再次救同一目标不会被错误判成连续两晚。
+  - 修复杀人游戏 actionTime 前后端/文档语义不一致。Worker 实际一直将 actionTime 用于普通投票和 PK 投票，而 Lobby、MafiaPlayerList 与规则文档却显示为“夜晚行动时间”；本轮统一标为“投票时间”，nightTime 继续作为夜晚总时长，避免房主误配参数。
+  - 修正规则文档流程图中“满足结束条件”的 Yes/No 箭头写反问题，并补充医生可主动空救的规则说明。
+审查结果/本轮未改动重点:
+  - 再次覆盖 backend/src 与 frontend/src 当前全部 85 个 TypeScript/Vue/CSS/SVG 源文件，复核六个游戏 Worker、BaseGameWorker、RoomThreadManager、roomController、各 Store/Room/ActionPanel/PlayerList 的任务串行、公开/私密状态、断线重连与前后端事件对应。本轮最明确、可稳定复现且适合低风险落地的问题集中在杀人游戏医生夜间可选行动与计时配置事实源，因此源码修改限定在既有 Mafia Worker/Store/组件和 Lobby，没有新增平行状态管理或目录结构。
+  - 狼人杀继续核对狼人共识、预言家/女巫/守卫/猎人夜序、警长与放逐一次 PK；一夜狼人继续核对玩家+3 角色牌、独狼中心牌、换牌后最终身份及并列处决；阿瓦隆继续核对任务人数、7 人以上第四任务双失败、五次否决、刺杀与湖上夫人；德州扑克继续核对盲注/HU 顺序、短码 all-in、加注权、未跟注返还、边池与摊牌。本轮未发现优先级高于本次确定性 Mafia 流程缺口、且能同等低风险合并的新主流程阻断项。
+  - 血染钟楼仍保留前轮已经记录、需要更大状态模型或真人说书人裁决 UI 才能正确完成的高阶边界：特殊自定义夜序下 Pit-Hag 创建 Demon 后无法安全逆向更早已经真实落地并触发被动的死亡；真人说书人缺少每一次 Recluse/Spy registration 的逐次手工裁决；Mathematician 极端情况下仍缺统一的逐次能力异常最终基准审计。本轮没有用局部近似逻辑冒险修改这些架构级问题。
+  - 前端 27 个 Vue SFC 继续复用既有 Room / ActionPanel / PlayerList / Chat、Element Plus 和共享 store/socket/session/playerName/messages 工具；Mafia 医生按钮直接加入现有夜间 player-buttons，并把 doctor-actions 纳入与其他夜间角色相同的间距规则，没有新建重复组件或独立样式体系。
+验证:
+  - backend/src + frontend/src 全量静态扫描通过：共 85 个源码文件、83 个 TypeScript/Vue script 解析单元、27 个 Vue SFC、28 个 CSS/style 块、314 个静态 import/export 路径均无 TypeScript 语法、SFC 基本结构、CSS 花括号、真实合并冲突标记或失效相对/@ 导入错误；项目根目录不存在 src/。
+  - backend/src 全部 34 个 TypeScript 文件使用全局 TypeScript 5.8.3、strict 模式、真实全局 Node 类型与项目目录外的 Express/CORS/Socket.IO/UUID 临时声明桩完成 noEmit 类型检查，0 个源码类型错误；同一配置成功生成 34 个隔离 CommonJS 测试编译文件。
+  - 六个实际游戏 Worker 使用本轮最新隔离编译产物执行 prepare_room 烟雾全部通过：狼人杀、杀人游戏、血染钟楼、一夜狼人、阿瓦隆、德州扑克均能启动 Worker 并完成房间初始化。
+  - 第 38 轮杀人游戏专项回归通过：6 人自定义 1 杀手/1 警察/2 医生/1 狙击手/1 平民局进入夜晚后，医生 A 主动 doctor_skip 会立即收到空救结果并失去再次操作权但不会提前结束医生阶段；其再次 doctor_save 被明确拒绝；医生 B 正常救治后医生阶段完成，随后警察、狙击手、杀手完成行动即无需等待 600 秒 nightTime 直接进入白天，未被救的杀手目标正常死亡。
+  - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts 校验（仅可选原生依赖提示）。
+  - 正式 npm ci --ignore-scripts --no-audit --no-fund 已执行，但当前内部 npm 源请求 package-lock 锁定的 typescript-5.8.3.tgz 返回 404。随后 npm run build 在依赖未完整安装的工作区执行，backend tsc 因 Node/Express/Socket.IO/UUID/CORS 等已声明依赖/类型无法解析而中止，根构建未进入 frontend vue-tsc/Vite。相同 backend/src 已通过上述严格隔离类型检查、六 Worker 实际运行烟雾与专项 Worker 回归；完整生产构建/直接部署仍需在依赖源可用、npm ci 完整成功的本地或 CI 执行 npm run build 做最终确认。
+备注: 本轮未删除文件，未创建根目录 src/；所有后端源码修改仅位于 backend/src/，所有前端源码修改仅位于 frontend/src/；修复包只包含本轮修改文件、规则文档及 repair_log.txt，可按相对路径直接覆盖。

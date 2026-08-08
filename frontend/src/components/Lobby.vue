@@ -638,8 +638,8 @@
                   <el-option label="120秒" :value="120" />
                 </el-select>
               </el-form-item>
-              <el-form-item label="行动时间">
-                <el-select v-model="createRoomForm.actionTime" placeholder="选择行动时间">
+              <el-form-item label="投票时间">
+                <el-select v-model="createRoomForm.actionTime" placeholder="选择投票时间">
                   <el-option label="30秒" :value="30" />
                   <el-option label="60秒" :value="60" />
                   <el-option label="90秒" :value="90" />

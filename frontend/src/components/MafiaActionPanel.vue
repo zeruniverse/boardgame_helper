@@ -77,6 +77,13 @@
           >
             {{ displayPlayerName(player) }}
           </el-button>
+          <el-button
+            @click="skipDoctorSave"
+            :disabled="!canOperate"
+            size="small"
+          >
+            本夜不救治
+          </el-button>
         </div>
       </div>
 
@@ -370,7 +377,7 @@ const getNightActionDescription = (): string => {
   } else if (props.playerSecret?.role === 'COP') {
     return '警察请选择今晚要查验的目标'
   } else if (props.playerSecret?.role === 'DOCTOR') {
-    return '医生请选择今晚要救的目标'
+    return '医生可选择今晚要救的目标，或主动放弃本夜救治'
   } else if (props.playerSecret?.role === 'SNIPER') {
     if (props.playerSecret?.sniperShot) {
       return '你已经使用过狙击机会了，请耐心等待...'
@@ -399,6 +406,7 @@ const startGame = () => safeAction(() => store.startGame(), 'startGame')
 const killPerson = (targetId: string) => safeAction(() => store.killPerson(targetId), 'killPerson')
 const inspectSuspect = (targetId: string) => safeAction(() => store.inspectSuspect(targetId), 'inspectSuspect')
 const doctorSave = (targetId: string) => safeAction(() => store.doctorSave(targetId), 'doctorSave')
+const skipDoctorSave = () => safeAction(() => store.skipDoctorSave(), 'skipDoctorSave')
 const sniperShoot = (targetId: string) => safeAction(() => store.sniperShoot(targetId), 'sniperShoot')
 const skipSnipe = () => safeAction(() => store.skipSnipe(), 'skipSnipe')
 const vote = (targetId: string) => safeAction(() => store.vote(targetId), 'vote')
@@ -448,6 +456,7 @@ const restartGame = () => safeAction(() => store.restartGame(), 'restartGame')
 
 .night-actions .killer-actions,
 .night-actions .cop-actions,
+.night-actions .doctor-actions,
 .night-actions .sniper-actions {
   margin-bottom: 16px;
 }

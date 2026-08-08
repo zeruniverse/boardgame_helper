@@ -60,6 +60,7 @@ interface MafiaGameState {
   inspect: Record<string, string>;    // 警察验人 {警察ID: 被验者ID}
   wantToKill: Record<string, string>; // 杀手杀人 {杀手ID: 被杀者ID}
   wantToSave: Record<string, string>; // 医生救人 {医生ID: 被救者ID}
+  doctorSkipped: Record<string, true>; // 医生主动放弃本夜救治 {医生ID: true}
   doctorSaves: Record<string, { target: string; day: number }>; // 已结算/已提交的医生历史，用于限制连续两晚救同一人
   personWillDie: string | null;       // 夜晚将死的人（杀手目标）
   sniperTarget: string | null;        // 狙击手目标（独立于杀手目标）
@@ -95,7 +96,7 @@ interface GameEndResult {
 // 杀人游戏配置接口
 interface MafiaConfig {
   speakTime: number;      // 发言时间（秒）
-  actionTime: number;     // 行动时间（秒）
+  actionTime: number;     // 投票时间（秒，含普通投票与PK投票）
   nightTime: number;      // 夜晚时间（秒）
   lastWordRound: number;  // 遗言轮数
   killerCount?: number;   // 杀手数量
@@ -184,6 +185,7 @@ class MafiaWorker extends BaseGameWorker {
       inspect: {},
       wantToKill: {},
       wantToSave: {},
+      doctorSkipped: {},
       doctorSaves: {},
       personWillDie: null,
       sniperTarget: null,
@@ -551,6 +553,9 @@ class MafiaWorker extends BaseGameWorker {
         case 'doctor_save':
           this.handleDoctorSave(playerId, actionData?.targetId);
           break;
+        case 'doctor_skip':
+          this.handleDoctorSkip(playerId);
+          break;
         case 'sniper_shoot':
           this.handleSniperShoot(playerId, actionData?.targetId);
           break;
@@ -723,7 +728,9 @@ class MafiaWorker extends BaseGameWorker {
       return gameState.copActionLock && !(playerId in gameState.inspect);
     }
     if (gameState.topSecret.doctor.includes(playerId)) {
-      return gameState.doctorActionLock && !(playerId in gameState.wantToSave);
+      return gameState.doctorActionLock &&
+        !(playerId in gameState.wantToSave) &&
+        !(playerId in gameState.doctorSkipped);
     }
     if (gameState.topSecret.sniper.includes(playerId)) {
       return gameState.sniperActionLock;
@@ -1210,8 +1217,8 @@ class MafiaWorker extends BaseGameWorker {
       return;
     }
 
-    if (playerId in gameState.wantToSave) {
-      this.sendToPlayer(playerId, 'save_rejected', { message: '你已经选择过救人目标' });
+    if (playerId in gameState.wantToSave || playerId in gameState.doctorSkipped) {
+      this.sendToPlayer(playerId, 'save_rejected', { message: '你本夜已经完成医生行动' });
       return;
     }
 
@@ -1220,6 +1227,7 @@ class MafiaWorker extends BaseGameWorker {
     aliveOfflineDoctors.forEach(docId => {
       const abandonedTarget = gameState.wantToSave[docId];
       delete gameState.wantToSave[docId];
+      delete gameState.doctorSkipped[docId];
       const recordedSave = gameState.doctorSaves[docId];
       if (abandonedTarget && recordedSave?.day === gameState.day && recordedSave.target === abandonedTarget) {
         delete gameState.doctorSaves[docId];
@@ -1253,11 +1261,14 @@ class MafiaWorker extends BaseGameWorker {
 
     // 检查是否所有在线医生都完成了救人
     const aliveOnlineDoctors = this.getAliveOnlineDoctors();
-    const allDoctorsDone = aliveOnlineDoctors.every(docId => docId in gameState.wantToSave);
+    const allDoctorsDone = aliveOnlineDoctors.every(docId =>
+      docId in gameState.wantToSave || docId in gameState.doctorSkipped
+    );
 
     if (allDoctorsDone) {
       gameState.doctorActionLock = false;
       gameState.wantToSave = {};
+      gameState.doctorSkipped = {};
       aliveOnlineDoctors.forEach(doctorId => {
         this.sendToPlayer(doctorId, 'secret_update', this.getSecretForPlayer(doctorId));
       });
@@ -1267,6 +1278,62 @@ class MafiaWorker extends BaseGameWorker {
       this.sendToPlayer(playerId, 'secret_update', this.getSecretForPlayer(playerId));
       this.sendToPlayer(playerId, 'save_pending', {
         message: '救人选择已记录，等待其他医生选择'
+      });
+    }
+  }
+
+
+  private handleDoctorSkip(playerId: string): void {
+    if (!this.gameState) return;
+    const gameState = this.gameState as MafiaGameState;
+
+    if (gameState.status !== GameStatus.NIGHT ||
+        !gameState.doctorActionLock ||
+        !gameState.topSecret?.doctor?.includes(playerId) ||
+        !gameState.players?.[playerId]?.alive) {
+      this.sendToPlayer(playerId, 'save_rejected', { message: '当前不能跳过救人操作' });
+      return;
+    }
+
+    if (playerId in gameState.wantToSave || playerId in gameState.doctorSkipped) {
+      this.sendToPlayer(playerId, 'save_rejected', { message: '你本夜已经完成医生行动' });
+      return;
+    }
+
+    // 与提交救治相同：离线医生的未结算操作不再阻塞当前在线玩家。
+    const aliveOfflineDoctors = this.getAliveOfflineDoctors();
+    aliveOfflineDoctors.forEach(docId => {
+      const abandonedTarget = gameState.wantToSave[docId];
+      delete gameState.wantToSave[docId];
+      delete gameState.doctorSkipped[docId];
+      const recordedSave = gameState.doctorSaves[docId];
+      if (abandonedTarget && recordedSave?.day === gameState.day && recordedSave.target === abandonedTarget) {
+        delete gameState.doctorSaves[docId];
+      }
+    });
+    gameState.personSaved = [...new Set(Object.values(gameState.wantToSave))];
+
+    // 主动跳过只代表本夜不救人，不写入 doctorSaves；这样上一晚的救治历史仍按真实夜晚间隔判断。
+    gameState.doctorSkipped[playerId] = true;
+    this.sendToPlayer(playerId, 'save_result', { message: '你选择本夜不进行救治' });
+
+    const aliveOnlineDoctors = this.getAliveOnlineDoctors();
+    const allDoctorsDone = aliveOnlineDoctors.every(docId =>
+      docId in gameState.wantToSave || docId in gameState.doctorSkipped
+    );
+
+    if (allDoctorsDone) {
+      gameState.doctorActionLock = false;
+      gameState.wantToSave = {};
+      gameState.doctorSkipped = {};
+      aliveOnlineDoctors.forEach(doctorId => {
+        this.sendToPlayer(doctorId, 'secret_update', this.getSecretForPlayer(doctorId));
+      });
+      this.endNightIfNoPendingActions();
+    } else {
+      this.sendToPlayer(playerId, 'secret_update', this.getSecretForPlayer(playerId));
+      this.sendToPlayer(playerId, 'save_pending', {
+        message: '已放弃本夜救治，等待其他医生完成行动'
       });
     }
   }
@@ -1763,6 +1830,7 @@ class MafiaWorker extends BaseGameWorker {
     gameState.inspect = {};
     gameState.wantToKill = {};
     gameState.wantToSave = {};
+    gameState.doctorSkipped = {};
     gameState.wantToSnipe = {};
     gameState.sniperTarget = null;
 
@@ -1848,6 +1916,7 @@ class MafiaWorker extends BaseGameWorker {
       aliveOfflineDoctors.forEach(docId => {
         const abandonedTarget = gameState.wantToSave[docId];
         delete gameState.wantToSave[docId];
+        delete gameState.doctorSkipped[docId];
 
         // 离线医生的本夜选择被明确撤销时，也必须撤销同一笔历史记录。
         // 否则该选择既不会产生救治效果，却会错误阻止医生下一夜再次选择该目标。
@@ -1861,9 +1930,12 @@ class MafiaWorker extends BaseGameWorker {
       // 此时 personSaved 是已经提交的夜晚结果，不能被后续断线事件覆盖。
       gameState.personSaved = [...new Set(Object.values(gameState.wantToSave))];
       const aliveOnlineDoctors = this.getAliveOnlineDoctors();
-      if (aliveOnlineDoctors.length === 0 || aliveOnlineDoctors.every(docId => docId in gameState.wantToSave)) {
+      if (aliveOnlineDoctors.length === 0 || aliveOnlineDoctors.every(docId =>
+        docId in gameState.wantToSave || docId in gameState.doctorSkipped
+      )) {
         gameState.doctorActionLock = false;
         gameState.wantToSave = {};
+        gameState.doctorSkipped = {};
       }
     }
 
@@ -2006,6 +2078,7 @@ class MafiaWorker extends BaseGameWorker {
     gameState.inspect = {};
     gameState.wantToKill = {};
     gameState.wantToSave = {};
+    gameState.doctorSkipped = {};
     gameState.wantToSnipe = {};
     
     if (!gameState.personWillDie && !gameState.sniperTarget) {
@@ -2060,6 +2133,7 @@ class MafiaWorker extends BaseGameWorker {
     gameState.inspect = {};
     gameState.wantToKill = {};
     gameState.wantToSave = {};
+    gameState.doctorSkipped = {};
     gameState.step += 1;
 
     // 确定实际死亡的玩家列表
