@@ -1240,3 +1240,32 @@ Commit: fix(round18): 修复钟楼哲学家持续醉酒与有效能力结算
   - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts 校验；本轮三个源码文件相对附件原始版本的 git diff --no-index --check 无新增空白错误。
   - 正式 npm ci --ignore-scripts 已尝试，但当前内部 npm 源对锁定的 typescript-5.8.3.tgz 返回 404，无法完整安装 node_modules。随后正式 npm run build 再次执行，后端 tsc 因缺少 Node/Express/Socket.IO/UUID/CORS 等依赖/类型而中止，前端 vue-tsc/Vite 未进入生产构建。因此本轮不能声称完整生产构建已在此容器通过；需在依赖源可用的本地或 CI 执行 npm ci && npm run build 做最终部署确认。
 备注: 本轮未删除文件，未创建根目录 src/；所有后端源码修改均位于 backend/src/，未修改 frontend/src/；修复包只包含本轮修改文件及 repair_log.txt，可按相对路径直接覆盖。
+
+=== 当前请求第 19 轮修复记录 ===
+时间: 2026-08-08 04:47:57 UTC
+Commit: fix(round19): 支持钟楼夜间动态唤醒并封堵坑巫裁决竞态
+修改/新增文件:
+  - backend/src/workers/botcWorker.ts
+  - repair_log.txt
+删除文件: 无
+构建测试: 部分通过（后端 34 个 TypeScript strict/noEmit 与隔离测试编译、85 个源码文件静态扫描、六 Worker prepare_room 烟雾、BOTC 第 19 轮动态夜序专项回归及 package-lock 依赖树检查通过；正式 npm ci / npm run build 仍受当前容器内部 npm 源缺少锁定 TypeScript 包阻塞）
+本轮修复:
+  - 补齐第 18 轮明确遗留的 BOTC “夜中获得新角色/能力后同夜稍后再次唤醒”架构缺口。夜间结算现在维护已结算动作账本与待动态唤醒玩家集合；当 Philosopher 获得稍后夜序的主动角色、Snake Charmer 与 Demon 换角、Pit-Hag 制造稍后夜序角色，或 Professor/Shabaloth 复活一个尚未到夜序的角色时，会暂停当前结算、重新打开该玩家行动并在提交后从断点继续，而不是静默丢失合法行动。
+  - 断点恢复不会重放已经结算的击杀、中毒、换角、一次性能力或提醒标记；动作排序改为优先按动作自身 roleId 的官方夜序，而不是只按玩家开夜时的原始位置，因此同一玩家可以先以 Philosopher/Snake Charmer 行动，再在稍后的新角色夜序合法执行第二次动作。
+  - 动态唤醒仅在“新角色标准夜序严格晚于造成变化的角色夜序”时创建，并复用现有 getNightOrder 资格判定；复活角色的夜序已经过去时不会错误把整晚卡住。真人说书人仍可用原有手动结算/推进入口显式跳过未提交的新增行动，自动模式则重新挂接夜晚超时。
+  - 修复同一玩家一夜内存在多个角色动作时特殊信息读取错 payload：Dreamer/Chambermaid/Seamstress 等延迟信息处理现在按 playerId + 当前有效 roleId 取该角色最新动作，不再误用玩家较早的 Philosopher/Snake Charmer 动作数据。
+  - 修复首夜 Philosopher 获得 Clockmaker/Washerwoman/Librarian/Investigator/Chef/Grandmother 等“立即得知”能力后，首夜收尾又重复发送一次信息的问题；已即时发送的玩家会从通用 first-night info 二次处理中过滤。
+  - 封堵 Pit-Hag 制造 Demon 后的人类说书人裁决竞态：任意死亡选择只有在本夜所有后续动态/普通动作都结算完成并建立 continuation 后才对说书人开放。若说书人过早提交裁决，服务端会拒绝；这样后续新 Demon 等能力造成的死亡尝试仍处于坑巫任意死亡规则的统一抑制/候选收集范围内，不会因一次抢先点击绕过规则。
+审查结果/本轮未改动重点:
+  - 继续覆盖 backend/src 与 frontend/src 当前全部 85 个代码文件，复查六个游戏 Worker、BaseGameWorker、Controller/RoomThreadManager 的目录约束、相对/@ 导入、Worker 初始化与状态同步边界；本轮最高优先级仍是第 18 轮已知且可复现的 BOTC 动态夜序缺口，因此修改集中在 botcWorker，不扩大到其他已稳定路径。
+  - 狼人杀、杀人游戏、一夜狼人、阿瓦隆、德州扑克本轮未发现优先级高于上述 BOTC 夜序错误的新阻断项；继续沿用前 18 轮已修复的身份隐私、阶段推进、投票/刺杀、重连与连接版本、Worker/Controller 状态版本、德州扑克边池及加注权等逻辑。本轮六个实际 Worker 均重新通过 prepare_room 初始化烟雾。
+  - 前端 27 个 Vue SFC 的 script/template/style、CSS 花括号和相对/@ 导入重新扫描通过；现有各游戏 Room / ActionPanel / PlayerList / Chat 分层及 Element Plus 体系未发现需要在本轮高风险重构的样式/组件复用阻断问题，因此未修改 frontend/src。
+  - 仍有后续高阶 BOTC 边界：自定义夜序若某些死亡已经在 Pit-Hag 制造 Demon 之前真正落地，当前任意死亡机制仍不能逆向撤销早先死亡；真人说书人仍没有对每一次 Recluse/Spy registration 逐次手工选择登记结果的专门 UI；AI 说书人对部分高度主观裁决角色仍采用保守自动化/组局限制而非完整真人主持逻辑。
+验证:
+  - backend/src 全部 34 个 TypeScript 文件使用 TypeScript strict/noEmit、真实全局 Node 类型和位于项目目录外的 Express/CORS/Socket.IO/UUID 声明桩完成类型检查，0 个错误；同一配置成功生成 34 个隔离 CommonJS 测试编译文件。
+  - backend/src + frontend/src 静态扫描通过：共 85 个代码文件、83 个 TypeScript/Vue script 解析单元、27 个 Vue SFC、27 个 style 块、219 个相对/@ 静态导入均无 TypeScript 语法、SFC 标签平衡、CSS 花括号或失效导入错误；项目根目录不存在 src/。
+  - 六个实际游戏 Worker 使用本轮最新严格编译产物执行 prepare_room 烟雾全部通过：狼人杀、杀人游戏、血染钟楼、一夜狼人、阿瓦隆、德州扑克均能启动 Worker 并完成房间初始化。
+  - BOTC 第 19 轮专项回归 5/5 通过：Philosopher 获得稍后 Dreamer 能力后同夜重新唤醒且两次动作只结算一次；Snake Charmer 与 Fang Gu 换角后新 Demon 获得稍后恶魔行动而旧 Demon 预提交动作被取消；Professor 复活稍后 Chambermaid 会同夜提示、复活已过夜序 Sailor 不会错误重开；Pit-Hag 裁决在后续动作完成前被拒绝；首夜 Philosopher 即时 Clockmaker 信息不会重复发送。
+  - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts；本轮源码 git diff --check 通过。
+  - 正式 npm ci --ignore-scripts 已再次尝试，但当前内部 npm 源对 package-lock 锁定的 typescript-5.8.3.tgz 返回 404，无法完整安装 node_modules。正式 npm run build 在现有工作区执行时，后端 tsc 因 Node/Express/Socket.IO/UUID/CORS 等依赖/类型未安装而中止，前端 vue-tsc/Vite 因此未进入生产构建。本轮不能声称完整生产构建已在此容器通过；请在依赖源可用的本地或 CI 执行 npm ci && npm run build 做最终部署确认。
+备注: 本轮未删除文件，未创建根目录 src/；所有源码修改仅位于既有 backend/src/，未修改 frontend/src/；修复包只包含本轮修改文件及 repair_log.txt，可按相对路径直接覆盖。

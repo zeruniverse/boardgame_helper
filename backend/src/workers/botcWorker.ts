@@ -155,6 +155,13 @@ export class BOTCWorker extends BaseGameWorker {
   // and collected as suggestions until the Storyteller chooses the actual deaths.
   private pendingPitHagArbitraryDeaths: PendingPitHagArbitraryDeaths | null = null;
   private pendingNightCompletion: PendingNightCompletion | null = null;
+  // Night actions are collected in parallel, but character changes/resurrections can
+  // create a brand-new wake later in the same official night order. Keep a durable
+  // resolution ledger so the worker can pause for that new choice and resume without
+  // replaying already-applied kills, poisons, swaps or once-per-game abilities.
+  private resolvedNightActionKeys: Set<string> = new Set();
+  private processedNightActionSummaries: PendingNightCompletion['processedActions'] = [];
+  private pendingDynamicNightActors: Set<string> = new Set();
   // Exorcist choices must only suppress a Demon after the Exorcist's own queued
   // action has actually resolved. Looking ahead through every submitted action
   // lets an Exorcist who died or changed character earlier in the night still
@@ -811,7 +818,7 @@ export class BOTCWorker extends BaseGameWorker {
     if (selectedPlayerId) {
       const target = this.gamePlayers.get(selectedPlayerId);
       if (target?.isDead && pending.eligiblePlayerIds.includes(selectedPlayerId)) {
-        await this.revivePlayer(selectedPlayerId);
+        await this.revivePlayer(selectedPlayerId, 'shabaloth');
         this.notifyStoryteller(`${this.getPlayerName(selectedPlayerId)} 被沙巴洛斯反刍并复活`, 'warning');
       } else {
         this.notifyStoryteller('沙巴洛斯反刍目标在结算前已不再是合法死亡目标，本夜未反刍', 'warning');
@@ -870,7 +877,15 @@ export class BOTCWorker extends BaseGameWorker {
   }
 
   private isPitHagDecisionBlockingNight(): boolean {
-    return this.isPitHagArbitraryDeathsActive() && !this.isComputerStoryteller();
+    // The Storyteller chooses arbitrary deaths only after every later night
+    // action has resolved. Exposing this decision immediately when the Pit-Hag
+    // acts lets a fast click mark it resolved before a newly created Demon acts,
+    // causing that later Demon kill to bypass the arbitrary-death rule.
+    return Boolean(
+      this.isPitHagArbitraryDeathsActive() &&
+      this.pendingNightCompletion &&
+      !this.isComputerStoryteller()
+    );
   }
 
   private beginPitHagArbitraryDeaths(pitHagId: string, createdDemonPlayerId: string): void {
@@ -955,6 +970,10 @@ export class BOTCWorker extends BaseGameWorker {
     }
     if (pending.resolved) {
       this.sendToPlayer(playerId, 'actionError', { message: '本夜坑巫任意死亡裁决已经完成' });
+      return;
+    }
+    if (!this.pendingNightCompletion) {
+      this.sendToPlayer(playerId, 'actionError', { message: '请等待本夜后续角色全部结算后再裁决坑巫任意死亡' });
       return;
     }
 
@@ -1897,6 +1916,115 @@ export class BOTCWorker extends BaseGameWorker {
     return action.roleId || (actingPlayer ? this.getEffectiveRole(actingPlayer)?.id : '') || '';
   }
 
+  private getNightActionKey(action: NightAction): string {
+    return `${action.playerId}:${action.roleId}:${action.timestamp}`;
+  }
+
+  private getNightRoleOrderIndex(roleId: string, isFirstNight: boolean = this.gameState.phase === GamePhase.FIRST_NIGHT): number {
+    if (!roleId) return -1;
+    const order = isFirstNight ? NIGHT_ORDER.first : NIGHT_ORDER.other;
+    return order.indexOf(roleId);
+  }
+
+  /**
+   * Character changes can create a legal second wake in the same night. Examples:
+   * - Philosopher chooses Dreamer, then later wakes as the Dreamer.
+   * - Snake Charmer becomes a Demon before the Demon slot.
+   * - Professor/Shabaloth revives a character whose normal wake is still ahead.
+   * - Pit-Hag creates a character whose normal wake is still ahead.
+   *
+   * The original collector only stored one boolean hasActed per player and therefore
+   * silently discarded these later wakes. Re-open that player's action only when the
+   * new character's official slot is strictly after the effect that created it.
+   */
+  private queueFreshNightActionIfLater(
+    player: GamePlayer,
+    afterRoleId: string,
+    reason: string
+  ): boolean {
+    if (!this.isNightPhase()) return false;
+
+    const isFirstNight = this.gameState.phase === GamePhase.FIRST_NIGHT;
+    const effectiveRole = this.getEffectiveRole(player);
+    if (!effectiveRole) return false;
+
+    const afterIndex = this.getNightRoleOrderIndex(afterRoleId, isFirstNight);
+    const newRoleIndex = this.getNightRoleOrderIndex(effectiveRole.id, isFirstNight);
+    if (afterIndex < 0 || newRoleIndex <= afterIndex) {
+      return false;
+    }
+
+    // Reuse the same eligibility rules as ordinary night setup: passive death-only
+    // entries do not become player actions, while living/retained-ability actors do.
+    const eligibleNow = getNightOrder(Array.from(this.gamePlayers.values()), isFirstNight)
+      .includes(player.playerId);
+    if (!eligibleNow) {
+      return false;
+    }
+
+    const alreadyQueued = this.nightActions.some(action =>
+      action.playerId === player.playerId &&
+      action.roleId === effectiveRole.id &&
+      !this.resolvedNightActionKeys.has(this.getNightActionKey(action))
+    );
+    if (alreadyQueued) {
+      return false;
+    }
+
+    if (!this.gameState.nightOrder.includes(player.playerId)) {
+      this.gameState.nightOrder.push(player.playerId);
+    }
+    player.hasActed = false;
+    this.pendingDynamicNightActors.add(player.playerId);
+    this.sendRoleStateToPlayer(player.playerId, false);
+    this.sendToPlayer(player.playerId, 'gameMessage', {
+      message: `${reason}，你在本夜稍后的夜序获得一次新的行动，请提交选择。`,
+      type: 'info'
+    });
+    this.notifyStoryteller(
+      `${this.getPlayerName(player.playerId)} ${reason}，将在本夜稍后的 ${effectiveRole.name} 夜序再次行动`,
+      'info'
+    );
+    return true;
+  }
+
+  private hasPendingDynamicNightActors(): boolean {
+    for (const playerId of Array.from(this.pendingDynamicNightActors)) {
+      const player = this.gamePlayers.get(playerId);
+      if (!player || player.hasActed) {
+        this.pendingDynamicNightActors.delete(playerId);
+      }
+    }
+    return this.pendingDynamicNightActors.size > 0;
+  }
+
+  private pauseNightForDynamicActorsIfNeeded(): boolean {
+    if (!this.hasPendingDynamicNightActors()) {
+      return false;
+    }
+
+    this.isProcessingNight = false;
+    if (this.shouldUseAutomaticTimers()) {
+      this.schedulePhaseTimer('night', this.gameConfig.nightTimer, () => this.handleNightTimeout());
+    }
+    this.broadcastGameState();
+    return true;
+  }
+
+  private skipPendingDynamicNightActors(reason: string): void {
+    if (!this.hasPendingDynamicNightActors()) return;
+
+    for (const playerId of this.pendingDynamicNightActors) {
+      const player = this.gamePlayers.get(playerId);
+      if (player) {
+        player.hasActed = true;
+      }
+    }
+    const skipped = this.pendingDynamicNightActors.size;
+    this.pendingDynamicNightActors.clear();
+    this.notifyStoryteller(`${reason}，已跳过 ${skipped} 个本夜新增行动`, 'warning');
+  }
+
   private async tryResolveFangGuJump(fangGuId: string, targetId: string): Promise<boolean> {
     const fangGu = this.gamePlayers.get(fangGuId);
     const target = this.gamePlayers.get(targetId);
@@ -2169,6 +2297,9 @@ export class BOTCWorker extends BaseGameWorker {
     this.pendingShabalothRegurgitation = null;
     this.pendingPitHagArbitraryDeaths = null;
     this.pendingNightCompletion = null;
+    this.resolvedNightActionKeys.clear();
+    this.processedNightActionSummaries = [];
+    this.pendingDynamicNightActors.clear();
     this.exorcisedDemonIdsThisNight.clear();
     this.lastGameResult = null;
     this.gameState = initializeGameState(this.gameConfig.storytellerId);
@@ -3034,6 +3165,9 @@ export class BOTCWorker extends BaseGameWorker {
     this.exorcisedDemonIdsThisNight.clear();
     this.pendingPitHagArbitraryDeaths = null;
     this.pendingNightCompletion = null;
+    this.resolvedNightActionKeys.clear();
+    this.processedNightActionSummaries = [];
+    this.pendingDynamicNightActors.clear();
     this.nightRound++;
 
     // Butler 的 Master 只对“明天”有效。进入新夜后先清掉上一晚选择，避免 Butler
@@ -3142,6 +3276,7 @@ export class BOTCWorker extends BaseGameWorker {
     for (const playerId of skippedPlayerIds) {
       const player = this.gamePlayers.get(playerId);
       if (player) player.hasActed = true;
+      this.pendingDynamicNightActors.delete(playerId);
     }
 
     if (skippedPlayerIds.length > 0) {
@@ -3221,6 +3356,7 @@ export class BOTCWorker extends BaseGameWorker {
       const player = this.gamePlayers.get(playerId);
       const effectiveRole = player ? this.getEffectiveRole(player) : null;
       if (!player || !effectiveRole) continue;
+      if (this.firstNightInfoPlayerIds.has(playerId)) continue;
 
       try {
         const result = processFirstNightInfo(player, allPlayers, this.gameConfig.edition);
@@ -4330,6 +4466,7 @@ export class BOTCWorker extends BaseGameWorker {
 
     this.nightActions.push(action);
     player.hasActed = true;
+    this.pendingDynamicNightActors.delete(playerId);
 
     this.sendToPlayer(playerId, 'nightActionConfirmed', { action });
     
@@ -4514,6 +4651,7 @@ export class BOTCWorker extends BaseGameWorker {
           this.sendToPlayer(playerId, 'actionError', { message: '请先完成坑巫制造恶魔后的本夜任意死亡裁决' });
           return;
         }
+        this.skipPendingDynamicNightActors('说书人手动结算夜晚');
         await this.processNightActions();
         break;
       case 'shabalothRegurgitate':
@@ -4584,6 +4722,7 @@ export class BOTCWorker extends BaseGameWorker {
             this.sendToPlayer(playerId, 'actionError', { message: '请先完成坑巫制造恶魔后的本夜任意死亡裁决' });
             return;
           }
+          this.skipPendingDynamicNightActors('说书人手动推进夜晚');
           await this.processNightActions();
         }
         break;
@@ -4797,8 +4936,13 @@ export class BOTCWorker extends BaseGameWorker {
       this.broadcastGameState();
       return;
     }
-    if (this.pendingNightCompletion || this.isPitHagDecisionBlockingNight()) {
+    if (this.pendingNightCompletion) {
       this.notifyStoryteller('请先完成坑巫制造恶魔后的本夜任意死亡裁决', 'warning');
+      this.broadcastGameState();
+      return;
+    }
+    if (this.hasPendingDynamicNightActors()) {
+      this.notifyStoryteller('本夜有因换角或复活新增的玩家行动尚未提交', 'info');
       this.broadcastGameState();
       return;
     }
@@ -4821,24 +4965,38 @@ export class BOTCWorker extends BaseGameWorker {
     }
 
     const allPlayers = Array.from(this.gamePlayers.values());
-    const processedActions: any[] = [];
+    const processedActions = this.processedNightActionSummaries;
     const nightOrderIndex = new Map(
       this.gameState.nightOrder.map((playerId, index) => [playerId, index])
     );
-    const orderedNightActions = [...this.nightActions].sort((a, b) => {
-      const aIndex = nightOrderIndex.get(a.playerId) ?? Number.MAX_SAFE_INTEGER;
-      const bIndex = nightOrderIndex.get(b.playerId) ?? Number.MAX_SAFE_INTEGER;
-      if (aIndex !== bIndex) return aIndex - bIndex;
-      return a.timestamp - b.timestamp;
-    });
     const isFirstNight = this.gameState.phase === GamePhase.FIRST_NIGHT;
+    const orderedNightActions = this.nightActions
+      .filter(action => !this.resolvedNightActionKeys.has(this.getNightActionKey(action)))
+      .sort((a, b) => {
+        // A player can legally wake twice after a character change (most notably a
+        // Philosopher who gains a later-waking ability). Sort by the role declared
+        // on each action, not only by the player's original slot.
+        const aRoleIndex = this.getNightRoleOrderIndex(this.getNightActionRoleId(a), isFirstNight);
+        const bRoleIndex = this.getNightRoleOrderIndex(this.getNightActionRoleId(b), isFirstNight);
+        const normalizedA = aRoleIndex < 0 ? Number.MAX_SAFE_INTEGER : aRoleIndex;
+        const normalizedB = bRoleIndex < 0 ? Number.MAX_SAFE_INTEGER : bRoleIndex;
+        if (normalizedA !== normalizedB) return normalizedA - normalizedB;
+        const aIndex = nightOrderIndex.get(a.playerId) ?? Number.MAX_SAFE_INTEGER;
+        const bIndex = nightOrderIndex.get(b.playerId) ?? Number.MAX_SAFE_INTEGER;
+        if (aIndex !== bIndex) return aIndex - bIndex;
+        return a.timestamp - b.timestamp;
+      });
     const moonchildOrderIndex = NIGHT_ORDER.other.indexOf('moonchild');
     let moonchildDeathsResolved = isFirstNight || moonchildOrderIndex < 0;
 
     // 按夜晚顺序处理各个角色的行动，而不是按玩家提交先后顺序。
     for (const action of orderedNightActions) {
+      const actionKey = this.getNightActionKey(action);
       const player = this.gamePlayers.get(action.playerId);
-      if (!player || !player.role) continue;
+      if (!player || !player.role) {
+        this.resolvedNightActionKeys.add(actionKey);
+        continue;
+      }
 
       if (!moonchildDeathsResolved) {
         const actionRoleId = this.getNightActionRoleId(action);
@@ -4859,6 +5017,7 @@ export class BOTCWorker extends BaseGameWorker {
           `${this.getPlayerName(player.playerId)} 在其夜序前已死亡，已取消其预先提交的夜间行动`,
           'info'
         );
+        this.resolvedNightActionKeys.add(actionKey);
         continue;
       }
 
@@ -4870,11 +5029,13 @@ export class BOTCWorker extends BaseGameWorker {
           `${this.getPlayerName(player.playerId)} 的角色已在其夜序前改变，已取消旧角色 ${getRoleName(action.roleId)} 的预提交行动`,
           'info'
         );
+        this.resolvedNightActionKeys.add(actionKey);
         continue;
       }
 
       // 检查玩家是否被保护或免疫
       if (this.shouldSkipAction(player, action)) {
+        this.resolvedNightActionKeys.add(actionKey);
         continue;
       }
 
@@ -4957,6 +5118,15 @@ export class BOTCWorker extends BaseGameWorker {
         }
       } catch (error) {
         console.error(`处理夜晚行动失败 (${action.roleId}):`, error);
+      } finally {
+        this.resolvedNightActionKeys.add(actionKey);
+      }
+
+      // A role change/resurrection may have opened a later official wake. Pause
+      // after the effect that created it, preserving all resolved-action keys, so
+      // the player can submit the fresh choice without replaying earlier effects.
+      if (this.pauseNightForDynamicActorsIfNeeded()) {
+        return;
       }
     }
 
@@ -5004,6 +5174,9 @@ export class BOTCWorker extends BaseGameWorker {
     if (!this.isNightPhase()) {
       this.isProcessingNight = false;
       this.pendingNightCompletion = null;
+      this.resolvedNightActionKeys.clear();
+      this.processedNightActionSummaries = [];
+      this.pendingDynamicNightActors.clear();
       return;
     }
 
@@ -5053,6 +5226,9 @@ export class BOTCWorker extends BaseGameWorker {
       actions: processedActions,
       summary: `处理了 ${processedActions.length} 个夜晚行动`
     });
+    this.resolvedNightActionKeys.clear();
+    this.processedNightActionSummaries = [];
+    this.pendingDynamicNightActors.clear();
 
     const gameEnd = checkGameEnd(
       Array.from(this.gamePlayers.values()),
@@ -5296,7 +5472,7 @@ export class BOTCWorker extends BaseGameWorker {
     // 处理复活
     if (effects.revived) {
       for (const playerId of effects.revived) {
-        await this.revivePlayer(playerId);
+        await this.revivePlayer(playerId, this.getNightActionRoleId(action));
       }
     }
 
@@ -5333,6 +5509,8 @@ export class BOTCWorker extends BaseGameWorker {
         this.refreshAlignmentLists();
         this.sendRoleStateToPlayer(playerA.playerId);
         this.sendRoleStateToPlayer(playerB.playerId);
+        this.queueFreshNightActionIfLater(playerA, roleId, '因本夜角色交换');
+        this.queueFreshNightActionIfLater(playerB, roleId, '因本夜角色交换');
         this.notifyStoryteller(swap.message || '有玩家的角色发生了交换', 'warning');
       }
     }
@@ -5362,6 +5540,7 @@ export class BOTCWorker extends BaseGameWorker {
           role: newRole.id,
           information: { message: change.message || `你的角色变成了${newRole.name}` }
         });
+        this.queueFreshNightActionIfLater(player, roleId, '因坑巫等效果获得新角色');
       }
     }
 
@@ -5381,6 +5560,9 @@ export class BOTCWorker extends BaseGameWorker {
         });
         if (player.role?.id === 'philosopher') {
           this.resolvePhilosopherImmediateStartInfo(player, newRole);
+        }
+        if (!(player.role?.id === 'philosopher' && PHILOSOPHER_IMMEDIATE_START_INFO_ROLE_IDS.has(newRole.id))) {
+          this.queueFreshNightActionIfLater(player, roleId, '因哲学家等效果获得新能力');
         }
       }
     }
@@ -5416,7 +5598,9 @@ export class BOTCWorker extends BaseGameWorker {
    */
   private async processSpecialNightInfo(): Promise<void> {
     const allPlayers = Array.from(this.gamePlayers.values());
-    const getAction = (playerId: string) => this.nightActions.find(action => action.playerId === playerId);
+    const getAction = (playerId: string, roleId: string) => [...this.nightActions]
+      .reverse()
+      .find(action => action.playerId === playerId && action.roleId === roleId);
     const selectedPlayers = (action: NightAction | undefined): GamePlayer[] => {
       return (action?.targets || [])
         .map(targetId => this.gamePlayers.get(targetId))
@@ -5444,7 +5628,7 @@ export class BOTCWorker extends BaseGameWorker {
       // 不能用hasActed判断：占卜师、筑梦师、女裁缝、侍女等目标型信息角色提交行动后仍需要在这里发信息。
       if (isFirstNight && this.firstNightInfoPlayerIds.has(playerId)) continue;
 
-      const action = getAction(playerId);
+      const action = getAction(playerId, roleId);
 
       try {
         if (roleId === 'empath') {
@@ -5912,7 +6096,7 @@ export class BOTCWorker extends BaseGameWorker {
   /**
    * 复活玩家
    */
-  private async revivePlayer(playerId: string): Promise<void> {
+  private async revivePlayer(playerId: string, afterRoleId?: string): Promise<void> {
     const player = this.gamePlayers.get(playerId);
     if (!player || !player.isDead) return;
 
@@ -5921,9 +6105,11 @@ export class BOTCWorker extends BaseGameWorker {
     // player-bound effects such as poisoning/drunkenness, but clear usage flags,
     // per-character target history and stale private night information. A
     // resurrected Philosopher is a fresh Philosopher again, not the copied
-    // character from before death.
+    // character from before death. Do not blindly reset hasActed here: if the
+    // character's wake has already passed this night it must not hold the night
+    // open. queueFreshNightActionIfLater re-opens it only when the wake is ahead.
     const wasPhilosopher = player.role?.id === 'philosopher';
-    this.clearFreshCharacterUsageState(player);
+    this.clearFreshCharacterUsageState(player, false);
     if (wasPhilosopher) {
       player.displayRole = undefined;
     }
@@ -5942,6 +6128,9 @@ export class BOTCWorker extends BaseGameWorker {
       playerId,
       playerName: this.getPlayerName(playerId)
     });
+    if (afterRoleId) {
+      this.queueFreshNightActionIfLater(player, afterRoleId, '因本夜复活');
+    }
     this.broadcastGameState();
   }
 
@@ -6506,7 +6695,7 @@ export class BOTCWorker extends BaseGameWorker {
           playerName: this.getPlayerName(playerId)
         }))
       } : undefined,
-      pitHagArbitraryDeaths: this.pendingPitHagArbitraryDeaths ? {
+      pitHagArbitraryDeaths: (this.pendingPitHagArbitraryDeaths && this.pendingNightCompletion) ? {
         pitHagId: this.pendingPitHagArbitraryDeaths.pitHagId,
         pitHagName: this.getPlayerName(this.pendingPitHagArbitraryDeaths.pitHagId),
         createdDemonPlayerId: this.pendingPitHagArbitraryDeaths.createdDemonPlayerId,
