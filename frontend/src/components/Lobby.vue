@@ -645,6 +645,14 @@
                   <el-option label="120秒" :value="120" />
                 </el-select>
               </el-form-item>
+              <el-form-item label="夜晚总时间">
+                <el-select v-model="createRoomForm.nightTime" placeholder="选择夜晚总时间">
+                  <el-option label="60秒" :value="60" />
+                  <el-option label="90秒" :value="90" />
+                  <el-option label="120秒" :value="120" />
+                  <el-option label="180秒" :value="180" />
+                </el-select>
+              </el-form-item>
             </template>
 
             <!-- 狼人杀特有设置 -->
@@ -668,16 +676,9 @@
                   <el-option label="180秒" :value="180" />
                 </el-select>
               </el-form-item>
-              <el-form-item label="行动时间">
-                <el-select v-model="createRoomForm.actionTime" placeholder="选择行动时间">
+              <el-form-item label="夜间行动时间">
+                <el-select v-model="createRoomForm.actionTime" placeholder="选择夜间行动时间">
                   <el-option label="30秒" :value="30" />
-                  <el-option label="60秒" :value="60" />
-                  <el-option label="90秒" :value="90" />
-                  <el-option label="120秒" :value="120" />
-                </el-select>
-              </el-form-item>
-              <el-form-item label="夜晚时间">
-                <el-select v-model="createRoomForm.nightTime" placeholder="选择夜晚时间">
                   <el-option label="60秒" :value="60" />
                   <el-option label="90秒" :value="90" />
                   <el-option label="120秒" :value="120" />
@@ -1074,8 +1075,11 @@ async function confirmCreateRoom() {
     } else if (createRoomForm.value.gameType === 'werewolf') {
       gameConfig.playerCount = createRoomForm.value.maxPlayers;
       gameConfig.speakTime = createRoomForm.value.speakTime;
+      gameConfig.dayTime = createRoomForm.value.speakTime;
       gameConfig.actionTime = createRoomForm.value.actionTime;
-      gameConfig.nightTime = createRoomForm.value.nightTime;
+      // nightTime 是旧版夜间行动字段，不是另一个独立的“整夜总时长”。
+      // 同时发送同值别名，兼容旧 Worker/旧房间快照且避免两个设置互相覆盖。
+      gameConfig.nightTime = createRoomForm.value.actionTime;
     } else if (createRoomForm.value.gameType === 'mafia') {
       gameConfig.playerCount = createRoomForm.value.maxPlayers;
       gameConfig.speakTime = createRoomForm.value.speakTime;
@@ -1180,6 +1184,31 @@ function getApiUrl() {
 // 选择游戏类型
 function selectGame(gameType: string) {
   createRoomForm.value.gameType = gameType;
+
+  // 这些字段由多个游戏共用同一个创建表单对象。切换游戏时若不恢复各自默认值，
+  // 上一个游戏不可见的计时设置会静默泄漏到新房间（例如 BOTC 的 300 秒夜晚
+  // 会变成杀人游戏的 nightTime，而用户在杀人游戏页面此前根本看不到该字段）。
+  switch (gameType) {
+    case 'werewolf':
+      Object.assign(createRoomForm.value, { speakTime: 60, actionTime: 60, nightTime: 60 });
+      break;
+    case 'mafia':
+      Object.assign(createRoomForm.value, { speakTime: 60, actionTime: 60, nightTime: 60 });
+      break;
+    case 'one-night-werewolf':
+      Object.assign(createRoomForm.value, { nightTime: 180, votingTime: 300, discussTime: 180 });
+      break;
+    case 'blood-on-the-clocktower':
+      Object.assign(createRoomForm.value, { dayTime: 600, nightTime: 300, edition: 'tb' });
+      break;
+    case 'avalon':
+      createRoomForm.value.enableLady = false;
+      break;
+    case 'texas-holdem':
+      createRoomForm.value.allowSystemDealing = true;
+      break;
+  }
+
   createRoomStep.value = 1;
 }
 

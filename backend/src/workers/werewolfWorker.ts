@@ -105,24 +105,24 @@ class WerewolfWorker extends BaseGameWorker {
       throw new Error('角色配置必须是数组');
     }
 
+    // speakTime/dayTime 与 actionTime/nightTime 分别是同一阶段计时的新版/旧版字段。
+    // 不能让两个别名在同一房间里长期保存成不同数值，否则 Controller 快照、
+    // Worker 实际计时和前端配置面板会各自显示不同答案。
+    const speakTime = normalizeDurationSeconds(
+      getOwnConfigValue(rawConfig, 'speakTime', 'dayTime'),
+      fallback?.speakTime ?? fallback?.dayTime ?? 60
+    );
+    const actionTime = normalizeDurationSeconds(
+      getOwnConfigValue(rawConfig, 'actionTime', 'nightTime'),
+      fallback?.actionTime ?? fallback?.nightTime ?? 60
+    );
+
     return {
       // 保留 0/null=不限时；只接受真实有限 number，拒绝字符串/布尔值的隐式数值转换。
-      speakTime: normalizeDurationSeconds(
-        getOwnConfigValue(rawConfig, 'speakTime', 'dayTime'),
-        fallback?.speakTime ?? 60
-      ),
-      actionTime: normalizeDurationSeconds(
-        getOwnConfigValue(rawConfig, 'actionTime', 'nightTime'),
-        fallback?.actionTime ?? 60
-      ),
-      nightTime: normalizeDurationSeconds(
-        getOwnConfigValue(rawConfig, 'nightTime', 'actionTime'),
-        fallback?.nightTime ?? 60
-      ),
-      dayTime: normalizeDurationSeconds(
-        getOwnConfigValue(rawConfig, 'dayTime', 'speakTime'),
-        fallback?.dayTime ?? 120
-      ),
+      speakTime,
+      actionTime,
+      nightTime: actionTime,
+      dayTime: speakTime,
       voteTime: normalizeDurationSeconds(
         getOwnConfigValue(rawConfig, 'voteTime'),
         fallback?.voteTime ?? 60

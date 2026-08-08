@@ -113,6 +113,8 @@
             <el-select v-model="timeConfig.nightActionTime" size="small">
               <el-option label="30秒" :value="30" />
               <el-option label="1分钟" :value="60" />
+              <el-option label="90秒" :value="90" />
+              <el-option label="2分钟" :value="120" />
               <el-option label="3分钟" :value="180" />
             </el-select>
           </div>
@@ -121,6 +123,8 @@
             <el-select v-model="timeConfig.dayDiscussTime" size="small">
               <el-option label="30秒" :value="30" />
               <el-option label="1分钟" :value="60" />
+              <el-option label="90秒" :value="90" />
+              <el-option label="2分钟" :value="120" />
               <el-option label="3分钟" :value="180" />
               <el-option label="5分钟" :value="300" />
               <el-option label="无限" :value="0" />
@@ -264,6 +268,24 @@ const timeConfig = ref({
   dayDiscussTime: 300,
   voteTime: 180
 })
+
+watch(
+  () => props.gameState?.config,
+  (config?: Record<string, any>) => {
+    if (!config) return
+
+    const finiteTimer = (value: unknown, fallback: number) =>
+      typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : fallback
+
+    timeConfig.value = {
+      nightActionTime: finiteTimer(config.nightActionTime ?? config.actionTime, timeConfig.value.nightActionTime),
+      // Worker 的白天讨论按玩家逐个发言推进，因此优先读取实际生效的 speakTime。
+      dayDiscussTime: finiteTimer(config.speakTime ?? config.dayDiscussTime ?? config.dayTime, timeConfig.value.dayDiscussTime),
+      voteTime: finiteTimer(config.voteTime, timeConfig.value.voteTime)
+    }
+  },
+  { immediate: true }
+)
 
 // 计算属性
 const sortedPlayers = computed(() => {
@@ -439,7 +461,9 @@ const updateRoleConfig = () => {
 
 const updateTimeConfig = () => {
   emit('updateConfig', {
+    actionTime: timeConfig.value.nightActionTime,
     nightTime: timeConfig.value.nightActionTime,
+    speakTime: timeConfig.value.dayDiscussTime,
     dayTime: timeConfig.value.dayDiscussTime,
     voteTime: timeConfig.value.voteTime
   })

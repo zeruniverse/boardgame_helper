@@ -571,6 +571,30 @@ function buildGameConfig(gameType: string, incomingConfig: any): any {
     gameConfig.autoCharacters = !hasCustomCharacters;
   }
 
+  if (gameType === 'werewolf') {
+    const rawConfig = gameConfig as Record<string, unknown>;
+    const speakTime = normalizeDurationSeconds(
+      getOwnConfigValue(rawConfig, 'speakTime', 'dayTime'),
+      60
+    );
+    const actionTime = normalizeDurationSeconds(
+      getOwnConfigValue(rawConfig, 'actionTime', 'nightTime'),
+      60
+    );
+
+    // dayTime/nightTime 是旧客户端字段；当前 Worker 分别把它们视为
+    // speakTime/actionTime 的别名。主线程也保存同一规范值，避免 room_update
+    // 与 Worker 的 game_prepared/game_info 在创建房间后立即出现配置分叉。
+    gameConfig.speakTime = speakTime;
+    gameConfig.dayTime = speakTime;
+    gameConfig.actionTime = actionTime;
+    gameConfig.nightTime = actionTime;
+    gameConfig.voteTime = normalizeDurationSeconds(
+      getOwnConfigValue(rawConfig, 'voteTime'),
+      60
+    );
+  }
+
   if (gameType === 'one-night-werewolf') {
     const hasCustomRoles = Array.isArray(incomingConfig?.roles) && incomingConfig.roles.length > 0;
     if (!Array.isArray(gameConfig.roles) || gameConfig.roles.length === 0) {

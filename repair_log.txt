@@ -1327,3 +1327,34 @@ Commit: fix(round21): 修正阿瓦隆湖上夫人与阶段计时配置
   - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts；本轮源码相对附件原始版本的 git diff --no-index --check 通过。
   - 正式 npm ci --ignore-scripts 已再次尝试，但当前内部 npm 源对 package-lock 锁定的 typescript-5.8.3.tgz 返回 404。随后正式 npm run build 在缺少 node_modules 的工作区执行，后端 tsc 因 Node/Express/Socket.IO/UUID/CORS 等已声明依赖/类型未安装而中止，前端 vue-tsc/Vite 因后端构建失败未进入执行。因此本轮不能声称完整生产 npm 构建已在此容器通过；仍需在依赖源可用的本地或 CI 执行 npm ci && npm run build 做最终部署构建确认。
 备注: 本轮未删除文件，未创建根目录 src/；所有后端源码修改仅位于 backend/src/，未修改 frontend/src/；修复包只包含本轮修改文件及 repair_log.txt，可按相对路径直接覆盖。
+
+=== 当前请求第 22 轮修复记录 ===
+时间: 2026-08-08 05:35:00 UTC
+Commit: fix(round22): 统一狼人杀计时配置并修复跨游戏创建参数串扰
+修改/新增文件:
+  - backend/src/controllers/roomController.ts
+  - backend/src/workers/werewolfWorker.ts
+  - frontend/src/components/Lobby.vue
+  - frontend/src/components/WerewolfPlayerList.vue
+  - repair_log.txt
+删除文件: 无
+构建测试: 部分通过（全量 85 个源码文件静态扫描、后端 34 个 TypeScript strict/noEmit 与隔离测试编译、六 Worker prepare_room 烟雾、狼人杀计时别名专项回归及 package-lock 依赖树检查通过；正式 npm ci / npm run build 仍受当前容器内部 npm 源缺少锁定 TypeScript 5.8.3 包阻塞）
+本轮修复:
+  - 修复狼人杀创建房间计时配置存在两套可见但实际互为别名的字段问题。旧大厅同时展示“行动时间”和“夜晚时间”，默认分别为 60 秒和 180 秒，而 Worker 优先读取 actionTime，导致用户看到并设置的 nightTime 很可能完全不生效；现在大厅只保留一个“夜间行动时间”，创建请求同时写入 actionTime/nightTime 同值，明确 nightTime 仅作为兼容旧版本的别名。
+  - 后端 Controller 与 Werewolf Worker 统一狼人杀计时规范化语义：speakTime/dayTime 始终归一为同一个白天单人发言时限，actionTime/nightTime 始终归一为同一个夜间角色行动时限，voteTime 独立保留。这样房间主线程快照、Worker 实际配置以及后续 update_config 不会再出现两组别名长期分叉、页面显示一套而实际执行另一套的状态同步问题。
+  - 修复创建房间表单在不同游戏之间切换时复用同一批响应式计时字段导致的“配置串味”。selectGame 现在按游戏重置该游戏自身的共享默认配置，BOTC/一夜狼人等较长 nightTime 不会静默带入杀人游戏或狼人杀；昵称、人数、房间密码等真正跨游戏的通用输入保持不变。
+  - 补齐杀人游戏大厅原本隐藏但后台实际使用的“夜晚总时间”配置。旧创建请求总会发送共享 nightTime，但 UI 没有对应控件，用户无法知道或修改这个总计时；现在明确显示 60/90/120/180 秒选项，并与杀人游戏每个夜间动作 actionTime 分离。
+  - 修复狼人杀房间内设置面板使用硬编码默认值、没有从服务端 gameState.config 回填的问题。房主打开设置时现在会立即同步当前实际配置，90/120 秒等大厅允许值也能正确显示；保存时同时发送 speakTime/dayTime 与 actionTime/nightTime 两组兼容别名，避免一次保存把已有房间计时意外重置为面板默认值。
+审查结果/本轮未改动重点:
+  - 继续覆盖 backend/src 与 frontend/src 当前全部 85 个代码文件，并重点复核六个游戏 Worker、Controller/RoomThreadManager 状态同步、创建配置入口、前端 Room/ActionPanel/PlayerList/Lobby 的计时配置和组件结构。本轮最明确且跨层可复现的问题集中在狼人杀/杀人游戏配置语义与前端共享状态，因此修改保持在现有 Controller、Werewolf Worker 和两个既有 Vue 组件内，没有新建平行目录或根 src/。
+  - 狼人杀、杀人游戏、血染钟楼、一夜狼人、阿瓦隆、德州扑克六个 Worker 均重新通过实际 prepare_room 初始化烟雾；本轮未发现优先级高于计时配置失配、且适合低风险批量修复的六游戏主流程阻断错误。前 21 轮已经修复的身份隐私、阶段推进、阿瓦隆刺杀/湖上夫人、一夜狼人投票、德州扑克边池与加注权、BOTC 夜序/登记/复活等逻辑继续保留。
+  - 前端 27 个 Vue SFC 的 script/template/style 结构、CSS 花括号、相对/@ 导入重新扫描通过；本轮沿用 Element Plus 和现有 Lobby/PlayerList 组件体系，只消除重复/隐藏配置与状态回填缺口，没有为了视觉统一进行高风险页面重构。
+  - BOTC 仍保留前轮已经记录的高阶边界：自定义夜序中若某个死亡在 Pit-Hag 制造 Demon 之前已经真正落地，当前“本夜死亡任意”机制不能逆向撤销此前死亡；真人说书人也仍没有 Recluse/Spy 每次 registration 的逐次手工裁决 UI。本轮未对该高风险夜序架构做额外改动。
+验证:
+  - backend/src + frontend/src 全量静态扫描通过：共 85 个代码文件、83 个 TypeScript/Vue script 解析单元、27 个 Vue SFC、27 个 style 块、218 个相对/@ 导入均无 TypeScript 语法、SFC 标签平衡、CSS 花括号或失效导入错误；项目根目录不存在 src/。
+  - backend/src 全部 34 个 TypeScript 文件使用 TypeScript 5.8.3、strict 模式、真实全局 Node 类型和位于项目目录外的 Express/CORS/Socket.IO/UUID 临时声明桩完成 noEmit 类型检查，0 个错误；同一配置成功生成 34 个 CommonJS 隔离测试文件。
+  - 六个实际游戏 Worker 使用本轮最新严格编译产物执行 prepare_room 烟雾全部通过：狼人杀、杀人游戏、血染钟楼、一夜狼人、阿瓦隆、德州扑克均能启动 Worker 并完成房间初始化。
+  - 狼人杀计时别名专项回归通过：prepare_room 即使收到 speakTime=90/dayTime=300、actionTime=30/nightTime=180 的冲突输入，也统一为 speakTime=dayTime=90、actionTime=nightTime=30；后续用旧版 dayTime=180/nightTime=120 更新时，也会统一映射到对应规范字段，不再保留分叉值。
+  - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts 校验。
+  - 正式 npm ci --ignore-scripts 已再次尝试，但当前内部 npm 源对 package-lock 锁定的 typescript-5.8.3.tgz 返回 404。正式 npm run build 在依赖未完整安装的工作区执行时，后端 tsc 因 Node/Express/Socket.IO/UUID/CORS 等依赖/类型缺失而中止，根构建流程因此未进入前端 vue-tsc/Vite。故本轮不能声称完整生产构建已在此容器通过；请在依赖源可用的本地或 CI 执行 npm ci && npm run build 做最终部署确认。
+备注: 本轮未删除文件，未创建根目录 src/；所有后端源码修改仅位于 backend/src/，所有前端源码修改仅位于 frontend/src/；修复包只包含本轮修改文件及 repair_log.txt，可按相对路径直接覆盖。
