@@ -1505,3 +1505,33 @@ Commit: fix(round27): 修复一夜狼人重连夜间权限与私密状态同步
   - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts 校验；本轮四个源码修改文件相对附件原始版本执行 diff --check 无新增尾随空白错误。
   - 正式 npm ci --ignore-scripts --no-audit --no-fund 已再次尝试，当前内部 npm 源对 package-lock 锁定的 typescript-5.8.3.tgz 返回 404；正式 npm run build 在依赖未完整安装的工作区执行时，后端 tsc 因 Node/Express/Socket.IO/UUID/CORS 等已声明依赖/类型缺失而中止，根构建因此没有进入前端 vue-tsc/Vite。故本轮不能声称完整生产 npm 构建已在此容器通过；请在依赖源可用的本地或 CI 执行 npm ci && npm run build 做最终部署确认。
 备注: 本轮未删除文件，未创建根目录 src/；所有后端源码修改仅位于 backend/src/，所有前端源码修改仅位于 frontend/src/；修复包只包含本轮修改文件及 repair_log.txt，可按相对路径直接覆盖。
+
+=== 当前请求第 28 轮修复记录 ===
+时间: 2026-08-08 07:07:31 UTC
+Commit: fix(round28): 修复钟楼夜间死亡泄露与赌徒结算
+修改/新增文件:
+  - backend/src/utils/botcSkills.ts
+  - backend/src/workers/botcWorker.ts
+  - repair_log.txt
+删除文件: 无
+构建测试: 部分通过（85 个源码文件全量静态扫描、backend/src 全量 strict/noEmit 与隔离 CommonJS 编译、六游戏 Worker prepare_room 烟雾、BOTC 夜间生命状态保密及 Gambler/Clockmaker 专项回归、package-lock 工作区依赖树检查均通过；正式 npm ci / npm run build 仍受当前容器内部 npm 源缺少 package-lock 锁定 TypeScript 5.8.3 包阻塞）
+本轮修复:
+  - 修复血染钟楼夜间死亡/复活被实时公开给全房间的问题。旧 killPlayer/revivePlayer 会在夜间立即广播 playerDied/playerRevived，并且随后公开 game_update 直接携带真实 isDead/isAlive/canVote/livingPlayers，导致尚未行动的普通玩家能提前知道谁在本夜死亡或复活。现在入夜时保存公开生命状态快照，Worker 内部仍立即使用真实死亡状态推进夜序和被动效果，但普通玩家/房间广播在黎明前只看到黄昏时已公开的生命/幽灵票状态；说书人私有状态仍保持实时权威值。黎明统一按死亡后复活的顺序公布本夜变化并再广播真实白天状态。
+  - 修复 BOTC 赌徒错误向本人泄露“猜对/猜错”布尔结果。旧 processGambler 返回 information.isCorrect，Worker 会通过 nightInfo 私聊直接告诉赌徒答案；现在赌徒不会收到正确性信息，猜错只产生赌徒自身死亡效果，猜对则无效果，符合该能力应通过是否死亡体现结果的流程。
+  - 修复赌徒判断目标角色时绕过 Recluse/Spy registration 的问题。现在赌徒的猜测使用项目既有 chooseRegisteredIdentity 解析该次能力下目标登记身份；若目标的 registration 能力因中毒/醉酒失效，则回到真实角色。这样自定义剧本中 Recluse/Spy 与赌徒并存时不会总按真实角色硬判。
+  - 修复后续夜动态获得 Clockmaker 能力时忽略已经死亡 Demon/Minion 的问题。旧 processClockmaker 先过滤死亡玩家；项目允许 Philosopher 等动态角色在后续夜获得首夜信息能力，因此死亡的 Demon/Minion 或仍可 registration 的死亡 Recluse/Spy 会被错误排除。现在 Clockmaker 对在场玩家做 registration 后计算最近 Demon-Minion 座位距离，不再以存活状态筛掉合法角色。
+审查结果/本轮未改动重点:
+  - 再次覆盖 backend/src 与 frontend/src 当前全部 85 个 TypeScript/Vue/CSS/SVG 代码文件，继续人工复核六个游戏 Worker、BaseGameWorker、RoomThreadManager/Controller 的任务串行、公开/私密状态边界和前端 Room / ActionPanel / PlayerList / Store 消费路径。本轮最明确且影响信息完整性的新增问题集中在 BOTC 夜间公开状态和角色能力结算，因此修改保持在既有 botcWorker.ts 与 botcSkills.ts 内，没有扩大目录结构。
+  - 狼人杀、杀人游戏、一夜狼人、阿瓦隆、德州扑克本轮未新增源码修改；六个实际 Worker 使用本轮最新严格隔离编译产物重新完成 prepare_room 初始化烟雾。前 27 轮已修复的狼人夜序/共识击杀、杀人游戏多角色行动、一夜狼人重连私密状态、阿瓦隆任务/刺杀/湖上夫人、德州扑克短码加注/边池等流程继续保留。
+  - 前端 27 个 Vue SFC 的 script/template/style 结构、CSS 花括号以及相对/@ 导入重新扫描通过；各游戏继续沿用现有 Room / ActionPanel / PlayerList / Chat 与 Element Plus 组件体系。本轮没有发现需要为了构建/运行而新增平行组件或进行高风险视觉重构的问题，因此未修改 frontend/src。
+  - Controller/RoomThreadManager/Worker 的 messageChain/任务串行、状态版本合并和 game_action acknowledgement 再次复核，本轮未发现比夜间信息泄露更高优先级且可稳定复现的新跨线程竞态。
+  - 仍保留此前记录的 BOTC 高阶边界：自定义夜序中若死亡已经在 Pit-Hag 制造 Demon 之前真实落地，当前“本夜死亡任意”模型不能安全逆向撤销先前死亡及其被动效果；真人说书人仍没有针对每次 Recluse/Spy registration 的逐次手工裁决 UI。这两个问题需要更大的状态模型/UI 设计，本轮未做冒险性重构。
+验证:
+  - backend/src + frontend/src 全量静态扫描通过：共 85 个代码文件、83 个 TypeScript/Vue script 解析单元、27 个 Vue SFC、27 个 style 块、313 个 import/export 路径均无 TypeScript 语法、SFC 顶层结构、CSS 花括号或失效相对/@ 导入错误；项目根目录不存在 src/。
+  - backend/src 全部 34 个 TypeScript 文件使用全局 TypeScript 5.8.3、strict 模式和位于项目目录外的 Node/Express/CORS/Socket.IO/UUID 临时声明桩完成 noEmit 类型检查，0 个错误；同一配置成功生成 34 个隔离 CommonJS 测试编译文件。
+  - 六个实际游戏 Worker 使用本轮最新 strict 编译产物执行 prepare_room 烟雾全部通过：狼人杀、杀人游戏、血染钟楼、一夜狼人、阿瓦隆、德州扑克均能启动 Worker 并完成房间初始化。
+  - BOTC 夜间生命状态专项回归通过：夜间内部 kill 后权威玩家立即死亡，但普通房间没有 playerDied 且公开 game_update 仍显示其存活；说书人私有 game_update 能看到真实死亡。进入白天后才收到 playerDied 和真实公开状态。下一夜 revive 同样在黎明前对普通玩家保持死亡快照、说书人实时看到复活，并在黎明公开 playerRevived。
+  - BOTC 能力专项回归通过：赌徒猜对/猜错均不再返回 information，猜错只杀死赌徒；强制 Spy 登记成其他善良角色时猜“Spy”按登记结果判错；Clockmaker 在 Demon 存活、相邻 Minion 已死亡的后续夜仍正确计算两者座位距离。
+  - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts 校验；本轮两个源码文件相对附件原始版本执行 diff --check 无新增尾随空白错误。
+  - 正式 npm ci --ignore-scripts --no-audit --no-fund 已再次执行，当前内部 npm 源对 package-lock 锁定的 typescript-5.8.3.tgz 返回 404。随后正式 npm run build 在依赖未完整安装的工作区执行，后端 tsc 因 Node/Express/Socket.IO/UUID/CORS 等已声明依赖/类型未安装而中止，根构建因此未进入前端 vue-tsc/Vite。故本轮不能声称完整生产 npm 构建已在此容器通过；请在依赖源可用的本地或 CI 执行 npm ci && npm run build 做最终部署确认。
+备注: 本轮未删除文件，未创建根目录 src/；所有后端源码修改仅位于 backend/src/，未修改 frontend/src/；修复包只包含本轮修改文件及 repair_log.txt，可按相对路径直接覆盖。

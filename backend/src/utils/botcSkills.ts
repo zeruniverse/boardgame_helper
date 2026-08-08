@@ -114,7 +114,7 @@ export function processNightAction(
     sailor: () => processSailor(action, allPlayers),
     exorcist: () => processExorcist(action, allPlayers),
     innkeeper: () => processInnkeeper(action, allPlayers),
-    gambler: () => processGambler(action, allPlayers),
+    gambler: () => processGambler(action, allPlayers, context.editionId),
     courtier: () => processCourtier(action, allPlayers),
     professor: () => processProfessor(action, allPlayers, context.editionId),
     godfather: () => processGodfather(action, allPlayers, isFirstNight, context.outsiderDiedToday === true),
@@ -381,7 +381,6 @@ function processClockmaker(
   // This matters on custom/role-change states where Recluse or Spy can coexist
   // with Clockmaker even though they are not on Sects & Violets itself.
   const registered = allPlayers
-    .filter(target => !target.isDead)
     .map(target => ({
       player: target,
       identity: chooseRegisteredIdentity(target, editionId, !isAbilitySuppressed(target))
@@ -700,7 +699,11 @@ function processInnkeeper(action: NightAction, allPlayers: GamePlayer[]): SkillR
   };
 }
 
-function processGambler(action: NightAction, allPlayers: GamePlayer[]): SkillResult {
+function processGambler(
+  action: NightAction,
+  allPlayers: GamePlayer[],
+  editionId?: string
+): SkillResult {
   const targets = action.targets;
   const guess = action.data?.guess;
   
@@ -709,12 +712,26 @@ function processGambler(action: NightAction, allPlayers: GamePlayer[]): SkillRes
   }
 
   const target = allPlayers.find(p => p.playerId === targets[0]);
-  const normalizedGuess = String(guess).trim().toLowerCase();
-  const isCorrect = target?.role?.id.toLowerCase() === normalizedGuess || target?.role?.name === String(guess).trim();
+  if (!target?.role) {
+    return { success: false, message: '赌徒选择的目标不存在或没有角色' };
+  }
 
+  // Gambler checks which character the target registers as for this ability.
+  // Recluse/Spy may therefore legally register as another character when their
+  // registration ability is functioning; a poisoned/drunk one uses its real role.
+  const registeredRole = editionId
+    ? chooseRegisteredIdentity(target, editionId, !isAbilitySuppressed(target)).role
+    : target.role;
+  const normalizedGuess = String(guess).trim().toLowerCase();
+  const normalizedRoleName = registeredRole?.name?.trim().toLowerCase();
+  const isCorrect = registeredRole?.id.toLowerCase() === normalizedGuess ||
+    normalizedRoleName === normalizedGuess;
+
+  // The Gambler is not told whether the guess was correct. A wrong guess is
+  // represented only by the death effect; returning isCorrect as information
+  // leaks a result the character does not learn.
   return {
     success: true,
-    information: { isCorrect },
     effects: isCorrect ? undefined : {
       killed: [action.playerId]
     }

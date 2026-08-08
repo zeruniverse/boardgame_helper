@@ -167,6 +167,10 @@ export class BOTCWorker extends BaseGameWorker {
   // lets an Exorcist who died or changed character earlier in the night still
   // suppress a Demon, which is incorrect in the parallel-submission model.
   private exorcisedDemonIdsThisNight: Set<string> = new Set();
+  // 夜间死亡/复活在黎明前不应成为公开信息。Worker 内部仍立即更新真实状态，
+  // 但普通玩家看到的是入夜时的生命/遗言票快照；真实变更只给说书人，并在黎明统一公布。
+  private nightPublicLifeSnapshot: Map<string, { isDead: boolean; canVote: boolean }> | null = null;
+  private deferredNightPublicLifeEvents: Array<{ type: 'death' | 'revival'; playerId: string }> = [];
   // 终局结果必须保留在 Worker 权威状态中。仅广播一次 gameEnded 会导致刷新/重连
   // 玩家拿到 phase=ended 却丢失胜方和角色揭晓。
   private lastGameResult: BOTCGameResult | null = null;
@@ -191,10 +195,51 @@ export class BOTCWorker extends BaseGameWorker {
    * “谁死亡了”，避免通过 cause/能力标记直接泄露隐藏角色或击杀来源。
    */
   private announcePublicDeath(playerId: string): void {
+    if (this.isNightPhase()) {
+      this.deferredNightPublicLifeEvents.push({ type: 'death', playerId });
+      return;
+    }
+
     this.sendToRoom('playerDied', {
       playerId,
       playerName: this.getPlayerName(playerId)
     });
+  }
+
+  private announcePublicRevival(playerId: string): void {
+    if (this.isNightPhase()) {
+      this.deferredNightPublicLifeEvents.push({ type: 'revival', playerId });
+      return;
+    }
+
+    this.sendToRoom('playerRevived', {
+      playerId,
+      playerName: this.getPlayerName(playerId)
+    });
+  }
+
+  private captureNightPublicLifeSnapshot(): void {
+    this.nightPublicLifeSnapshot = new Map(
+      Array.from(this.gamePlayers.values()).map(player => [
+        player.playerId,
+        { isDead: player.isDead, canVote: player.canVote }
+      ])
+    );
+    this.deferredNightPublicLifeEvents = [];
+  }
+
+  private flushDeferredNightPublicLifeEvents(): void {
+    const events = this.deferredNightPublicLifeEvents;
+    this.deferredNightPublicLifeEvents = [];
+    this.nightPublicLifeSnapshot = null;
+
+    // 黎明先公布夜间死亡，再公布复活；同一玩家同夜先死后复活时两个变化都应保留，
+    // 不能只比较最终净状态而吞掉复活信息。每种变化对同一玩家至多公开一次。
+    const deaths = new Set(events.filter(event => event.type === 'death').map(event => event.playerId));
+    const revivals = new Set(events.filter(event => event.type === 'revival').map(event => event.playerId));
+
+    deaths.forEach(playerId => this.announcePublicDeath(playerId));
+    revivals.forEach(playerId => this.announcePublicRevival(playerId));
   }
 
   private notifyStoryteller(message: string, type: 'info' | 'warning' | 'success' = 'info'): void {
@@ -2327,6 +2372,8 @@ export class BOTCWorker extends BaseGameWorker {
     this.processedNightActionSummaries = [];
     this.pendingDynamicNightActors.clear();
     this.exorcisedDemonIdsThisNight.clear();
+    this.nightPublicLifeSnapshot = null;
+    this.deferredNightPublicLifeEvents = [];
     this.lastGameResult = null;
     this.gameState = initializeGameState(this.gameConfig.storytellerId);
     this.gameState.grimoire.startTime = Date.now();
@@ -3184,6 +3231,9 @@ export class BOTCWorker extends BaseGameWorker {
     this.clearTimers();
 
     this.gameState.phase = isFirstNight ? GamePhase.FIRST_NIGHT : GamePhase.NIGHT;
+    // 从这一刻起，内部夜间死亡/复活可以即时影响后续角色，但普通玩家在黎明前
+    // 仍只能看到黄昏时已经公开的生命状态。
+    this.captureNightPublicLifeSnapshot();
     this.isProcessingNight = false;
     this.nightActions = [];
     this.firstNightInfoPlayerIds.clear();
@@ -3619,6 +3669,9 @@ export class BOTCWorker extends BaseGameWorker {
       alivePlayers: Array.from(this.gamePlayers.values()).filter(p => !p.isDead).length,
       phaseEndTime: this.getActivePhaseEndTime()
     });
+    // 先让客户端进入白天，再按死亡->复活顺序公布昨夜生命变化；随后广播黎明后的
+    // 权威状态，避免夜间 action/state 事件提前把结果泄露给仍在等待行动的玩家。
+    this.flushDeferredNightPublicLifeEvents();
     this.sendDawnDeathChoicePrompts();
     this.broadcastGameState();
   }
@@ -6215,10 +6268,7 @@ export class BOTCWorker extends BaseGameWorker {
     // 复活死亡爪牙会立即失去维格莫提斯给予的死亡保留能力及其毒源。
     this.refreshVigormortisEffects();
 
-    this.sendToRoom('playerRevived', {
-      playerId,
-      playerName: this.getPlayerName(playerId)
-    });
+    this.announcePublicRevival(playerId);
     if (afterRoleId) {
       this.queueFreshNightActionIfLater(player, afterRoleId, '因本夜复活');
     }
@@ -6718,6 +6768,8 @@ export class BOTCWorker extends BaseGameWorker {
     this.isProcessingNight = false;
     this.pendingNightCompletion = null;
     this.pendingPitHagArbitraryDeaths = null;
+    this.nightPublicLifeSnapshot = null;
+    this.deferredNightPublicLifeEvents = [];
     this.clearTimers();
 
     const gameResult: BOTCGameResult = {
@@ -6806,6 +6858,18 @@ export class BOTCWorker extends BaseGameWorker {
   private getPublicGameState(viewerId?: string): any {
     const allPlayers = Array.from(this.gamePlayers.values());
     const viewerNightOrder = viewerId && this.gameState.nightOrder.includes(viewerId) ? [viewerId] : [];
+    const shouldMaskNightLifeState =
+      this.isNightPhase() &&
+      this.nightPublicLifeSnapshot !== null &&
+      viewerId !== this.gameConfig.storytellerId;
+    const publicLifeStateFor = (player: GamePlayer): { isDead: boolean; canVote: boolean } =>
+      (shouldMaskNightLifeState ? this.nightPublicLifeSnapshot?.get(player.playerId) : undefined) ?? {
+        isDead: player.isDead,
+        canVote: player.canVote
+      };
+    const publicLivingPlayers = shouldMaskNightLifeState
+      ? allPlayers.filter(player => !publicLifeStateFor(player).isDead).length
+      : this.gameState.livingPlayers;
     const terminalState = this.gameState.phase === GamePhase.ENDED && this.lastGameResult
       ? {
           winner: this.lastGameResult.winner,
@@ -6821,24 +6885,27 @@ export class BOTCWorker extends BaseGameWorker {
       phase: this.gameState.phase,
       day: this.gameState.day,
       isFirstDay: this.gameState.isFirstDay,
-      livingPlayers: this.gameState.livingPlayers,
+      livingPlayers: publicLivingPlayers,
       nominations: this.gameState.nominations,
       votes: this.gameState.votes,
       execution: this.gameState.execution,
-      players: allPlayers.map(p => ({
-        id: p.playerId,
-        name: this.getPlayerName(p.playerId),
-        isDead: p.isDead,
-        isAlive: !p.isDead,
-        canVote: p.canVote,
-        seat: p.seat,
-        // 夜间是否已经行动属于魔典信息。普通玩家只能看到自己的状态，
-        // 否则房间广播会直接暴露哪些玩家会在夜间醒来以及行动顺序。
-        ...(viewerId === p.playerId ? { hasActed: p.hasActed } : {}),
-        // 血染钟楼死亡后仍不公开真实角色；角色身份只给说书人/终局揭示。
-        role: undefined,
-        nominations: p.nominations
-      })),
+      players: allPlayers.map(p => {
+        const publicLifeState = publicLifeStateFor(p);
+        return {
+          id: p.playerId,
+          name: this.getPlayerName(p.playerId),
+          isDead: publicLifeState.isDead,
+          isAlive: !publicLifeState.isDead,
+          canVote: publicLifeState.canVote,
+          seat: p.seat,
+          // 夜间是否已经行动属于魔典信息。普通玩家只能看到自己的状态，
+          // 否则房间广播会直接暴露哪些玩家会在夜间醒来以及行动顺序。
+          ...(viewerId === p.playerId ? { hasActed: p.hasActed } : {}),
+          // 血染钟楼死亡后仍不公开真实角色；角色身份只给说书人/终局揭示。
+          role: undefined,
+          nominations: p.nominations
+        };
+      }),
       playerCount: this.room.players.length,
       nightOrder: viewerNightOrder,
       phaseEndTime: this.getActivePhaseEndTime(),
