@@ -861,3 +861,36 @@ Commit: fix(round6): 修正钟楼保护来源与普卡死亡时序
   - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts；git diff --check 在打包前再次执行。
   - 完整 npm ci --ignore-scripts 已尝试，但当前内部 npm 源对锁定的 typescript-5.8.3.tgz 返回 404，项目 node_modules 因此无法安装，无法在本容器完成正式 npm run build。该环境限制不影响上述源码 strict 类型检查和专项回归结果；仍需在依赖源可用的本地或 CI 执行 npm ci && npm run build 做最终生产构建确认。
 备注: 本轮未删除文件，未创建根目录 src/；所有后端源码修改均位于 backend/src/，所有前端源码修改均位于 frontend/src/；修复包只包含本轮修改文件及 repair_log.txt，可按相对路径直接覆盖。
+
+=== 当前请求第 7 轮修复记录 ===
+时间: 2026-08-08 UTC
+Commit: fix(round7): 补齐钟楼维格莫提斯与死亡触发结算
+修改/新增文件:
+  - backend/src/utils/botcSkills.ts
+  - backend/src/utils/botcTypes.ts
+  - backend/src/utils/botcUtils.ts
+  - backend/src/workers/botcWorker.ts
+  - repair_log.txt
+删除文件: 无
+构建测试: 部分通过（完整 npm build 受当前容器内部依赖源/缓存缺少 typescript-5.8.3.tgz 阻塞）
+本轮修复:
+  - 血染钟楼补齐 Vigormortis（维格莫提斯）核心交互：被其实际杀死的爪牙在维格莫提斯仍存活且能力有效时继续保留角色能力，并进入后续夜晚行动顺序；维格莫提斯死亡、醉酒或中毒时会暂停这些死亡爪牙的保留能力，恢复后重新生效。
+  - Vigormortis 的“死亡爪牙邻近镇民中毒”改为可追踪的来源状态：只在维格莫提斯实际杀死存活爪牙后建立；从该爪牙两侧最近的镇民候选中选择并固定一个目标；维格莫提斯能力失效时暂停、恢复时重建；爪牙复活或不再是爪牙时清除，避免永久残留或与其他中毒来源互相覆盖。
+  - BOTC 玩家新增独立 alignment（阵营）状态，不再把当前角色类型直接等同于阵营。由此修复 Pit-Hag 改角后阵营被错误改变、Snake Charmer 与恶魔交换角色后双方阵营没有交换、Fang Gu 跳转后新恶魔仍被当作善良阵营等问题；终局结果和说书人状态同步携带阵营。
+  - Klutz（呆瓜）死亡后加入待选择流程：白天死亡立即提示、夜间死亡在黎明得知死亡后提示；选择邪恶玩家且能力有效时立即按其当前阵营正确结算胜负，邪恶呆瓜选择邪恶玩家时反向由善良阵营获胜。
+  - Moonchild（月之子）死亡后加入待选择与延迟死亡流程：白天死亡立即选择、夜间死亡在黎明选择；选择时快照目标阵营，并在下一夜月之子的标准行动时序检查月之子届时是否清醒健康后再决定是否杀死所选善良玩家，避免错误按目标后来变更的阵营或选择当时的醉毒状态结算。
+  - 调整 BOTC startNight 状态刷新顺序：先清理上一夜临时醉毒/保护，再刷新 No Dashii 与 Vigormortis 等持续效果，最后计算夜间行动顺序，修复上一夜临时状态错误影响新夜晚行动者列表和持续中毒的问题。
+  - 继续复用现有 BOTCActionPanel 的死亡能力选择卡与 deathAbilityAction 协议，本轮无需新增前端组件，避免产生重复交互和风格分叉。
+审查结果/本轮未改动重点:
+  - 已继续检查 backend/src 与 frontend/src 当前全部源码、六个游戏 Worker 的可加载性、相对导入和根目录结构。本轮最高优先级问题集中在上轮已明确留下的 BOTC Vigormortis、Klutz、Moonchild 以及角色/阵营混用。
+  - 狼人杀、杀人游戏、一夜狼人、阿瓦隆、德州扑克本轮未新增源码修改；本轮静态检查与 Worker 启动烟雾未发现优先级高于上述 BOTC 状态/规则错误的新阻断项。
+  - Barber（理发师）的“死亡后由恶魔选择两名非恶魔玩家交换角色”仍未在本批次补齐。该流程需要增加恶魔双目标选择、合法性校验、角色交换与状态同步，建议下一轮单独完成并做专项回归。
+  - Vigormortis 的中毒目标按规则应由说书人在两个合法最近镇民候选间决定；当前项目夜间结算没有可暂停的说书人事务式选择流程，因此本轮实现为在合法候选中自动选择一次并持久保存。目标合法性与持续/暂停逻辑已补齐，但仍缺少人工说书人的精确选择权。
+验证:
+  - BOTC Worker 及其导入图使用 TypeScript 5.8.3、strict 模式和临时 Node/外部模块声明完成类型检查，0 个错误。
+  - BOTC 第 7 轮专项回归通过：Vigormortis 杀死爪牙后的保留能力/邻近镇民中毒、维格莫提斯能力失效与恢复、Pit-Hag 保持阵营、Snake Charmer 阵营交换、Fang Gu 跳转、善/邪恶 Klutz 终局、Moonchild 阵营快照与醉毒阻断均通过。
+  - backend/src + frontend/src 共 84 个源码文件完成静态扫描：TypeScript/Vue script 解析、Vue template/script/style 结构、相对导入解析和 CSS 括号检查均通过；根目录不存在 src/。
+  - 六个游戏 Worker 启动烟雾测试通过：狼人杀、杀人游戏、血染钟楼、一夜狼人、阿瓦隆、德州扑克均能由当前源码加载并保持运行。
+  - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts；差异空白检查通过。
+  - 完整 npm ci --ignore-scripts 因当前内部依赖源对锁定的 typescript-5.8.3.tgz 返回 404；离线安装同样因该包未缓存而失败。因此 node_modules 无法完整安装，无法在本容器完成正式 npm run build，仍需在依赖源可用的本地或 CI 执行 npm ci && npm run build 做最终生产构建确认。
+备注: 本轮未删除文件，未创建根目录 src/；所有后端源码修改均位于 backend/src/；本轮没有前端源码修改；修复包只包含本轮修改文件及 repair_log.txt，可按相对路径直接覆盖。

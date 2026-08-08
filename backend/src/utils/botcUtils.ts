@@ -16,6 +16,7 @@ import { ROLES, getRolesByTeam, NIGHT_ORDER } from './botcData';
 
 export const ZOMBUUL_ALIVE_REMINDER = 'Zombuul Alive';
 export const GOOD_TWIN_EXECUTED_REMINDER = 'Good Twin Executed';
+export const VIGORMORTIS_HAS_ABILITY_REMINDER = 'Vigormortis Has Ability';
 
 /**
  * 这些角色需要说书人在白天理解自由文本、构造信息或进行主观裁决。
@@ -224,6 +225,7 @@ export function createGamePlayer(playerId: string, role: Role | null, seat: numb
   return {
     playerId,
     role,
+    alignment: role && (role.team === Team.DEMON || role.team === Team.MINION) ? 'evil' : 'good',
     isDead: false,
     isAlive: true,
     canVote: true,
@@ -258,6 +260,24 @@ export function initializeGameState(storytellerId: string): GameState {
 /**
  * 获取夜晚行动顺序 - 优化版本
  */
+export function hasActiveVigormortis(gamePlayers: GamePlayer[]): boolean {
+  return gamePlayers.some(player =>
+    player.role?.id === 'vigormortis' &&
+    !player.isDead &&
+    !isAbilitySuppressed(player)
+  );
+}
+
+export function hasVigormortisRetainedAbility(player: GamePlayer, gamePlayers: GamePlayer[]): boolean {
+  return Boolean(
+    player.isDead &&
+    player.role?.team === Team.MINION &&
+    player.reminders.includes(VIGORMORTIS_HAS_ABILITY_REMINDER) &&
+    hasActiveVigormortis(gamePlayers) &&
+    !isAbilitySuppressed(player)
+  );
+}
+
 export function getNightOrder(gamePlayers: GamePlayer[], isFirstNight: boolean): string[] {
   const nightOrderIds = isFirstNight ? NIGHT_ORDER.first : NIGHT_ORDER.other;
   const order: string[] = [];
@@ -275,7 +295,8 @@ export function getNightOrder(gamePlayers: GamePlayer[], isFirstNight: boolean):
     }
   });
 
-  // 按照夜晚顺序添加相关角色玩家。酒鬼按其伪镇民身份进入夜晚流程。
+  // 按照夜晚顺序添加相关角色玩家。酒鬼按其伪镇民身份进入夜晚流程；
+  // 被 Vigormortis 夜杀的爪牙在 Vigormortis 仍有能力时，即使已经死亡也继续行动。
   nightOrderIds.forEach(roleId => {
     const playersWithRole = roleToPlayers.get(roleId);
     if (!playersWithRole) return;
@@ -283,7 +304,8 @@ export function getNightOrder(gamePlayers: GamePlayer[], isFirstNight: boolean):
     playersWithRole.forEach(player => {
       const effectiveRole = player.displayRole || player.role!;
       const nightAction = isFirstNight ? effectiveRole.firstNight : effectiveRole.otherNight;
-      if (nightAction > 0 && (!player.isDead || isZombuulLivingWhileRegisteredDead(player))) {
+      const canActWhileDead = hasVigormortisRetainedAbility(player, gamePlayers);
+      if (nightAction > 0 && (!player.isDead || isZombuulLivingWhileRegisteredDead(player) || canActWhileDead)) {
         order.push(player.playerId);
       }
     });
@@ -322,7 +344,7 @@ export function isAbilitySuppressed(player?: GamePlayer | null): boolean {
 export function hasLivingEvilTwin(gamePlayers: GamePlayer[]): boolean {
   return gamePlayers.some(player =>
     player.role?.id === 'eviltwin' &&
-    !player.isDead &&
+    (!player.isDead || hasVigormortisRetainedAbility(player, gamePlayers)) &&
     !isAbilitySuppressed(player)
   );
 }
@@ -417,6 +439,9 @@ export function getNeighbors(playerId: string, gamePlayers: GamePlayer[]): GameP
  * 检查玩家是否为邪恶阵营
  */
 export function isEvilPlayer(player: GamePlayer): boolean {
+  if (player.alignment) {
+    return player.alignment === 'evil';
+  }
   return player.role?.team === Team.DEMON || player.role?.team === Team.MINION;
 }
 
@@ -424,6 +449,9 @@ export function isEvilPlayer(player: GamePlayer): boolean {
  * 检查玩家是否为善良阵营
  */
 export function isGoodPlayer(player: GamePlayer): boolean {
+  if (player.alignment) {
+    return player.alignment === 'good';
+  }
   return player.role?.team === Team.TOWNSFOLK || player.role?.team === Team.OUTSIDER;
 }
 

@@ -1321,11 +1321,8 @@ export function processDeathAbility(
       // 笨蛋死亡时，公开选择一名玩家，如果邪恶则善良失败
       return { success: true, information: { mustChoosePublicly: true }, effects: { message: '笨蛋死亡，需要公开选择一名玩家' } };
     case 'moonchild':
-      // 月之子死亡时，选择一名玩家，如果善良则该玩家今夜死亡
-      if (deathCause === 'execution') {
-        return { success: true, information: { canChoosePlayer: true, killIfGood: true }, effects: { message: '月之子被处决，需要选择一名玩家' } };
-      }
-      break;
+      // 月之子无论如何死亡，都在得知死亡后公开选择一名存活玩家；死亡来源不限制触发。
+      return { success: true, information: { canChoosePlayer: true, killIfGood: true }, effects: { message: '月之子死亡，需要公开选择一名玩家' } };
   }
 
   return { success: true };

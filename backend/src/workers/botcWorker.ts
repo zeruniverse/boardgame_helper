@@ -34,9 +34,12 @@ import {
   isGoodTwinPlayer,
   GOOD_TWIN_EXECUTED_REMINDER,
   hasLivingEvilTwin,
+  hasActiveVigormortis,
+  hasVigormortisRetainedAbility,
+  VIGORMORTIS_HAS_ABILITY_REMINDER,
   AI_STORYTELLER_MANUAL_ROLE_IDS
 } from '../utils/botcUtils';
-import { EDITIONS, getAllRoles, getEditionById, getRoleById, getRolesByTeam } from '../utils/botcData';
+import { EDITIONS, NIGHT_ORDER, getAllRoles, getEditionById, getRoleById, getRolesByTeam } from '../utils/botcData';
 import { processFirstNightInfo, processNightAction, processDeathAbility } from '../utils/botcSkills';
 import { normalizeChatChannel, normalizeChatText } from '../utils/chat';
 import { mergeRoomGameConfig } from '../utils/roomGameConfig';
@@ -46,11 +49,15 @@ type DebuffSourceMap = Record<string, Partial<Record<DebuffType, string[]>>>;
 
 const MONK_PROTECTION_REMINDER = 'Protected:Monk';
 const INNKEEPER_PROTECTION_REMINDER = 'Protected:Innkeeper';
+const VIGORMORTIS_POISON_SOURCE_PREFIX = 'vigormortis:';
+const KLUTZ_DEATH_PENDING_REMINDER = 'Klutz Death Ability Pending';
+const MOONCHILD_DEATH_PENDING_REMINDER = 'Moonchild Death Ability Pending';
 
 interface BOTCGameResultPlayer {
   id: string;
   name: string;
   role: Role | null;
+  alignment: 'good' | 'evil';
   isDead: boolean;
   deathCause?: string;
   team?: Team;
@@ -175,7 +182,8 @@ export class BOTCWorker extends BaseGameWorker {
         role: p.role,
         displayRole: p.displayRole,
         seat: p.seat,
-        team: p.role?.team
+        team: p.role?.team,
+        alignment: isEvilPlayer(p) ? 'evil' : 'good'
       }))
     };
   }
@@ -202,6 +210,16 @@ export class BOTCWorker extends BaseGameWorker {
   }
 
   private playerAbilityWorks(player: GamePlayer): boolean {
+    // 被维格莫提斯杀死的爪牙只有在一名仍有能力的维格莫提斯存活时才继续拥有能力。
+    // 夜晚顺序在夜晚开始时生成，因此维格莫提斯若在更早的夜间顺序中失去能力，
+    // 这里还需要再次做动态检查，避免已入队的死亡爪牙错误结算。
+    if (
+      player.isDead &&
+      player.reminders.includes(VIGORMORTIS_HAS_ABILITY_REMINDER) &&
+      !hasVigormortisRetainedAbility(player, Array.from(this.gamePlayers.values()))
+    ) {
+      return false;
+    }
     return !this.isPlayerPoisoned(player) && !this.isPlayerDrunk(player);
   }
 
@@ -345,6 +363,106 @@ export class BOTCWorker extends BaseGameWorker {
       targetId: target.playerId,
       targetName: this.getPlayerName(target.playerId)
     });
+  }
+
+  private getDeathChoiceTargets(playerId: string): Array<{ playerId: string; playerName: string }> {
+    return Array.from(this.gamePlayers.values())
+      .filter(candidate => !candidate.isDead && candidate.playerId !== playerId)
+      .map(candidate => ({
+        playerId: candidate.playerId,
+        playerName: this.getPlayerName(candidate.playerId)
+      }));
+  }
+
+  private sendPendingDeathChoicePrompt(player: GamePlayer): void {
+    if (!player.isDead) return;
+
+    const availableTargets = this.getDeathChoiceTargets(player.playerId);
+    if (availableTargets.length === 0) return;
+
+    if (player.role?.id === 'klutz' && player.reminders.includes(KLUTZ_DEATH_PENDING_REMINDER)) {
+      this.sendToPlayer(player.playerId, 'deathAbilityPrompt', {
+        role: 'klutz',
+        message: '你已得知自己死亡。请公开选择一名存活玩家；若该玩家为邪恶，你的阵营将失败。',
+        availableTargets
+      });
+      return;
+    }
+
+    if (player.role?.id === 'moonchild' && player.reminders.includes(MOONCHILD_DEATH_PENDING_REMINDER)) {
+      this.sendToPlayer(player.playerId, 'deathAbilityPrompt', {
+        role: 'moonchild',
+        message: '你已得知自己死亡。请公开选择一名存活玩家；若该玩家此刻为善良，其将在今晚死亡。',
+        availableTargets
+      });
+    }
+  }
+
+  private queueDeathChoiceIfNeeded(player: GamePlayer): void {
+    if (!player.isDead) return;
+
+    if (player.role?.id === 'klutz' && !player.reminders.includes(KLUTZ_DEATH_PENDING_REMINDER)) {
+      this.addReminder(player, KLUTZ_DEATH_PENDING_REMINDER);
+    } else if (player.role?.id === 'moonchild' && !player.reminders.includes(MOONCHILD_DEATH_PENDING_REMINDER)) {
+      this.addReminder(player, MOONCHILD_DEATH_PENDING_REMINDER);
+    } else {
+      return;
+    }
+
+    // 夜间死亡会在黎明才被玩家得知，因此延迟到 startDay 再提示；白天死亡则立即提示。
+    if (this.gameState.phase === GamePhase.DAY) {
+      this.sendPendingDeathChoicePrompt(player);
+    }
+  }
+
+  private sendDawnDeathChoicePrompts(): void {
+    for (const player of this.gamePlayers.values()) {
+      if (
+        player.reminders.includes(KLUTZ_DEATH_PENDING_REMINDER) ||
+        player.reminders.includes(MOONCHILD_DEATH_PENDING_REMINDER)
+      ) {
+        this.sendPendingDeathChoicePrompt(player);
+      }
+    }
+  }
+
+  private getPendingMoonchildDeaths(): Array<{
+    sourceId: string;
+    targetId: string;
+    targetWasGood: boolean;
+    resolveNightRound: number;
+  }> {
+    if (!Array.isArray(this.gameState.grimoire.moonchildPendingDeaths)) {
+      this.gameState.grimoire.moonchildPendingDeaths = [];
+    }
+    return this.gameState.grimoire.moonchildPendingDeaths;
+  }
+
+  private async resolvePendingMoonchildDeaths(): Promise<void> {
+    const pending = this.getPendingMoonchildDeaths();
+    if (pending.length === 0) return;
+
+    const remaining: typeof pending = [];
+    for (const entry of pending) {
+      if (entry.resolveNightRound > this.nightRound) {
+        remaining.push(entry);
+        continue;
+      }
+
+      const source = this.gamePlayers.get(entry.sourceId);
+      const target = this.gamePlayers.get(entry.targetId);
+      if (!source || !target || target.isDead) {
+        continue;
+      }
+
+      // Moonchild 在“今晚”结算时是否清醒健康才决定能力是否有效；目标阵营使用
+      // 公开选择当时的快照，避免 Goon 等阵营随后变化导致错误结果。
+      if (entry.targetWasGood && source.role?.id === 'moonchild' && this.playerAbilityWorks(source)) {
+        await this.killPlayer(target.playerId, 'moonchild');
+      }
+    }
+
+    this.gameState.grimoire.moonchildPendingDeaths = remaining;
   }
 
   private async resolveSurvivedExecution(player: GamePlayer, executedBy: string, reason?: string): Promise<void> {
@@ -704,6 +822,126 @@ export class BOTCWorker extends BaseGameWorker {
     }
   }
 
+  private getVigormortisPoisonAssignments(): Record<string, string> {
+    if (!this.gameState.grimoire.vigormortisPoisonAssignments) {
+      this.gameState.grimoire.vigormortisPoisonAssignments = {};
+    }
+    return this.gameState.grimoire.vigormortisPoisonAssignments as Record<string, string>;
+  }
+
+  private getVigormortisPoisonCandidates(minionId: string): GamePlayer[] {
+    const seatedPlayers = Array.from(this.gamePlayers.values()).sort((a, b) => a.seat - b.seat);
+    const minionIndex = seatedPlayers.findIndex(player => player.playerId === minionId);
+    if (minionIndex < 0 || seatedPlayers.length <= 1) {
+      return [];
+    }
+
+    const candidates: GamePlayer[] = [];
+    const addClosestTownsfolk = (direction: -1 | 1) => {
+      for (let offset = 1; offset < seatedPlayers.length; offset++) {
+        const index = (minionIndex + direction * offset + seatedPlayers.length) % seatedPlayers.length;
+        const candidate = seatedPlayers[index];
+        if (candidate.role?.team === Team.TOWNSFOLK) {
+          if (!candidates.some(existing => existing.playerId === candidate.playerId)) {
+            candidates.push(candidate);
+          }
+          return;
+        }
+      }
+    };
+
+    addClosestTownsfolk(-1);
+    addClosestTownsfolk(1);
+    return candidates;
+  }
+
+  private clearVigormortisPoisonForMinion(minionId: string): void {
+    const source = `${VIGORMORTIS_POISON_SOURCE_PREFIX}${minionId}`;
+    this.clearDebuffSourceFromAll('Poisoned', source);
+    delete this.getVigormortisPoisonAssignments()[minionId];
+  }
+
+  private activateVigormortisKilledMinion(minion: GamePlayer): void {
+    if (minion.role?.team !== Team.MINION || !minion.isDead) {
+      return;
+    }
+
+    this.addReminder(minion, VIGORMORTIS_HAS_ABILITY_REMINDER);
+    const assignments = this.getVigormortisPoisonAssignments();
+    if (!assignments[minion.playerId]) {
+      const candidates = this.getVigormortisPoisonCandidates(minion.playerId);
+      if (candidates.length > 0) {
+        // 规则允许说书人在两个最近镇民中选择一个。当前自动结算模型没有一个
+        // 可暂停整夜等待说书人选择的事务，因此在合法候选中一次性选择并持久化，
+        // 后续刷新不会随机漂移。
+        const unprotectedCandidates = candidates.filter(candidate => !this.getDemonSafetyReason(candidate));
+        const pool = unprotectedCandidates.length > 0 ? unprotectedCandidates : candidates;
+        const target = pool[Math.floor(Math.random() * pool.length)];
+        assignments[minion.playerId] = target.playerId;
+        this.sendToPlayer(this.gameConfig.storytellerId, 'gameMessage', {
+          message: `维格莫提斯：${this.getPlayerName(minion.playerId)} 保留爪牙能力，${this.getPlayerName(target.playerId)} 被其效果中毒`,
+          type: 'warning'
+        });
+      }
+    }
+
+    this.refreshVigormortisEffects();
+  }
+
+  private refreshVigormortisEffects(): void {
+    const assignments = this.getVigormortisPoisonAssignments();
+    const activeVigormortis = hasActiveVigormortis(Array.from(this.gamePlayers.values()));
+
+    for (const player of this.gamePlayers.values()) {
+      if (!player.reminders.includes(VIGORMORTIS_HAS_ABILITY_REMINDER)) continue;
+
+      const isStillEligibleKilledMinion = player.isDead && player.role?.team === Team.MINION;
+      if (!isStillEligibleKilledMinion) {
+        player.reminders = player.reminders.filter(reminder => reminder !== VIGORMORTIS_HAS_ABILITY_REMINDER);
+        this.clearVigormortisPoisonForMinion(player.playerId);
+        continue;
+      }
+
+      const source = `${VIGORMORTIS_POISON_SOURCE_PREFIX}${player.playerId}`;
+      const targetId = assignments[player.playerId];
+      const target = targetId ? this.gamePlayers.get(targetId) : undefined;
+
+      if (!activeVigormortis) {
+        // 维格莫提斯死亡、醉酒或中毒期间，保留“由其杀死”的来源标记，
+        // 但持续能力和由此造成的中毒都暂停；恢复健康后可自动恢复。
+        this.clearDebuffSourceFromAll('Poisoned', source);
+        continue;
+      }
+
+      if (!target) {
+        const candidates = this.getVigormortisPoisonCandidates(player.playerId);
+        if (candidates.length === 0) continue;
+        const unprotectedCandidates = candidates.filter(candidate => !this.getDemonSafetyReason(candidate));
+        const pool = unprotectedCandidates.length > 0 ? unprotectedCandidates : candidates;
+        const replacement = pool[Math.floor(Math.random() * pool.length)];
+        assignments[player.playerId] = replacement.playerId;
+        if (!this.getDemonSafetyReason(replacement)) {
+          this.applyDebuff(replacement, 'Poisoned', source);
+        }
+        continue;
+      }
+
+      if (this.getDemonSafetyReason(target)) {
+        this.clearDebuffSourceFromAll('Poisoned', source);
+      } else {
+        this.applyDebuff(target, 'Poisoned', source);
+      }
+    }
+
+    // 清理不再对应任何 Vigormortis 死亡爪牙的陈旧来源，避免角色变化/复活后永久中毒。
+    for (const minionId of Object.keys(assignments)) {
+      const minion = this.gamePlayers.get(minionId);
+      if (!minion || !minion.isDead || minion.role?.team !== Team.MINION || !minion.reminders.includes(VIGORMORTIS_HAS_ABILITY_REMINDER)) {
+        this.clearVigormortisPoisonForMinion(minionId);
+      }
+    }
+  }
+
   private advanceCourtierDrunkMarkers(): void {
     const courtierMarkerPattern = /^Courtier Drunk ([123])$/;
 
@@ -783,6 +1021,7 @@ export class BOTCWorker extends BaseGameWorker {
     this.addReminder(fangGu, 'Fang Gu Jumped');
     target.role = { ...fangGuRole };
     target.displayRole = undefined;
+    target.alignment = 'evil';
     target.nightInfo = null;
     this.addReminder(target, 'Fang Gu Jumped');
     this.refreshAlignmentLists();
@@ -1866,7 +2105,6 @@ export class BOTCWorker extends BaseGameWorker {
 
     this.gameState.phase = isFirstNight ? GamePhase.FIRST_NIGHT : GamePhase.NIGHT;
     this.isProcessingNight = false;
-    this.gameState.nightOrder = getNightOrder(Array.from(this.gamePlayers.values()), isFirstNight);
     this.nightActions = [];
     this.firstNightInfoPlayerIds.clear();
     this.nightRound++;
@@ -1879,7 +2117,6 @@ export class BOTCWorker extends BaseGameWorker {
     // 清除上一白天/上一夜的临时效果。
     if (!isFirstNight) {
       this.clearExpiredTemporaryDebuffs();
-      this.refreshNoDashiiPoison();
       this.gamePlayers.forEach(player => {
         player.isProtected = false;
         const poChargeWasUsed = player.reminders.includes('Po Charged Used');
@@ -1897,9 +2134,12 @@ export class BOTCWorker extends BaseGameWorker {
       });
     }
 
-    if (isFirstNight) {
-      this.refreshNoDashiiPoison();
-    }
+    // 持续中毒必须在清掉上一夜的临时醉酒/中毒和保护之后刷新。此前先生成 nightOrder，
+    // 会导致“上一夜投毒、今夜已恢复”的维格莫提斯错误丢失死亡爪牙行动；同时上一夜
+    // 的 Monk 标记也可能错误阻止 No Dashii 新一夜的邻座中毒。
+    this.refreshNoDashiiPoison();
+    this.refreshVigormortisEffects();
+    this.gameState.nightOrder = getNightOrder(Array.from(this.gamePlayers.values()), isFirstNight);
 
     // 进入夜晚后补发每名玩家自己的私有能力状态。
     // 只包含玩家已知且提交行动必需的信息（例如珀是否已蓄力），避免公开魔典提醒标记。
@@ -2161,6 +2401,7 @@ export class BOTCWorker extends BaseGameWorker {
     // No Dashii poison is continuous. Monk safety ends at dawn, so refresh
     // after clearing the night-only marker; Soldier safety remains in force.
     this.refreshNoDashiiPoison();
+    this.refreshVigormortisEffects();
 
     // 女巫在只剩3名存活玩家时失去能力，现有诅咒立即移除
     if (this.gameState.livingPlayers <= 3) {
@@ -2189,6 +2430,7 @@ export class BOTCWorker extends BaseGameWorker {
       alivePlayers: Array.from(this.gamePlayers.values()).filter(p => !p.isDead).length,
       phaseEndTime: this.getActivePhaseEndTime()
     });
+    this.sendDawnDeathChoicePrompts();
     this.broadcastGameState();
   }
 
@@ -2909,6 +3151,8 @@ export class BOTCWorker extends BaseGameWorker {
     this.recordDeathToday(player, 'execution');
 
     this.resolveSweetheartDeath(player);
+    this.queueDeathChoiceIfNeeded(player);
+    this.refreshVigormortisEffects();
 
     // 死亡不会公开翻开身份。角色专属死亡能力提示只能发给说书人，
     // 否则 Sweetheart/Barber/Klutz/Moonchild 等角色会被系统直接泄露。
@@ -2981,7 +3225,10 @@ export class BOTCWorker extends BaseGameWorker {
     }
 
     const player = this.gamePlayers.get(playerId);
-    if (!player || (player.isDead && !isZombuulLivingWhileRegisteredDead(player))) {
+    const canActWhileDead = player
+      ? hasVigormortisRetainedAbility(player, Array.from(this.gamePlayers.values()))
+      : false;
+    if (!player || (player.isDead && !isZombuulLivingWhileRegisteredDead(player) && !canActWhileDead)) {
       this.sendToPlayer(playerId, 'actionError', { message: '无法执行夜晚行动' });
       return;
     }
@@ -3044,18 +3291,8 @@ export class BOTCWorker extends BaseGameWorker {
     }
 
     const player = this.gamePlayers.get(playerId);
-    if (!player || player.role?.id !== 'ravenkeeper') {
-      this.sendToPlayer(playerId, 'actionError', { message: '当前角色没有可选择的死亡能力' });
-      return;
-    }
-
-    if (!player.isDead || player.deathCause === 'execution' || !player.reminders.includes('ravenkeeperDeathAbilityPending')) {
-      this.sendToPlayer(playerId, 'actionError', { message: '乌鸦饲养员只有夜间死亡后才能选择目标' });
-      return;
-    }
-
-    if (player.reminders.includes('ravenkeeperDeathAbilityUsed')) {
-      this.sendToPlayer(playerId, 'actionError', { message: '死亡能力已经使用过' });
+    if (!player || !player.isDead || !player.role) {
+      this.sendToPlayer(playerId, 'actionError', { message: '当前没有可选择的死亡能力' });
       return;
     }
 
@@ -3066,28 +3303,109 @@ export class BOTCWorker extends BaseGameWorker {
       return;
     }
 
-    player.reminders = player.reminders.filter(reminder => reminder !== 'ravenkeeperDeathAbilityPending');
-    player.reminders.push('ravenkeeperDeathAbilityUsed');
+    if (player.role.id === 'ravenkeeper') {
+      if (player.deathCause === 'execution' || !player.reminders.includes('ravenkeeperDeathAbilityPending')) {
+        this.sendToPlayer(playerId, 'actionError', { message: '乌鸦饲养员只有夜间死亡后才能选择目标' });
+        return;
+      }
 
-    const information = {
-      playerId: target.playerId,
-      playerName: this.getPlayerName(target.playerId),
-      roleName: target.role?.name,
-      roleId: target.role?.id
-    };
+      if (player.reminders.includes('ravenkeeperDeathAbilityUsed')) {
+        this.sendToPlayer(playerId, 'actionError', { message: '死亡能力已经使用过' });
+        return;
+      }
 
-    this.sendNightInfoToPlayer(playerId, {
-      role: 'ravenkeeper',
-      information,
-      isDeathAbility: true
-    });
+      player.reminders = player.reminders.filter(reminder => reminder !== 'ravenkeeperDeathAbilityPending');
+      player.reminders.push('ravenkeeperDeathAbilityUsed');
 
-    this.sendToPlayer(this.gameConfig.storytellerId, 'deathAbilityResolved', {
-      playerId,
-      playerName: this.getPlayerName(playerId),
-      role: 'ravenkeeper',
-      target: information
-    });
+      const information = {
+        playerId: target.playerId,
+        playerName: this.getPlayerName(target.playerId),
+        roleName: target.role?.name,
+        roleId: target.role?.id
+      };
+
+      this.sendNightInfoToPlayer(playerId, {
+        role: 'ravenkeeper',
+        information,
+        isDeathAbility: true
+      });
+
+      this.sendToPlayer(this.gameConfig.storytellerId, 'deathAbilityResolved', {
+        playerId,
+        playerName: this.getPlayerName(playerId),
+        role: 'ravenkeeper',
+        target: information
+      });
+      return;
+    }
+
+    if (player.role.id === 'klutz') {
+      if (!player.reminders.includes(KLUTZ_DEATH_PENDING_REMINDER)) {
+        this.sendToPlayer(playerId, 'actionError', { message: '笨蛋当前没有待处理的死亡选择' });
+        return;
+      }
+      if (target.isDead) {
+        this.sendToPlayer(playerId, 'actionError', { message: '笨蛋必须选择一名存活玩家' });
+        return;
+      }
+
+      player.reminders = player.reminders.filter(reminder => reminder !== KLUTZ_DEATH_PENDING_REMINDER);
+      this.sendToRoom('gameMessage', {
+        message: `${this.getPlayerName(playerId)} 的死亡能力公开选择了 ${this.getPlayerName(target.playerId)}`,
+        type: 'warning'
+      });
+      this.sendToPlayer(this.gameConfig.storytellerId, 'deathAbilityResolved', {
+        playerId,
+        playerName: this.getPlayerName(playerId),
+        role: 'klutz',
+        target: {
+          playerId: target.playerId,
+          playerName: this.getPlayerName(target.playerId)
+        }
+      });
+
+      if (this.playerAbilityWorks(player) && isEvilPlayer(target)) {
+        const winner: 'good' | 'evil' = isEvilPlayer(player) ? 'good' : 'evil';
+        await this.endGame(winner, '笨蛋死亡后公开选择了邪恶玩家，其阵营失败');
+      }
+      return;
+    }
+
+    if (player.role.id === 'moonchild') {
+      if (!player.reminders.includes(MOONCHILD_DEATH_PENDING_REMINDER)) {
+        this.sendToPlayer(playerId, 'actionError', { message: '月之子当前没有待处理的死亡选择' });
+        return;
+      }
+      if (target.isDead) {
+        this.sendToPlayer(playerId, 'actionError', { message: '月之子必须选择一名存活玩家' });
+        return;
+      }
+
+      player.reminders = player.reminders.filter(reminder => reminder !== MOONCHILD_DEATH_PENDING_REMINDER);
+      this.getPendingMoonchildDeaths().push({
+        sourceId: player.playerId,
+        targetId: target.playerId,
+        targetWasGood: isGoodPlayer(target),
+        resolveNightRound: this.nightRound + 1
+      });
+
+      this.sendToRoom('gameMessage', {
+        message: `${this.getPlayerName(playerId)} 的死亡能力公开选择了 ${this.getPlayerName(target.playerId)}`,
+        type: 'warning'
+      });
+      this.sendToPlayer(this.gameConfig.storytellerId, 'deathAbilityResolved', {
+        playerId,
+        playerName: this.getPlayerName(playerId),
+        role: 'moonchild',
+        target: {
+          playerId: target.playerId,
+          playerName: this.getPlayerName(target.playerId)
+        }
+      });
+      return;
+    }
+
+    this.sendToPlayer(playerId, 'actionError', { message: '当前角色没有可选择的死亡能力' });
   }
 
   /**
@@ -3171,6 +3489,7 @@ export class BOTCWorker extends BaseGameWorker {
         if (!hasPoisoned) {
           this.applyDebuff(target, 'Poisoned', 'manual');
         }
+        this.refreshVigormortisEffects();
         this.sendToRoom('gameMessage', {
           message: `${this.getPlayerName(data.playerId)} ${hasPoisoned ? '被解毒' : '被标记为中毒'}`,
           type: 'info'
@@ -3190,6 +3509,7 @@ export class BOTCWorker extends BaseGameWorker {
         if (!hasDrunk) {
           this.applyDebuff(target, 'Drunk', 'manual');
         }
+        this.refreshVigormortisEffects();
         this.sendToRoom('gameMessage', {
           message: `${this.getPlayerName(data.playerId)} ${hasDrunk ? '恢复清醒' : '被标记为醉酒'}`,
           type: 'info'
@@ -3373,11 +3693,23 @@ export class BOTCWorker extends BaseGameWorker {
       if (aIndex !== bIndex) return aIndex - bIndex;
       return a.timestamp - b.timestamp;
     });
+    const isFirstNight = this.gameState.phase === GamePhase.FIRST_NIGHT;
+    const moonchildOrderIndex = NIGHT_ORDER.other.indexOf('moonchild');
+    let moonchildDeathsResolved = isFirstNight || moonchildOrderIndex < 0;
 
     // 按夜晚顺序处理各个角色的行动，而不是按玩家提交先后顺序。
     for (const action of orderedNightActions) {
       const player = this.gamePlayers.get(action.playerId);
       if (!player || !player.role) continue;
+
+      if (!moonchildDeathsResolved) {
+        const actionRoleId = this.getNightActionRoleId(action);
+        const actionOrderIndex = NIGHT_ORDER.other.indexOf(actionRoleId);
+        if (actionOrderIndex > moonchildOrderIndex) {
+          await this.resolvePendingMoonchildDeaths();
+          moonchildDeathsResolved = true;
+        }
+      }
 
       // 检查玩家是否被保护或免疫
       if (this.shouldSkipAction(player, action)) {
@@ -3434,8 +3766,14 @@ export class BOTCWorker extends BaseGameWorker {
       }
     }
 
+    // 若月之子之后没有任何玩家提交行动，仍必须在其标准夜序位置完成延迟死亡。
+    if (!moonchildDeathsResolved) {
+      await this.resolvePendingMoonchildDeaths();
+      moonchildDeathsResolved = true;
+    }
+
     // 首夜信息必须等前置夜晚效果（如投毒、保护、阻止）按顺序结算后再发送。
-    if (this.gameState.phase === GamePhase.FIRST_NIGHT) {
+    if (isFirstNight) {
       await this.processFirstNightInfo();
     }
 
@@ -3601,6 +3939,8 @@ export class BOTCWorker extends BaseGameWorker {
     const roleId = this.getNightActionRoleId(action);
     if (effects.killed) {
       for (const playerId of effects.killed) {
+        const killTarget = this.gamePlayers.get(playerId);
+        const wasLivingMinion = Boolean(killTarget && !killTarget.isDead && killTarget.role?.team === Team.MINION);
         if (roleId === 'fanggu') {
           const jumped = await this.tryResolveFangGuJump(action.playerId, playerId);
           if (jumped) {
@@ -3608,6 +3948,9 @@ export class BOTCWorker extends BaseGameWorker {
           }
         }
         await this.killPlayer(playerId, killCause);
+        if (roleId === 'vigormortis' && wasLivingMinion && killTarget?.isDead) {
+          this.activateVigormortisKilledMinion(killTarget);
+        }
       }
     }
 
@@ -3679,6 +4022,13 @@ export class BOTCWorker extends BaseGameWorker {
         playerA.nightInfo = null;
         playerB.nightInfo = null;
 
+        // Snake Charmer 是少数“角色交换同时改变阵营”的交换。一般角色交换（如 Barber）
+        // 必须保持玩家原阵营，因此阵营不再从角色 team 隐式推导。
+        if (roleId === 'snakecharmer') {
+          playerA.alignment = 'evil';
+          playerB.alignment = 'good';
+        }
+
         if (swap.poisonPlayerId) {
           const poisoned = this.gamePlayers.get(swap.poisonPlayerId);
           if (poisoned) {
@@ -3747,6 +4097,9 @@ export class BOTCWorker extends BaseGameWorker {
         }
       }
     }
+
+    // 角色变化、复活、醉酒/中毒都可能即时影响维格莫提斯与其死亡爪牙的持续能力。
+    this.refreshVigormortisEffects();
   }
 
   /**
@@ -3986,8 +4339,8 @@ export class BOTCWorker extends BaseGameWorker {
     // 诺达希（No Dashii）的邻座镇民中毒是持续效果；夜晚结束时刷新，供白天和下一夜使用。
     this.refreshNoDashiiPoison();
 
-    // 维格莫提斯（Vigormortis）杀死的爪牙保留能力并毒化邻座镇民
-    // 此效果在applyNightEffects中通过reminders处理
+    // 维格莫提斯持续效果可能因本夜死亡、醉酒或角色变化而改变，夜末再统一校准一次。
+    this.refreshVigormortisEffects();
 
     // 同步茶艺师保护标记给魔典/信息角色查看；真正的死亡免疫在 killPlayer/executePlayer 中即时判断。
     for (const protectedPlayerId of this.getTeaLadyProtectedPlayerIds()) {
@@ -4188,6 +4541,8 @@ export class BOTCWorker extends BaseGameWorker {
     this.gameState.livingPlayers--;
     this.recordDeathToday(player, cause);
     this.resolveSweetheartDeath(player);
+    this.queueDeathChoiceIfNeeded(player);
+    this.refreshVigormortisEffects();
 
     this.sendToRoom('playerDied', {
       playerId,
@@ -4212,6 +4567,9 @@ export class BOTCWorker extends BaseGameWorker {
     player.deathCause = undefined;
     player.canVote = true;
     this.gameState.livingPlayers++;
+
+    // 复活死亡爪牙会立即失去维格莫提斯给予的死亡保留能力及其毒源。
+    this.refreshVigormortisEffects();
 
     this.sendToRoom('playerRevived', {
       playerId,
@@ -4706,6 +5064,7 @@ export class BOTCWorker extends BaseGameWorker {
         id: p.playerId,
         name: this.getPlayerName(p.playerId),
         role: p.role,
+        alignment: isEvilPlayer(p) ? 'evil' : 'good',
         isDead: p.isDead,
         deathCause: p.deathCause,
         team: p.role?.team,
@@ -4744,6 +5103,7 @@ export class BOTCWorker extends BaseGameWorker {
         hasActed: p.hasActed,
         role: p.role,
         displayRole: p.displayRole,
+        alignment: isEvilPlayer(p) ? 'evil' : 'good',
         reminders: p.reminders,
         nominations: p.nominations
       })),

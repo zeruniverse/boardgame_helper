@@ -23,6 +23,8 @@ export enum VoteType {
   EXECUTION = 'execution'
 }
 
+export type Alignment = 'good' | 'evil';
+
 export interface Role {
   id: string;
   name: string;
@@ -55,6 +57,11 @@ export interface GamePlayer {
   role: Role | null;
   /** 玩家实际看到/被当作执行夜晚流程的角色；目前用于酒鬼的伪镇民身份。 */
   displayRole?: Role | null;
+  /**
+   * 阵营与角色类型必须分开保存。Barber/Pit-Hag 等换角色时阵营通常不变，
+   * Snake Charmer/Fang Gu 等能力则会显式改变阵营。
+   */
+  alignment?: Alignment;
   isDead: boolean;
   isAlive?: boolean;  // 前端兼容性属性，由isDead派生
   deathCause?: string;
