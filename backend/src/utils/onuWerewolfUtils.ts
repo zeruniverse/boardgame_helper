@@ -15,17 +15,13 @@ import {
   OnuWerewolfSelection,
   ONU_WEREWOLF_REFERENCE_ROLES
 } from './onuWerewolfTypes';
+import { secureRandomString, secureShuffle } from './secureRandom';
 
 /**
  * 洗牌算法（Fisher-Yates）
  */
 export function onuShuffle<T>(array: T[]): T[] {
-  const result = [...array];
-  for (let i = result.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [result[i], result[j]] = [result[j], result[i]];
-  }
-  return result;
+  return secureShuffle(array);
 }
 
 /**
@@ -33,11 +29,7 @@ export function onuShuffle<T>(array: T[]): T[] {
  */
 export function onuGenerateRandomString(length: number): string {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-  let result = '';
-  for (let i = 0; i < length; i++) {
-    result += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-  return result;
+  return secureRandomString(length, chars);
 }
 
 /**

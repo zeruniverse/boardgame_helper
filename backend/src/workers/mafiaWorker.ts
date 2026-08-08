@@ -4,6 +4,7 @@ import { Room } from '../models/Room';
 import { Player } from '../models/Player';
 import { normalizeChatText } from '../utils/chat';
 import { normalizeBoundedInteger, normalizeDurationSeconds } from '../utils/configNormalization';
+import { secureShuffle } from '../utils/secureRandom';
 
 if (!parentPort) {
   throw new Error('这个文件只能在Worker线程中运行');
@@ -1734,12 +1735,7 @@ class MafiaWorker extends BaseGameWorker {
 
   // 工具方法
   private shuffleArray<T>(array: T[]): T[] {
-    const result = [...array];
-    for (let i = result.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [result[i], result[j]] = [result[j], result[i]];
-    }
-    return result;
+    return secureShuffle(array);
   }
 
   private setTimer(ms: number, callback: () => void): void {

@@ -9,6 +9,7 @@ import {
   Nomination
 } from './botcTypes';
 import { ROLES, getRolesByTeam, NIGHT_ORDER } from './botcData';
+import { secureRandomUnit, secureShuffle } from './secureRandom';
 
 /**
  * 血染钟楼游戏工具函数
@@ -50,12 +51,7 @@ export function isZombuulLivingWhileRegisteredDead(player?: GamePlayer | null): 
  * 随机打乱数组
  */
 export function shuffleArray<T>(array: T[]): T[] {
-  const shuffled = [...array];
-  for (let i = shuffled.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
-  }
-  return shuffled;
+  return secureShuffle(array);
 }
 
 /**
@@ -505,7 +501,7 @@ export function chooseRegisteredIdentity(
   player: GamePlayer,
   editionId: string,
   allowAlternate: boolean = true,
-  random: () => number = Math.random
+  random: () => number = secureRandomUnit
 ): BotcRegisteredIdentity {
   const actualRole = player.role;
   if (!actualRole) {

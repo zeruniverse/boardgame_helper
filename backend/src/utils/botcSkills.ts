@@ -12,6 +12,7 @@ import {
   isAbilitySuppressed
 } from './botcUtils';
 import { getAllRoles, getRoleById } from './botcData';
+import { secureRandomBoolean, secureRandomItem } from './secureRandom';
 
 /**
  * 血染钟楼角色技能处理器 - 完整版本
@@ -178,18 +179,18 @@ function processWasherwoman(
     };
   }
 
-  const randomTownsfolk = townsfolk[Math.floor(Math.random() * townsfolk.length)];
+  const randomTownsfolk = secureRandomItem(townsfolk)!;
   const otherPlayers = allPlayers.filter(p =>
     p.playerId !== player.playerId && p.playerId !== randomTownsfolk.player.playerId
   );
   const randomOther = otherPlayers.length > 0
-    ? otherPlayers[Math.floor(Math.random() * otherPlayers.length)]
+    ? secureRandomItem(otherPlayers)
     : null;
   const information = {
     roleId: randomTownsfolk.identity.role?.id,
     roleName: randomTownsfolk.identity.role?.name,
     players: randomOther
-      ? (Math.random() < 0.5
+      ? (secureRandomBoolean()
         ? [randomTownsfolk.player.playerId, randomOther.playerId]
         : [randomOther.playerId, randomTownsfolk.player.playerId])
       : [randomTownsfolk.player.playerId]
@@ -234,18 +235,18 @@ function processLibrarian(
     };
   }
 
-  const randomOutsider = outsiders[Math.floor(Math.random() * outsiders.length)];
+  const randomOutsider = secureRandomItem(outsiders)!;
   const otherPlayers = allPlayers.filter(p =>
     p.playerId !== player.playerId && p.playerId !== randomOutsider.player.playerId
   );
   const randomOther = otherPlayers.length > 0
-    ? otherPlayers[Math.floor(Math.random() * otherPlayers.length)]
+    ? secureRandomItem(otherPlayers)
     : null;
   const information = {
     roleId: randomOutsider.identity.role?.id,
     roleName: randomOutsider.identity.role?.name,
     players: randomOther
-      ? (Math.random() < 0.5
+      ? (secureRandomBoolean()
         ? [randomOutsider.player.playerId, randomOther.playerId]
         : [randomOther.playerId, randomOutsider.player.playerId])
       : [randomOutsider.player.playerId]
@@ -290,18 +291,18 @@ function processInvestigator(
     };
   }
 
-  const randomMinion = minions[Math.floor(Math.random() * minions.length)];
+  const randomMinion = secureRandomItem(minions)!;
   const otherPlayers = allPlayers.filter(p =>
     p.playerId !== player.playerId && p.playerId !== randomMinion.player.playerId
   );
   const randomOther = otherPlayers.length > 0
-    ? otherPlayers[Math.floor(Math.random() * otherPlayers.length)]
+    ? secureRandomItem(otherPlayers)
     : null;
   const information = {
     roleId: randomMinion.identity.role?.id,
     roleName: randomMinion.identity.role?.name,
     players: randomOther
-      ? (Math.random() < 0.5
+      ? (secureRandomBoolean()
         ? [randomMinion.player.playerId, randomOther.playerId]
         : [randomOther.playerId, randomMinion.player.playerId])
       : [randomMinion.player.playerId]
@@ -423,7 +424,7 @@ function processGrandmother(player: GamePlayer, allPlayers: GamePlayer[], editio
       identity: chooseRegisteredIdentity(target, editionId, !isAbilitySuppressed(target))
     }))
     .filter(entry => entry.identity.alignment === 'good' && entry.identity.role);
-  const grandchild = goodPlayers[Math.floor(Math.random() * goodPlayers.length)];
+  const grandchild = secureRandomItem(goodPlayers);
   const actualGoodExists = allPlayers.some(target =>
     target.playerId !== player.playerId && !isEvilPlayer(target)
   );
@@ -585,7 +586,7 @@ function processImp(action: NightAction, allPlayers: GamePlayer[]): SkillResult 
     );
     
     if (minions.length > 0) {
-      const newDemon = minions[Math.floor(Math.random() * minions.length)];
+      const newDemon = secureRandomItem(minions)!;
       return {
         success: true,
         effects: {
@@ -663,7 +664,7 @@ function processSailor(action: NightAction, allPlayers: GamePlayer[]): SkillResu
   }
 
   // 随机决定是水手还是目标醉酒
-  const drunkTarget = Math.random() < 0.5 ? action.playerId : targets[0];
+  const drunkTarget = secureRandomBoolean() ? action.playerId : targets[0];
 
   return {
     success: true,
@@ -690,7 +691,7 @@ function processInnkeeper(action: NightAction, allPlayers: GamePlayer[]): SkillR
     return { success: false, message: '酒馆老板必须选择两个目标' };
   }
 
-  const drunkTarget = targets[Math.floor(Math.random() * targets.length)];
+  const drunkTarget = secureRandomItem(targets)!;
 
   return {
     success: true,

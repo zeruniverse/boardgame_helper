@@ -10,6 +10,7 @@ import {
   normalizeBoundedInteger,
   normalizeDurationSeconds
 } from '../utils/configNormalization';
+import { secureRandomItem, secureShuffle } from '../utils/secureRandom';
 
 if (!parentPort) {
   throw new Error('这个文件只能在Worker线程中运行');
@@ -414,7 +415,7 @@ class AvalonWorker extends BaseGameWorker {
   private autoAssassinate(playerId: string): void {
     const state = this.gameState as AvalonGameState;
     const candidateTargets = Object.keys(state.players).filter(id => id !== playerId);
-    const randomTarget = candidateTargets[Math.floor(Math.random() * candidateTargets.length)];
+    const randomTarget = secureRandomItem(candidateTargets);
     if (randomTarget) this.handleAssassinate(playerId, randomTarget);
   }
 
@@ -425,7 +426,7 @@ class AvalonWorker extends BaseGameWorker {
     );
 
     if (availableTargets.length > 0) {
-      const randomTarget = availableTargets[Math.floor(Math.random() * availableTargets.length)];
+      const randomTarget = secureRandomItem(availableTargets);
       this.handleLadyInspect(playerId, randomTarget);
       return;
     }
@@ -1502,7 +1503,7 @@ class AvalonWorker extends BaseGameWorker {
         );
         if (assassin) {
           const candidateTargets = Object.keys(state.players).filter(id => id !== assassin);
-          const randomTarget = candidateTargets[Math.floor(Math.random() * candidateTargets.length)];
+          const randomTarget = secureRandomItem(candidateTargets);
           if (randomTarget) this.handleAssassinate(assassin, randomTarget);
         }
         break;
@@ -1513,7 +1514,7 @@ class AvalonWorker extends BaseGameWorker {
           id => id !== ladyPlayer && !state.ladys.includes(id)
         );
         if (availableTargets.length > 0) {
-          const randomTarget = availableTargets[Math.floor(Math.random() * availableTargets.length)];
+          const randomTarget = secureRandomItem(availableTargets);
           this.handleLadyInspect(ladyPlayer, randomTarget);
         } else {
           state.mission += 1;
@@ -1569,7 +1570,7 @@ class AvalonWorker extends BaseGameWorker {
 
     // 随机选择第一个队长
     const playerIds = Object.keys(state.players);
-    state.captain = playerIds[Math.floor(Math.random() * playerIds.length)];
+    state.captain = secureRandomItem(playerIds)!;
 
     // 初始化其他状态
     state.team = [];
@@ -1800,12 +1801,7 @@ class AvalonWorker extends BaseGameWorker {
   }
 
   private shuffleArray<T>(array: T[]): T[] {
-    const shuffled = [...array];
-    for (let i = shuffled.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
-    }
-    return shuffled;
+    return secureShuffle(array);
   }
 
   dispose(): void {

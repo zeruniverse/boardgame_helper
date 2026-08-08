@@ -8,6 +8,7 @@ import {
   GameStatus,
   StatusWithAction
 } from './werewolfTypes';
+import { secureShuffle } from './secureRandom';
 
 /**
  * 获取投票结果 - 返回票数最多的玩家编号列表
@@ -342,12 +343,7 @@ export function renderPlayersHTML(hint: string, players?: number[]): string {
  * @returns 打乱后的新数组
  */
 export function shuffleArray<T>(array: T[]): T[] {
-  const result = [...array];
-  for (let i = result.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [result[i], result[j]] = [result[j], result[i]];
-  }
-  return result;
+  return secureShuffle(array);
 }
 
 /**

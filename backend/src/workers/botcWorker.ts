@@ -46,6 +46,7 @@ import { EDITIONS, NIGHT_ORDER, getAllRoles, getEditionById, getRoleById, getRol
 import { processFirstNightInfo, processNightAction, processDeathAbility } from '../utils/botcSkills';
 import { normalizeChatChannel, normalizeChatText } from '../utils/chat';
 import { mergeRoomGameConfig } from '../utils/roomGameConfig';
+import { secureRandomBoolean, secureRandomItem, secureRandomUnit, secureShuffle } from '../utils/secureRandom';
 
 type DebuffType = 'Poisoned' | 'Drunk';
 type DebuffSourceMap = Record<string, Partial<Record<DebuffType, string[]>>>;
@@ -722,7 +723,7 @@ export class BOTCWorker extends BaseGameWorker {
 
     this.addReminder(player, 'sweetheartProcessed');
     const candidates = Array.from(this.gamePlayers.values()).filter(candidate => !candidate.isDead);
-    const target = candidates[Math.floor(Math.random() * candidates.length)];
+    const target = secureRandomItem(candidates);
     if (!target) {
       return;
     }
@@ -907,7 +908,7 @@ export class BOTCWorker extends BaseGameWorker {
     // Regurgitation is a Storyteller choice, not a guaranteed resurrection. Keep
     // some no-regurgitation nights, while using aiBias only to choose among legal
     // dead targets rather than changing the underlying Demon ability.
-    if (Math.random() < 0.5) return null;
+    if (secureRandomBoolean()) return null;
 
     const aiBias = this.gameConfig.aiBias || 'neutral';
     const preferred = candidates.filter(player => {
@@ -916,7 +917,7 @@ export class BOTCWorker extends BaseGameWorker {
       return true;
     });
     const pool = preferred.length > 0 ? preferred : candidates;
-    return pool[Math.floor(Math.random() * pool.length)]?.playerId || null;
+    return secureRandomItem(pool)?.playerId || null;
   }
 
   private async applyShabalothRegurgitationBeforeAction(shabalothId: string): Promise<void> {
@@ -1070,7 +1071,7 @@ export class BOTCWorker extends BaseGameWorker {
       return Boolean(player && this.isFunctionallyAlive(player));
     });
     if (candidates.length === 0) return [];
-    return [candidates[Math.floor(Math.random() * candidates.length)]];
+    return [secureRandomItem(candidates)!];
   }
 
   private async applyPitHagArbitraryDeaths(targetIds: string[]): Promise<void> {
@@ -1932,7 +1933,7 @@ export class BOTCWorker extends BaseGameWorker {
         // 后续刷新不会随机漂移。
         const unprotectedCandidates = candidates.filter(candidate => !this.getDemonSafetyReason(candidate));
         const pool = unprotectedCandidates.length > 0 ? unprotectedCandidates : candidates;
-        const target = pool[Math.floor(Math.random() * pool.length)];
+        const target = secureRandomItem(pool)!;
         assignments[minion.playerId] = target.playerId;
         this.sendToPlayer(this.gameConfig.storytellerId, 'gameMessage', {
           message: `维格莫提斯：${this.getPlayerName(minion.playerId)} 保留爪牙能力，${this.getPlayerName(target.playerId)} 被其效果中毒`,
@@ -1974,7 +1975,7 @@ export class BOTCWorker extends BaseGameWorker {
         if (candidates.length === 0) continue;
         const unprotectedCandidates = candidates.filter(candidate => !this.getDemonSafetyReason(candidate));
         const pool = unprotectedCandidates.length > 0 ? unprotectedCandidates : candidates;
-        const replacement = pool[Math.floor(Math.random() * pool.length)];
+        const replacement = secureRandomItem(pool)!;
         assignments[player.playerId] = replacement.playerId;
         if (!this.getDemonSafetyReason(replacement)) {
           this.applyDebuff(replacement, 'Poisoned', source);
@@ -2243,7 +2244,7 @@ export class BOTCWorker extends BaseGameWorker {
       const unusedPool = townsfolkRoles.filter(role => !actualRoleIds.has(role.id) && !usedDisplayRoleIds.has(role.id));
       const fallbackPool = townsfolkRoles.filter(role => !usedDisplayRoleIds.has(role.id));
       const pool = unusedPool.length > 0 ? unusedPool : (fallbackPool.length > 0 ? fallbackPool : townsfolkRoles);
-      const displayRole = pool[Math.floor(Math.random() * pool.length)];
+      const displayRole = secureRandomItem(pool)!;
       player.displayRole = { ...displayRole };
       usedDisplayRoleIds.add(displayRole.id);
 
@@ -2261,7 +2262,7 @@ export class BOTCWorker extends BaseGameWorker {
 
     const existingGoodTwin = players.find(player => isGoodTwinPlayer(player) && !isEvilPlayer(player));
     const candidates = players.filter(player => player.playerId !== evilTwin.playerId && !isEvilPlayer(player));
-    const goodTwin = existingGoodTwin || candidates[Math.floor(Math.random() * candidates.length)];
+    const goodTwin = existingGoodTwin || secureRandomItem(candidates);
     if (!goodTwin) {
       return;
     }
@@ -2743,7 +2744,7 @@ export class BOTCWorker extends BaseGameWorker {
           .map(roleId => getRoleById(roleId))
           .filter((role): role is Role => Boolean(role)) || getAllRoles();
         const fakePool = rolePool.filter(role => role.id !== actualRole?.id);
-        const fakeRole = fakePool[Math.floor(Math.random() * fakePool.length)];
+        const fakeRole = secureRandomItem(fakePool);
         if (fakeRole) {
           corrupted.answer = fakeRole.name;
           corrupted.roleId = fakeRole.id;
@@ -2753,7 +2754,7 @@ export class BOTCWorker extends BaseGameWorker {
       case 'adjacentEvil': {
         const actualCount = Number(data?.adjacentEvilPairs ?? 0);
         const fakeCounts = [0, 1, 2, 3].filter(count => count !== actualCount);
-        const fakeCount = fakeCounts[Math.floor(Math.random() * fakeCounts.length)] ?? Math.max(0, actualCount + 1);
+        const fakeCount = secureRandomItem(fakeCounts) ?? Math.max(0, actualCount + 1);
         corrupted.answer = `${fakeCount}个坏人相邻`;
         corrupted.count = fakeCount;
         break;
@@ -3282,7 +3283,7 @@ export class BOTCWorker extends BaseGameWorker {
       const goodPlayersForHerring = Array.from(this.gamePlayers.values())
         .filter(p => !isEvilPlayer(p) && p.role?.id !== 'fortuneteller');
       if (goodPlayersForHerring.length > 0) {
-        const redHerringPlayer = goodPlayersForHerring[Math.floor(Math.random() * goodPlayersForHerring.length)];
+        const redHerringPlayer = secureRandomItem(goodPlayersForHerring)!;
         redHerringPlayer.reminders.push('Red herring');
       }
 
@@ -3613,7 +3614,7 @@ export class BOTCWorker extends BaseGameWorker {
     const allRoles = edition?.roles
       .map(roleId => getRoleById(roleId))
       .filter((role): role is Role => Boolean(role)) || getAllRoles();
-    const pickRandom = <T>(items: T[]): T | undefined => items[Math.floor(Math.random() * items.length)];
+    const pickRandom = <T>(items: T[]): T | undefined => secureRandomItem(items);
     const roleForPlayerId = (playerId: string | null | undefined): Role | null => {
       const player = playerId ? this.gamePlayers.get(playerId) : null;
       return player ? (this.getEffectiveRole(player) || player.role) : null;
@@ -3632,9 +3633,7 @@ export class BOTCWorker extends BaseGameWorker {
     if (Array.isArray(information.players) && Object.prototype.hasOwnProperty.call(information, 'roleId')) {
       let playerIds: string[] = information.players.filter((id: unknown): id is string => typeof id === 'string');
       if (playerIds.length === 0) {
-        playerIds = allPlayers
-          .filter(player => player.playerId !== undefined)
-          .sort(() => Math.random() - 0.5)
+        playerIds = secureShuffle(allPlayers.filter(player => player.playerId !== undefined))
           .slice(0, Math.min(2, allPlayers.length))
           .map(player => player.playerId);
         corrupted.players = playerIds;
@@ -3662,7 +3661,7 @@ export class BOTCWorker extends BaseGameWorker {
     if (Array.isArray(information.roles)) {
       const actualRole = roleForPlayerId(information.playerId);
       const blocked = new Set([actualRole?.id, roleId].filter((id): id is string => Boolean(id)));
-      const fakeRoles = allRoles.filter(role => !blocked.has(role.id)).sort(() => Math.random() - 0.5).slice(0, 2);
+      const fakeRoles = secureShuffle(allRoles.filter(role => !blocked.has(role.id))).slice(0, 2);
       if (fakeRoles.length > 0) {
         corrupted.roles = fakeRoles.map(role => ({ roleId: role.id, roleName: role.name }));
       }
@@ -6021,8 +6020,8 @@ export class BOTCWorker extends BaseGameWorker {
           const rolePool = fakeTeams
             .flatMap(team => getRolesByTeam(this.gameConfig.edition, team))
             .filter(role => role.id !== registeredRole?.id);
-          const fakeRole = rolePool[Math.floor(Math.random() * rolePool.length)] || registeredRole;
-          const roles = Math.random() < 0.5
+          const fakeRole = secureRandomItem(rolePool) || registeredRole;
+          const roles = secureRandomBoolean()
             ? [registeredRole, fakeRole]
             : [fakeRole, registeredRole];
           if (target.role?.id && !roles.some(role => role?.id === target.role?.id)) {
@@ -6136,7 +6135,7 @@ export class BOTCWorker extends BaseGameWorker {
 
         else if (roleId === 'highpriestess') {
           const randomAlive = allPlayers.filter(p => !p.isDead && p.playerId !== playerId);
-          const target = randomAlive[Math.floor(Math.random() * randomAlive.length)];
+          const target = secureRandomItem(randomAlive);
           if (target) {
             this.sendStorytellerQuestion(playerId, 'alignment', {
               targetId: target.playerId
@@ -6330,8 +6329,8 @@ export class BOTCWorker extends BaseGameWorker {
     if (this.getEffectiveRole(player)?.id === 'mayor' && this.playerAbilityWorks(player) && diedAtNight && !ignoresDeathProtection) {
       const allPlayers = Array.from(this.gamePlayers.values());
       const redirectCandidates = allPlayers.filter(p => !p.isDead && p.playerId !== playerId);
-      if (redirectCandidates.length > 0 && Math.random() < 0.5) {
-        const redirectTarget = redirectCandidates[Math.floor(Math.random() * redirectCandidates.length)];
+      if (redirectCandidates.length > 0 && secureRandomBoolean()) {
+        const redirectTarget = secureRandomItem(redirectCandidates);
         if (redirectTarget) {
           player.isProtected = true;
           await this.killPlayer(redirectTarget.playerId, cause);
@@ -6371,7 +6370,7 @@ export class BOTCWorker extends BaseGameWorker {
       this.broadcastGameState();
 
       const allPlayers = Array.from(this.gamePlayers.values());
-      const pickRandom = <T>(items: T[]): T | undefined => items[Math.floor(Math.random() * items.length)];
+      const pickRandom = <T>(items: T[]): T | undefined => secureRandomItem(items);
       const withoutSelf = allPlayers.filter(p => p.playerId !== playerId);
       let pair: GamePlayer[] = [];
 
@@ -6409,12 +6408,12 @@ export class BOTCWorker extends BaseGameWorker {
       // Defensive fallback for highly unusual custom states. In normal 5-15
       // player games there are always enough candidates for the branches above.
       if (pair.length !== 2) {
-        const fallback = [...withoutSelf].sort(() => Math.random() - 0.5).slice(0, 2);
+        const fallback = secureShuffle(withoutSelf).slice(0, 2);
         pair = fallback;
       }
 
       if (pair.length === 2) {
-        if (Math.random() < 0.5) pair.reverse();
+        if (secureRandomBoolean()) pair.reverse();
         const information = {
           players: pair.map(p => ({
             playerId: p.playerId,
@@ -6660,7 +6659,7 @@ export class BOTCWorker extends BaseGameWorker {
     const isComputerStoryteller = this.isComputerStoryteller();
     if (!isComputerStoryteller) return;
 
-    const delay = 3000 + Math.random() * 3000; // 3-6秒随机延迟
+    const delay = 3000 + secureRandomUnit() * 3000; // 3-6秒随机延迟
 
     this.scheduleNightTask('autoStoryteller', delay, async () => {
       // 如果游戏不在夜晚阶段，不处理
@@ -6768,7 +6767,7 @@ export class BOTCWorker extends BaseGameWorker {
           const safeOutsiderRoles = ['drunk', 'recluse', 'saint', 'moonchild', 'sweetheart', 'barber', 'klutz'];
           actionData.data = { 
             character: hasAliveDemon 
-              ? safeOutsiderRoles[Math.floor(Math.random() * safeOutsiderRoles.length)]
+              ? secureRandomItem(safeOutsiderRoles)
               : 'imp' // 如果恶魔已死，变出新恶魔保持游戏进行
           }; }
         break;
@@ -6786,7 +6785,7 @@ export class BOTCWorker extends BaseGameWorker {
           (roleId !== 'devilsadvocate' || !candidate.isDead) &&
           candidate.playerId !== previousTarget
         );
-        const target = candidates[Math.floor(Math.random() * candidates.length)];
+        const target = secureRandomItem(candidates);
         actionData.targets = target ? [target.playerId] : [];
         break;
       }
@@ -6833,7 +6832,7 @@ export class BOTCWorker extends BaseGameWorker {
   private getRandomAlivePlayer(allPlayers: GamePlayer[], excludeId?: string): string | null {
     const candidates = allPlayers.filter(p => !p.isDead && p.playerId !== excludeId);
     if (candidates.length === 0) return null;
-    return candidates[Math.floor(Math.random() * candidates.length)].playerId;
+    return secureRandomItem(candidates)!.playerId;
   }
 
   /**
@@ -6861,7 +6860,7 @@ export class BOTCWorker extends BaseGameWorker {
     if (aiBias === 'good') {
       const lowPriority = aliveGood.filter(p => !['empath', 'fortuneteller', 'slayer', 'ravenkeeper'].includes(p.role?.id || ''));
       if (lowPriority.length > 0) {
-        return lowPriority[Math.floor(Math.random() * lowPriority.length)].playerId;
+        return secureRandomItem(lowPriority)!.playerId;
       }
     }
     
@@ -6876,7 +6875,7 @@ export class BOTCWorker extends BaseGameWorker {
     if (aiBias === 'neutral' && isEvilStrong) {
       const lowPriority = aliveGood.filter(p => !['empath', 'fortuneteller'].includes(p.role?.id || ''));
       if (lowPriority.length > 0) {
-        return lowPriority[Math.floor(Math.random() * lowPriority.length)].playerId;
+        return secureRandomItem(lowPriority)!.playerId;
       }
     }
     
@@ -6932,10 +6931,10 @@ export class BOTCWorker extends BaseGameWorker {
     const aliveGood = allPlayers.filter(p => !p.isDead && !isEvilPlayer(p));
     // 女巫诅咒经常提名的活跃好人
     if (aiBias === 'evil' || (aiBias === 'neutral' && isGoodStrong)) {
-      return aliveGood[Math.floor(Math.random() * aliveGood.length)]?.playerId || '';
+      return secureRandomItem(aliveGood)?.playerId || '';
     }
     // 偏向好人：诅咒不太重要的目标
-    return aliveGood[Math.floor(Math.random() * Math.min(3, aliveGood.length))]?.playerId || '';
+    return secureRandomItem(aliveGood.slice(0, 3))?.playerId || '';
   }
 
   /**
@@ -6951,13 +6950,13 @@ export class BOTCWorker extends BaseGameWorker {
     const hasAliveDemon = demons.some(p => this.isFunctionallyAlive(p));
     if (hasAliveDemon) {
       // 选择一个非恶魔角色的目标
-      const target = aliveGood[Math.floor(Math.random() * aliveGood.length)];
+      const target = secureRandomItem(aliveGood);
       return target?.playerId || this.getRandomAlivePlayer(allPlayers) || '';
     }
     
     // 如果恶魔已死，变出一个新恶魔（让游戏继续）
     if (!hasAliveDemon && demons.length > 0) {
-      const target = aliveGood[Math.floor(Math.random() * aliveGood.length)];
+      const target = secureRandomItem(aliveGood);
       return target?.playerId || this.getRandomAlivePlayer(allPlayers) || '';
     }
     
@@ -6990,9 +6989,9 @@ export class BOTCWorker extends BaseGameWorker {
     if (candidates.length <= 2) {
       return candidates.map(p => p.playerId);
     }
-    const first = candidates[Math.floor(Math.random() * candidates.length)];
+    const first = secureRandomItem(candidates)!;
     const remaining = candidates.filter(p => p.playerId !== first.playerId);
-    const second = remaining[Math.floor(Math.random() * remaining.length)];
+    const second = secureRandomItem(remaining)!;
     return [first.playerId, second.playerId];
   }
 
