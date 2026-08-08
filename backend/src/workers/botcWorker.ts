@@ -52,6 +52,13 @@ const INNKEEPER_PROTECTION_REMINDER = 'Protected:Innkeeper';
 const VIGORMORTIS_POISON_SOURCE_PREFIX = 'vigormortis:';
 const KLUTZ_DEATH_PENDING_REMINDER = 'Klutz Death Ability Pending';
 const MOONCHILD_DEATH_PENDING_REMINDER = 'Moonchild Death Ability Pending';
+const BARBER_HAIRCUT_REMINDER = 'Haircuts tonight';
+
+interface PendingBarberDecision {
+  barberId: string;
+  demonId: string;
+  resume: 'startNight' | 'finishNight';
+}
 
 interface BOTCGameResultPlayer {
   id: string;
@@ -93,6 +100,11 @@ export class BOTCWorker extends BaseGameWorker {
   private noExecutionToday: boolean = true;
   private deathsToday: Array<{ playerId: string; roleId?: string; team?: Team; cause: string }> = [];
   private firstNightInfoPlayerIds: Set<string> = new Set();
+  // Barber is a death-triggered choice made by a Demon, not a regular action of
+  // the dead Barber. Queue the death event until the correct night transition,
+  // then keep the choice as private player state so reconnects can restore it.
+  private barberDeathsPending: string[] = [];
+  private pendingBarberDecision: PendingBarberDecision | null = null;
   // 终局结果必须保留在 Worker 权威状态中。仅广播一次 gameEnded 会导致刷新/重连
   // 玩家拿到 phase=ended 却丢失胜方和角色揭晓。
   private lastGameResult: BOTCGameResult | null = null;
@@ -363,6 +375,271 @@ export class BOTCWorker extends BaseGameWorker {
       targetId: target.playerId,
       targetName: this.getPlayerName(target.playerId)
     });
+  }
+
+  private queueBarberDeathIfNeeded(player: GamePlayer): void {
+    if (
+      player.role?.id !== 'barber' ||
+      !player.isDead ||
+      !this.playerAbilityWorks(player) ||
+      this.barberDeathsPending.includes(player.playerId) ||
+      this.pendingBarberDecision?.barberId === player.playerId
+    ) {
+      return;
+    }
+
+    this.addReminder(player, BARBER_HAIRCUT_REMINDER);
+    this.barberDeathsPending.push(player.playerId);
+    this.sendToPlayer(this.gameConfig.storytellerId, 'barberDeathQueued', {
+      barberId: player.playerId,
+      barberName: this.getPlayerName(player.playerId),
+      message: '理发师已经死亡；今晚需要由恶魔决定是否交换两名玩家的角色。'
+    });
+  }
+
+  private getBarberDemonCandidates(): GamePlayer[] {
+    return Array.from(this.gamePlayers.values())
+      .filter(player =>
+        player.role?.team === Team.DEMON &&
+        (!player.isDead || isZombuulLivingWhileRegisteredDead(player))
+      )
+      .sort((a, b) => a.seat - b.seat);
+  }
+
+  private getBarberSwapTargets(demonId: string): Array<{ playerId: string; playerName: string }> {
+    return Array.from(this.gamePlayers.values())
+      // The choosing Demon may select themself, but may not select another Demon.
+      // Dead players remain legal Barber targets.
+      .filter(player => player.playerId === demonId || player.role?.team !== Team.DEMON)
+      .sort((a, b) => a.seat - b.seat)
+      .map(player => ({
+        playerId: player.playerId,
+        playerName: this.getPlayerName(player.playerId)
+      }));
+  }
+
+  private clearFreshCharacterUsageState(player: GamePlayer): void {
+    // Barber-created characters receive a fresh character ability. Keep player-bound
+    // states (poison/drunkenness/protection/death/ghost vote) but remove usage flags
+    // that would incorrectly make the newly received character already spent.
+    const characterUsageReminders = new Set([
+      'No ability',
+      'Seamstress used',
+      'foolUsed',
+      'Po Charged',
+      'Po Charged Used',
+      'Fang Gu Jumped',
+      'ravenkeeperDeathAbilityUsed'
+    ]);
+    player.reminders = player.reminders.filter(reminder => !characterUsageReminders.has(reminder));
+    player.hasActed = false;
+    player.nightInfo = null;
+  }
+
+  private beginNextBarberDecision(resume: PendingBarberDecision['resume']): boolean {
+    if (this.pendingBarberDecision || !this.isNightPhase()) {
+      return Boolean(this.pendingBarberDecision);
+    }
+
+    while (this.barberDeathsPending.length > 0) {
+      const barberId = this.barberDeathsPending.shift()!;
+      const barber = this.gamePlayers.get(barberId);
+      if (!barber) {
+        continue;
+      }
+
+      const demons = this.getBarberDemonCandidates();
+      const demon = demons[0];
+      if (!demon) {
+        barber.reminders = barber.reminders.filter(reminder => reminder !== BARBER_HAIRCUT_REMINDER);
+        this.sendToPlayer(this.gameConfig.storytellerId, 'barberSwapSkipped', {
+          barberId,
+          reason: '当前没有仍在游戏中的恶魔，理发师换角无法执行。'
+        });
+        continue;
+      }
+
+      const availableTargets = this.getBarberSwapTargets(demon.playerId);
+      if (availableTargets.length < 2) {
+        barber.reminders = barber.reminders.filter(reminder => reminder !== BARBER_HAIRCUT_REMINDER);
+        this.sendToPlayer(this.gameConfig.storytellerId, 'barberSwapSkipped', {
+          barberId,
+          reason: '可合法选择的理发师换角目标不足两名。'
+        });
+        continue;
+      }
+
+      this.pendingBarberDecision = {
+        barberId,
+        demonId: demon.playerId,
+        resume
+      };
+      this.gameState.nightOrder = [];
+
+      const prompt = {
+        isBarberSwapPrompt: true,
+        role: 'barber',
+        message: '理发师已死亡。你可以选择两名玩家交换角色（不能选择另一名恶魔），也可以不交换。',
+        availableTargets,
+        requiredTargets: 2,
+        allowSkip: true
+      };
+      this.sendNightInfoToPlayer(demon.playerId, prompt);
+      this.sendToPlayer(this.gameConfig.storytellerId, 'barberSwapPending', {
+        barberId,
+        barberName: this.getPlayerName(barberId),
+        demonId: demon.playerId,
+        demonName: this.getPlayerName(demon.playerId),
+        demonCandidates: demons.map(candidate => ({
+          playerId: candidate.playerId,
+          playerName: this.getPlayerName(candidate.playerId)
+        })),
+        message: demons.length > 1
+          ? '场上有多名恶魔；当前按座位顺序由第一名仍在游戏中的恶魔处理理发师换角。'
+          : '等待恶魔处理理发师换角。'
+      });
+
+      if (this.shouldUseAutomaticTimers() && this.gameConfig.nightTimer > 0) {
+        const decisionSeconds = Math.min(60, this.gameConfig.nightTimer);
+        this.scheduleNightTask('barberDecision', decisionSeconds * 1000, async () => {
+          if (!this.pendingBarberDecision || this.pendingBarberDecision.demonId !== demon.playerId) {
+            return;
+          }
+          await this.resolveBarberDecision(demon.playerId, { skip: true }, true);
+        });
+      }
+
+      this.broadcastGameState();
+      return true;
+    }
+
+    return false;
+  }
+
+  private async resolveBarberDecision(playerId: string, data: any, timedOut: boolean = false): Promise<void> {
+    const pending = this.pendingBarberDecision;
+    if (!pending) {
+      this.sendToPlayer(playerId, 'actionError', { message: '当前没有待处理的理发师换角' });
+      return;
+    }
+    if (pending.demonId !== playerId) {
+      this.sendToPlayer(playerId, 'actionError', { message: '只有当前被唤醒的恶魔可以处理理发师换角' });
+      return;
+    }
+
+    const barber = this.gamePlayers.get(pending.barberId);
+    const skip = data?.skip === true;
+    let swappedPlayers: GamePlayer[] = [];
+
+    if (!skip) {
+      const targets = Array.isArray(data?.targets)
+        ? data.targets.filter((targetId: unknown): targetId is string => typeof targetId === 'string')
+        : [];
+      if (targets.length !== 2 || new Set(targets).size !== 2) {
+        this.sendToPlayer(playerId, 'actionError', { message: '理发师换角必须选择两名不同的玩家' });
+        return;
+      }
+
+      const [firstId, secondId] = targets;
+      const first = this.gamePlayers.get(firstId);
+      const second = this.gamePlayers.get(secondId);
+      if (!first || !second) {
+        this.sendToPlayer(playerId, 'actionError', { message: '理发师换角目标不存在' });
+        return;
+      }
+      if (
+        (first.playerId !== playerId && first.role?.team === Team.DEMON) ||
+        (second.playerId !== playerId && second.role?.team === Team.DEMON)
+      ) {
+        this.sendToPlayer(playerId, 'actionError', { message: '理发师换角不能选择另一名恶魔' });
+        return;
+      }
+
+      const firstRole = first.role ? { ...first.role } : null;
+      const firstDisplayRole = first.displayRole ? { ...first.displayRole } : undefined;
+      first.role = second.role ? { ...second.role } : null;
+      first.displayRole = second.displayRole ? { ...second.displayRole } : undefined;
+      second.role = firstRole;
+      second.displayRole = firstDisplayRole;
+
+      // Barber swaps characters, not alignments. Do not derive alignment from the
+      // newly received role; both players remain on their previous alignment.
+      this.clearFreshCharacterUsageState(first);
+      this.clearFreshCharacterUsageState(second);
+      swappedPlayers = [first, second];
+
+      this.refreshNoDashiiPoison();
+      this.refreshVigormortisEffects();
+      this.refreshAlignmentLists();
+
+      for (const changedPlayer of swappedPlayers) {
+        this.sendRoleStateToPlayer(changedPlayer.playerId, false);
+        this.sendNightInfoToPlayer(changedPlayer.playerId, {
+          role: 'barber',
+          information: {
+            message: `理发师的能力使你的角色变成了${this.getEffectiveRole(changedPlayer)?.name || '未知角色'}。`
+          }
+        });
+      }
+      this.sendStorytellerFullInfo();
+    } else {
+      this.sendNightInfoToPlayer(playerId, null);
+    }
+
+    const timer = this.dayTimers.get('barberDecision');
+    if (timer) {
+      clearTimeout(timer);
+      this.dayTimers.delete('barberDecision');
+    }
+
+    if (barber) {
+      barber.reminders = barber.reminders.filter(reminder => reminder !== BARBER_HAIRCUT_REMINDER);
+    }
+
+    const resume = pending.resume;
+    this.pendingBarberDecision = null;
+    this.sendToPlayer(this.gameConfig.storytellerId, 'barberSwapResolved', {
+      barberId: pending.barberId,
+      demonId: playerId,
+      skipped: skip,
+      timedOut,
+      targets: swappedPlayers.map(player => ({
+        playerId: player.playerId,
+        playerName: this.getPlayerName(player.playerId),
+        roleId: player.role?.id,
+        roleName: player.role?.name
+      }))
+    });
+
+    const gameEnd = checkGameEnd(
+      Array.from(this.gamePlayers.values()),
+      true,
+      !!this.gameState.grimoire.mastermindTriggered
+    );
+    if (gameEnd.isEnded) {
+      await this.endGame(gameEnd.winner!, gameEnd.reason!);
+      return;
+    }
+
+    // Multiple Barber deaths can be pending in custom/role-change games. Resolve
+    // them one at a time before continuing the night transition.
+    if (this.beginNextBarberDecision(resume)) {
+      return;
+    }
+
+    if (resume === 'startNight') {
+      await this.continueNightSetup(false);
+    } else {
+      this.scheduleNightTask('processNightToDay', 3000, () => this.startDay());
+    }
+  }
+
+  private async handleBarberSwapAction(playerId: string, data: any): Promise<void> {
+    if (!this.isNightPhase()) {
+      this.sendToPlayer(playerId, 'actionError', { message: '理发师换角只能在夜晚处理' });
+      return;
+    }
+    await this.resolveBarberDecision(playerId, data);
   }
 
   private getDeathChoiceTargets(playerId: string): Array<{ playerId: string; playerName: string }> {
@@ -1253,6 +1530,8 @@ export class BOTCWorker extends BaseGameWorker {
     this.noExecutionToday = true;
     this.deathsToday = [];
     this.firstNightInfoPlayerIds.clear();
+    this.barberDeathsPending = [];
+    this.pendingBarberDecision = null;
     this.lastGameResult = null;
     this.gameState = initializeGameState(this.gameConfig.storytellerId);
     this.gameState.grimoire.startTime = Date.now();
@@ -1861,6 +2140,11 @@ export class BOTCWorker extends BaseGameWorker {
       return;
     }
 
+    if (actionType === 'barberSwapAction') {
+      await this.handleBarberSwapAction(playerId, actionData);
+      return;
+    }
+
     if (actionType === 'proposeEndDay') {
       await this.handleProposeEndDay(playerId);
       return;
@@ -2134,6 +2418,22 @@ export class BOTCWorker extends BaseGameWorker {
       });
     }
 
+    // Daytime Barber deaths must be resolved before this app asks players for the
+    // new night's actions. This is deliberately a transition gate: after the swap
+    // we rebuild nightOrder from the new characters, rather than accepting actions
+    // for identities that may no longer belong to those players.
+    if (!isFirstNight && this.beginNextBarberDecision('startNight')) {
+      return;
+    }
+
+    await this.continueNightSetup(isFirstNight);
+  }
+
+  private async continueNightSetup(isFirstNight: boolean): Promise<void> {
+    if (!this.isNightPhase() || this.pendingBarberDecision) {
+      return;
+    }
+
     // 持续中毒必须在清掉上一夜的临时醉酒/中毒和保护之后刷新。此前先生成 nightOrder，
     // 会导致“上一夜投毒、今夜已恢复”的维格莫提斯错误丢失死亡爪牙行动；同时上一夜
     // 的 Monk 标记也可能错误阻止 No Dashii 新一夜的邻座中毒。
@@ -2362,6 +2662,9 @@ export class BOTCWorker extends BaseGameWorker {
     // 旧计时器或重复说书人操作不得在白天再次调用 startDay，否则会把同一天
     // 重置并将 day 连续加一。只有当前夜晚可以进入白天。
     if (!this.isNightPhase()) {
+      return;
+    }
+    if (this.pendingBarberDecision) {
       return;
     }
 
@@ -3152,6 +3455,7 @@ export class BOTCWorker extends BaseGameWorker {
 
     this.resolveSweetheartDeath(player);
     this.queueDeathChoiceIfNeeded(player);
+    this.queueBarberDeathIfNeeded(player);
     this.refreshVigormortisEffects();
 
     // 死亡不会公开翻开身份。角色专属死亡能力提示只能发给说书人，
@@ -3419,11 +3723,19 @@ export class BOTCWorker extends BaseGameWorker {
 
     switch (data.actionType) {
       case 'processNight':
+        if (this.pendingBarberDecision) {
+          this.sendToPlayer(playerId, 'actionError', { message: '请等待恶魔先处理理发师换角' });
+          return;
+        }
         await this.processNightActions();
         break;
       case 'startDay':
         if (!this.isNightPhase()) {
           this.sendToPlayer(playerId, 'actionError', { message: '当前阶段不能进入白天' });
+          return;
+        }
+        if (this.pendingBarberDecision) {
+          this.sendToPlayer(playerId, 'actionError', { message: '请等待恶魔先处理理发师换角' });
           return;
         }
         await this.startDay();
@@ -3459,6 +3771,10 @@ export class BOTCWorker extends BaseGameWorker {
           }
           await this.endDay();
         } else if (this.gameState.phase === GamePhase.NIGHT || this.gameState.phase === GamePhase.FIRST_NIGHT) {
+          if (this.pendingBarberDecision) {
+            this.sendToPlayer(playerId, 'actionError', { message: '请等待恶魔先处理理发师换角' });
+            return;
+          }
           await this.processNightActions();
         }
         break;
@@ -3664,6 +3980,9 @@ export class BOTCWorker extends BaseGameWorker {
     if (this.gameState.phase !== GamePhase.NIGHT && this.gameState.phase !== GamePhase.FIRST_NIGHT) {
       return;
     }
+    if (this.pendingBarberDecision) {
+      return;
+    }
 
     // 夜晚结算包含死亡、角色晋升和被动能力等不可重复副作用。定时器、玩家最后一次行动和
     // 说书人按钮可能在同一时间触发结算，必须保证整个结算阶段只执行一次。
@@ -3825,6 +4144,13 @@ export class BOTCWorker extends BaseGameWorker {
     );
     if (gameEnd.isEnded) {
       await this.endGame(gameEnd.winner!, gameEnd.reason!);
+      return;
+    }
+
+    // A Barber that died during this night still resolves before dawn. The
+    // regular night actions have already been settled, so after the Demon makes
+    // (or skips) the swap we only need to continue to the day transition.
+    if (this.beginNextBarberDecision('finishNight')) {
       return;
     }
 
@@ -4542,6 +4868,7 @@ export class BOTCWorker extends BaseGameWorker {
     this.recordDeathToday(player, cause);
     this.resolveSweetheartDeath(player);
     this.queueDeathChoiceIfNeeded(player);
+    this.queueBarberDeathIfNeeded(player);
     this.refreshVigormortisEffects();
 
     this.sendToRoom('playerDied', {

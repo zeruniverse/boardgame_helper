@@ -894,3 +894,39 @@ Commit: fix(round7): 补齐钟楼维格莫提斯与死亡触发结算
   - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts；差异空白检查通过。
   - 完整 npm ci --ignore-scripts 因当前内部依赖源对锁定的 typescript-5.8.3.tgz 返回 404；离线安装同样因该包未缓存而失败。因此 node_modules 无法完整安装，无法在本容器完成正式 npm run build，仍需在依赖源可用的本地或 CI 执行 npm ci && npm run build 做最终生产构建确认。
 备注: 本轮未删除文件，未创建根目录 src/；所有后端源码修改均位于 backend/src/；本轮没有前端源码修改；修复包只包含本轮修改文件及 repair_log.txt，可按相对路径直接覆盖。
+
+=== 当前请求第 8 轮修复记录 ===
+时间: 2026-08-08 UTC
+Commit: fix(round8): 补齐钟楼理发师换角并修正条件夜序
+修改/新增文件:
+  - backend/src/utils/botcTypes.ts
+  - backend/src/utils/botcUtils.ts
+  - backend/src/workers/botcWorker.ts
+  - frontend/src/components/BOTCActionPanel.vue
+  - repair_log.txt
+删除文件: 无
+构建测试: 部分通过（源码 strict 检查、六 Worker 烟雾和 BOTC 专项回归通过；完整 npm build 仍受当前容器项目依赖未安装阻塞）
+本轮修复:
+  - 血染钟楼补齐 Barber（理发师）死亡后的核心换角流程。理发师实际死亡且能力有效时进入待处理队列；夜间由恶魔获得私密双目标提示，可选择两名不同玩家交换角色或选择不交换，选择者本人可以成为目标，但不能选择另一名恶魔，死亡玩家仍可作为目标。
+  - Barber 换角只交换角色/显示角色，不根据新角色重算玩家阵营；与上一轮独立 alignment 状态保持一致，避免换角后把善恶阵营错误改成角色默认阵营。
+  - Barber 换角后清理与旧角色绑定的常见“一次性能力已使用/能力耗尽”状态，并重算 No Dashii、Vigormortis 与阵营索引；换角双方立即收到新的私密角色状态，说书人魔典同步刷新。
+  - 白天死亡的 Barber 会在进入下一夜常规动作前形成状态门闩；恶魔处理完成后重新生成 nightOrder，避免客户端已经按旧角色提交夜间动作后才换角。夜间死亡的 Barber 则在本夜常规结算完成、进入黎明前处理，避免 startDay/nextPhase/processNight 绕过尚未完成的换角。
+  - Barber 决策新增单独超时路径；非法目标不会清掉仍有效的超时计时器，合法换角/主动跳过才清理，修复“先提交非法参数即可让房间永久失去自动兜底”的竞态。
+  - getNightOrder 不再把 Barber、Sweetheart、Sage、Moonchild、Ravenkeeper 这类“仅在死亡触发时按 otherNight 时序处理”的角色，当作存活时每夜固定行动者，减少无意义/错误夜间提示；它们的死亡能力继续由 Worker 的专用流程处理。
+  - BOTCActionPanel 复用既有死亡能力卡片布局加入 Barber 双目标选择，不新建重复组件；提示通过现有 nightInfo 私密状态传输，因此断线重连仍可恢复待处理选择。
+审查结果/本轮未改动重点:
+  - 继续扫描 backend/src 与 frontend/src 全部 84 个文件，检查 TypeScript/Vue 语法、Vue SFC 结构、样式括号、相对导入和根目录约束；同时复查六个游戏 Worker 的初始化、Controller/Worker 状态边界和前几轮已修复路径。本轮最高优先级且可稳定落地的问题仍是第 7 轮明确遗留的 BOTC Barber 缺失以及条件死亡角色误入常规夜序。
+  - 狼人杀、杀人游戏、一夜狼人、阿瓦隆和德州扑克本轮未新增源码修改；六个 Worker 当前均能由本轮严格转译产物完成 prepare_room。由于本轮重点为已明确的 BOTC 高优先级缺口，不声称对六个游戏所有角色/人数/断线组合完成穷举证明。
+  - Barber 的官方精确夜序仍有一项架构级近似：当前项目把玩家夜间动作批量收集后统一结算，因此“白天已死 Barber”在夜晚入口先处理，“本夜刚死 Barber”在常规夜间动作结算后、黎明前处理，尚未实现可在完整 otherNight 队列中间暂停并恢复的事务式说书人流程。
+  - 自定义状态存在多名存活恶魔时，当前实现按座位顺序选择第一名恶魔处理 Barber；官方流程允许由说书人决定唤醒哪一名恶魔。要完全对齐这一边界，需要再增加说书人选择恶魔的中间状态。
+  - Barber 产生新角色时已重置项目中常见的一次性能力耗尽标记，但少数高度组合化的“角色创建后立即需要重新建立额外配对/初始化状态”的自定义交互仍建议后续逐角色专项验证。
+  - 前端整体继续沿用各游戏 Room / ActionPanel / PlayerList / Chat 分层和 Element Plus 体系；本轮没有发现值得以大规模视觉重构换取的功能收益，因此只在现有 BOTCActionPanel 内复用已有样式完成必要交互。
+验证:
+  - 全量静态扫描通过：backend/src + frontend/src 共 84 个文件，82 个 TypeScript/Vue script 解析单元、27 个 Vue SFC、27 个 style 块、211 个相对导入均无语法、结构、样式括号或失效相对导入错误；根目录不存在 src/。
+  - backend/src 全量源码使用 TypeScript strict 模式、真实 Node 类型和临时外部模块声明桩完成 noEmit 类型检查，并成功生成测试用 CommonJS 产物，0 个类型错误。
+  - 六个实际游戏 Worker prepare_room 烟雾测试全部通过：狼人杀、杀人游戏、一夜狼人、阿瓦隆、血染钟楼、德州扑克均能加载本轮编译源码并完成初始化。
+  - BOTC Barber 专项回归通过：条件死亡角色不再进入常规夜序；白天死亡后夜晚入口正确门闩；恶魔可选自己、不可选另一恶魔；双目标交换角色但保留阵营；新角色不会继承通用耗尽标记；换角后 nightOrder 重建；中毒 Barber 不触发；夜间死亡可在黎明前处理并继续转阶段。
+  - Barber 计时竞态专项回归通过：非法重复目标返回失败且原 barberDecision 超时仍存在；合法跳过后超时被清除。
+  - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts；差异空白检查未报告新增问题；根目录不存在 src/。
+  - 完整 npm run build 已再次执行，但项目 node_modules 未完整安装，后端正式 tsc 因缺少 Node/Express/Socket.IO/UUID/CORS 等依赖/类型而中止，前端 vue-tsc/Vite 未进入执行。此前 npm ci --ignore-scripts 又因当前内部 npm 源无法提供锁定的 typescript-5.8.3.tgz 而失败。因此本轮不能宣称“生产构建已在此容器通过”，仍需在依赖源可用的本地或 CI 执行 npm ci && npm run build 做最终部署构建确认。
+备注: 本轮未删除文件，未创建根目录 src/；所有后端源码修改均位于 backend/src/，所有前端源码修改均位于 frontend/src/；修复包只包含本轮修改文件及 repair_log.txt，可按相对路径直接覆盖。

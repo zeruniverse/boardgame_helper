@@ -281,6 +281,15 @@ export function hasVigormortisRetainedAbility(player: GamePlayer, gamePlayers: G
 export function getNightOrder(gamePlayers: GamePlayer[], isFirstNight: boolean): string[] {
   const nightOrderIds = isFirstNight ? NIGHT_ORDER.first : NIGHT_ORDER.other;
   const order: string[] = [];
+  // 这些角色的 otherNight 只是用于标注“若其死亡则在该夜序处理”的条件触发能力，
+  // 并不代表角色存活时每晚都要被唤醒。它们的死亡流程由 Worker 单独处理。
+  const conditionalDeathNightRoles = new Set([
+    'barber',
+    'sweetheart',
+    'sage',
+    'moonchild',
+    'ravenkeeper'
+  ]);
   
   // 构建角色ID到玩家的映射（优化查找）
   const roleToPlayers: Map<string, GamePlayer[]> = new Map();
@@ -303,6 +312,9 @@ export function getNightOrder(gamePlayers: GamePlayer[], isFirstNight: boolean):
 
     playersWithRole.forEach(player => {
       const effectiveRole = player.displayRole || player.role!;
+      if (!isFirstNight && conditionalDeathNightRoles.has(effectiveRole.id)) {
+        return;
+      }
       const nightAction = isFirstNight ? effectiveRole.firstNight : effectiveRole.otherNight;
       const canActWhileDead = hasVigormortisRetainedAbility(player, gamePlayers);
       if (nightAction > 0 && (!player.isDead || isZombuulLivingWhileRegisteredDead(player) || canActWhileDead)) {

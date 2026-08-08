@@ -1,5 +1,35 @@
 <template>
   <div class="botc-action-panel">
+    <!-- 理发师死亡后由恶魔处理的双目标换角，不属于恶魔自己的常规夜间能力 -->
+    <el-card v-if="barberSwapPrompt && !isStoryteller" class="death-ability-card">
+      <template #header>
+        <h4>理发师换角</h4>
+      </template>
+      <p>{{ formatNightInfo(barberSwapPrompt) }}</p>
+      <div class="death-ability-targets">
+        <el-button
+          v-for="target in barberSwapTargets"
+          :key="target.playerId"
+          @click="toggleBarberSwapTarget(target.playerId)"
+          :type="selectedBarberSwapTargets.includes(target.playerId) ? 'primary' : 'default'"
+          size="small"
+        >
+          {{ displayPlayerNameById(target.playerId, target.playerName) }}
+        </el-button>
+      </div>
+      <div class="barber-swap-actions">
+        <el-button size="small" @click="skipBarberSwap">不交换</el-button>
+        <el-button
+          type="primary"
+          size="small"
+          :disabled="selectedBarberSwapTargets.length !== 2"
+          @click="submitBarberSwap"
+        >
+          交换所选两人
+        </el-button>
+      </div>
+    </el-card>
+
     <!-- 死亡能力提示（不属于常规夜晚队列） -->
     <el-card v-if="deathAbilityPrompt && !isStoryteller" class="death-ability-card">
       <template #header>
@@ -506,6 +536,7 @@ const dayAbilityCompleted = ref(false)
 const deathAbilityCompleted = ref(false)
 const selectedNightTargets = ref<string[]>([])
 const selectedDayTarget = ref('')
+const selectedBarberSwapTargets = ref<string[]>([])
 const nightExtraInput = ref('')
 const dayAbilityInput = ref('')
 const storytellerResponseInput = ref('')
@@ -543,6 +574,12 @@ const watchDeathAbility = watch(() => props.nightInfo, (info) => {
   }
 })
 
+const watchBarberSwap = watch(() => props.nightInfo, (info) => {
+  if (info?.isBarberSwapPrompt) {
+    selectedBarberSwapTargets.value = []
+  }
+})
+
 const watchNightActionConfirmation = watch(() => props.nightInfo, (info) => {
   if (info?.playerId === props.currentUserId && info?.actionType) {
     nightActionCompleted.value = true
@@ -568,6 +605,7 @@ onUnmounted(() => {
   watchPhase()
   watchRole()
   watchDeathAbility()
+  watchBarberSwap()
   watchNightActionConfirmation()
   watchEndDayProposal()
   stopEndDayTimer()
@@ -605,6 +643,14 @@ const displayPlayerNameById = (playerId?: string, name?: string): string => {
 // 计算属性
 const deathAbilityPrompt = computed(() => {
   return props.nightInfo?.isDeathAbilityPrompt ? props.nightInfo : null
+})
+
+const barberSwapPrompt = computed(() => {
+  return props.nightInfo?.isBarberSwapPrompt ? props.nightInfo : null
+})
+
+const barberSwapTargets = computed(() => {
+  return barberSwapPrompt.value?.availableTargets || []
 })
 
 const deathAbilityTargets = computed(() => {
@@ -1004,6 +1050,33 @@ const useDeathAbility = (targetId: string) => {
   })
 }
 
+const toggleBarberSwapTarget = (targetId: string) => {
+  const existingIndex = selectedBarberSwapTargets.value.indexOf(targetId)
+  if (existingIndex >= 0) {
+    selectedBarberSwapTargets.value.splice(existingIndex, 1)
+    return
+  }
+  if (selectedBarberSwapTargets.value.length >= 2) {
+    selectedBarberSwapTargets.value.shift()
+  }
+  selectedBarberSwapTargets.value.push(targetId)
+}
+
+const submitBarberSwap = () => {
+  if (selectedBarberSwapTargets.value.length !== 2) return
+  emit('game-action', {
+    type: 'barberSwapAction',
+    data: { targets: [...selectedBarberSwapTargets.value] }
+  })
+}
+
+const skipBarberSwap = () => {
+  emit('game-action', {
+    type: 'barberSwapAction',
+    data: { skip: true }
+  })
+}
+
 const respondToStorytellerQuestion = (answer: string) => {
   if (!props.storytellerQuestion) return
   emit('storyteller-response', {
@@ -1289,6 +1362,13 @@ const formatNightInfo = (info: any) => {
 .death-ability-targets {
   display: flex;
   flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.barber-swap-actions {
+  display: flex;
+  justify-content: flex-end;
   gap: 8px;
   margin-top: 12px;
 }
