@@ -3998,87 +3998,91 @@ export function roomController(io: Server) {
         ) {
           return [];
         }
-        return [{ room, player }];
+        return [{ roomId: room.id, playerId: player.id }];
       });
 
-      for (let { room: currentRoom, player: currentPlayer } of memberships) {
-        const roomId = currentRoom.id;
-        // 处理前一个房间的 worker 响应期间，同一座位可能已经由新 socket 重连。
-        // 必须基于当前控制层快照复核旧 socket 仍拥有该座位，不能用循环开始时的
-        // memberships 快照把新连接再次标记为离线。
-        const latestRoomBeforeDisconnect = rooms.get(roomId);
-        const latestPlayerBeforeDisconnect = latestRoomBeforeDisconnect?.players.find(p => p.id === currentPlayer.id);
-        if (!latestRoomBeforeDisconnect || !latestPlayerBeforeDisconnect || latestPlayerBeforeDisconnect.socketId !== socket.id) {
-          continue;
-        }
-        currentRoom = latestRoomBeforeDisconnect;
-        currentPlayer = latestPlayerBeforeDisconnect;
-        const player = currentPlayer;
+      for (const membership of memberships) {
+        const { roomId, playerId } = membership;
 
-        console.log(`玩家 ${player.nickname} (${player.id}) 从房间 ${roomId} 断开连接`);
+        // disconnect 与 reconnect / Cash Out / 踢人等都会改变同一座位的连接或成员归属。
+        // 它们必须共享 seatMutationQueues：第 63 轮把 existing-seat migration 提前登记到
+        // ensureRoomThreadRunning 的第一次 await 之前后，新迁移可能已经持有座位锁，但旧
+        // socketId 尚未切走。若旧连接此时断开而这里继续在锁外发送 player_offline，德州
+        // 会自动弃牌，其他游戏也可能自动跳过当前操作者；随后迁移即使成功，这些游戏副作用
+        // 也无法靠 online=true 回滚。现在谁先取得座位锁谁先完整提交，后取得者再基于最新
+        // socketId 复核所有权，避免迁移与旧连接断线交叉提交。
+        await runSeatMutationExclusive(roomId, playerId, async () => {
+          const currentRoom = rooms.get(roomId);
+          const currentPlayer = currentRoom?.players.find(p => p.id === playerId);
+          if (!currentRoom || !currentPlayer || currentPlayer.socketId !== socket.id) {
+            return;
+          }
 
-        // 将玩家标记为离线
-        const offlineAt = advancePlayerHeartbeat(player);
-        player.online = false;
-        player.socketId = '';
-        advancePlayerConnectionState(player);
-        // 断线也算最近活动，避免空闲清理轮询抢在重连宽限/房间清理定时器之前删除长期房间。
-        currentRoom.lastActiveTime = Date.now();
+          const player = currentPlayer;
+          console.log(`玩家 ${player.nickname} (${player.id}) 从房间 ${roomId} 断开连接`);
 
-        rooms.set(roomId, currentRoom);
-        threadManager.updateRoomData(roomId, currentRoom);
+          // 将玩家标记为离线
+          const offlineAt = advancePlayerHeartbeat(player);
+          player.online = false;
+          player.socketId = '';
+          advancePlayerConnectionState(player);
+          // 断线也算最近活动，避免空闲清理轮询抢在重连宽限/房间清理定时器之前删除长期房间。
+          currentRoom.lastActiveTime = Date.now();
 
-        // 两个任务都要在首次 await 前入队。否则新连接可能在两次 await 之间完成
-        // 座位接管，随后旧连接的 player_offline 会错误覆盖新的在线状态。
-        const updateRoomTask = sendTaskToRoom(roomId, 'update_room_data', { room: currentRoom });
-        const playerOfflineTask = sendTaskToRoom(roomId, 'player_offline', { playerId: player.id });
-        const [updateRoomResult, playerOfflineResult] = await Promise.allSettled([
-          updateRoomTask,
-          playerOfflineTask
-        ]);
+          rooms.set(roomId, currentRoom);
+          threadManager.updateRoomData(roomId, currentRoom);
 
-        // 将更新后的房间数据同步到工作线程
-        if (updateRoomResult.status === 'rejected') {
-          console.error(`向房间 ${roomId} 同步数据失败 (disconnect):`, updateRoomResult.reason);
-        }
+          // 两个任务都要在首次 await 前入队。否则新连接可能在两次 await 之间完成
+          // 座位接管，随后旧连接的 player_offline 会错误覆盖新的在线状态。
+          const updateRoomTask = sendTaskToRoom(roomId, 'update_room_data', { room: currentRoom });
+          const playerOfflineTask = sendTaskToRoom(roomId, 'player_offline', { playerId: player.id });
+          const [updateRoomResult, playerOfflineResult] = await Promise.allSettled([
+            updateRoomTask,
+            playerOfflineTask
+          ]);
 
-        // 向游戏线程发送玩家离线事件
-        if (playerOfflineResult.status === 'rejected') {
-          console.error(`向房间 ${roomId} 发送 player_offline 任务失败:`, playerOfflineResult.reason);
-        }
+          // 将更新后的房间数据同步到工作线程
+          if (updateRoomResult.status === 'rejected') {
+            console.error(`向房间 ${roomId} 同步数据失败 (disconnect):`, updateRoomResult.reason);
+          }
 
-        const latestRoom = rooms.get(roomId);
-        if (!latestRoom) {
-          continue;
-        }
-        const latestPlayer = latestRoom.players.find(p => p.id === player.id);
-        // 等待 worker 响应期间，座位可能已经被重连或同昵称接管。
-        // 仅当座位仍属于本次断线快照时，才继续广播离线状态和安排清理。
-        if (
-          !latestPlayer ||
-          latestPlayer.online !== false ||
-          latestPlayer.socketId !== '' ||
-          Number(latestPlayer.lastHeartbeat || 0) !== offlineAt
-        ) {
-          continue;
-        }
+          // 向游戏线程发送玩家离线事件
+          if (playerOfflineResult.status === 'rejected') {
+            console.error(`向房间 ${roomId} 发送 player_offline 任务失败:`, playerOfflineResult.reason);
+          }
 
-        currentRoom = latestRoom;
-        rooms.set(roomId, latestRoom);
-        threadManager.updateRoomData(roomId, latestRoom);
-        io.to(roomId).emit('room_update', toClientRoom(latestRoom));
-        scheduleOfflineHostFailoverIfNeeded(latestRoom);
+          const latestRoom = rooms.get(roomId);
+          if (!latestRoom) {
+            return;
+          }
+          const latestPlayer = latestRoom.players.find(p => p.id === player.id);
+          // 等待 worker 响应期间，其他非座位锁路径仍可能更新连接代次。仅当座位仍属于
+          // 本次断线快照时，才继续广播离线状态和安排清理。
+          if (
+            !latestPlayer ||
+            latestPlayer.online !== false ||
+            latestPlayer.socketId !== '' ||
+            Number(latestPlayer.lastHeartbeat || 0) !== offlineAt
+          ) {
+            return;
+          }
 
-        // 更新大厅中该房间的玩家数量
-        if (!latestRoom.private) {
-          broadcastLobbyUpdate();
-        }
+          rooms.set(roomId, latestRoom);
+          threadManager.updateRoomData(roomId, latestRoom);
+          io.to(roomId).emit('room_update', toClientRoom(latestRoom));
+          scheduleOfflineHostFailoverIfNeeded(latestRoom);
 
-        // 检查房间是否已空，如果空则使用统一的竞态安全清理流程。
-        if (!latestRoom.players.some(p => p.online)) {
-          console.log(`房间 ${roomId} 已没有在线玩家，设置清理定时器`);
-          scheduleRoomCleanupIfNoOnlinePlayers(latestRoom);
-        }
+          // 更新大厅中该房间的玩家数量
+          if (!latestRoom.private) {
+            broadcastLobbyUpdate();
+          }
+
+          // 检查房间是否已空，如果空则使用统一的竞态安全清理流程。
+          if (!latestRoom.players.some(p => p.online)) {
+            console.log(`房间 ${roomId} 已没有在线玩家，设置清理定时器`);
+            scheduleRoomCleanupIfNoOnlinePlayers(latestRoom);
+          }
+        });
       }
     });
 
