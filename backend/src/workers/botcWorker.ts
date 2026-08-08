@@ -1351,9 +1351,14 @@ export class BOTCWorker extends BaseGameWorker {
       return false;
     }
 
+    // 红颜继承刚死亡恶魔的具体角色，而不是简单取当前剧本中的第一个恶魔。
+    // Trouble Brewing 只有 Imp 时两者没有区别，但自定义剧本/多恶魔剧本会因此
+    // 得到完全不同的夜晚能力。
     const edition = getEditionById(this.gameConfig.edition);
-    const demonRoleId = edition?.roles.find(roleId => getRoleById(roleId)?.team === Team.DEMON);
-    const newDemonRole = demonRoleId ? getRoleById(demonRoleId) : null;
+    const fallbackDemonRoleId = edition?.roles.find(roleId => getRoleById(roleId)?.team === Team.DEMON);
+    const newDemonRole = dyingDemon?.role?.team === Team.DEMON
+      ? dyingDemon.role
+      : (fallbackDemonRoleId ? getRoleById(fallbackDemonRoleId) : null);
     if (!newDemonRole) {
       return false;
     }
@@ -3419,20 +3424,13 @@ export class BOTCWorker extends BaseGameWorker {
       }
     }
 
-    // 小恶魔自杀时，先让一名爪牙成为新小恶魔，再处理旧小恶魔死亡。
-    // 否则 killPlayer 会先触发“恶魔已死亡”的胜负/红颜逻辑。
-    if (effects.reminders) {
-      for (const reminder of effects.reminders) {
-        if (reminder.reminder === '成为恶魔') {
-          this.promotePlayerToImp(reminder.playerId);
-        }
-      }
-    }
-
     // 处理击杀
+    const impTransferReminders = Array.isArray(effects.reminders)
+      ? effects.reminders.filter((reminder: any) => reminder?.reminder === '成为恶魔')
+      : [];
+    const killCause = this.getNightKillCause(action);
+    const roleId = this.getNightActionRoleId(action);
     if (effects.killed) {
-      const killCause = this.getNightKillCause(action);
-      const roleId = this.getNightActionRoleId(action);
       for (const playerId of effects.killed) {
         if (roleId === 'fanggu') {
           const jumped = await this.tryResolveFangGuJump(action.playerId, playerId);
@@ -3444,8 +3442,37 @@ export class BOTCWorker extends BaseGameWorker {
       }
     }
 
+    // Imp 自杀只有在“旧 Imp 实际死亡”后才转移恶魔身份。此前先晋升爪牙会导致
+    // 被 Monk/其他防死效果保护的 Imp 仍存活，却额外产生第二个活恶魔。
+    // 同时 killPlayer 会先即时结算 Scarlet Woman；若她在 5+ 存活玩家时应接任，
+    // 她必须优先于 Imp 的普通爪牙转移候选。
+    const actingPlayer = this.gamePlayers.get(action.playerId);
+    const impSelfKillSucceeded = roleId === 'imp' &&
+      Array.isArray(effects.killed) &&
+      effects.killed.includes(action.playerId) &&
+      actingPlayer?.isDead === true;
+    if (
+      impSelfKillSucceeded &&
+      impTransferReminders.length > 0 &&
+      !this.hasFunctionallyAliveDemon(Array.from(this.gamePlayers.values()))
+    ) {
+      const successor = impTransferReminders.find((reminder: any) => {
+        const candidate = this.gamePlayers.get(reminder.playerId);
+        return Boolean(candidate && !candidate.isDead && candidate.role?.team === Team.MINION);
+      });
+      if (successor) {
+        this.promotePlayerToImp(successor.playerId);
+      }
+    }
+
     // 处理提醒标记
     if (effects.reminders) {
+      if (roleId === 'butler' && effects.reminders.some((reminder: any) => reminder?.reminder === 'Master')) {
+        // Butler 每晚重新选择主人；上一晚的 Master 标记不能残留在魔典里。
+        for (const gamePlayer of this.gamePlayers.values()) {
+          gamePlayer.reminders = gamePlayer.reminders.filter(reminder => reminder !== 'Master' && reminder !== '主人');
+        }
+      }
       for (const reminder of effects.reminders) {
         if (reminder.reminder === '成为恶魔') {
           continue;

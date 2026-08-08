@@ -801,3 +801,32 @@ Commit: fix(round4): 清理阿瓦隆旧刺杀投票并标记系统代投
   - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts 校验。
   - 完整 npm ci 已尝试但当前内部依赖源对锁定的 typescript-5.8.3.tgz 返回 404；随后 npm run build 因 node_modules 未成功安装，在后端正式 tsc 阶段缺少 Node/Express/Socket.IO/UUID/CORS 等已声明依赖/类型而中止，前端 vue-tsc/Vite 未进入执行。该失败属于当前容器依赖源/安装环境问题；源码已通过上述 strict 检查、六 Worker 烟雾测试与阿瓦隆实际流程回归，仍需在依赖源可用的本地或 CI 执行 npm ci && npm run build 做最终生产构建确认。
 备注: 本轮未删除文件，未创建根目录 src/；后端源码修改仅位于 backend/src/，前端源码修改仅位于 frontend/src/；修复包只包含本轮修改文件及 repair_log.txt，可按相对路径直接覆盖。
+
+=== 当前请求第 5 轮修复记录 ===
+时间: 2026-08-08 01:36:41 UTC
+Commit: fix(round5): 修复钟楼小恶魔转移与管家主人标记
+修改/新增文件:
+  - backend/src/workers/botcWorker.ts
+  - backend/src/utils/botcSkills.ts
+  - frontend/src/components/Lobby.vue
+  - repair_log.txt
+删除文件: 无
+构建测试: 部分通过（完整 npm build 受当前容器依赖安装失败阻塞）
+本轮修复:
+  - 血染钟楼修复 Imp 自杀的结算顺序：不再在死亡实际发生前预先把爪牙晋升为 Imp。若 Imp 被 Monk 等防死效果保护，自杀失败时不会额外产生第二名存活恶魔。
+  - 血染钟楼修复 Imp 自杀与 Scarlet Woman 的优先级：先让 killPlayer 对实际发生的恶魔死亡即时结算 Scarlet Woman；5 名及以上非旅行者存活且其能力有效时，由 Scarlet Woman 优先接任，普通 Imp 转移候选仅在场上仍无功能性存活恶魔时才接任。
+  - Scarlet Woman 接任时改为继承刚死亡恶魔的具体角色，而不是取剧本列表中的第一个恶魔，避免多恶魔/组合剧本下获得错误能力。
+  - Butler 的 Master 提醒标记改为落在被选择的主人身上；每次新的 Butler 夜间选择会清理上一晚的 Master/主人标记，避免魔典同时残留多个旧主人。
+  - Lobby 中 Trouble Brewing 的 Butler/Imp 规则说明同步修正：Butler 可选择任意其他玩家（包括死亡玩家）且并非主人投票就必须跟投；Imp 自杀后由一名存活爪牙成为新 Imp，而不是由 Imp 玩家额外选择接任者。
+审查结果/本轮未改动重点:
+  - 对 backend/src 与 frontend/src 全部 83 个 TypeScript/Vue/CSS 源码文件继续做结构、语法和相对导入静态检查，并复查六个游戏 Worker、Controller/RoomThreadManager、状态版本与计时器关键路径。本轮最高优先级且可稳定复现的新问题集中在 BOTC 的 Imp/Scarlet Woman 结算顺序和 Butler 魔典标记。
+  - 狼人杀、杀人游戏、一夜狼人、阿瓦隆、德州扑克沿用前几轮已修复的遗言/隐私、权威计时、刺杀流程、掉线状态和边池/加注权逻辑；本轮没有发现优先级高于上述 BOTC 状态破坏问题、且适合安全落地的新阻断项。
+  - 前端仍沿用现有 Room / ActionPanel / PlayerList / Chat 分层、LocalPlayerMark 与共享 socket/session 工具；本轮只修正规则说明，没有进行风险较高的大规模样式重构。
+验证:
+  - backend/src + frontend/src 共 55 个 .ts、27 个 Vue SFC 使用 TypeScript 解析检查，0 个语法错误；83 个 TypeScript/Vue/CSS 源码结构检查通过；全部 82 个 TS/JS/Vue 文件的相对导入检查 0 个失效路径；根目录不存在 src/。
+  - 本轮修改的 backend/src/workers/botcWorker.ts 与 backend/src/utils/botcSkills.ts 使用 TypeScript 5.8.3、strict 模式和 Node 类型完成独立类型检查，0 个错误。
+  - 六个实际游戏 Worker 启动烟雾测试通过：狼人杀、杀人游戏、血染钟楼、一夜狼人、阿瓦隆、德州扑克均可由当前源码经 ts-node 加载并保持运行；空配置 prepare_room 对杀人游戏、血染钟楼、阿瓦隆、德州扑克成功，狼人杀/一夜狼人按设计拒绝缺少合法角色配置的空配置。
+  - BOTC 专项回归通过 5 个场景：受保护 Imp 自杀不会产生双恶魔；5 人及以上时 Scarlet Woman 优先于普通爪牙接任；无 Scarlet Woman 时普通爪牙转移仍工作；Scarlet Woman 继承刚死亡的具体恶魔角色；Butler 新主人标记正确移动且旧标记被清除。
+  - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts 校验；差异空白检查未报告新增问题。
+  - 完整 npm ci 已尝试，但当前内部 npm 源对锁定的 typescript-5.8.3.tgz 返回 404；随后 npm run build 因 node_modules 未成功安装，在后端 tsc 阶段缺少 Node/Express/Socket.IO/UUID/CORS 等已声明依赖/类型而中止，前端 vue-tsc/Vite 未进入执行。因此无法在本容器给出“生产构建已通过”的结论，仍需在依赖源可用的本地或 CI 执行 npm ci && npm run build 做最终确认。
+备注: 本轮未删除文件，未创建根目录 src/；后端源码修改仅位于 backend/src/，前端源码修改仅位于 frontend/src/；修复包只包含本轮修改文件及 repair_log.txt，可按相对路径直接覆盖。

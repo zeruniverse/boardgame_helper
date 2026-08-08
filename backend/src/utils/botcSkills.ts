@@ -584,7 +584,8 @@ function processButler(action: NightAction, allPlayers: GamePlayer[]): SkillResu
     success: true,
     effects: {
       reminders: [
-        { playerId: action.playerId, reminder: '主人' }
+        // “主人/Master”标记属于被管家选择的玩家，而不是管家自己。
+        { playerId: target, reminder: 'Master' }
       ]
     }
   };
