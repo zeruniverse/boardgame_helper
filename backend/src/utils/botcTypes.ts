@@ -140,7 +140,7 @@ export interface GameConfig {
   dayTimer: number;
   nightTimer: number;
   votingTimer: number;
-  /** 说书人模式：player / ai / none */
+  /** 说书人模式：player / ai；none 仅保留为旧配置的“系统自动主持”兼容别名 */
   storytellerMode?: 'player' | 'ai' | 'none';
   /** AI说书人偏好：neutral / good / evil */
   aiBias?: 'neutral' | 'good' | 'evil';

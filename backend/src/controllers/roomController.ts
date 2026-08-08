@@ -661,6 +661,14 @@ function buildGameConfig(gameType: string, incomingConfig: any): any {
   }
 
   if (gameType === 'blood-on-the-clocktower') {
+    // 旧配置曾暴露 storytellerMode="none"，文档语义是“由系统自动主持”。
+    // Worker 实际又会为非 ai 模式补一个真人说书人，导致 Controller 先多放一席、
+    // Worker 再把房主排除出游戏，配置字段与真实权限/容量发生分叉。
+    // 在进入 Worker 前把这个遗留别名收敛为 AI 说书人模式，保持唯一事实源。
+    if (gameConfig.storytellerMode === 'none') {
+      gameConfig.storytellerMode = 'ai';
+    }
+
     // 前端使用 dayTime/nightTime，worker 使用 dayTimer/nightTimer。
     gameConfig.dayTimer = gameConfig.dayTimer ?? gameConfig.dayTime;
     gameConfig.nightTimer = gameConfig.nightTimer ?? gameConfig.nightTime;

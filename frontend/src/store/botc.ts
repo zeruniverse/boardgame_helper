@@ -60,6 +60,14 @@ export const useBOTCGameStore = defineStore('botc', () => {
     chatMessages.value = appendLimitedMessage(chatMessages.value, normalizeIncomingMessage(data))
   }
 
+  const syncSetupPlayerCountFromRoom = () => {
+    if (!room.value || gameState.value?.phase !== 'setup') return
+    const storytellerId = gameConfig.value?.storytellerId
+    gameState.value.playerCount = (room.value.players || []).filter((player: any) =>
+      player.online !== false && player.id !== storytellerId
+    ).length
+  }
+
   const getStorytellerAnswerText = (data: any): string => {
     const response = data?.response
     if (typeof response === 'string') return response
@@ -163,6 +171,7 @@ export const useBOTCGameStore = defineStore('botc', () => {
           if (gameConfig.value) {
             isStoryteller.value = currentUserId.value === gameConfig.value.storytellerId
           }
+          syncSetupPlayerCountFromRoom()
         })
 
         // 监听游戏状态同步 - 后端使用gameState
@@ -170,6 +179,7 @@ export const useBOTCGameStore = defineStore('botc', () => {
           gameState.value = data.gameState
           if (data.gameConfig) gameConfig.value = data.gameConfig
           isStoryteller.value = data.isStoryteller || false
+          syncSetupPlayerCountFromRoom()
         })
 
         // 监听游戏更新
@@ -400,12 +410,14 @@ export const useBOTCGameStore = defineStore('botc', () => {
 
         on('gameConfigured', (data) => {
           gameConfig.value = data.config
+          syncSetupPlayerCountFromRoom()
         })
 
         on('configUpdated', (data) => {
           if (data.config) {
             gameConfig.value = { ...gameConfig.value, ...data.config }
           }
+          syncSetupPlayerCountFromRoom()
         })
 
         // 监听需要说书人回复的问题（如Artist的yes/no问题）

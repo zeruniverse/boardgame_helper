@@ -475,7 +475,12 @@ class OnuWerewolfWorker extends BaseGameWorker {
   }
 
   private getGameInfo(): any {
-    const playerCount = Object.keys(this.gameState.players).length;
+    // 等待阶段的开局条件只看当前在线玩家；离线保留席位不能继续计入公开
+    // playerCount，否则 readyCount 与 playerCount 会来自两套不同的人群，前端会
+    // 显示“所有人已准备”却仍差人数。开局后座位已经锁定，再使用局内玩家数。
+    const playerCount = this.gameState.status === OnuWerewolfGameStatus.WAITING
+      ? this.getOnlinePlayers().length
+      : Object.keys(this.gameState.players).length;
     // 等待阶段准备人数以当前仍在房间且在线的玩家为准，避免离房/被踢玩家的旧 ID
     // 让 readyCount 与实际大厅状态分叉。
     const readyCount = this.gameState.status === OnuWerewolfGameStatus.WAITING

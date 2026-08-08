@@ -208,7 +208,7 @@
 2. **确定说书人模式**：
    - 玩家说书人模式：房主指定一名玩家担任说书人
    - AI 说书人模式：由 AI 自动主持游戏
-   - 无说书人模式：由系统自动处理
+   - 旧配置中的 `none`（“无说书人/系统自动处理”）会兼容映射为 AI 说书人；血染钟楼不会以真正没有说书人的状态运行
 3. **玩家准备/确认**：所有玩家确认就位
 4. **角色分配**：系统自动根据剧本和人数分配角色
 
@@ -428,7 +428,7 @@ AI 首先判断当前阵营强弱：
 | `dayTime` | number | 0 ~ 3600（秒） | `null` | 白天时间（秒），`0` 或 `null` 表示不限时 |
 | `nightTime` | number | 0 ~ 3600（秒） | `null` | 夜晚时间（秒），`0` 或 `null` 表示不限时 |
 | `allowPrivateChat` | boolean | `true` / `false` | `true` | 是否允许玩家间一对一私聊 |
-| `storytellerMode` | string | `player` / `ai` / `none` | `ai` | 说书人模式 |
+| `storytellerMode` | string | `player` / `ai`（旧值 `none` 兼容为 `ai`） | `ai` | 说书人模式 |
 | `aiBias` | string | `neutral` / `good` / `evil` | `neutral` | AI 说书人偏好（仅 AI 模式有效） |
 | `storytellerId` | string | 玩家 ID | `null` | 玩家说书人的玩家 ID（仅玩家模式有效） |
 

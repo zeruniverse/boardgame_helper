@@ -7,6 +7,7 @@
           v-if="isHost && !gameStarted" 
           type="primary" 
           size="small"
+          :disabled="!canStartGame"
           @click="startGame"
         >
           开始游戏
@@ -273,6 +274,26 @@ const storytellerOptions = computed(() => [
   }))
 ])
 
+const selectedStorytellerIsComputer = computed(() => selectedStoryteller.value.startsWith('computer_'))
+
+const activeGamePlayerCount = computed(() => props.players.filter(player =>
+  player.online !== false &&
+  (selectedStorytellerIsComputer.value || player.id !== selectedStoryteller.value)
+).length)
+
+const canStartGame = computed(() => {
+  if (!selectedStoryteller.value) return false
+
+  if (!selectedStorytellerIsComputer.value) {
+    const storyteller = props.players.find(player => player.id === selectedStoryteller.value)
+    if (!storyteller || storyteller.online === false) return false
+  }
+
+  const configuredMax = Number(props.gameConfig?.maxPlayers)
+  const maxPlayers = Number.isFinite(configuredMax) && configuredMax > 0 ? configuredMax : 15
+  return activeGamePlayerCount.value >= 5 && activeGamePlayerCount.value <= maxPlayers
+})
+
 const syncConfigSelection = () => {
   selectedEdition.value = props.gameConfig?.edition || selectedEdition.value || 'tb'
   selectedStoryteller.value = props.storytellerId || props.gameConfig?.storytellerId || props.hostId || props.currentUserId || selectedStoryteller.value
@@ -431,8 +452,12 @@ const startGame = () => {
     ElMessage.warning('请选择说书人')
     return
   }
+  if (!canStartGame.value) {
+    ElMessage.warning('排除真人说书人后，需要 5-15 名在线游戏玩家才能开始')
+    return
+  }
   
-  const isComputer = selectedStoryteller.value.startsWith('computer_')
+  const isComputer = selectedStorytellerIsComputer.value
   const aiBias = selectedStoryteller.value.includes('good') ? 'good' :
     selectedStoryteller.value.includes('evil') ? 'evil' : 'neutral'
 

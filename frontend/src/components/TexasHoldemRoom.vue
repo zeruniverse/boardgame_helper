@@ -388,9 +388,14 @@ const canCheck = computed(() => isMyTurn.value && toCall.value === 0);
 const minRaiseDelta = computed(() => Math.max(1, store.lastRaiseAmount || 0));
 const quickBetAmount = computed(() => Math.max(minRaiseDelta.value, Math.floor(store.pot / 2)));
 const canStartGame = computed(() => {
-  // 修复：游戏开始前participants为空，应直接检查有多少玩家有筹码
-  const playersWithChips = store.players.filter((p: any) => p.gameMetadata?.chips > 0);
-  return isHost.value && playersWithChips.length >= 2;
+  // 与 Worker 开局条件保持一致：离线保留席位、明确 sit out 的玩家以及无筹码玩家
+  // 都不能拿来满足“两名可参赛玩家”的最低要求。否则按钮会可点但服务端必然拒绝。
+  const eligiblePlayers = store.players.filter((p: any) =>
+    p.online !== false &&
+    p.gameMetadata?.inGame !== false &&
+    Number(p.gameMetadata?.chips) > 0
+  );
+  return isHost.value && eligiblePlayers.length >= 2;
 });
 // 使用playerId判断是否在参与游戏中
 const isInGame = computed(() => {

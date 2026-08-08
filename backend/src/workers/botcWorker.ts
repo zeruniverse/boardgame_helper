@@ -2369,7 +2369,10 @@ export class BOTCWorker extends BaseGameWorker {
     let storytellerId = hasExplicitStoryteller
       ? config.storytellerId!.trim()
       : fallback?.storytellerId || '';
-    let storytellerMode = requestedMode;
+    // "none" 是旧客户端/旧文档使用的“系统自动主持”别名，并不表示 BOTC
+    // 可以在没有说书人的情况下运行。若把它落到真人分支，storytellerMode 会写
+    // none，但 storytellerId/权限/人数却按房主真人说书人处理，形成互相矛盾的状态。
+    let storytellerMode: GameConfig['storytellerMode'] = requestedMode === 'none' ? 'ai' : requestedMode;
 
     // 显式指定说书人 ID 时，以 ID 类型推断模式；切换模式但未给 ID 时自动选择安全默认值。
     if (hasExplicitStoryteller && config.storytellerMode === undefined) {
@@ -2478,6 +2481,21 @@ export class BOTCWorker extends BaseGameWorker {
 
   private getRoomCapacity(config: GameConfig = this.gameConfig): number {
     return config.maxPlayers + (this.isComputerStoryteller(config.storytellerId) ? 0 : 1);
+  }
+
+  /**
+   * 当前真正参与本局的玩家数。
+   *
+   * SETUP 阶段尚未创建 gamePlayers，因此按“在线且不是真人说书人”的房间成员计算；
+   * 开局后则以已经锁定的 gamePlayers 为准，旁观者加入不能把公开人数继续抬高。
+   */
+  private getActiveGamePlayerCount(): number {
+    if (this.gameState.phase === GamePhase.SETUP) {
+      return this.room.players.filter(
+        player => player.online !== false && player.id !== this.gameConfig.storytellerId
+      ).length;
+    }
+    return this.gamePlayers.size;
   }
 
   private validateStorytellerAndCapacity(config: GameConfig, requireOnline: boolean): void {
@@ -2959,7 +2977,7 @@ export class BOTCWorker extends BaseGameWorker {
         isOnline: true,
         isSpectator: isGameInProgress
       },
-      playerCount: this.room.players.length
+      playerCount: this.getActiveGamePlayerCount()
     });
     this.sendToRoom('room_update', this.room);
 
@@ -7140,7 +7158,9 @@ export class BOTCWorker extends BaseGameWorker {
           nominations: p.nominations
         };
       }),
-      playerCount: this.room.players.length,
+      // room.players 还包含真人说书人、离线保留席位和开局后的旁观者；公开的
+      // playerCount 必须与开局校验和 players 列表表达同一批实际游戏玩家。
+      playerCount: this.getActiveGamePlayerCount(),
       nightOrder: viewerNightOrder,
       phaseEndTime: this.getActivePhaseEndTime(),
       endDayProposal: this.endDayProposal.isActive ? {

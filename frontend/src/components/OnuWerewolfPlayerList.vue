@@ -3,7 +3,7 @@
     <div class="player-list-header">
       <h4>玩家列表</h4>
       <div class="player-count">
-        {{ players.length }}/{{ maxPlayers }} 人
+        {{ activePlayerCount }}/{{ maxPlayers }} 人在线
         <span v-if="gameState?.config?.roles" class="role-count">
           (需要 {{ gameState.config.roles.length }} 个角色)
         </span>
@@ -33,7 +33,8 @@
           </div>
           
           <div class="player-status">
-            <span v-if="gameState?.status === 0" class="ready-status" :class="{ ready: player.ready }">
+            <span v-if="player.online === false" class="offline-status">离线</span>
+            <span v-else-if="gameState?.status === 0" class="ready-status" :class="{ ready: player.ready }">
               {{ player.ready ? '已准备' : '未准备' }}
             </span>
             <span v-else-if="gameState?.status === 2" class="skill-status">
@@ -97,8 +98,8 @@
       </div>
 
       <!-- 空位提示 -->
-      <div v-if="players.length < minPlayers" class="empty-slots">
-        <div class="empty-slot" v-for="n in (minPlayers - players.length)" :key="n">
+      <div v-if="activePlayerCount < minPlayers" class="empty-slots">
+        <div class="empty-slot" v-for="n in (minPlayers - activePlayerCount)" :key="n">
           <el-icon size="24" class="empty-icon">
             <Plus />
           </el-icon>
@@ -117,12 +118,14 @@
       <!-- 准备状态 -->
       <div v-if="gameState.status === 0" class="ready-info">
         <div class="ready-count">
-          已准备: {{ gameState.readyCount || 0 }}/{{ players.length }}
+          已准备: {{ gameState.readyCount || 0 }}/{{ activePlayerCount }}
         </div>
         <div v-if="gameState.config?.roles" class="role-requirement">
           角色配置: {{ gameState.config.roles.length }} 个角色
           <br/>
-          {{ gameState.config.roles.length === players.length + 3 ? '✓ 符合要求' : '✗ 需要比玩家数多3个角色' }}
+          {{ gameState.config.autoRoles === true
+            ? `✓ 开局将按 ${activePlayerCount + 3} 张自动配置`
+            : (gameState.config.roles.length === activePlayerCount + 3 ? '✓ 符合要求' : '✗ 需要比在线玩家数多3个角色') }}
         </div>
       </div>
     </div>
@@ -146,6 +149,7 @@ interface Player {
   skillUsed?: boolean;
   initialRole?: number;
   finalRole?: number;
+  online?: boolean;
   revealed?: boolean;
   revealedRole?: OnuWerewolfRole;
 }
@@ -156,6 +160,7 @@ interface GameState {
   readyCount?: number;
   config?: {
     roles: OnuWerewolfRole[];
+    autoRoles?: boolean;
   };
 }
 
@@ -198,6 +203,7 @@ const minPlayers = 3;
 const maxPlayers = 10;
 
 const displayPlayerName = (player: Player) => formatPlayerName(player, props.currentUserId);
+const activePlayerCount = computed(() => props.players.filter(player => player.online !== false).length);
 
 // 计算属性
 const sortedPlayers = computed(() => {
@@ -241,6 +247,7 @@ const canManagePlayer = (player: Player) => {
 
 const getGameStatusText = (player: Player) => {
   if (!props.gameState) return '';
+  if (player.online === false) return '离线';
   
   switch (props.gameState.status) {
     case OnuWerewolfGameStatus.WAITING:
@@ -477,6 +484,11 @@ const handlePlayerAction = (command: { action: string; playerId: string }) => {
 
 .ready-status.ready {
   color: #28a745;
+  font-weight: 500;
+}
+
+.offline-status {
+  color: #909399;
   font-weight: 500;
 }
 

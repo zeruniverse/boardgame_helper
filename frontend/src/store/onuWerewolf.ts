@@ -277,14 +277,17 @@ export const useOnuWerewolfStore = defineStore('onuWerewolf', {
       const syncWaitingRoomState = (room?: OnuWerewolfRoomState | null, fallbackConfig?: OnuWerewolfGameState['config']) => {
         const players = (room?.players || []).map(toWaitingPlayer);
         const config = this.gameState?.config || fallbackConfig || readConfigFromRoom(room) || undefined;
-        const readyCount = players.filter(player => player.ready).length;
+        // Worker 在等待阶段只让在线玩家参与新一局；离线保留席位仍展示在列表中，
+        // 但不能继续计入 playerCount/readyCount，否则大厅提示会与实际开局校验分叉。
+        const activePlayers = players.filter(player => player.online !== false);
+        const readyCount = activePlayers.filter(player => player.ready).length;
 
         if (!this.gameState) {
           this.gameState = {
             status: OnuWerewolfGameStatus.WAITING,
             currentPhase: '等待中',
             timeLeft: 0,
-            playerCount: players.length,
+            playerCount: activePlayers.length,
             readyCount,
             day: 1,
             players,
@@ -294,7 +297,7 @@ export const useOnuWerewolfStore = defineStore('onuWerewolf', {
         }
 
         if (this.gameState.status === OnuWerewolfGameStatus.WAITING) {
-          this.gameState.playerCount = players.length;
+          this.gameState.playerCount = activePlayers.length;
           this.gameState.readyCount = readyCount;
           this.gameState.players = players;
         }

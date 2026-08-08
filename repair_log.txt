@@ -1755,3 +1755,45 @@ Commit: fix(round35): 阻止狼人杀跳过未准备在线玩家开局
   - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts 校验。
   - 正式 npm ci --ignore-scripts --no-audit --no-fund 已尝试，当前内部 npm 源对 package-lock 锁定的 typescript-5.8.3.tgz 返回 404。随后在最终源码路径执行 npm run build，因 node_modules 未完整安装，backend tsc 缺少 Node/Express/Socket.IO/UUID/CORS 等已声明依赖/类型而中止，根构建因此未进入前端 vue-tsc/Vite。相同 backend/src 已通过上述严格隔离类型检查与 Worker 实际运行烟雾；完整生产构建/直接部署仍需在依赖源可用、npm ci 完整成功的本地或 CI 执行 npm run build 做最终确认。
 备注: 本轮未删除文件，未创建根目录 src/；所有后端源码修改仅位于 backend/src/，所有前端源码修改仅位于 frontend/src/；修复包只包含本轮修改文件、规则文档及 repair_log.txt，可按相对路径直接覆盖。
+
+=== 当前请求第 36 轮修复记录 ===
+时间: 2026-08-08 09:16:06 UTC
+Commit: fix(round36): 统一钟楼说书人与跨游戏在线开局状态
+修改/新增文件:
+  - backend/src/controllers/roomController.ts
+  - backend/src/utils/botcTypes.ts
+  - backend/src/workers/botcWorker.ts
+  - backend/src/workers/onuWerewolfWorker.ts
+  - frontend/src/components/BOTCPlayerList.vue
+  - frontend/src/components/OnuWerewolfPlayerList.vue
+  - frontend/src/components/TexasHoldemRoom.vue
+  - frontend/src/store/botc.ts
+  - frontend/src/store/onuWerewolf.ts
+  - doc/botc.md
+  - doc/onu-werewolf.md
+  - doc/texas-holdem.md
+  - repair_log.txt
+删除文件: 无
+构建测试: 部分通过（85 个源码文件全量静态扫描、backend/src 全量 strict/noEmit 与隔离 CommonJS 编译、六游戏 Worker prepare_room 烟雾、本轮 BOTC/ONU 状态同步专项回归、前端开局条件静态契约及 package-lock 工作区依赖树检查均通过；正式 npm ci / npm run build 仍受当前容器内部 npm 源缺失锁定 TypeScript 包与工作区依赖不完整阻塞）
+本轮修复:
+  - 修复血染钟楼遗留 storytellerMode="none" 的语义分叉。文档原先把 none 描述为“系统自动处理”，但 Worker 会把所有非 ai 模式落到真人说书人分支，在没有 storytellerId 时又把房主设为说书人；结果配置字段仍是 none，权限、容量、开局参与者却按真人说书人执行。Controller 和 Worker 现在都把 legacy none 收敛为 AI 说书人模式，Worker 同步生成 computer_<aiBias> 说书人 ID；旧存档/旧客户端仍可兼容输入 none，但运行态只保留一致的 player/ai 语义。
+  - 修复血染钟楼公开 playerCount 把真人说书人、离线保留席位和开局后旁观者一起算成“实际玩家”的问题。新增统一的实际游戏人数计算：SETUP 按在线且非说书人的房间成员计数，开局后直接使用锁定的 gamePlayers；playerJoined 与 getPublicGameState 均使用这一事实源。前端 botc store 在 room_update/configUpdated/gameState 时也会用同一规则同步 SETUP playerCount，ActionPanel 的人数与后端开局校验不再分叉。
+  - 修复 BOTCPlayerList 的“开始游戏”按钮无条件可点。现在会按当前选择的真人/AI 说书人、说书人在线状态、在线实际游戏玩家数与 maxPlayers 判断；不足 5 人、真人说书人离线或人数超限时按钮直接禁用，避免客户端制造必然被 Worker 拒绝的开始请求。
+  - 修复一夜狼人等待阶段 playerCount 与 readyCount 使用不同玩家集合的问题。Worker 的等待状态 playerCount 改为在线玩家数，前端 store 同样只用在线玩家计算 playerCount/readyCount；离线保留席位仍保留在成员列表中但不会阻塞新局。PlayerList 同步显示“在线人数”、离线状态、在线准备人数和基于在线玩家的 player+3 角色牌要求；自动角色模式明确提示开局时会按当前在线人数重新配置，避免旧角色数组长度造成误报。
+  - 修复德州扑克开始按钮只看“有筹码席位”而忽略在线状态与 sit out 的前后端条件不一致。前端现在和 Worker 一样只统计 online !== false、inGame !== false 且 chips > 0 的可参赛玩家，避免一名在线玩家 + 一名离线/休战有筹码席位时按钮错误可用。
+  - 更新 BOTC、一夜狼人、德州扑克文档，使说书人兼容模式、离线保留席位与德州实际参赛条件和当前代码一致。
+审查结果/本轮未改动重点:
+  - 再次覆盖 backend/src 与 frontend/src 当前全部 85 个 TypeScript/Vue/CSS/SVG 源文件，并复核六个具体 Worker、BaseGameWorker、RoomThreadManager、roomController、各 Store/Room/ActionPanel/PlayerList 的任务串行、开局成员选择、公开/私有状态同步和组件边界。本轮优先处理的是三个可稳定复现的“前端允许/显示的参与人数与 Worker 权威校验不一致”问题以及 BOTC legacy none 配置事实源分叉。
+  - 狼人杀继续核对在线玩家全部准备、狼人共识、预言家/女巫/守卫/猎人夜序、警长 1.5 票及一次 PK；杀人游戏继续核对杀手共识、警察/医生/狙击手、第一天投票限制、一次 PK 和项目屠边胜负；阿瓦隆继续核对标准任务人数、7 人以上第四任务双失败、五次否决、刺杀与湖上夫人；本轮没有发现优先级高于上述状态分叉、且适合低风险当前批次落地的新确定性主流程阻断项。
+  - 一夜狼人继续核对玩家+3 角色牌、初始身份夜序、独狼中心牌、交换后的最终身份投票与胜负；本轮主要缺口是等待房间把离线保留席位继续当作本局人数，现已统一修复。德州扑克继续核对 HU 盲位/行动顺序、短码 all-in、加注权、未跟注返还、边池和摊牌；本轮主要缺口是开始按钮没有复用 Worker 的 eligible player 条件，现已统一。
+  - 血染钟楼继续复核角色分配、说书人/AI 权限、夜序、registration、提名投票和公开状态。仍保留前轮已记录、需要更大状态模型或人工裁决 UI 才能完整处理的高阶边界：特殊自定义夜序下 Pit-Hag 创建 Demon 后无法安全逆向更早已经真实落地并触发被动的死亡；真人说书人仍缺少每一次 Recluse/Spy registration 的逐次手工裁决 UI；自由文本与多重效果互相抵消等 Mathematician 极端情况仍缺统一的逐次最终基准审计。本轮没有用局部近似逻辑冒险修改这些架构级问题。
+  - 前端 27 个 Vue SFC 仍复用既有 Room / ActionPanel / PlayerList / Chat、Element Plus 与共享 store/socket/session/playerName 工具。本轮只在既有组件内复用 Worker 已有的参与资格语义，没有新增平行组件或新的样式体系；各游戏原有主题差异保持不变。
+验证:
+  - backend/src + frontend/src 全量静态扫描通过：共 85 个源码文件、83 个 TypeScript/Vue script 解析单元、27 个 Vue SFC、28 个 CSS/style 块、314 个静态 import/export 路径均无 TypeScript 语法、SFC 基本结构、CSS 花括号、合并冲突标记或失效相对/@ 导入错误；项目根目录不存在 src/。
+  - backend/src 全部 34 个 TypeScript 文件使用全局 TypeScript 5.8.3、strict 模式、真实全局 Node 类型与位于项目目录外的 Express/CORS/Socket.IO/UUID 临时声明桩完成 noEmit 类型检查，0 个源码类型错误；同一严格配置成功生成 34 个隔离 CommonJS 测试编译文件。
+  - 六个实际游戏 Worker 使用本轮最新 strict 编译产物执行 prepare_room 烟雾全部通过：狼人杀、杀人游戏、血染钟楼、一夜狼人、阿瓦隆、德州扑克均能启动 Worker 并完成房间初始化。
+  - 第 36 轮专项回归通过：BOTC legacy none 在 prepare_room 后规范为 storytellerMode=ai、storytellerId=computer_neutral 且 AI 模式 room.maxPlayers 不额外 +1；6 个房间席位中含 1 真人说书人和 1 离线保留席位时，公开 SETUP playerCount 正确为 4，而不是 room.players.length=6；ONU 3 个保留席位中 1 人离线时，等待态 gameInfo.playerCount 正确为 2、readyCount 为 0。
+  - 前端静态契约专项通过：德州开始条件同时检查 online/inGame/chips；ONU store/UI 使用在线人数和在线 player+3 要求；BOTC store 会从 room 同步 SETUP 实际玩家数，PlayerList 开始按钮受 canStartGame 限制；Controller 明确把 legacy none 归一为 ai。
+  - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts 校验（仅可选原生依赖提示）。所有本轮修改源码相对附件原始版本均未发现新增尾随空白/冲突标记。
+  - 正式 npm ci --ignore-scripts --no-audit --no-fund 已执行，但当前内部 npm 源请求 package-lock 锁定的 typescript-5.8.3.tgz 返回 404。随后 npm run build 在依赖未完整安装的工作区执行，backend tsc 因 Node/Express/Socket.IO/UUID/CORS 等已声明依赖/类型不可解析而中止，根构建无法进入完整 frontend vue-tsc/Vite。相同 backend/src 已通过上述严格隔离类型检查与 Worker 实际运行烟雾；完整生产构建/直接部署仍需在依赖源可用、npm ci 完整成功的本地或 CI 执行 npm run build 最终确认。
+备注: 本轮未删除文件，未创建根目录 src/；所有后端源码修改仅位于 backend/src/，所有前端源码修改仅位于 frontend/src/；修复包只包含本轮修改文件、规则文档及 repair_log.txt，可按相对路径直接覆盖。
