@@ -1763,11 +1763,16 @@ class TexasHoldemWorker extends BaseGameWorker {
       this.sendToRoom('chat_broadcast', { message: `[玩家${player.nickname} 延时当前行动30s]` });
     }
 
-    // 重置超时定时器，并继续绑定同一行动玩家。
-    this.startActionTimerForPlayer(currentPlayer.id);
+    // “延时30秒”应在当前剩余时间上增加30秒，而不是把倒计时重置为30秒。
+    // 否则玩家在还剩20多秒时使用延时，实际只能获得几秒额外时间。
+    const extendedDurationMs = Math.max(0, this.actionDeadline - Date.now()) + 30000;
+    this.startActionTimerForPlayer(currentPlayer.id, extendedDurationMs / 1000);
 
-    // 重新发送行动请求，让前端更新倒计时
-    this.sendToRoom('action_request', { playerId: this.room.players[gs.currentTurn].id, seconds: 30 });
+    // 重新发送行动请求，让前端使用与 Worker 定时器一致的新倒计时。
+    this.sendToRoom('action_request', {
+      playerId: this.room.players[gs.currentTurn].id,
+      seconds: Math.ceil(extendedDurationMs / 1000)
+    });
   }
 
   private handleToggleAutoStart(playerId: string) {

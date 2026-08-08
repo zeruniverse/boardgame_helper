@@ -2141,3 +2141,33 @@ Commit: fix(round47): 隔离房间创建提交窗口并阻断跨连接抢入
   - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts 校验，仅有 ws 的可选原生依赖提示。
   - 正式 npm run build 已执行并进入 backend tsc，但当前附件工作区的 node_modules/类型依赖不完整，fs/path/crypto/worker_threads 的 Node 类型以及 Express/CORS/Socket.IO/UUID 等 package.json 已声明依赖无法解析，构建在 backend 阶段中止，未进入 frontend vue-tsc/Vite。相同 backend/src 已通过上述全量 strict/noEmit、隔离 CommonJS 编译、六 Worker 实际运行烟雾和 Controller 专项回归，因此没有把依赖环境缺失误判成源码错误；完整生产构建与“可直接部署”仍需在 npm ci 能完整成功的本地或 CI 执行 npm run build 做最终确认。
 备注: 本轮未删除文件，未创建根目录 src/；所有后端源码修改仅位于 backend/src/，本轮没有前端源码修改；修复包只包含 backend/src/controllers/roomController.ts 与更新后的 repair_log.txt，可按相对路径直接覆盖。
+
+=== 当前请求第 48 轮修复记录 ===
+时间: 2026-08-08 12:14:55 UTC
+Commit: fix(round48): 收紧临时席位踢人投票边界并修正德州延时
+修改/新增文件:
+  - backend/src/controllers/roomController.ts
+  - backend/src/utils/hostKickVote.ts
+  - backend/src/workers/texasHoldemWorker.ts
+  - repair_log.txt
+删除文件: 无
+构建测试: 部分通过（backend/src + frontend/src 当前全部 85 个源文件静态扫描、backend/src 34 个 TypeScript strict/noEmit 与隔离 CommonJS 编译、六游戏 Worker prepare_room 烟雾、房主踢人/投票临时席位专项回归、德州扑克延时专项回归、package-lock 工作区依赖树检查均通过；正式 npm ci 仍被当前内部 npm 镜像缺失 TypeScript 5.8.3 tarball 的 404 阻塞，因此无法在本容器完成完整 frontend vue-tsc/Vite 生产构建与直接部署终验）
+本轮修复:
+  - 补齐第 46 轮新增座位事务隔离在旧版直接 kick_player Socket 入口上的遗漏。共享 kickPlayerFromRoom 已经拒绝仍处于 NewSeatConnection 事务中的目标，但旧版 socket.on('kick_player') 路径此前只阻止“临时席位自己发起操作”，没有阻止房主把“尚未被 Worker 正式接纳的临时目标”直接踢出。现在目标查找后、任何 Worker kick_out_player 或房主投票逻辑前统一拒绝临时目标，避免加入事务尚在 await 时被另一连接打断并产生 Controller/Worker 成员状态分叉。
+  - 修复踢房主投票把尚未提交的新座位计入在线多数门槛的问题。NewSeatConnection 会在 Worker join_room 完成前暂时出现在 Controller room.players 且 online=true；虽然该临时玩家自己不能投票，但旧 getRequiredHostKickVotes 仍会把它算进总在线人数，在特定奇偶人数下把所需票数临时抬高。hostKickVote 工具现在支持显式成员资格过滤，Controller 的投票清理、初始门槛和最终计票都只统计已经提交的房间成员；异常残留的临时票也会在 prune 时移除。
+  - 修复德州扑克“延时当前行动30s”实际只是把倒计时重置为 30 秒的问题。玩家若在还剩 20 多秒时点击延时，旧实现实际只增加几秒，与广播语义不一致。现在在 Worker 当前 actionDeadline 的真实剩余毫秒上增加 30 秒，并用同一时长重建定时器和 action_request 倒计时；仍保持“仅当前行动者、每次行动最多一次延时”的既有限制和计时器代际保护。
+审查结果/本轮未改动重点:
+  - 本轮继续覆盖 backend/src 与 frontend/src 全部 85 个源文件，并重点复核 RoomThreadManager、BaseGameWorker、roomController、新增/迁移座位事务、六个游戏 Worker、前端六套 Store/Room/ActionPanel/PlayerList/Chat 以及共享 gameSocket/gameSession/router 工具。当前最重要且可低风险确定修复的问题是第 46 轮临时席位边界在旧 kick_player/房主投票统计上的两处漏口，以及德州扑克延时语义与真实计时不一致。
+  - 六游戏主流程继续按项目规则文档和实现交叉检查：狼人杀的狼人共识、预言家/女巫/守卫/猎人夜序、警长与一次 PK 放逐；杀人游戏的杀手/警察/医生/狙击手并行夜间行动、医生跳过/不可连续救同人、一次 PK 与项目屠边；一夜狼人的玩家牌+3 张基础中心牌、头狼额外中心牌、夜间换牌后的最终身份、平票/猎人/皮匠；阿瓦隆的标准任务人数、7 人以上第 4 任务双失败、连续五次组队否决、刺杀和湖上夫人；德州扑克的盲注/HU 行动顺序、短码 all-in/加注权、未跟注返还、边池/奇数筹码、flop/turn/river 前 burn card；血染钟楼的官方剧本人数配置、夜序、提名投票、说书人私密信息与终局。本轮没有发现比上述三项更高优先级、同时适合当前批次安全合入的新的确定性主流程规则错误。
+  - 前端 27 个 Vue SFC 的结构和本地依赖再次扫描；六类房间仍共同使用 Element Plus、共享 gameSocket/gameSession/playerName/messages/forcedExit 等工具，并沿用 Room + PlayerList + ActionPanel/ActionBar + Chat 的分层。各游戏保留独立主题和专属状态面板，本轮没有为了“表面统一”强行合并高耦合游戏组件，也没有新增重复样式体系，因此无需前端源码修改。
+  - Worker/Controller 状态同步继续使用 workerStateVersion、connectionStateVersion、hostStateVersion 和串行 Worker 消息链；本轮新增的房主投票资格过滤只读取 Controller 的 NewSeatConnection 事务事实，不向 Worker/前端再复制一份平行状态。
+  - 血染钟楼仍保留此前 repair_log 已明确记录、需要更大状态模型或真人说书人逐次裁决 UI 才能完整解决的架构级边界：特殊自定义夜序下 Pit-Hag 创建 Demon 后无法安全逆向更早已经真实落地并触发被动的死亡；真人说书人仍缺每次 Recluse/Spy registration 的逐次手工裁决 UI；自由文本/多重效果抵消等 Mathematician 极端情况仍缺统一逐次最终基准审计。本轮没有用不完整近似逻辑冒险修改这些边界。
+验证:
+  - backend/src + frontend/src 全量静态扫描通过：共 85 个源文件、83 个 TypeScript/Vue script 解析单元、215 个静态相对/@ 导入、28 个 style/CSS 块；无 TypeScript 解析错误、CSS 花括号错误、真实合并冲突标记或失效本地导入；项目根目录不存在 src/。
+  - backend/src 全部 34 个 TypeScript 文件使用全局 TypeScript 5.8.3、strict 模式、真实全局 Node 类型与项目目录外的 Express/CORS/Socket.IO/UUID 临时声明桩完成 noEmit 类型检查，0 个源码类型错误；同一严格配置成功生成隔离 CommonJS 测试产物。临时声明、测试脚本与编译产物只位于 /mnt/data/round48_validation，不进入修复包。
+  - 六个实际游戏 Worker 使用本轮最新隔离编译产物执行 prepare_room 烟雾全部通过：狼人杀、杀人游戏、血染钟楼、一夜狼人、阿瓦隆、德州扑克均能启动 Worker 并完成合法房间配置初始化。
+  - 房主踢人/投票专项回归通过：legacy kick_player 源码路径确认在 Worker kick_out_player 前拒绝临时目标；4 个在线席位中 1 个为 provisional 时，过滤前严格多数门槛为 3、过滤后按 3 个已提交成员正确为 2，且临时席位若异常出现在 voters 集合会被 prune 移除。
+  - 德州扑克延时专项 Worker 回归通过：启动 3 人牌局获得 30 秒行动请求，等待约 1.2 秒后由当前行动者使用一次 extendTime，新的 action_request 为约 59 秒而非重置到 30 秒，证明真实剩余时间上增加了 30 秒。
+  - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts 校验，仅有 ws 的可选原生依赖提示。
+  - 正式 npm ci --ignore-scripts --no-audit --no-fund 已再次执行，但当前内部 npm 镜像请求 package-lock 锁定的 typescript-5.8.3.tgz 返回 404；正式 npm run build 也因附件工作区没有完整 node_modules，在 backend tsc 阶段被 Node/Express/CORS/Socket.IO/UUID 等 package.json 已声明依赖/类型缺失阻塞。相同 backend/src 已通过上述全量 strict/noEmit、隔离编译和 Worker 实际运行测试，但完整 frontend vue-tsc/Vite 生产构建与“可直接部署”仍需在依赖镜像正常的本地或 CI 执行 npm ci && npm run build 最终确认。
+备注: 本轮未删除文件，未创建根目录 src/；所有后端源码修改仅位于 backend/src/，本轮没有前端源码修改；正式 build 失败时临时产生的 backend/dist 已清理，不进入修复包。修复包只包含本轮修改源码文件与更新后的 repair_log.txt，可按相对路径直接覆盖。

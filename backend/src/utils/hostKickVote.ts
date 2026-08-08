@@ -1,3 +1,4 @@
+import type { Player } from '../models/Player';
 import { Room } from '../models/Room';
 
 /**
@@ -10,11 +11,16 @@ import { Room } from '../models/Room';
 export function pruneHostKickVoters(
   room: Room,
   voters: Set<string>,
-  targetHostId: string = room.hostId
+  targetHostId: string = room.hostId,
+  isEligiblePlayer: (player: Player) => boolean = () => true
 ): number {
   const eligibleVoterIds = new Set(
     room.players
-      .filter(player => player.online !== false && player.id !== targetHostId)
+      .filter(player =>
+        player.online !== false &&
+        player.id !== targetHostId &&
+        isEligiblePlayer(player)
+      )
       .map(player => player.id)
   );
 
@@ -27,8 +33,14 @@ export function pruneHostKickVoters(
   return voters.size;
 }
 
-/** 在线成员（含房主）的严格多数票。 */
-export function getRequiredHostKickVotes(room: Room): number {
-  const onlinePlayerCount = room.players.filter(player => player.online !== false).length;
+/** 符合资格的在线成员（含房主）的严格多数票。 */
+export function getRequiredHostKickVotes(
+  room: Room,
+  isEligiblePlayer: (player: Player) => boolean = () => true
+): number {
+  const onlinePlayerCount = room.players.filter(player =>
+    player.online !== false && isEligiblePlayer(player)
+  ).length;
   return Math.floor(onlinePlayerCount / 2) + 1;
 }
+

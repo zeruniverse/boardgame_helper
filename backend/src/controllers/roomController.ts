@@ -287,6 +287,10 @@ function isPendingNewSeat(roomId: string, playerId: string): boolean {
   return false;
 }
 
+function isCommittedRoomMember(room: Room, player: Player): boolean {
+  return !isPendingNewSeat(room.id, player.id);
+}
+
 function findCommittedHostCandidate(room: Room, excludePlayerId?: string): Player | undefined {
   const candidates = room.players.filter(player =>
     player.id !== excludePlayerId &&
@@ -3321,6 +3325,10 @@ export function roomController(io: Server) {
           sendErrorResponse(socket, '目标玩家不存在', ack);
           return;
         }
+        if (isPendingNewSeat(room.id, targetPlayer.id)) {
+          sendErrorResponse(socket, '目标玩家仍在加入房间，请稍后重试', ack);
+          return;
+        }
 
         // 如果是房主踢出其他人
         if (room.hostId === player.id && targetId !== player.id) {
@@ -3359,7 +3367,12 @@ export function roomController(io: Server) {
           if (voteData) {
             // 只保留当前仍在线且仍在房间中的非房主票。否则在线人数下降后，
             // 已离线玩家的旧票可能与更低的门槛组合，错误地通过投票。
-            pruneHostKickVoters(room, voteData.voters, voteData.targetHostId);
+            pruneHostKickVoters(
+              room,
+              voteData.voters,
+              voteData.targetHostId,
+              candidate => isCommittedRoomMember(room, candidate)
+            );
           }
 
           if (!voteData) {
@@ -3385,7 +3398,10 @@ export function roomController(io: Server) {
             voteData = createdVote;
             hostKickVotes.set(room.id, createdVote);
 
-            const requiredVotes = getRequiredHostKickVotes(room);
+            const requiredVotes = getRequiredHostKickVotes(
+              room,
+              candidate => isCommittedRoomMember(room, candidate)
+            );
             io.to(room.id).emit('chat_broadcast', {
               message: `${player.nickname} 发起踢出房主投票，需要${requiredVotes}票`,
               type: 'system'
@@ -3413,8 +3429,16 @@ export function roomController(io: Server) {
             return;
           }
 
-          pruneHostKickVoters(latestRoom, voteData.voters, voteData.targetHostId);
-          const requiredVotes = getRequiredHostKickVotes(latestRoom);
+          pruneHostKickVoters(
+            latestRoom,
+            voteData.voters,
+            voteData.targetHostId,
+            candidate => isCommittedRoomMember(latestRoom, candidate)
+          );
+          const requiredVotes = getRequiredHostKickVotes(
+            latestRoom,
+            candidate => isCommittedRoomMember(latestRoom, candidate)
+          );
 
           if (voteData.voters.size >= requiredVotes) {
             // 投票通过后保留 resolving 占位，直到 Worker 和 Controller 都完成踢人。
