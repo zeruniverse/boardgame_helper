@@ -95,9 +95,38 @@ app.post('/api/reset-server', async (req: Request, res: Response) => {
 // backend-only 部署（例如现有后端 Dockerfile）没有 frontend/dist 时仍保留 API 状态页。
 const frontendDistPath = path.resolve(__dirname, '../../frontend/dist');
 const frontendIndexPath = path.join(frontendDistPath, 'index.html');
+const hashRoutePrefixes = new Set([
+  'texas-holdem',
+  'avalon',
+  'mafia',
+  'onu-werewolf',
+  'werewolf',
+  'botc',
+  'room'
+]);
+
+function getHashRouteRedirect(req: Request): string | null {
+  const firstSegment = req.path.split('/').filter(Boolean)[0];
+  if (!firstSegment || !hashRoutePrefixes.has(firstSegment)) {
+    return null;
+  }
+
+  const queryIndex = req.originalUrl.indexOf('?');
+  const search = queryIndex >= 0 ? req.originalUrl.slice(queryIndex) : '';
+  return `/#${req.path}${search}`;
+}
+
 if (fs.existsSync(frontendIndexPath)) {
   app.use(express.static(frontendDistPath));
-  app.get(/^(?!\/(?:api|health|socket\.io)(?:\/|$)).*/, (_req: Request, res: Response) => {
+  app.get(/^(?!\/(?:api|health|socket\.io)(?:\/|$)).*/, (req: Request, res: Response) => {
+    // 前端使用 hash history。静态托管时 public/404.html 会把旧式/干净房间链接
+    // 转成 /#/game/room；同源 Express 部署也必须保持相同行为，否则直接打开
+    // /werewolf/ROOM 等 URL 只会返回 index.html，hash 路由看到的却仍是大厅。
+    const hashRedirect = getHashRouteRedirect(req);
+    if (hashRedirect) {
+      res.redirect(302, hashRedirect);
+      return;
+    }
     res.sendFile(frontendIndexPath);
   });
 } else {

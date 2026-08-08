@@ -229,24 +229,11 @@ onMounted(() => {
   const socket = store.socket;
   if (!socket) return;
 
-  // 直接进入/刷新房间页时使用普通加入流程：已有座位必须携带有效会话令牌，
-  // 防止公开昵称被用于接管他人座位；reconnect_room 仅用于网络断线重连。
+  // 先挂页面级监听，再发 join_room。否则直接刷新时服务端可能在监听注册前
+  // 返回 room_joined/room_update，页面只能等轮询恢复，且首个 get_room_state 还可能
+  // 与异步 join_room 处理并发而被判定为“尚未加入房间”。
   const isNewJoin = sessionStorage.getItem('texas_newJoin') === 'true';
   const rememberedRoomId = store.currentRoom;
-  if (store.playerId && !isNewJoin) {
-    console.log(`尝试进入房间 ${roomId}，玩家ID ${store.playerId}`);
-    const session = ensureGameSession('texas-holdem', store.nickname || undefined, roomId);
-    socket.emit('join_room', {
-      roomId,
-      nickname: session.nickname,
-      playerId: session.playerId,
-      sessionToken: rememberedRoomId === roomId ? session.sessionToken : undefined
-    });
-  }
-  // 成功加入或重连后，清除新加入标记
-  if (isNewJoin) {
-    sessionStorage.removeItem('texas_newJoin');
-  }
 
   // 监听房间更新事件，以取消"准备中"状态
   onRoomUpdateHandler = (data: any) => {
@@ -288,8 +275,25 @@ onMounted(() => {
   };
   socket.on('room_joined', onRoomJoinedHandler);
 
-  // 立即请求一次，并设置定时器
-  requestRoomState();
+  // 直接进入/刷新房间页时使用普通加入流程：已有座位必须携带有效会话令牌，
+  // 防止公开昵称被用于接管他人座位；reconnect_room 仅用于网络断线重连。
+  if (store.playerId && !isNewJoin) {
+    console.log(`尝试进入房间 ${roomId}，玩家ID ${store.playerId}`);
+    const session = ensureGameSession('texas-holdem', store.nickname || undefined, roomId);
+    socket.emit('join_room', {
+      roomId,
+      nickname: session.nickname,
+      playerId: session.playerId,
+      sessionToken: rememberedRoomId === roomId ? session.sessionToken : undefined
+    });
+  }
+
+  // 从大厅刚加入时，room_joined 已在路由切换前由 store 收到，因此这里主动拉取一次；
+  // 直接刷新则等待本组件已注册的 room_joined，再由其拉取状态，避免与 join_room 竞态。
+  if (isNewJoin) {
+    sessionStorage.removeItem('texas_newJoin');
+    requestRoomState();
+  }
   statusCheckInterval = window.setInterval(requestRoomState, 3000);
 });
 

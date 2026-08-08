@@ -1597,3 +1597,31 @@ Commit: fix(round30): 保留一夜狼人计时配置并消除阿瓦隆入房监�
   - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts 校验。
   - 正式 npm run build 已在本轮最终源码上执行，但当前 node_modules 不完整，后端 tsc 因 body-parser/connect/cors/estree/express/express-serve-static-core/http-errors/lodash/lodash-es/node/qs/range-parser/send/serve-static/uuid/web-bluetooth/ws 等类型定义缺失而中止，根构建因此没有进入前端 vue-tsc/Vite；单独执行 npm --prefix frontend run build 也因 vue-tsc 未安装而无法启动。由于相同 backend/src 已在严格隔离类型检查中通过、前端源码静态解析与专项契约检查通过，本轮没有把环境依赖缺失误判为源码编译错误；完整生产构建仍需在依赖安装完整的本地或 CI 执行 npm ci && npm run build 最终确认。
 备注: 本轮未删除文件，未创建根目录 src/；未修改 backend/src/；所有前端源码修改仅位于 frontend/src/；修复包只包含本轮修改文件及 repair_log.txt，可按相对路径直接覆盖。
+
+=== 当前请求第 31 轮修复记录 ===
+时间: 2026-08-08 07:58:40 UTC
+Commit: fix(round31): 消除德州刷新竞态并修复同源部署房间直链
+修改/新增文件:
+  - backend/src/server.ts
+  - frontend/src/components/TexasHoldemRoom.vue
+  - repair_log.txt
+删除文件: 无
+构建测试: 部分通过（85 个源码文件全量静态扫描、backend/src 全量 strict/noEmit 与隔离 CommonJS 编译、六游戏 Worker prepare_room 烟雾、德州扑克入房监听顺序与同源部署 clean URL -> hash route 专项回归、package-lock 工作区依赖树检查均通过；正式 npm ci / npm run build 仍受当前容器内部 npm 源缺少 package-lock 锁定 TypeScript 5.8.3 包及由此造成的 node_modules 不完整阻塞）
+本轮修复:
+  - 修复 TexasHoldemRoom 直接刷新/重进房间时页面级 Socket 监听注册晚于 join_room 的竞态。旧顺序会先 emit join_room，再注册 room_update/room_joined；服务端快速回包时页面可能漏掉首个加入/房间更新，只能依赖 3 秒轮询恢复准备遮罩和房间名称。现在先初始化 store 监听，再注册页面 room_update/room_joined，最后才发 join_room，与第 30 轮已经修正的 AvalonRoom 入房顺序保持一致。
+  - 修复德州扑克直接刷新时 get_room_state 与异步 join_room 并发的状态拉取竞态。旧页面在 join_room 后无条件立即 get_room_state，而 Controller 会先验证该 socket 已是房间当前成员；join_room 尚未完成时该请求可被拒绝为未加入。现在从大厅刚完成加入的 newJoin 路径仍立即拉取，直接刷新/重进路径则等待本组件已经可靠收到 room_joined 后再拉取，并保留 3 秒兜底轮询。
+  - 修复前后端同源 Express 部署下的干净房间直链。前端使用 createWebHashHistory 且 Vite base 为 ./；旧 server catch-all 对 /werewolf/ROOM、/texas-holdem/ROOM 等 URL 直接 sendFile(index.html)，浏览器既没有得到 # 路由，且相对 assets 路径还可能落到嵌套目录，导致直链回大厅或静态资源加载失败。现在 server 对六个游戏房间前缀及旧 /room/:id 路径统一 302 到 /#/...，并保留查询串；普通根路径、API/health/socket.io 与静态资源行为不变，和 frontend/public/404.html 的静态托管兼容逻辑保持一致。
+审查结果/本轮未改动重点:
+  - 再次扫描 backend/src 与 frontend/src 当前全部 85 个 TypeScript/Vue/CSS/SVG 代码文件，并围绕六个游戏 Worker、BaseGameWorker、RoomThreadManager/Controller 的任务串行/状态版本合并、各 Store/Room 的 Socket 生命周期、路由与同源部署入口进行复核。本轮新增的确定性高优先级问题集中在德州扑克页面入房时序和生产直链部署，因此源码修改限制在既有 TexasHoldemRoom.vue 与 backend/src/server.ts，没有改变目录结构或引入平行状态源。
+  - 六游戏主流程继续按项目文档与前 30 轮已修复语义复核：狼人杀的夜序/狼人共识/守卫女巫猎人/警长放逐，杀人游戏的杀手共识/警察医生狙击手/PK 与项目屠边胜负，一夜狼人的夜序/换牌/独狼/并列处决/最终身份胜负，阿瓦隆的组队/任务人数/7 人以上第四任务双失败/五次否决/刺杀/湖上夫人，德州扑克的盲注/HU 顺序/短码 all-in/加注权/未跟注返还/边池/摊牌，血染钟楼的夜序/registration/夜间信息边界/提名投票/说书人裁决。本轮没有发现另一项优先级更高且能低风险合并的确定性主流程阻断项。
+  - 前端 27 个 Vue SFC 的 script/template/style、相对/@ 导入继续通过静态检查；Room / ActionPanel / PlayerList / Chat 与共享 store/util 体系仍可复用，本轮没有为了视觉一致性进行高风险跨游戏主题重写。德州扑克此次仅调整现有生命周期/监听顺序，不新增页面组件。
+  - Controller/RoomThreadManager/BaseGameWorker 的 Worker 单房间任务串行、game_action acknowledgement、workerStateVersion/hostStateVersion/connectionStateVersion 合并路径继续复核；本轮未发现比页面 join/get_state 时序更明确的新跨线程竞态。六个 Worker 均能使用本轮最新严格隔离编译产物完成 prepare_room。
+  - BOTC 仍保留前轮已记录、需要更大状态模型或说书人 UI 的高阶缺口：Mathematician 尚未基于“自黎明起由另一角色导致能力实际异常工作”的逐次能力执行审计精确计数；Pit-Hag 在特定自定义夜序中无法安全逆向已经真实落地并触发被动的死亡；真人说书人仍没有每次 Recluse/Spy registration 的逐次手工裁决 UI。本轮没有用局部近似逻辑冒险修补这些问题。
+验证:
+  - backend/src + frontend/src 全量静态扫描通过：共 85 个代码文件、83 个 TypeScript/Vue script 解析单元、27 个 Vue SFC、27 个 style 块、213 个相对/@ 静态导入均无 TypeScript 语法、SFC 结构、CSS 花括号或失效导入错误；项目根目录不存在 src/。
+  - backend/src 全部 34 个 TypeScript 文件使用全局 TypeScript 5.8.3、strict 模式、真实全局 Node 类型和位于项目目录外的 Express/CORS/Socket.IO/UUID 临时声明桩完成 noEmit 类型检查，0 个错误；同一严格配置成功生成 34 个隔离 CommonJS 测试编译文件。
+  - 六个实际游戏 Worker 使用本轮最新 strict 编译产物执行 prepare_room 烟雾全部通过：狼人杀、杀人游戏、血染钟楼、一夜狼人、阿瓦隆、德州扑克均能启动 Worker 并完成房间初始化。
+  - 第 31 轮专项回归通过：TexasHoldemRoom onMounted 中 room_update 与 room_joined 页面监听均位于 join_room emit 之前；直接刷新路径不再在加入完成前主动拉取状态，room_joined 回调负责首个 get_room_state，而大厅 newJoin 路径仍能立即同步。server.ts 中实际 getHashRouteRedirect 函数通过 AST 提取并执行，/werewolf/ROOM42、/texas-holdem/T1?watch=1 和旧 /room/legacy 均正确重定向为 /#/... 且保留查询串，/ 与未知静态路径不被错误重定向。
+  - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts 校验；本轮两个源码修改文件无新增尾随空白。
+  - 正式 npm ci --ignore-scripts --no-audit --no-fund 已在最终源码上执行，但当前内部 npm 源请求 package-lock 锁定的 frontend TypeScript 5.8.3 tarball 返回 404。随后 npm run build 在依赖未完整安装的工作区执行，后端 tsc 因 Node/Express/Socket.IO/UUID/CORS 等依赖/类型缺失而中止，根构建因此无法进入前端 vue-tsc/Vite。故本轮不能声称完整生产 npm 构建已在此容器通过；请在依赖源可用的本地或 CI 执行 npm ci && npm run build 做最终部署确认。
+备注: 本轮未删除文件，未创建根目录 src/；所有后端源码修改仅位于 backend/src/，所有前端源码修改仅位于 frontend/src/；修复包只包含本轮修改文件及 repair_log.txt，可按相对路径直接覆盖。
