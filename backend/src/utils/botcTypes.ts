@@ -55,7 +55,7 @@ export interface GamePlayer {
   playerId: string;
   /** 真实角色。酒鬼等隐藏身份仍以真实角色记录，避免泄露给普通玩家。 */
   role: Role | null;
-  /** 玩家实际看到/被当作执行夜晚流程的角色；目前用于酒鬼的伪镇民身份。 */
+  /** 玩家实际看到/作为有效能力执行流程的角色；用于酒鬼伪身份与哲学家获得的能力。 */
   displayRole?: Role | null;
   /**
    * 阵营与角色类型必须分开保存。Barber/Pit-Hag 等换角色时阵营通常不变，

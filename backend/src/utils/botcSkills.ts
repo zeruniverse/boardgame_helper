@@ -1249,11 +1249,14 @@ export function processDayAbility(
   editionId: string = 'tb'
 ): SkillResult {
   const player = allPlayers.find(p => p.playerId === playerId);
-  if (!player || !player.role) {
+  const effectiveRole = player?.displayRole || player?.role;
+  if (!player || !effectiveRole) {
     return { success: false, message: '玩家或角色不存在' };
   }
 
-  switch (player.role.id) {
+  // Drunk 的伪角色、Philosopher 获得的角色能力都应沿用同一套死亡触发语义；
+  // 是否真正生效由 Worker 的醉酒/中毒/死亡时点判定负责。
+  switch (effectiveRole.id) {
     case 'slayer':
       return processSlayerAbility(playerId, data, allPlayers, editionId);
     case 'virgin':
@@ -1351,11 +1354,14 @@ export function processDeathAbility(
   deathCause: string
 ): SkillResult {
   const player = allPlayers.find(p => p.playerId === playerId);
-  if (!player || !player.role) {
+  const effectiveRole = player?.displayRole || player?.role;
+  if (!player || !effectiveRole) {
     return { success: false, message: '玩家或角色不存在' };
   }
 
-  switch (player.role.id) {
+  // Drunk 的伪角色、Philosopher 获得的角色能力都应沿用同一套死亡触发语义；
+  // 是否真正生效由 Worker 的醉酒/中毒/死亡时点判定负责。
+  switch (effectiveRole.id) {
     case 'ravenkeeper':
       // 乌鸦饲养员在任何夜间死亡时都能触发（不仅限于恶魔击杀）
       if (deathCause !== 'execution') {

@@ -57,6 +57,15 @@ const KLUTZ_DEATH_PENDING_REMINDER = 'Klutz Death Ability Pending';
 const MOONCHILD_DEATH_PENDING_REMINDER = 'Moonchild Death Ability Pending';
 const BARBER_HAIRCUT_REMINDER = 'Haircuts tonight';
 const GRANDMOTHER_GRANDCHILD_PREFIX = 'Grandchild:';
+const PHILOSOPHER_DRUNK_SOURCE_PREFIX = 'philosopher:';
+const PHILOSOPHER_IMMEDIATE_START_INFO_ROLE_IDS = new Set([
+  'washerwoman',
+  'librarian',
+  'investigator',
+  'chef',
+  'grandmother',
+  'clockmaker'
+]);
 
 interface PendingBarberDecision {
   barberId: string;
@@ -489,7 +498,7 @@ export class BOTCWorker extends BaseGameWorker {
     const allPlayers = Array.from(this.gamePlayers.values());
 
     for (const teaLady of allPlayers) {
-      if (teaLady.role?.id !== 'tealady' || teaLady.isDead || !this.playerAbilityWorks(teaLady)) {
+      if (this.getEffectiveRole(teaLady)?.id !== 'tealady' || teaLady.isDead || !this.playerAbilityWorks(teaLady)) {
         continue;
       }
 
@@ -516,7 +525,7 @@ export class BOTCWorker extends BaseGameWorker {
   }
 
   private isSoberSailor(player: GamePlayer): boolean {
-    return player.role?.id === 'sailor' && this.playerAbilityWorks(player);
+    return this.getEffectiveRole(player)?.id === 'sailor' && this.playerAbilityWorks(player);
   }
 
   private deathProtectionBypassed(cause: string): boolean {
@@ -536,7 +545,7 @@ export class BOTCWorker extends BaseGameWorker {
       return '僧侣保护';
     }
 
-    if (player.role?.id === 'soldier' && this.playerAbilityWorks(player)) {
+    if (this.getEffectiveRole(player)?.id === 'soldier' && this.playerAbilityWorks(player)) {
       return '士兵免疫恶魔能力';
     }
 
@@ -579,7 +588,7 @@ export class BOTCWorker extends BaseGameWorker {
 
   private resolveSweetheartDeath(player: GamePlayer): void {
     if (
-      player.role?.id !== 'sweetheart' ||
+      this.getEffectiveRole(player)?.id !== 'sweetheart' ||
       player.reminders.includes('sweetheartProcessed') ||
       !this.playerAbilityWorks(player)
     ) {
@@ -597,6 +606,12 @@ export class BOTCWorker extends BaseGameWorker {
     // the end of the following night.  This matters for abilities that wake
     // that same night after a daytime execution.
     this.applyDebuff(target, 'Drunk', 'sweetheart');
+    // A Sweetheart can make an active Philosopher (or a continuing Demon)
+    // lose its ability immediately; dependent continuous effects must update in
+    // the same resolution step rather than waiting for the next night setup.
+    this.refreshPhilosopherDrunkenness();
+    this.refreshNoDashiiPoison();
+    this.refreshVigormortisEffects();
     this.sendToPlayer(this.gameConfig.storytellerId, 'sweetheartEffect', {
       targetId: target.playerId,
       targetName: this.getPlayerName(target.playerId)
@@ -605,7 +620,7 @@ export class BOTCWorker extends BaseGameWorker {
 
   private queueBarberDeathIfNeeded(player: GamePlayer): void {
     if (
-      player.role?.id !== 'barber' ||
+      this.getEffectiveRole(player)?.id !== 'barber' ||
       !player.isDead ||
       !this.playerAbilityWorks(player) ||
       this.barberDeathsPending.includes(player.playerId) ||
@@ -1107,6 +1122,7 @@ export class BOTCWorker extends BaseGameWorker {
       this.clearFreshCharacterUsageState(second);
       swappedPlayers = [first, second];
 
+      this.refreshPhilosopherDrunkenness();
       this.refreshNoDashiiPoison();
       this.refreshVigormortisEffects();
       this.refreshAlignmentLists();
@@ -1196,7 +1212,7 @@ export class BOTCWorker extends BaseGameWorker {
     const availableTargets = this.getDeathChoiceTargets(player.playerId);
     if (availableTargets.length === 0) return;
 
-    if (player.role?.id === 'klutz' && player.reminders.includes(KLUTZ_DEATH_PENDING_REMINDER)) {
+    if (this.getEffectiveRole(player)?.id === 'klutz' && player.reminders.includes(KLUTZ_DEATH_PENDING_REMINDER)) {
       this.sendToPlayer(player.playerId, 'deathAbilityPrompt', {
         role: 'klutz',
         message: '你已得知自己死亡。请公开选择一名存活玩家；若该玩家为邪恶，你的阵营将失败。',
@@ -1205,7 +1221,7 @@ export class BOTCWorker extends BaseGameWorker {
       return;
     }
 
-    if (player.role?.id === 'moonchild' && player.reminders.includes(MOONCHILD_DEATH_PENDING_REMINDER)) {
+    if (this.getEffectiveRole(player)?.id === 'moonchild' && player.reminders.includes(MOONCHILD_DEATH_PENDING_REMINDER)) {
       this.sendToPlayer(player.playerId, 'deathAbilityPrompt', {
         role: 'moonchild',
         message: '你已得知自己死亡。请公开选择一名存活玩家；若该玩家此刻为善良，其将在今晚死亡。',
@@ -1217,9 +1233,9 @@ export class BOTCWorker extends BaseGameWorker {
   private queueDeathChoiceIfNeeded(player: GamePlayer): void {
     if (!player.isDead) return;
 
-    if (player.role?.id === 'klutz' && !player.reminders.includes(KLUTZ_DEATH_PENDING_REMINDER)) {
+    if (this.getEffectiveRole(player)?.id === 'klutz' && !player.reminders.includes(KLUTZ_DEATH_PENDING_REMINDER)) {
       this.addReminder(player, KLUTZ_DEATH_PENDING_REMINDER);
-    } else if (player.role?.id === 'moonchild' && !player.reminders.includes(MOONCHILD_DEATH_PENDING_REMINDER)) {
+    } else if (this.getEffectiveRole(player)?.id === 'moonchild' && !player.reminders.includes(MOONCHILD_DEATH_PENDING_REMINDER)) {
       this.addReminder(player, MOONCHILD_DEATH_PENDING_REMINDER);
     } else {
       return;
@@ -1273,7 +1289,7 @@ export class BOTCWorker extends BaseGameWorker {
 
       // Moonchild 在“今晚”结算时是否清醒健康才决定能力是否有效；目标阵营使用
       // 公开选择当时的快照，避免 Goon 等阵营随后变化导致错误结果。
-      if (entry.targetWasGood && source.role?.id === 'moonchild' && this.playerAbilityWorks(source)) {
+      if (entry.targetWasGood && this.getEffectiveRole(source)?.id === 'moonchild' && this.playerAbilityWorks(source)) {
         await this.killPlayer(target.playerId, 'moonchild');
       }
     }
@@ -1542,7 +1558,7 @@ export class BOTCWorker extends BaseGameWorker {
 
     const marker = `${GRANDMOTHER_GRANDCHILD_PREFIX}${grandchildId}`;
     const grandmothers = Array.from(this.gamePlayers.values()).filter(candidate =>
-      candidate.role?.id === 'grandmother' &&
+      this.getEffectiveRole(candidate)?.id === 'grandmother' &&
       !candidate.isDead &&
       candidate.reminders.includes(marker) &&
       this.playerAbilityWorks(candidate)
@@ -1622,6 +1638,51 @@ export class BOTCWorker extends BaseGameWorker {
 
   private clearDebuffSourceFromAll(debuff: DebuffType, source: string): void {
     this.gamePlayers.forEach(player => this.removeDebuffSource(player, debuff, source));
+  }
+
+  /**
+   * Philosopher drunkenness is a live consequence of the Philosopher's own
+   * functioning ability, not a permanent marker on the copied character.
+   * The original character immediately sobers when that Philosopher dies or
+   * becomes drunk/poisoned, and becomes drunk again if the Philosopher later
+   * regains the ability. Track each Philosopher as an independent source so a
+   * second source of drunkenness cannot be accidentally removed with it.
+   */
+  private refreshPhilosopherDrunkenness(): void {
+    // First remove only Philosopher-owned sources. Keep manual, Sweetheart,
+    // Courtier, Sailor, Innkeeper, etc. intact.
+    for (const player of this.gamePlayers.values()) {
+      const sources = [...(this.getDebuffSources()[player.playerId]?.Drunk || [])];
+      for (const source of sources) {
+        if (source.startsWith(PHILOSOPHER_DRUNK_SOURCE_PREFIX)) {
+          this.removeDebuffSource(player, 'Drunk', source);
+        }
+      }
+      player.reminders = player.reminders.filter(reminder => reminder !== 'Philosopher Drunk');
+    }
+
+    const allPlayers = Array.from(this.gamePlayers.values());
+    for (const philosopher of allPlayers) {
+      const copiedRole = philosopher.displayRole;
+      if (
+        philosopher.role?.id !== 'philosopher' ||
+        philosopher.isDead ||
+        !copiedRole ||
+        !philosopher.reminders.includes('Is the Philosopher') ||
+        !this.playerAbilityWorks(philosopher)
+      ) {
+        continue;
+      }
+
+      const source = `${PHILOSOPHER_DRUNK_SOURCE_PREFIX}${philosopher.playerId}`;
+      for (const target of allPlayers) {
+        if (target.playerId === philosopher.playerId || target.role?.id !== copiedRole.id) {
+          continue;
+        }
+        this.applyDebuff(target, 'Drunk', source);
+        this.addReminder(target, 'Philosopher Drunk');
+      }
+    }
   }
 
   private getNoDashiiPoisonTargets(nodashiiId: string): GamePlayer[] {
@@ -1818,6 +1879,7 @@ export class BOTCWorker extends BaseGameWorker {
       this.removeDebuffSource(player, 'Drunk', 'innkeeper');
     });
     this.advanceCourtierDrunkMarkers();
+    this.refreshPhilosopherDrunkenness();
   }
 
   private getNightKillCause(action: NightAction): string {
@@ -3101,6 +3163,55 @@ export class BOTCWorker extends BaseGameWorker {
   }
 
   /**
+   * "You start knowing" abilities happen when the Philosopher gains that
+   * ability, even if this is a later night. These roles do not need an extra
+   * target submission, so they can be resolved safely inside the current
+   * parallel night collector without inventing a second player action.
+   */
+  private resolvePhilosopherImmediateStartInfo(player: GamePlayer, copiedRole: Role): void {
+    if (!PHILOSOPHER_IMMEDIATE_START_INFO_ROLE_IDS.has(copiedRole.id)) {
+      return;
+    }
+
+    const result = processFirstNightInfo(
+      player,
+      Array.from(this.gamePlayers.values()),
+      this.gameConfig.edition
+    );
+    if (!result.success || !result.information) {
+      return;
+    }
+
+    const isMetaInfo = result.information.requiresTargets !== undefined ||
+      result.information.requiresStatement !== undefined ||
+      result.information.requiresQuestion !== undefined ||
+      result.information.checkDemonVoted !== undefined ||
+      result.information.checkMinionNominated !== undefined;
+    if (isMetaInfo) {
+      return;
+    }
+
+    if (copiedRole.id === 'grandmother') {
+      player.reminders = player.reminders.filter(reminder => !reminder.startsWith(GRANDMOTHER_GRANDCHILD_PREFIX));
+      const grandchildId = typeof result.information.grandchild === 'string'
+        ? result.information.grandchild
+        : null;
+      if (grandchildId && this.playerAbilityWorks(player)) {
+        this.addReminder(player, `${GRANDMOTHER_GRANDCHILD_PREFIX}${grandchildId}`);
+      }
+    }
+
+    const finalInfo = this.prepareInfoForPlayer(player, result.information, copiedRole.id, copiedRole);
+    this.sendNightInfoToPlayer(player.playerId, {
+      role: copiedRole.id,
+      information: finalInfo,
+      isCorrupted: false
+    });
+    this.wokeForOwnAbilityThisNight.add(player.playerId);
+    this.firstNightInfoPlayerIds.add(player.playerId);
+  }
+
+  /**
    * 处理首夜信息
    */
   private async processFirstNightInfo(): Promise<void> {
@@ -3429,7 +3540,7 @@ export class BOTCWorker extends BaseGameWorker {
     // 旅行者不计入镇长/邪恶阵营的存活人数胜负条件。
     const alivePlayers = Array.from(this.gamePlayers.values()).filter(p => !p.isDead);
     const aliveNonTravelers = alivePlayers.filter(p => p.role?.team !== Team.TRAVELER);
-    const mayor = aliveNonTravelers.find(p => p.role?.id === 'mayor' && this.playerAbilityWorks(p));
+    const mayor = aliveNonTravelers.find(p => this.getEffectiveRole(p)?.id === 'mayor' && this.playerAbilityWorks(p));
     if (mayor && aliveNonTravelers.length === 3) {
       // 今天没有处决且只剩3名非旅行者存活（含镇长），善良获胜
       await this.endGame('good', '镇长特殊胜利：仅剩3名非旅行者存活且无执行');
@@ -3546,7 +3657,7 @@ export class BOTCWorker extends BaseGameWorker {
     }
 
     // 检查处女（Virgin）能力 - 首次被提名时，若提名者是镇民，提名者立即被处决
-    if (nominee.role?.id === 'virgin' && !nominee.isDead && !nominee.reminders.includes('No ability')) {
+    if (this.getEffectiveRole(nominee)?.id === 'virgin' && !nominee.isDead && !nominee.reminders.includes('No ability')) {
       const virginAbilityWorks = this.playerAbilityWorks(nominee);
       // Virgin 首次被提名后失去能力；若当时中毒/醉酒，则不产生立即处决。
       nominee.reminders.push('No ability');
@@ -4066,14 +4177,14 @@ export class BOTCWorker extends BaseGameWorker {
       return;
     }
 
-    if (player.role?.id === 'fool' && this.playerAbilityWorks(player) && !player.reminders?.includes('foolUsed')) {
+    if (this.getEffectiveRole(player)?.id === 'fool' && this.playerAbilityWorks(player) && !player.reminders?.includes('foolUsed')) {
       this.addReminder(player, 'foolUsed');
       await this.resolveSurvivedExecution(player, executedBy, '愚者首次免死');
       return;
     }
 
     // 处理圣徒被处决 - 善良阵营直接失败
-    if (player.role?.id === 'saint' && this.playerAbilityWorks(player)) {
+    if (this.getEffectiveRole(player)?.id === 'saint' && this.playerAbilityWorks(player)) {
       await this.endGame('evil', '圣徒被处决，善良阵营失败');
       return;
     }
@@ -4102,6 +4213,7 @@ export class BOTCWorker extends BaseGameWorker {
     this.gameState.livingPlayers--;
     this.noExecutionToday = false;
     this.recordDeathToday(player, 'execution');
+    this.refreshPhilosopherDrunkenness();
 
     this.resolveSweetheartDeath(player);
     this.queueDeathChoiceIfNeeded(player);
@@ -4253,6 +4365,7 @@ export class BOTCWorker extends BaseGameWorker {
       return;
     }
 
+    const abilityRoleId = this.getEffectiveRole(player)?.id;
     const targetId = data?.targetId || data?.targets?.[0];
     const target = this.gamePlayers.get(targetId);
     if (!target) {
@@ -4260,7 +4373,7 @@ export class BOTCWorker extends BaseGameWorker {
       return;
     }
 
-    if (player.role.id === 'ravenkeeper') {
+    if (abilityRoleId === 'ravenkeeper') {
       if (player.deathCause === 'execution' || !player.reminders.includes('ravenkeeperDeathAbilityPending')) {
         this.sendToPlayer(playerId, 'actionError', { message: '乌鸦饲养员只有夜间死亡后才能选择目标' });
         return;
@@ -4307,7 +4420,7 @@ export class BOTCWorker extends BaseGameWorker {
       return;
     }
 
-    if (player.role.id === 'klutz') {
+    if (abilityRoleId === 'klutz') {
       if (!player.reminders.includes(KLUTZ_DEATH_PENDING_REMINDER)) {
         this.sendToPlayer(playerId, 'actionError', { message: '笨蛋当前没有待处理的死亡选择' });
         return;
@@ -4340,7 +4453,7 @@ export class BOTCWorker extends BaseGameWorker {
       return;
     }
 
-    if (player.role.id === 'moonchild') {
+    if (abilityRoleId === 'moonchild') {
       if (!player.reminders.includes(MOONCHILD_DEATH_PENDING_REMINDER)) {
         this.sendToPlayer(playerId, 'actionError', { message: '月之子当前没有待处理的死亡选择' });
         return;
@@ -4501,6 +4614,8 @@ export class BOTCWorker extends BaseGameWorker {
         if (!hasPoisoned) {
           this.applyDebuff(target, 'Poisoned', 'manual');
         }
+        this.refreshPhilosopherDrunkenness();
+        this.refreshNoDashiiPoison();
         this.refreshVigormortisEffects();
         this.notifyStoryteller(`${this.getPlayerName(data.playerId)} ${hasPoisoned ? '被解毒' : '被标记为中毒'}`, 'info');
         this.broadcastGameState();
@@ -4518,6 +4633,8 @@ export class BOTCWorker extends BaseGameWorker {
         if (!hasDrunk) {
           this.applyDebuff(target, 'Drunk', 'manual');
         }
+        this.refreshPhilosopherDrunkenness();
+        this.refreshNoDashiiPoison();
         this.refreshVigormortisEffects();
         this.notifyStoryteller(`${this.getPlayerName(data.playerId)} ${hasDrunk ? '恢复清醒' : '被标记为醉酒'}`, 'info');
         this.broadcastGameState();
@@ -5262,6 +5379,9 @@ export class BOTCWorker extends BaseGameWorker {
           role: newRole.id,
           information: { message: change.message || `你获得了${newRole.name}能力` }
         });
+        if (player.role?.id === 'philosopher') {
+          this.resolvePhilosopherImmediateStartInfo(player, newRole);
+        }
       }
     }
 
@@ -5269,7 +5389,9 @@ export class BOTCWorker extends BaseGameWorker {
     if (effects.drunk) {
       const actingPlayer = this.gamePlayers.get(action.playerId);
       const sourceRoleId = action.roleId || (actingPlayer ? this.getEffectiveRole(actingPlayer)?.id : '') || '';
-      const source = ['sailor', 'innkeeper', 'courtier', 'philosopher'].includes(sourceRoleId) ? sourceRoleId : undefined;
+      const source = sourceRoleId === 'philosopher'
+        ? `${PHILOSOPHER_DRUNK_SOURCE_PREFIX}${action.playerId}`
+        : (['sailor', 'innkeeper', 'courtier'].includes(sourceRoleId) ? sourceRoleId : undefined);
       for (const playerId of effects.drunk) {
         const player = this.gamePlayers.get(playerId);
         if (player) {
@@ -5278,6 +5400,9 @@ export class BOTCWorker extends BaseGameWorker {
       }
     }
 
+    // 哲学家造成的醉酒只在其自身能力有效时持续；角色变化/中毒/醉酒都可能
+    // 让原角色立即清醒或再次醉酒。随后再刷新依赖能力是否有效的持续恶魔效果。
+    this.refreshPhilosopherDrunkenness();
     // 角色变化、复活、醉酒/中毒都可能即时改变恶魔持续效果。尤其 Snake Charmer
     // 或 Pit-Hag 把 No Dashii 移到新座位时，相邻镇民必须立即按新位置重算中毒。
     this.refreshNoDashiiPoison();
@@ -5591,7 +5716,7 @@ export class BOTCWorker extends BaseGameWorker {
     }
 
     // 检查愚者（Fool）免死效果。刺客会绕过一切防死效果；其他保护先生效，避免白白消耗愚者。
-    if (!ignoresDeathProtection && player.role?.id === 'fool' && this.playerAbilityWorks(player) && !player.reminders?.includes('foolUsed')) {
+    if (!ignoresDeathProtection && this.getEffectiveRole(player)?.id === 'fool' && this.playerAbilityWorks(player) && !player.reminders?.includes('foolUsed')) {
       this.addReminder(player, 'foolUsed');
       this.sendToPlayer(this.gameConfig.storytellerId, 'playerProtected', {
         playerId,
@@ -5606,7 +5731,7 @@ export class BOTCWorker extends BaseGameWorker {
     // night-time deaths can be redirected too. Assassin explicitly bypasses any
     // effect that would stop its chosen player from dying, so do not redirect it.
     const diedAtNight = this.gameState.phase === GamePhase.NIGHT || this.gameState.phase === GamePhase.FIRST_NIGHT;
-    if (player.role?.id === 'mayor' && this.playerAbilityWorks(player) && diedAtNight && !ignoresDeathProtection) {
+    if (this.getEffectiveRole(player)?.id === 'mayor' && this.playerAbilityWorks(player) && diedAtNight && !ignoresDeathProtection) {
       const allPlayers = Array.from(this.gamePlayers.values());
       const redirectCandidates = allPlayers.filter(p => !p.isDead && p.playerId !== playerId);
       if (redirectCandidates.length > 0 && Math.random() < 0.5) {
@@ -5631,7 +5756,7 @@ export class BOTCWorker extends BaseGameWorker {
     // Pukka 使用独立 deathCause 做延迟死亡记账，但仍然是恶魔能力，不能漏掉。
     // 中毒/醉酒的智者以及 Vortox 下的智者仍会收到信息，只是信息必须可以是错误的；
     // 静默不提示会反向泄露其能力已经失效。
-    if (player.role?.id === 'sage' && this.isDemonAbilityCause(cause)) {
+    if (this.getEffectiveRole(player)?.id === 'sage' && this.isDemonAbilityCause(cause)) {
       const shouldCorruptSageInfo = this.shouldCorruptInfoForPlayer(player, this.getEffectiveRole(player));
 
       player.isDead = true;
@@ -5640,6 +5765,7 @@ export class BOTCWorker extends BaseGameWorker {
       player.canVote = true;
       this.gameState.livingPlayers--;
       this.recordDeathToday(player, cause);
+      this.refreshPhilosopherDrunkenness();
 
       this.announcePublicDeath(playerId);
       await this.resolveGrandmotherDeathForGrandchild(playerId, cause);
@@ -5722,13 +5848,14 @@ export class BOTCWorker extends BaseGameWorker {
     }
 
     // 处理乌鸦饲养员的死亡能力（夜间死亡触发）
-    if (player.role?.id === 'ravenkeeper' && diedAtNight) {
+    if (this.getEffectiveRole(player)?.id === 'ravenkeeper' && diedAtNight) {
       player.isDead = true;
       player.isAlive = false;
       player.deathCause = cause;
       player.canVote = true; // 获得遗言票
       this.gameState.livingPlayers--;
       this.recordDeathToday(player, cause);
+      this.refreshPhilosopherDrunkenness();
 
       this.announcePublicDeath(playerId);
       await this.resolveGrandmotherDeathForGrandchild(playerId, cause);
@@ -5768,6 +5895,7 @@ export class BOTCWorker extends BaseGameWorker {
     player.canVote = true; // 新死亡的玩家获得遗言票
     this.gameState.livingPlayers--;
     this.recordDeathToday(player, cause);
+    this.refreshPhilosopherDrunkenness();
     this.resolveSweetheartDeath(player);
     this.queueDeathChoiceIfNeeded(player);
     this.queueBarberDeathIfNeeded(player);
@@ -5791,14 +5919,22 @@ export class BOTCWorker extends BaseGameWorker {
     // Resurrection gives the character a fresh ability. In particular, used
     // once-per-game abilities can be used again after resurrection. Preserve
     // player-bound effects such as poisoning/drunkenness, but clear usage flags,
-    // per-character target history and stale private night information.
+    // per-character target history and stale private night information. A
+    // resurrected Philosopher is a fresh Philosopher again, not the copied
+    // character from before death.
+    const wasPhilosopher = player.role?.id === 'philosopher';
     this.clearFreshCharacterUsageState(player);
+    if (wasPhilosopher) {
+      player.displayRole = undefined;
+    }
     player.isDead = false;
     player.isAlive = true;
     player.deathCause = undefined;
     player.canVote = true;
     this.gameState.livingPlayers++;
 
+    this.refreshPhilosopherDrunkenness();
+    this.refreshNoDashiiPoison();
     // 复活死亡爪牙会立即失去维格莫提斯给予的死亡保留能力及其毒源。
     this.refreshVigormortisEffects();
 
