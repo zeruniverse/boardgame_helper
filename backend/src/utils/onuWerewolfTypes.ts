@@ -205,6 +205,8 @@ export interface OnuWerewolfPlayer {
   skillUsed: boolean;
   skillReady: boolean;
   skillData?: any;
+  /** 仅供该玩家本人重连恢复的夜间已知信息；不会进入公开 gameInfo。 */
+  privateVision?: OnuWerewolfVision;
   auraVisible?: boolean;
 }
 

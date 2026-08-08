@@ -215,6 +215,9 @@ class OnuWerewolfWorker extends BaseGameWorker {
 
   async joinRoom(player: Player): Promise<void> {
     const roomPlayer = this.upsertRoomPlayer(player);
+    // 主动离房/被踢后重新加入必须重新准备。readyPlayers 是 Worker 私有集合，
+    // 不能依赖 Controller 的 room.players 更新自动清掉旧玩家 ID。
+    this.gameState.readyPlayers.delete(roomPlayer.id);
     roomPlayer.gameMetadata = {
       ready: false,
       seatKey: roomPlayer.gameMetadata.seatKey || onuGenerateRandomString(16)
@@ -397,8 +400,10 @@ class OnuWerewolfWorker extends BaseGameWorker {
       return { kicked: false, reason: '游戏进行中，无法踢出玩家' };
     }
 
-    // 从房间中移除玩家
+    // 从房间中移除玩家，同时清理等待阶段的准备集合；否则同 ID 重进房间时
+    // 会继承上一次的准备状态，并且公开 readyCount 会长期大于实际人数。
     this.room.players = this.room.players.filter(p => p.id !== targetId);
+    this.gameState.readyPlayers.delete(targetId);
     delete this.gameState.players[targetId];
 
     const message = `${target.nickname} 已被踢出房间`;
@@ -431,6 +436,24 @@ class OnuWerewolfWorker extends BaseGameWorker {
     }
   }
 
+  private mergePrivateVision(player: OnuWerewolfPlayer, vision?: OnuWerewolfVision): void {
+    if (!vision) return;
+
+    const existing = player.privateVision || {};
+    const playersBySeat = new Map<number, NonNullable<OnuWerewolfVision['players']>[number]>();
+    for (const item of existing.players || []) playersBySeat.set(item.seat, { ...item });
+    for (const item of vision.players || []) playersBySeat.set(item.seat, { ...item });
+
+    const cardsByPosition = new Map<number, NonNullable<OnuWerewolfVision['cards']>[number]>();
+    for (const item of existing.cards || []) cardsByPosition.set(item.position, { ...item });
+    for (const item of vision.cards || []) cardsByPosition.set(item.position, { ...item });
+
+    player.privateVision = {
+      ...(playersBySeat.size > 0 ? { players: Array.from(playersBySeat.values()) } : {}),
+      ...(cardsByPosition.size > 0 ? { cards: Array.from(cardsByPosition.values()) } : {})
+    };
+  }
+
   private sendGameStateToPlayer(playerId: string): void {
     const gamePlayer = this.gameState.players[playerId];
     if (!gamePlayer) return;
@@ -453,7 +476,11 @@ class OnuWerewolfWorker extends BaseGameWorker {
 
   private getGameInfo(): any {
     const playerCount = Object.keys(this.gameState.players).length;
-    const readyCount = this.gameState.readyPlayers.size;
+    // 等待阶段准备人数以当前仍在房间且在线的玩家为准，避免离房/被踢玩家的旧 ID
+    // 让 readyCount 与实际大厅状态分叉。
+    const readyCount = this.gameState.status === OnuWerewolfGameStatus.WAITING
+      ? this.getOnlineReadyPlayerCount()
+      : this.gameState.readyPlayers.size;
 
     return {
       status: this.gameState.status,
@@ -489,9 +516,23 @@ class OnuWerewolfWorker extends BaseGameWorker {
 
     // 根据游戏状态返回不同信息
     if (this.gameState.status === OnuWerewolfGameStatus.NIGHT) {
-      result.canUseSkill = player.skillReady && !player.skillUsed;
+      const currentSkillItem = this.skillQueue[this.currentSkillIndex];
+      const isCurrentActor = Boolean(
+        currentSkillItem &&
+        currentSkillItem.player.id === playerId &&
+        !player.skillUsed
+      );
+
+      // skillReady 不能表示“当前轮到谁”：同一玩家（化身）可能在队列中有第二次
+      // 后续行动，而且旧实现会把所有有技能的人整晚都标成 ready。重连必须直接
+      // 依据当前队列游标恢复权限与角色，避免错误展示可操作按钮/错误角色 UI。
+      result.canUseSkill = isCurrentActor;
       result.skillUsed = player.skillUsed;
       result.skillData = player.skillData;
+      result.vision = player.privateVision;
+      if (isCurrentActor && currentSkillItem) {
+        result.activeSkillRole = currentSkillItem.skill.getRole();
+      }
     } else if (this.gameState.status === OnuWerewolfGameStatus.VOTING) {
       result.canVote = this.votingOpen && !player.voted;
       result.myVote = player.lynchTarget;
@@ -644,7 +685,8 @@ class OnuWerewolfWorker extends BaseGameWorker {
         shielded: false,
         skillUsed: false,
         skillReady: false,
-        skillData: {}
+        skillData: {},
+        privateVision: {}
       };
       this.gameState.players[player.id] = gamePlayer;
     });
@@ -735,9 +777,10 @@ class OnuWerewolfWorker extends BaseGameWorker {
       a.skill.getPriority() - b.skill.getPriority()
     );
 
-    // 设置所有玩家的技能状态
+    // skillReady 表示“当前正轮到该玩家”，不能表示“本夜拥有技能”。
+    // 否则重连会把所有夜间角色都恢复成可操作状态。
     Object.values(this.gameState.players).forEach(player => {
-      player.skillReady = this.skillQueue.some(item => item.player.id === player.id);
+      player.skillReady = false;
       player.skillUsed = false;
     });
   }
@@ -776,6 +819,7 @@ class OnuWerewolfWorker extends BaseGameWorker {
 
     const vision = this.buildInitialWolfVisionFor(player);
     if (vision) {
+      this.mergePrivateVision(player, vision);
       this.sendToPlayer(player.id, 'onu_board_info', { vision });
     }
   }
@@ -813,7 +857,9 @@ class OnuWerewolfWorker extends BaseGameWorker {
 
     this.skillQueue.splice(insertIndex, 0, { player, skill: followUpSkill });
     player.skillUsed = false;
-    player.skillReady = true;
+    // 若复制角色的夜序在稍后，不能提前把化身标记为可行动；真正轮到时
+    // processNextSkill 才会设置 skillReady。
+    player.skillReady = false;
   }
 
   private processNextSkill(): void {
@@ -833,11 +879,13 @@ class OnuWerewolfWorker extends BaseGameWorker {
 
     const currentSkillItem = this.skillQueue[this.currentSkillIndex];
     const { player } = currentSkillItem;
+    player.skillReady = true;
 
     // 哨兵护盾会阻止酒鬼移动自己的牌；不要把玩家卡在一个无法执行且不可跳过的强制技能上。
     if (currentSkillItem.skill.getRole() === OnuWerewolfRole.Drunk && player.shielded) {
       this.tryAutoResolveMandatorySkill(player, currentSkillItem.skill);
       player.skillUsed = true;
+      player.skillReady = false;
       this.currentSkillIndex++;
       this.processNextSkill();
       return;
@@ -928,10 +976,13 @@ class OnuWerewolfWorker extends BaseGameWorker {
           witchCardPosition: position
         };
 
+        const witchVision = onuCreateVision([], [card]);
+        this.mergePrivateVision(player, witchVision);
         this.sendToPlayer(playerId, 'onu_skill_result', {
           message: `你查看了中心卡${position}（${ONU_WEREWOLF_ROLE_NAMES[card.role] || '未知'}），请选择一名玩家交换`,
-          vision: onuCreateVision([], [card]),
-          skillData: { witchCardPosition: position }
+          vision: witchVision,
+          skillData: { witchCardPosition: position },
+          keepSkillOpen: true
         });
         this.sendToPlayer(playerId, 'onu_skill_ready', {
           message: '女巫请选择一名玩家，将已查看的中心卡交给他',
@@ -973,8 +1024,11 @@ class OnuWerewolfWorker extends BaseGameWorker {
       delete player.skillData.witchCardPosition;
     }
 
+    this.mergePrivateVision(player, result.vision);
+
     // 标记技能已使用
     player.skillUsed = true;
+    player.skillReady = false;
 
     // 清理技能超时定时器
     if (this.skillTimeout) {
@@ -1059,6 +1113,7 @@ class OnuWerewolfWorker extends BaseGameWorker {
       player.auraVisible = true;
     }
     this.applySkillResult(result);
+    this.mergePrivateVision(player, result.vision);
     this.sendToPlayer(player.id, 'onu_skill_result', {
       message: result.message,
       vision: result.vision
@@ -1088,6 +1143,7 @@ class OnuWerewolfWorker extends BaseGameWorker {
 
     // 标记技能已使用（跳过或已由系统自动处理强制技能）
     player.skillUsed = true;
+    player.skillReady = false;
 
     // 清理技能超时定时器
     if (this.skillTimeout) {
@@ -1204,6 +1260,7 @@ class OnuWerewolfWorker extends BaseGameWorker {
       if (currentSkillItem && !currentSkillItem.player.skillUsed) {
         this.tryAutoResolveMandatorySkill(currentSkillItem.player, currentSkillItem.skill);
         currentSkillItem.player.skillUsed = true;
+        currentSkillItem.player.skillReady = false;
       }
       this.currentSkillIndex++;
     }

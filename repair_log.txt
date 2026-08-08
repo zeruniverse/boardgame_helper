@@ -1473,3 +1473,35 @@ Commit: fix(round26): 修复钟楼结束白天投票与提名并发竞态
   - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts 校验；本轮两个源码文件相对附件原始版本执行 diff --check 无新增尾随空白错误。
   - 正式 npm ci --ignore-scripts --no-audit --no-fund 已再次尝试，当前内部 npm 源仍对 package-lock 锁定的 typescript-5.8.3.tgz 返回 404；显式切换公共 npm registry 的安装尝试在当前容器网络层失败。正式 npm run build 也已执行，但工作区 node_modules 不完整，后端 tsc 因 Node/Express/CORS 等已声明类型依赖缺失而中止，根构建因此没有进入前端 vue-tsc/Vite。故本轮不能声称完整生产构建已在此容器通过；仍需在依赖源可用的本地或 CI 执行 npm ci && npm run build 做最终部署确认。
 备注: 本轮未删除文件，未创建根目录 src/；所有后端源码修改仅位于 backend/src/，所有前端源码修改仅位于 frontend/src/；修复包只包含本轮修改文件及 repair_log.txt，可按相对路径直接覆盖。
+
+=== 当前请求第 27 轮修复记录 ===
+时间: 2026-08-08 06:52:29 UTC
+Commit: fix(round27): 修复一夜狼人重连夜间权限与私密状态同步
+修改/新增文件:
+  - backend/src/utils/onuWerewolfTypes.ts
+  - backend/src/workers/onuWerewolfWorker.ts
+  - frontend/src/components/OnuWerewolfActionPanel.vue
+  - frontend/src/store/onuWerewolf.ts
+  - repair_log.txt
+删除文件: 无
+构建测试: 部分通过（backend/src 全量 strict/noEmit 与隔离 CommonJS 编译、85 个源码文件静态扫描、六游戏 Worker prepare_room 烟雾、一夜狼人重连/女巫两步技能/准备状态专项回归及 package-lock 工作区依赖树检查均通过；正式 npm ci / npm run build 仍受当前容器内部 npm 源缺少 package-lock 锁定 TypeScript 5.8.3 包阻塞）
+本轮修复:
+  - 修复一夜狼人夜间重连时“尚未轮到的角色也被恢复为可行动”的权限错误。旧 prepareSkillQueue 会把整条夜序中所有有技能的玩家整晚标成 skillReady=true，getSecretInfoForPlayer 又直接据此返回 canUseSkill；因此强盗等后序角色重连后会提前看到技能 UI，提交后才被 Worker 拒绝。现在重连权限直接由 skillQueue[currentSkillIndex] 的当前操作者决定，activeSkillRole 也从当前队列项恢复；skillReady 仅在真正轮到该玩家时置为 true。
+  - 修复化身复制角色后续唤醒的提前授权与错误 UI。旧 enqueueDoppelgangerFollowUp 在把复制技能插入未来夜序时会立刻 skillReady=true，化身若在真正唤醒前重连会获得错误操作权；同时重连响应没有 activeSkillRole，会退回化身初始角色界面。现在未来队列项不会提前置 ready，真正轮到时再授权，并通过队列游标恢复复制角色。
+  - 增加玩家私有夜间视野的 Worker 侧持久化，修复预言家、强盗、狼人/头狼/狼先知、学徒预言家、超自然调查员、失眠者等在断线重连后丢失已经看到的信息。私密视野只保存在 OnuWerewolfPlayer.privateVision 并通过个人 secret 返回，不进入公开 gameInfo；同座位/中心位置的新信息会覆盖旧项，避免重复。
+  - 修复女巫两步技能的重连恢复。第一步查看中心牌现在持久化视野与 witchCardPosition，并通过 keepSkillOpen 明确告诉前端这只是中间结果；重连时服务端继续返回当前女巫权限、已看中心牌位置和私有视野，ActionPanel 会自动恢复已选中心牌并直接显示第二步“选择交换玩家”，不会误导玩家重新选择中心牌。完成技能后前端会清理该临时位置。
+  - 修复同 ID 玩家离房/被踢后重新加入继承旧 readyPlayers 条目的等待室状态污染。joinRoom 与 kickOutPlayer 现在同步清理 Worker 私有准备集合，等待阶段 readyCount 以当前在线且仍在准备集合中的玩家为准，避免准备人数长期大于实际房间人数或新座位被视为已准备。
+  - 修复前端新的 onu_skill_ready 未覆盖上一段 skillUsed=true 的状态残留。化身等同一夜可能再次被唤醒的玩家收到 ready 后现在会显式重置 skillUsed=false；女巫第一步的中间结果也不再被前端误标记为技能已完成。
+审查结果/本轮未改动重点:
+  - 再次覆盖 backend/src 与 frontend/src 当前全部 85 个 TypeScript/Vue/CSS/SVG 代码文件，并重点复核六个游戏 Worker、BaseGameWorker、RoomThreadManager、Controller 的任务串行/acknowledgement/状态版本同步，以及前端 Room / ActionPanel / PlayerList / Store 的公开/私密状态消费。本轮最明确且可稳定复现的高优先级缺陷集中在一夜狼人重连时的夜间权限与私密知识恢复，因此修改保持在既有 ONU Worker、类型、Store 和 ActionPanel 中，没有扩大目录结构或做高风险跨游戏重构。
+  - 狼人杀继续核对夜序、狼人一致击杀、药剂/守卫/猎人、警长与放逐；杀人游戏继续核对杀手一致击杀、警察/医生/狙击手、首日自投限制与阵营胜负；血染钟楼继续核对夜序、registration、动态唤醒、提名/投票和说书人裁决；阿瓦隆继续核对组队、任务人数、7人以上第四任务双失败票、五次否决、刺杀与湖上夫人；德州扑克继续核对盲注、heads-up 行动顺序、短码 all-in、加注权、未跟注筹码返还、边池与摊牌。本轮没有发现优先级高于上述 ONU 状态恢复错误、且适合当前批次低风险落地的新主流程阻断项。
+  - 前端 27 个 Vue SFC 继续沿用各游戏 Room / ActionPanel / PlayerList / Chat、Element Plus 和既有公共玩家标识/命名工具，静态导入和样式块扫描均通过。各游戏存在有意的主题差异，但未发现需要本轮跨游戏重构才能修复的构建或运行问题。
+  - BOTC 仍保留此前记录的高阶边界：自定义夜序中如果死亡已经在 Pit-Hag 制造 Demon 前真实落地，当前“本夜死亡任意”模型不能安全逆向撤销已经触发的死亡/被动效果；真人说书人仍没有针对每次 Recluse/Spy registration 的逐次手工裁决 UI。本轮未对这两个需要更大状态模型/UI 设计的问题做冒险性修改。
+验证:
+  - backend/src 全部 34 个 TypeScript 文件使用 TypeScript 5.8.3、strict 模式、真实全局 Node 类型和位于项目目录外的 Express/CORS/Socket.IO/UUID 临时声明桩完成 noEmit 类型检查，0 个错误；同一配置成功生成 34 个隔离 CommonJS 测试编译文件。
+  - backend/src + frontend/src 全量静态扫描通过：共 85 个代码文件、83 个 TypeScript/Vue script 解析单元、27 个 Vue SFC、27 个 style 块、213 个相对/@ 静态导入均无 TypeScript 语法、SFC 顶层结构、CSS 花括号或失效导入错误；项目根目录不存在 src/。
+  - 六个实际游戏 Worker 使用本轮最新 strict 编译产物执行 prepare_room 烟雾全部通过：狼人杀、杀人游戏、血染钟楼、一夜狼人、阿瓦隆、德州扑克均能启动 Worker 并完成房间初始化。
+  - 一夜狼人第 27 轮专项回归全部通过：预言家当前行动时后序强盗重连保持 canUseSkill=false；预言家查验后重连仍能恢复已查看的强盗身份；轮到强盗时重连恢复 canUseSkill=true + activeSkillRole=Robber；女巫查看中心牌后重连恢复 canUseSkill、Witch 当前角色、witchCardPosition 与已查看中心牌视野；准备后的玩家被踢并以同 ID 重入时 readyCount 回到 0。相同重连权限测试运行在本轮修改前源码上稳定失败为“后序强盗 canUseSkill=true”，证明覆盖了原缺陷。
+  - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts 校验；本轮四个源码修改文件相对附件原始版本执行 diff --check 无新增尾随空白错误。
+  - 正式 npm ci --ignore-scripts --no-audit --no-fund 已再次尝试，当前内部 npm 源对 package-lock 锁定的 typescript-5.8.3.tgz 返回 404；正式 npm run build 在依赖未完整安装的工作区执行时，后端 tsc 因 Node/Express/Socket.IO/UUID/CORS 等已声明依赖/类型缺失而中止，根构建因此没有进入前端 vue-tsc/Vite。故本轮不能声称完整生产 npm 构建已在此容器通过；请在依赖源可用的本地或 CI 执行 npm ci && npm run build 做最终部署确认。
+备注: 本轮未删除文件，未创建根目录 src/；所有后端源码修改仅位于 backend/src/，所有前端源码修改仅位于 frontend/src/；修复包只包含本轮修改文件及 repair_log.txt，可按相对路径直接覆盖。

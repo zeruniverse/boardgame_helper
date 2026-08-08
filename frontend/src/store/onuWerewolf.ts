@@ -479,15 +479,25 @@ export const useOnuWerewolfStore = defineStore('onuWerewolf', {
           this.playerSecret.skillData = { ...(this.playerSecret.skillData || {}), ...data.skillData };
         }
         this.playerSecret.canUseSkill = true;
+        // 化身可能在同一夜再次以复制角色行动；新的 ready 事件必须覆盖上一段
+        // 技能结果留下的 skillUsed=true，否则重连/后续唤醒 UI 会显示状态分叉。
+        this.playerSecret.skillUsed = false;
         this.addSystemMessage(data.message || '轮到你使用技能了');
       });
 
       // Skill result (C4 fix)
       on('onu_skill_result', (data: any) => {
         if (!this.playerSecret) this.playerSecret = {};
-        this.playerSecret.canUseSkill = false;
-        this.playerSecret.skillUsed = true;
-        delete this.playerSecret.activeSkillRole;
+        const keepSkillOpen = data?.keepSkillOpen === true;
+        const completedRole = this.playerSecret.activeSkillRole;
+        this.playerSecret.canUseSkill = keepSkillOpen;
+        this.playerSecret.skillUsed = !keepSkillOpen;
+        if (!keepSkillOpen) {
+          delete this.playerSecret.activeSkillRole;
+          if (completedRole === OnuWerewolfRole.Witch && this.playerSecret.skillData) {
+            delete this.playerSecret.skillData.witchCardPosition;
+          }
+        }
         if (data.vision) {
           mergeVision(data.vision);
         }

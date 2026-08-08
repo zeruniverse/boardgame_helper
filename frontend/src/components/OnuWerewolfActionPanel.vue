@@ -608,6 +608,10 @@ interface PlayerSecret {
   activeSkillRole?: OnuWerewolfRole;
   mySeat?: number;
   skillUsed?: boolean;
+  skillData?: {
+    witchCardPosition?: number;
+    [key: string]: unknown;
+  };
   myVote?: number | string;
   vision?: {
     players?: Array<{ seat: number; role: OnuWerewolfRole }>;
@@ -1036,6 +1040,18 @@ const watchRole = watch(() => activeRole.value, () => {
   skillResult.value = '';
 });
 
+// 女巫第一步查看中心卡后，服务端会持久化该位置。断线重连时恢复选择，
+// 这样 UI 会直接回到第二步“选择交换玩家”，而不是误导玩家重新选中心卡。
+const watchWitchCardPosition = watch(
+  () => props.playerSecret?.skillData?.witchCardPosition,
+  (position) => {
+    if (activeRole.value === OnuWerewolfRole.Witch && typeof position === 'number') {
+      selectedCard.value = position;
+    }
+  },
+  { immediate: true }
+);
+
 const watchDiscussionPhase = watch(isDiscussionPhase, (isOpen) => {
   if (isOpen) hasSkippedDiscussion.value = false;
 });
@@ -1048,6 +1064,7 @@ const watchSeerChoice = watch(() => seerChoice.value, () => {
 onUnmounted(() => {
   watchConfig();
   watchRole();
+  watchWitchCardPosition();
   watchSeerChoice();
   watchDiscussionPhase();
 });
