@@ -292,7 +292,13 @@ export function getNightOrder(gamePlayers: GamePlayer[], isFirstNight: boolean):
     'sweetheart',
     'sage',
     'moonchild',
-    'ravenkeeper'
+    'ravenkeeper',
+    // Grandmother's later-night entry is only the passive follow-up death if
+    // their grandchild was killed by a Demon. Tinker deaths are entirely a
+    // Storyteller choice. Neither character should create a routine player
+    // action that can hold the night open while they are alive.
+    'grandmother',
+    'tinker'
   ]);
   
   // 构建角色ID到玩家的映射（优化查找）

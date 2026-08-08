@@ -1178,3 +1178,33 @@ Commit: fix(round16): 补齐钟楼身份登记与昼间历史判定
   - package-lock 工作区依赖树继续通过 npm ls --package-lock-only --all --ignore-scripts 校验，本轮四个源码文件相对原始附件执行 diff --check 均无新增尾随空白错误。
   - 正式 npm run build 已在本轮修改后再次执行：当前项目目录没有完整 node_modules，因此后端 tsc 在 Node/Express/Socket.IO/UUID/CORS/worker_threads 等声明缺失处中止，前端 vue-tsc/Vite 未进入执行。另在隔离副本尝试 npm ci --ignore-scripts --registry=https://registry.npmjs.org，容器对 registry.npmjs.org 的 DNS 请求返回 EAI_AGAIN，依赖无法下载。本轮因此不能声称完整生产构建已在此环境通过；仍需在可联网且依赖源正常的本地或 CI 执行 npm ci && npm run build 做最终部署确认。
 备注: 本轮未删除文件，未创建根目录 src/；所有源码修改均位于既有 backend/src/ 目录，未修改 frontend/src/；修复包只包含本轮修改文件及 repair_log.txt，可按相对路径直接覆盖。
+
+=== 当前请求第 17 轮修复记录 ===
+时间: 2026-08-08 04:23:28 UTC
+Commit: fix(round17): 修正钟楼夜序与一次性能力结算
+修改/新增文件:
+  - backend/src/utils/botcUtils.ts
+  - backend/src/utils/botcSkills.ts
+  - backend/src/workers/botcWorker.ts
+  - repair_log.txt
+删除文件: 无
+构建测试: 部分通过（后端全量 strict 类型检查/测试编译、85 个源码文件静态扫描、六 Worker prepare_room 烟雾、BOTC 第 17 轮专项回归及 package-lock 依赖树检查通过；正式 npm run build 仍因当前工作区 node_modules 为不完整安装而在后端 tsc 阶段中止）
+本轮修复:
+  - 修复 Grandmother（祖母）与 Tinker（修补匠）被错误加入常规 other-night 玩家行动队列的问题。祖母后续夜序条目仅用于“孙辈被恶魔杀死后祖母随之死亡”的被动结算，修补匠死亡则是说书人可随时裁决；二者现在不会在存活时每夜制造无意义的玩家提交要求，也不会因为没有提交而把夜晚流程卡住。
+  - 修复醉酒/中毒的一次性夜间能力“效果被抑制后却没有消耗次数”的规则错误。Assassin、Professor、Courtier 等在合法尝试使用一次性能力时，即使自身能力因醉酒/中毒失效，也只会保留行动者自己的 No ability 使用标记，不会错误应用击杀、复活、醉酒、保护或目标提醒等真实效果。
+  - 修复 Philosopher（哲学家）把自己的使用状态和“获得的角色能力”共用 No ability 标记的问题。哲学家现在使用独立的 Philosopher used 内部标记记录自身一次性选择，并保留 Is the Philosopher；健康哲学家获得 Artist 等另一项一次性能力后不会在获得瞬间就被判定为“已经使用过”，而醉酒/中毒哲学家的失败尝试仍会正确消耗哲学家自身的一次性能力。角色刷新/换角时也会清理该内部使用标记。
+  - 补齐 Professor 对目标角色类型的 registration 判定：技能处理器现在接收当前 edition，并通过统一 chooseRegisteredIdentity 解析目标；被抑制的 Recluse/Spy 不会使用替代登记，避免与第 16 轮建立的 registration 规则链出现局部旁路。
+  - 补齐 Tea Lady、Klutz、Moonchild 的阵营 registration 检查：茶艺师判断两个存活邻座是否为善良时、笨蛋死亡后选择目标时、月之子公开选择目标并保存“选择当时阵营”快照时，均使用单次登记结果而不是直接读取真实 alignment。月之子仍保存选择当时的快照，后续阵营变化不会逆向改写已经作出的选择。
+审查结果/本轮未改动重点:
+  - 再次覆盖 backend/src 与 frontend/src 当前全部 85 个 TypeScript/Vue/CSS/SVG 代码文件，并复查六个游戏 Worker、BaseGameWorker、Controller/RoomThreadManager 的目录、导入和初始化边界。本轮发现并优先处理的最高风险项集中在 BOTC 夜序卡死、醉酒/中毒一次性能力次数、哲学家获得能力及 registration 一致性；狼人杀、杀人游戏、一夜狼人、阿瓦隆、德州扑克没有发现优先级高于这些问题、且适合本批安全修改的新阻断项，因此未修改对应源码。
+  - 前端 27 个 Vue SFC 的 script/template/style 结构与相对/@ 导入重新扫描通过，现有 Room / ActionPanel / PlayerList / Chat 分层和 Element Plus 组件体系未发现需要在本轮以高回归风险重构解决的样式/复用阻断问题，因此本轮没有修改 frontend/src。
+  - 仍存在后续 BOTC 高阶边界：夜晚开始时已经死亡、在夜中由 Professor/Shabaloth 复活的角色，当前并行预收集架构仍不能动态插入此前不存在的新夜间交互；Pit-Hag 制造 Demon 前已经结算的死亡不能被后续“任意死亡”裁决逆向改写；人类说书人仍没有对每一次 Recluse/Spy registration 做手工选择的逐次 UI。
+  - Philosopher 的“获得被动/死亡触发角色能力”仍有若干 Worker 分支直接检查真实 player.role，而不是统一检查有效能力角色；同时 Philosopher 造成的原角色醉酒目前按角色来源而非按具体哲学家实例追踪，死亡/中毒/多哲学家等极端状态的动态解除仍需要单独重构。为避免本轮把已验证的一次性能力修复扩张成高风险状态模型改造，本批先修复可独立验证的使用次数错误，剩余部分留待下一轮专项处理。
+验证:
+  - backend/src 全部 34 个 TypeScript 文件使用 TypeScript 5.8.3、strict 模式、真实 Node 类型和位于项目外的 Express/CORS/Socket.IO/UUID 临时声明桩完成 noEmit 类型检查，0 个错误；同一配置成功重新生成 34 个 CommonJS 测试编译文件。
+  - backend/src + frontend/src 静态扫描通过：共 85 个代码文件、83 个 TypeScript/Vue script 解析单元、27 个 Vue SFC、27 个 style 块、312 个 import/export 路径检查均无语法、SFC 标签平衡、CSS 花括号或失效相对/@ 导入错误；项目根目录不存在 src/。
+  - 六个实际游戏 Worker 使用本轮最新 strict 编译产物执行 prepare_room 烟雾全部通过：狼人杀、杀人游戏、一夜狼人、阿瓦隆、血染钟楼、德州扑克均能启动 Worker 并完成房间初始化。
+  - BOTC 第 17 轮专项回归 8/8 通过：祖母/修补匠不再进入常规后续夜行动队列；中毒刺客不杀人但消耗一次性能力；中毒教授不复活但消耗一次性能力；中毒朝臣不施加醉酒但消耗一次性能力；健康哲学家获得 Artist 后可实际使用其一次性能力、而中毒哲学家失败尝试只消耗哲学家自身能力；Professor registration 可区分正常/被抑制 Spy；Tea Lady 的邻座保护受单次 Spy 登记影响；Klutz/Moonchild 的目标阵营判定使用 registration 并对月之子保存选择时快照。
+  - package-lock 工作区依赖树继续通过 npm ls --package-lock-only --all --ignore-scripts 校验；本轮三个源码文件相对原始附件执行 diff --check 无新增尾随空白错误。
+  - 正式 npm run build 在本轮最终源码上再次执行，但当前工作区 node_modules 是此前失败安装留下的不完整目录，后端 tsc 因缺少 Node、Express、Socket.IO、UUID、CORS 及若干间接 @types 声明而中止，前端 vue-tsc/Vite 因此未进入生产构建。本轮不能声称完整生产构建已在此容器通过；仍需在依赖源可用且 npm ci 能完整完成的本地或 CI 执行 npm ci && npm run build 做最终部署确认。
+备注: 本轮未删除文件，未创建根目录 src/；所有源码修改均位于既有 backend/src/ 目录，未修改 frontend/src/；修复包只包含本轮修改文件及 repair_log.txt，可按相对路径直接覆盖。

@@ -91,7 +91,7 @@ export function processNightAction(
   action: NightAction,
   allPlayers: GamePlayer[],
   isFirstNight: boolean = false,
-  context: { outsiderDiedToday?: boolean; anyoneDiedToday?: boolean } = {}
+  context: { outsiderDiedToday?: boolean; anyoneDiedToday?: boolean; editionId?: string } = {}
 ): SkillResult {
   const player = allPlayers.find(p => p.playerId === action.playerId);
   const effectiveRole = player?.displayRole || player?.role;
@@ -116,7 +116,7 @@ export function processNightAction(
     innkeeper: () => processInnkeeper(action, allPlayers),
     gambler: () => processGambler(action, allPlayers),
     courtier: () => processCourtier(action, allPlayers),
-    professor: () => processProfessor(action, allPlayers),
+    professor: () => processProfessor(action, allPlayers, context.editionId),
     godfather: () => processGodfather(action, allPlayers, isFirstNight, context.outsiderDiedToday === true),
     devilsadvocate: () => processDevilsAdvocate(action, allPlayers),
     assassin: () => processAssassin(action, allPlayers),
@@ -908,7 +908,7 @@ function processPo(action: NightAction, allPlayers: GamePlayer[]): SkillResult {
   };
 }
 
-function processProfessor(action: NightAction, allPlayers: GamePlayer[]): SkillResult {
+function processProfessor(action: NightAction, allPlayers: GamePlayer[], editionId?: string): SkillResult {
   const player = allPlayers.find(p => p.playerId === action.playerId);
   if (player?.reminders.includes('No ability')) {
     return { success: true, message: '教授已经使用过能力' };
@@ -926,7 +926,10 @@ function processProfessor(action: NightAction, allPlayers: GamePlayer[]): SkillR
   if (!target || !target.isDead) {
     return { success: false, message: '教授必须选择一名死亡玩家' };
   }
-  if (target.role?.team !== Team.TOWNSFOLK) {
+  const targetTeam = editionId
+    ? chooseRegisteredIdentity(target, editionId, !isAbilitySuppressed(target)).team
+    : target.role?.team;
+  if (targetTeam !== Team.TOWNSFOLK) {
     return {
       success: true,
       effects: {
@@ -1020,8 +1023,7 @@ function findPlayersWithRealRole(allPlayers: GamePlayer[], roleId: string): Game
 function hasUsedOncePerGameAbility(player: GamePlayer | undefined): boolean {
   return Boolean(player?.reminders.some(reminder =>
     reminder === 'No ability' ||
-    reminder === '已使用' ||
-    reminder === 'Is the Philosopher'
+    reminder === '已使用'
   ));
 }
 
@@ -1054,7 +1056,11 @@ function processCourtier(action: NightAction, allPlayers: GamePlayer[]): SkillRe
 
 function processPhilosopher(action: NightAction, allPlayers: GamePlayer[]): SkillResult {
   const actor = allPlayers.find(player => player.playerId === action.playerId);
-  if (hasUsedOncePerGameAbility(actor)) {
+  if (
+    hasUsedOncePerGameAbility(actor) ||
+    actor?.reminders.includes('Philosopher used') ||
+    actor?.reminders.includes('Is the Philosopher')
+  ) {
     return { success: true, message: '哲学家能力已经使用过' };
   }
 
@@ -1078,7 +1084,11 @@ function processPhilosopher(action: NightAction, allPlayers: GamePlayer[]): Skil
       ],
       drunk: drunkTargets,
       reminders: [
-        { playerId: action.playerId, reminder: 'No ability' },
+        // Keep the Philosopher's own once-per-game usage separate from the
+        // gained character. Reusing the generic "No ability" marker here made
+        // gained Artist/Slayer/Professor/Courtier-style abilities look already
+        // spent before the Philosopher ever got a chance to use them.
+        { playerId: action.playerId, reminder: 'Philosopher used' },
         { playerId: action.playerId, reminder: 'Is the Philosopher' },
         ...drunkTargets.map(playerId => ({ playerId, reminder: 'Philosopher Drunk' }))
       ]
