@@ -1443,3 +1443,33 @@ Commit: fix(round25): 修复狼人分歧投票提前空刀与共识回调竞态
   - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts；三个源码修改文件相对附件原始版本执行 diff --check 无新增空白错误。
   - 正式 npm ci --ignore-scripts 已再次执行，但当前内部 npm 源对 package-lock 锁定的 typescript-5.8.3.tgz 返回 404；正式 npm run build 在依赖未完整安装的工作区执行时，后端 tsc 因 Node/Express/Socket.IO/UUID/CORS 等依赖/类型缺失而中止，根构建因此没有进入前端 vue-tsc/Vite。故本轮不能声称完整生产 npm 构建已在此容器通过；请在依赖源可用的本地或 CI 执行 npm ci && npm run build 做最终部署确认。
 备注: 本轮未删除文件，未创建根目录 src/；所有后端源码修改仅位于 backend/src/，未修改 frontend/src/；修复包只包含本轮修改文件及 repair_log.txt，可按相对路径直接覆盖。
+
+=== 当前请求第 26 轮修复记录 ===
+时间: 2026-08-08 06:39:41 UTC
+Commit: fix(round26): 修复钟楼结束白天投票与提名并发竞态
+修改/新增文件:
+  - backend/src/workers/botcWorker.ts
+  - frontend/src/components/BOTCActionPanel.vue
+  - repair_log.txt
+删除文件: 无
+构建测试: 部分通过（85 个源码文件全量静态扫描、backend/src 全量 strict/noEmit 与隔离 CommonJS 编译、六游戏 Worker prepare_room 烟雾、BOTC 结束白天/提名并发及死亡票专项回归、package-lock 工作区依赖树检查均通过；正式 npm ci / npm run build 仍受当前容器依赖源缺少锁定 TypeScript 5.8.3 包阻塞）
+本轮修复:
+  - 修复血染钟楼“结束白天”辅助投票与正式提名投票可同时存在的并发流程错误。旧实现允许先发起结束白天提议、再开始提名；若辅助投票随后达到存活玩家多数，finishDay() 会对仍在投票中的 activeNomination 调用 endVoting()，从而用尚未完整收集的票数提前结算提名，严重时会错误处决并直接进入夜晚。现在正式提名一旦合法发起，会取消尚未完成的结束白天辅助提议；反过来，在正式提名投票进行时后端会拒绝新的结束白天提议。
+  - 前端 BOTCActionPanel 与后端约束同步：存在 currentNomination 时不再展示/允许“提议结束白天”，避免 UI 暗示一个后端不应接受的并行操作。若用户已经发起辅助提议后有人继续正式提名，则以后端正式提名权为优先并取消辅助提议，不让元流程阻塞 BOTC 核心规则流程。
+  - 修复结束白天提议原始 setTimeout 的陈旧回调竞态。clearTimeout() 无法撤回已经进入事件队列的旧回调；旧提议刚取消又创建新提议时，陈旧回调理论上可能对新对象自动补反对票甚至提前结束。现在定时器闭包绑定具体 proposal 对象并做对象身份/active 双重校验，旧回调不能作用于后续提议。
+  - 修复辅助投票期间玩家死亡后其旧票仍被计入“存活玩家多数”的问题。投票提交和超时自动弃权前都会重新计算存活玩家并剔除死亡玩家旧票，避免说书人手动死亡等路径导致一张已经失效的赞成票错误触发结束白天。
+审查结果/本轮未改动重点:
+  - 再次覆盖 backend/src 与 frontend/src 当前全部 85 个代码文件，并重点复核六个游戏 Worker、BaseGameWorker、RoomThreadManager、Controller 状态同步及前端 Room / ActionPanel / PlayerList / Store 的公开/私密状态消费。本轮最明确且可稳定复现的高优先级问题集中在 BOTC 白天辅助投票与正式提名的并发，因此修改保持在既有 botcWorker.ts 和 BOTCActionPanel.vue 中，没有扩展目录结构或进行高风险跨游戏重构。
+  - 狼人杀继续核对夜间角色链、狼人共识击杀、药剂/守卫/猎人、警长与放逐投票；杀人游戏继续核对多杀手一致击杀、警察/医生/狙击手、首日自投限制与阵营胜负；一夜狼人继续核对角色配置、夜间换牌、最高票并列/无人达到两票、皮匠/爪牙胜负；阿瓦隆继续核对组队、任务人数、7 人以上第四任务双失败票、五次否决、刺杀与湖上夫人；德州扑克继续核对 heads-up 盲注/行动顺序、短码 all-in 加注权、未跟注筹码返还、边池与摊牌。本轮没有发现优先级高于 BOTC 并发缺陷、且适合当前批次低风险落地的其他确定性主流程错误。
+  - Controller/Worker 层再次复核 game_action acknowledgement、RoomThreadManager messageChain 串行、workerStateVersion/connectionStateVersion/hostStateVersion 合并和 Worker 失效保护；未发现需要本轮追加修改的确定性跨线程状态覆盖问题。六个实际 Worker 都能由本轮最新隔离编译产物完成 prepare_room。
+  - 前端 27 个 Vue SFC 的 script/template/style 结构、CSS 花括号和相对/@ 导入继续通过静态扫描；各游戏沿用已有 Room / ActionPanel / PlayerList / Chat 与 Element Plus 组件体系。视觉主题有游戏特有差异，但没有发现需要本轮跨页面大重构才能解决的构建/运行问题。
+  - BOTC 仍保留此前记录的两个高阶边界：自定义夜序中如果某次死亡已经在 Pit-Hag 制造 Demon 前真实落地，当前“本夜死亡任意”模型不能安全逆向撤销已经触发的死亡/被动效果；真人说书人仍没有针对每次 Recluse/Spy registration 的逐次手工裁决 UI。本轮未对这两个需要更大状态模型/UI 设计的问题做冒险性修改。
+验证:
+  - backend/src + frontend/src 全量静态扫描通过：共 85 个代码文件、83 个 TypeScript/Vue script 解析单元、27 个 Vue SFC、27 个 style 块、213 个相对/@ 静态导入均无 TypeScript 语法、SFC 顶层结构、CSS 花括号或失效导入错误；项目根目录不存在 src/。
+  - backend/src 全部 34 个 TypeScript 文件使用 strict/noEmit、真实全局 Node 类型和位于项目目录外的 Express/CORS/Socket.IO/UUID 临时声明桩完成全量类型检查，0 个错误；同一配置成功生成隔离 CommonJS 测试编译产物。本轮修改后的 botcWorker.ts 也单独通过 strict/noEmit。
+  - 六个实际游戏 Worker 使用本轮最新隔离编译产物执行 prepare_room 烟雾全部通过：狼人杀、杀人游戏、一夜狼人、阿瓦隆、德州扑克、血染钟楼均能启动 Worker 并完成房间初始化。
+  - BOTC 第 26 轮并发专项回归通过：先由 p1 发起结束白天辅助投票，再由 p2 正式提名 p3，确认辅助提议立即取消且正式 nomination 保持 active；随后 p4 在 nomination 期间尝试再次提议结束白天会收到失败 acknowledgement。相同测试运行在本轮修改前源码上稳定失败为“end-day proposal still active after nomination”，证明覆盖了原缺陷。
+  - BOTC 死亡票专项回归通过：5 名存活游戏玩家中，已投赞成的提议者被说书人手动杀死后，再有两名存活玩家赞成时不会把死亡提议者旧票算入 3 票多数；第三名存活玩家赞成后才正确结束白天。相同测试运行在修改前源码上会稳定提前通过，证明本轮剔除死亡票逻辑有效。
+  - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts 校验；本轮两个源码文件相对附件原始版本执行 diff --check 无新增尾随空白错误。
+  - 正式 npm ci --ignore-scripts --no-audit --no-fund 已再次尝试，当前内部 npm 源仍对 package-lock 锁定的 typescript-5.8.3.tgz 返回 404；显式切换公共 npm registry 的安装尝试在当前容器网络层失败。正式 npm run build 也已执行，但工作区 node_modules 不完整，后端 tsc 因 Node/Express/CORS 等已声明类型依赖缺失而中止，根构建因此没有进入前端 vue-tsc/Vite。故本轮不能声称完整生产构建已在此容器通过；仍需在依赖源可用的本地或 CI 执行 npm ci && npm run build 做最终部署确认。
+备注: 本轮未删除文件，未创建根目录 src/；所有后端源码修改仅位于 backend/src/，所有前端源码修改仅位于 frontend/src/；修复包只包含本轮修改文件及 repair_log.txt，可按相对路径直接覆盖。

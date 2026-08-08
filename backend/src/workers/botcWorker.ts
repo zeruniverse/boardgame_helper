@@ -3818,6 +3818,18 @@ export class BOTCWorker extends BaseGameWorker {
       return;
     }
 
+    // “结束白天”是线上流程辅助，不属于 BOTC 的提名/投票规则。只要有人继续发起
+    // 一个合法提名，就说明白天尚未达成结束共识；此时必须取消尚未完成的结束白天
+    // 提议，不能让它继续在后台计票。否则该提议稍后达到多数或超时回调时会调用
+    // finishDay()，把刚开始的提名投票强制提前结算，甚至按不完整票数处决玩家。
+    if (this.endDayProposal.isActive) {
+      this.clearEndDayProposal();
+      this.sendToRoom('gameMessage', {
+        message: '有玩家发起新的提名，未完成的结束白天投票已取消',
+        type: 'info'
+      });
+    }
+
     // 检查处女（Virgin）能力 - 首次被提名时，若提名者是镇民，提名者立即被处决
     if (this.getEffectiveRole(nominee)?.id === 'virgin' && !nominee.isDead && !nominee.reminders.includes('No ability')) {
       const virginAbilityWorks = this.playerAbilityWorks(nominee);
@@ -4121,6 +4133,14 @@ export class BOTCWorker extends BaseGameWorker {
       return;
     }
 
+    // 提名投票属于当天的核心规则流程，不能与“结束白天”辅助投票并行。否则结束白天
+    // 多数票会通过 finishDay() 直接调用 endVoting(activeNomination)，把尚未投完的提名
+    // 按当前残缺票数提前结算。
+    if (this.getActiveNomination()) {
+      this.sendToPlayer(playerId, 'actionError', { message: '当前提名投票尚未结束，不能提议结束白天' });
+      return;
+    }
+
     if (this.endDayProposal.isActive) {
       this.sendToPlayer(playerId, 'actionError', { message: '已经有一个结束白天的提议正在进行' });
       return;
@@ -4132,15 +4152,23 @@ export class BOTCWorker extends BaseGameWorker {
       return;
     }
 
-    this.endDayProposal = {
+    const proposal: typeof this.endDayProposal = {
       isActive: true,
       proposerId: playerId,
       votes: [{ playerId, vote: 'agree' }],
-      timer: setTimeout(() => {
-        this.autoAbstainEndDayVoters();
-      }, 60000),
+      timer: null as NodeJS.Timeout | null,
       startTime: Date.now()
     };
+
+    proposal.timer = setTimeout(() => {
+      // clearTimeout() 无法撤回已经进入事件队列的旧回调。若旧提议刚被取消、同一房间
+      // 又创建了新提议，旧回调绝不能替新提议自动投反对票或把它提前结束。
+      if (this.endDayProposal !== proposal || !proposal.isActive) {
+        return;
+      }
+      void this.autoAbstainEndDayVoters(proposal);
+    }, 60000);
+    this.endDayProposal = proposal;
 
     this.sendToRoom('endDayProposed', {
       proposerId: playerId,
@@ -4155,6 +4183,14 @@ export class BOTCWorker extends BaseGameWorker {
   private async handleVoteEndDay(playerId: string, data: { vote?: unknown } | null | undefined): Promise<void> {
     if (!this.endDayProposal.isActive) {
       this.sendToPlayer(playerId, 'actionError', { message: '当前没有结束白天的提议' });
+      return;
+    }
+
+    // 防御旧状态/边界竞态：任何提名投票一旦存在，都以提名流程为准并取消辅助投票。
+    if (this.getActiveNomination()) {
+      this.clearEndDayProposal();
+      this.sendToPlayer(playerId, 'actionError', { message: '提名投票已经开始，结束白天投票已取消' });
+      this.broadcastGameState();
       return;
     }
 
@@ -4175,6 +4211,12 @@ export class BOTCWorker extends BaseGameWorker {
       return;
     }
 
+    // 说书人手动死亡等路径可能在辅助投票期间改变存活玩家。已经死亡玩家的旧票不能
+    // 继续参与“存活玩家多数”门槛，否则人数下降后会用一张已失效的票错误结束白天。
+    const alivePlayers = Array.from(this.gamePlayers.values()).filter(p => !p.isDead);
+    const alivePlayerIds = new Set(alivePlayers.map(p => p.playerId));
+    this.endDayProposal.votes = this.endDayProposal.votes.filter(v => alivePlayerIds.has(v.playerId));
+
     this.endDayProposal.votes.push({ playerId, vote: data.vote });
 
     this.sendToRoom('endDayVoteSubmitted', {
@@ -4184,7 +4226,6 @@ export class BOTCWorker extends BaseGameWorker {
     });
 
     // 检查是否超过半数存活玩家同意
-    const alivePlayers = Array.from(this.gamePlayers.values()).filter(p => !p.isDead);
     const agreeCount = this.endDayProposal.votes.filter(v => v.vote === 'agree').length;
     const requiredVotes = Math.floor(alivePlayers.length / 2) + 1;
 
@@ -4215,10 +4256,18 @@ export class BOTCWorker extends BaseGameWorker {
   /**
    * 自动弃权未投票的玩家
    */
-  private async autoAbstainEndDayVoters(): Promise<void> {
-    if (!this.endDayProposal.isActive) return;
+  private async autoAbstainEndDayVoters(expectedProposal = this.endDayProposal): Promise<void> {
+    if (!this.endDayProposal.isActive || this.endDayProposal !== expectedProposal) return;
+
+    if (this.getActiveNomination()) {
+      this.clearEndDayProposal();
+      this.broadcastGameState();
+      return;
+    }
 
     const alivePlayers = Array.from(this.gamePlayers.values()).filter(p => !p.isDead);
+    const alivePlayerIds = new Set(alivePlayers.map(p => p.playerId));
+    this.endDayProposal.votes = this.endDayProposal.votes.filter(v => alivePlayerIds.has(v.playerId));
     const votedIds = new Set(this.endDayProposal.votes.map(v => v.playerId));
 
     for (const player of alivePlayers) {

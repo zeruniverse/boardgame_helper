@@ -942,6 +942,8 @@ const endDayProposalActive = computed(() => {
 const canProposeEndDay = computed(() => {
   if (props.isStoryteller) return false
   if (props.gameState?.phase !== 'day') return false
+  // 结束白天辅助投票不能与 BOTC 正在进行的提名投票并行；后端同样会拒绝该操作。
+  if (currentNomination.value) return false
   if (!props.currentUserId) return false
   const myPlayer = props.gameState?.players?.find((p: any) => p.id === props.currentUserId)
   return myPlayer && !myPlayer.isDead
