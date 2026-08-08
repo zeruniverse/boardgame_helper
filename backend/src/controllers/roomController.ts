@@ -11,6 +11,7 @@ import { OnuWerewolfRole } from '../utils/onuWerewolfTypes';
 import { getRecommendedRoles } from '../utils/onuWerewolfPresets';
 import { getRequiredHostKickVotes, pruneHostKickVoters } from '../utils/hostKickVote';
 import { CHAT_MAX_LENGTH, normalizeChatText } from '../utils/chat';
+import { normalizeGamePlayerLimit } from '../utils/roomGameConfig';
 import {
   normalizeGameActionType,
   sanitizeIncomingGameConfig,
@@ -1943,8 +1944,18 @@ export function roomController(io: Server) {
         // 创建房间，房间ID和名称使用相同的6位随机字符
         const roomIdAndName = generateUniqueRoomIdAndName();
         const gameConfig = buildGameConfig(data.gameType, sanitizedConfigResult.config);
-        const configuredMaxPlayers = Number(gameConfig.maxPlayers || gameConfig.playerCount || config.games[data.gameType].maxPlayers);
-        const gamePlayerLimit = Math.max(1, Math.min(configuredMaxPlayers || config.games[data.gameType].maxPlayers, config.games[data.gameType].maxPlayers));
+        const configuredGameMaximum = config.games[data.gameType].maxPlayers;
+        const requestedPlayerLimit = gameConfig.maxPlayers ?? gameConfig.playerCount;
+        const gamePlayerLimit = normalizeGamePlayerLimit(
+          data.gameType,
+          requestedPlayerLimit,
+          configuredGameMaximum
+        );
+        // room.maxPlayers、Worker 配置和重连时保存的 gameConfig 必须使用同一个
+        // 已规范化人数。旧实现只修正 room.maxPlayers，gameConfig.playerCount 仍可能
+        // 保留 1/20 等无效值，导致默认角色配置与实际可加入人数分叉。
+        gameConfig.maxPlayers = gamePlayerLimit;
+        gameConfig.playerCount = gamePlayerLimit;
         // 血染钟楼的配置人数是实际参与游戏的人数。只有真人说书人需要额外席位；
         // AI 说书人不在 room.players 中，若仍然 +1 会允许超额玩家进入并导致开局校验失败。
         const hasHumanBOTCStoryteller = data.gameType === 'blood-on-the-clocktower' &&

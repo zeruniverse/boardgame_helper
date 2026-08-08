@@ -577,11 +577,12 @@
               <el-divider content-position="left">德州扑克设置</el-divider>
               <el-form-item label="最大人数">
                 <el-select v-model="createRoomForm.maxPlayers" placeholder="选择最大人数">
-                  <el-option label="2人" :value="2" />
-                  <el-option label="4人" :value="4" />
-                  <el-option label="6人" :value="6" />
-                  <el-option label="8人" :value="8" />
-                  <el-option label="10人" :value="10" />
+                  <el-option
+                    v-for="count in texasPlayerOptions"
+                    :key="count"
+                    :label="`${count}人`"
+                    :value="count"
+                  />
                 </el-select>
               </el-form-item>
               <el-form-item label="发牌模式">
@@ -858,6 +859,7 @@ const createRoomForm = ref({
 });
 const createRoomStep = ref(0);
 const creatingRoom = ref(false);
+const texasPlayerOptions = Array.from({ length: 9 }, (_, index) => index + 2);
 const mafiaPlayerOptions = Array.from({ length: 15 }, (_, index) => index + 6);
 const werewolfPlayerOptions = Array.from({ length: 13 }, (_, index) => index + 6);
 
@@ -1196,6 +1198,21 @@ function getApiUrl() {
 // 选择游戏类型
 function selectGame(gameType: string) {
   createRoomForm.value.gameType = gameType;
+
+  // 创建表单会在“上一步 -> 改选游戏”时复用同一 maxPlayers。此前从德州 2 人
+  // 切到阿瓦隆/杀人游戏等，会把 2 原样提交并创建一个永远达不到开局人数的房间；
+  // 从 20 人杀人游戏切到其他游戏则会留下超范围值。切换时按所选游戏边界收敛。
+  const gameMeta = GAME_META[gameType as keyof typeof GAME_META];
+  if (gameMeta) {
+    const currentLimit = Number(createRoomForm.value.maxPlayers);
+    const normalizedLimit = Number.isFinite(currentLimit)
+      ? Math.floor(currentLimit)
+      : 8;
+    createRoomForm.value.maxPlayers = Math.max(
+      gameMeta.minPlayers,
+      Math.min(normalizedLimit, gameMeta.maxPlayers)
+    );
+  }
 
   // 这些字段由多个游戏共用同一个创建表单对象。切换游戏时若不恢复各自默认值，
   // 上一个游戏不可见的计时设置会静默泄漏到新房间（例如 BOTC 的 300 秒夜晚
