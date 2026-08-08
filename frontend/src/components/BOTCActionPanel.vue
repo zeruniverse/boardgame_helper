@@ -500,6 +500,7 @@
 <script setup lang="ts">
 import { computed, ref, watch, onUnmounted } from 'vue'
 import { formatPlayerName } from '../utils/playerName'
+import { formatBOTCNightInfo } from '../utils/botcNightInfo'
 
 interface Props {
   gameState: any
@@ -1194,147 +1195,10 @@ const getGamePlayerName = (playerId: string) => {
   return displayPlayerNameById(playerId, player?.name || player?.playerName)
 }
 
-const formatNightInfo = (info: any) => {
-  if (!info) return ''
-  
-  if (typeof info === 'string') return info
-
-  if (info.isDeathAbilityPrompt && info.role === 'sage' && info.information?.players) {
-    const names = info.information.players.map((id: string) => getGamePlayerName(id)).join('、')
-    return `${info.message || '恶魔是以下两名玩家之一'}：${names}`
-  }
-  
-  if (info.message) return info.message
-  
-  if (info.information) {
-    const data = info.information
-    if (info.role === 'sage' && Array.isArray(data.players)) {
-      const names = data.players.map((entry: any) => {
-        if (typeof entry === 'string') return getGamePlayerName(entry)
-        return displayPlayerNameById(entry?.playerId, entry?.playerName)
-      }).filter(Boolean).join('、')
-      return `${data.message || '恶魔是以下两名玩家之一'}${names ? `：${names}` : ''}`
-    }
-    if (Array.isArray(data.outsiderRoles)) {
-      return data.outsiderRoles.length > 0
-        ? `在场外来者角色：${data.outsiderRoles.map((role: any) => role.roleName || role.roleId).join('、')}`
-        : '没有外来者角色在场'
-    }
-    if (data.canKill === false) {
-      return data.message || '今晚没有可执行的击杀'
-    }
-    if (data.playerId) {
-      return `${displayPlayerNameById(data.playerId, data.playerName)} 的角色是: ${data.roleName || data.roleId || '未知'}`
-    }
-    if (data.roleId) {
-      return `角色: ${data.roleName || data.roleId}, 玩家: ${(data.players || []).join(', ')}`
-    }
-    if (data.pairs !== undefined) {
-      return `相邻邪恶对数: ${data.pairs}`
-    }
-    if (data.evilCount !== undefined) {
-      return `邪恶邻居数: ${data.evilCount}`
-    }
-    if (data.grandchild) {
-      return `孙子: ${getGamePlayerName(data.grandchild)}, 角色: ${data.grandchildRole?.name || '未知'}`
-    }
-    if (data.distance !== undefined) {
-      return `恶魔最近距离: ${data.distance}`
-    }
-    if (data.isDemon !== undefined) {
-      return data.isDemon ? '是恶魔！' : '不是恶魔'
-    }
-    if (data.isCorrect !== undefined) {
-      return data.isCorrect ? '猜测正确！' : '猜测错误！'
-    }
-    if (data.abnormalCount !== undefined) {
-      return `异常玩家数: ${data.abnormalCount}`
-    }
-    if (data.demonVoted !== undefined) {
-      return data.demonVoted ? '今天有恶魔投票了' : '今天没有恶魔投票'
-    }
-    if (data.minionNominated !== undefined) {
-      return data.minionNominated ? '今天有爪牙提名了' : '今天没有爪牙提名'
-    }
-    if (data.deadEvilCount !== undefined) {
-      return `死亡的邪恶玩家数: ${data.deadEvilCount}`
-    }
-    if (data.sameAlignment !== undefined) {
-      return data.sameAlignment ? '两名玩家同阵营' : '两名玩家不同阵营'
-    }
-    if (data.wokeCount !== undefined) {
-      return `两名目标中今晚醒来的玩家数: ${data.wokeCount}`
-    }
-    if (Array.isArray(data.roles)) {
-      const roleNames = data.roles.map((role: any) => role.roleName || role.roleId).join(' / ')
-      return `${displayPlayerNameById(data.playerId, data.playerName)} 可能是: ${roleNames}`
-    }
-    return JSON.stringify(data)
-  }
-
-  // 直接处理information对象（worker直接发送的数据格式）
-  if (Array.isArray(info.outsiderRoles)) {
-    return info.outsiderRoles.length > 0
-      ? `在场外来者角色：${info.outsiderRoles.map((role: any) => role.roleName || role.roleId).join('、')}`
-      : '没有外来者角色在场'
-  }
-  if (info.canKill === false) {
-    return info.message || '今晚没有可执行的击杀'
-  }
-  if (info.demonVoted !== undefined) {
-    return info.demonVoted ? '今天有恶魔投票了' : '今天没有恶魔投票'
-  }
-  if (info.minionNominated !== undefined) {
-    return info.minionNominated ? '今天有爪牙提名了' : '今天没有爪牙提名'
-  }
-  if (info.deadEvilCount !== undefined) {
-    return `死亡的邪恶玩家数: ${info.deadEvilCount}`
-  }
-  if (info.wokeCount !== undefined) {
-    return `两名目标中今晚醒来的玩家数: ${info.wokeCount}`
-  }
-  if (Array.isArray(info.roles)) {
-    const roleNames = info.roles.map((role: any) => role.roleName || role.roleId).join(' / ')
-    return `${displayPlayerNameById(info.playerId, info.playerName)} 可能是: ${roleNames}`
-  }
-  if (info.playerId) {
-    return `${displayPlayerNameById(info.playerId, info.playerName)} 的角色是: ${info.roleName || info.roleId || '未知'}`
-  }
-  if (info.roleId) {
-    return `角色: ${info.roleName || info.roleId}, 玩家: ${(info.players || []).map((p: string) => getGamePlayerName(p)).join('、') || '未知'}`
-  }
-  if (info.pairs !== undefined) {
-    return `相邻邪恶对数: ${info.pairs}`
-  }
-  if (info.evilCount !== undefined) {
-    return `邪恶邻居数: ${info.evilCount}`
-  }
-  if (info.grandchild) {
-    return `孙子: ${getGamePlayerName(info.grandchild)}, 角色: ${info.grandchildRole?.name || '未知'}`
-  }
-  if (info.distance !== undefined) {
-    return `恶魔最近距离: ${info.distance}`
-  }
-  if (info.isDemon !== undefined) {
-    return info.isDemon ? '是恶魔！' : '不是恶魔'
-  }
-  if (info.isCorrect !== undefined) {
-    return info.isCorrect ? '猜测正确！' : '猜测错误！'
-  }
-  if (info.abnormalCount !== undefined) {
-    return `异常玩家数: ${info.abnormalCount}`
-  }
-  if (info.sameAlignment !== undefined) {
-    return info.sameAlignment ? '两名玩家同阵营' : '两名玩家不同阵营'
-  }
-  if (Array.isArray(info.outsiderRoles)) {
-    return info.outsiderRoles.length > 0
-      ? `在场外来者角色：${info.outsiderRoles.map((role: any) => role.roleName || role.roleId).join('、')}`
-      : '没有外来者角色在场'
-  }
-
-  return JSON.stringify(info)
-}
+const formatNightInfo = (info: any) => formatBOTCNightInfo(
+  info,
+  (playerId, preferredName) => displayPlayerNameById(playerId, preferredName)
+)
 </script>
 
 <style scoped>

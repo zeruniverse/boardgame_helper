@@ -992,3 +992,34 @@ Commit: fix(round10): 修复钟楼隐私泄露与祖母死亡联动
   - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts 校验。
   - 完整 npm ci --ignore-scripts 已再次尝试，但当前内部 npm 源对锁定的 typescript-5.8.3.tgz 返回 404，因此项目 node_modules 无法完整安装，无法在本容器继续执行正式 npm run build / vue-tsc / Vite 生产构建。该环境限制不影响上述源码 strict 类型检查、静态检查、六 Worker 烟雾和专项回归；仍需在依赖源可用的本地或 CI 执行 npm ci && npm run build 做最终部署构建确认。
 备注: 本轮未删除文件，未创建根目录 src/；所有后端源码修改仅位于 backend/src/，所有前端源码修改仅位于 frontend/src/；修复包只包含本轮修改文件及 repair_log.txt，可按相对路径直接覆盖。
+
+=== 当前请求第 11 轮修复记录 ===
+时间: 2026-08-08 02:54:02 UTC
+Commit: fix(round11): 补齐钟楼恶魔伪装与管家投票规则
+修改/新增文件:
+  - backend/src/workers/botcWorker.ts
+  - frontend/src/components/BOTCRoom.vue
+  - frontend/src/components/BOTCActionPanel.vue
+  - frontend/src/utils/botcNightInfo.ts（新增）
+  - repair_log.txt
+删除文件: 无
+构建测试: 部分通过（源码 strict/静态检查、六 Worker prepare_room 烟雾、BOTC 专项回归与前端格式化回归通过；完整 npm build 仍受当前容器依赖源缺包阻塞）
+本轮修复:
+  - 补齐血染钟楼恶魔开局核心信息：开局为 Demon 生成 3 个当前剧本内“未在场的善良角色”作为伪装身份，排除真实在场角色以及 Drunk 正在看到的伪装角色；结果写入恶魔私有 nightInfo，并在刷新/重连时复用同一组结果，不会重新随机或公开广播。
+  - 修复 Trouble Brewing Butler（管家）的投票约束：存活管家投赞成票时，所选 Master 必须已经在同一提名中投赞成票；若主人尚未举手则拒绝本次提交但不消耗投票机会，可在主人投票后重试。死亡管家已失去角色能力，其一次遗言赞成票不会再被 Master 规则错误拦截。
+  - 修复 Butler Master 生命周期：每次进入新夜先清除上一晚 Master 标记，避免管家死亡、掉线或本夜未行动时把旧主人错误带到下一天；管家即使处于醉酒/中毒状态，也保留其本人当晚实际选择的 Master 标记，从客户端行为上不反向泄露其隐藏失能状态。
+  - 抽取 frontend/src/utils/botcNightInfo.ts，统一 BOTCRoom 与 BOTCActionPanel 对钟楼私有/夜间信息的格式化逻辑，减少两处大段重复代码；补齐恶魔伪装、Sage、角色/玩家、Grandmother 等常见 payload 的一致显示，并优先把玩家 ID 解析为玩家名称，减少一处显示人名、另一处显示原始 ID/JSON 的不一致。
+审查结果/本轮未改动重点:
+  - 继续审查 backend/src 与 frontend/src 当前全部 84 个源码文件，并复查 BaseGameWorker、RoomThreadManager、Controller 的版本号、连接代次、房主切换、Worker 消息串行化/隔离与重连状态合并边界。本轮未发现优先级高于上述 BOTC 规则缺口的新通用竞态或状态倒退问题。
+  - 狼人杀、杀人游戏、一夜狼人、阿瓦隆、德州扑克继续复查角色/阶段推进、投票与胜负、断线/重连及状态同步；德州扑克同时复核盲注、行动顺序、all-in/自动发牌、边池和未跟注筹码返还。本轮未发现需要优先于 BOTC 修复的新阻断项。
+  - BOTC 仍有后续高阶规则工作：Recluse/Spy 等 registration（可登记成不同角色/阵营）尚未抽象成通用说书人裁决层，少数高级角色组合仍需逐项专项验证；本轮没有为此做高风险的大范围重构。
+  - 前端继续沿用既有 Element Plus 与各游戏 Room / ActionPanel / PlayerList / Chat 分层。本轮只合并确定重复的钟楼信息格式化逻辑，没有进行会扩大回归面的跨游戏视觉重构。
+验证:
+  - backend/src 全部 34 个 TypeScript 文件使用 TypeScript 5.8.3、strict 模式和位于项目外的临时外部模块/Node 声明桩完成 noEmit 类型检查，0 个错误；同一严格配置成功生成测试用 CommonJS 编译产物。
+  - backend/src + frontend/src 共 84 个源码文件完成静态扫描：83 个 TypeScript/Vue script 解析单元、27 个 Vue SFC、27 个 style 块均通过，全部相对/@ 导入目标可解析，无语法、SFC 结构、CSS 花括号或失效相对导入错误；根目录不存在 src/。
+  - 六个实际游戏 Worker 使用本轮严格编译产物执行 prepare_room 烟雾测试全部通过：狼人杀、杀人游戏、一夜狼人、阿瓦隆、血染钟楼、德州扑克均能启动 Worker 并完成房间初始化。
+  - BOTC 第 11 轮专项回归通过：恶魔获得 3 个唯一且未在场的善良伪装角色；Drunk 显示角色不会与自动生成伪装冲突；重连 payload 保持同一组伪装；管家早于 Master 投赞成票会被可重试地拒绝；Master 先赞成后管家赞成可正常计票；死亡管家遗言赞成票不受 Master 约束；新夜会清除旧 Master 标记。
+  - 前端共享 BOTC 信息格式化工具通过 strict 单文件编译和专项运行回归，验证恶魔伪装、玩家角色信息及 Sage 双人信息均按预期输出且玩家 ID 能解析为名称。
+  - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts 校验；新增/修改行通过 diff --check，未引入新的尾随空白错误。
+  - 已再次尝试正式 npm run build，但当前项目 node_modules 未能安装：本轮 npm ci --ignore-scripts 仍因当前内部 npm 源对锁定的 typescript-5.8.3.tgz 返回 404 而失败；正式后端 tsc 随后因缺少 Node/Express/Socket.IO/UUID/CORS 等已声明依赖/类型中止，前端 vue-tsc/Vite 未能进入执行。因此本轮不能声称完整生产构建已在此容器通过，仍需在依赖源可用的本地或 CI 执行 npm ci && npm run build 做最终部署构建确认。
+备注: 本轮未删除文件，未创建根目录 src/；所有后端源码修改仅位于 backend/src/，所有前端源码修改/新增仅位于 frontend/src/；修复包只包含本轮修改/新增文件及 repair_log.txt，可按相对路径直接覆盖。

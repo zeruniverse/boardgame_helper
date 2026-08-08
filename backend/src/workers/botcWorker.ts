@@ -37,7 +37,8 @@ import {
   hasActiveVigormortis,
   hasVigormortisRetainedAbility,
   VIGORMORTIS_HAS_ABILITY_REMINDER,
-  AI_STORYTELLER_MANUAL_ROLE_IDS
+  AI_STORYTELLER_MANUAL_ROLE_IDS,
+  shuffleArray
 } from '../utils/botcUtils';
 import { EDITIONS, NIGHT_ORDER, getAllRoles, getEditionById, getRoleById, getRolesByTeam } from '../utils/botcData';
 import { processFirstNightInfo, processNightAction, processDeathAbility } from '../utils/botcSkills';
@@ -200,6 +201,51 @@ export class BOTCWorker extends BaseGameWorker {
     const player = this.gamePlayers.get(playerId);
     if (!player) return;
     this.sendToPlayer(playerId, 'roleAssigned', this.buildRoleAssignedPayload(player, includeNightInfo));
+  }
+
+  /**
+   * At setup every Demon learns three good characters that are not in play.
+   * Keep the generated bluff set in the Demon's private nightInfo so reconnects
+   * receive exactly the same information instead of re-rolling a new set.
+   *
+   * A Drunk's display role is also excluded. Although that character is not a
+   * real token in play, giving the same cover identity to both the Drunk and the
+   * Demon is an avoidable automated-storyteller collision that makes the setup
+   * unnecessarily misleading.
+   */
+  private assignDemonBluffs(): void {
+    const demons = Array.from(this.gamePlayers.values()).filter(player => player.role?.team === Team.DEMON);
+    if (demons.length === 0) return;
+
+    const unavailableRoleIds = new Set<string>();
+    for (const player of this.gamePlayers.values()) {
+      if (player.role) unavailableRoleIds.add(player.role.id);
+      if (player.displayRole) unavailableRoleIds.add(player.displayRole.id);
+    }
+
+    const candidates = shuffleArray([
+      ...getRolesByTeam(this.gameConfig.edition, Team.TOWNSFOLK),
+      ...getRolesByTeam(this.gameConfig.edition, Team.OUTSIDER)
+    ].filter(role => !unavailableRoleIds.has(role.id)));
+
+    if (candidates.length < 3) {
+      throw new Error('当前剧本没有足够的未在场善良角色可供恶魔伪装');
+    }
+
+    const demonBluffs = candidates.slice(0, 3).map(role => ({
+      roleId: role.id,
+      roleName: role.name,
+      team: role.team
+    }));
+
+    for (const demon of demons) {
+      demon.nightInfo = {
+        role: demon.role?.id,
+        information: {
+          demonBluffs: demonBluffs.map(bluff => ({ ...bluff }))
+        }
+      };
+    }
   }
 
   private buildStorytellerInfoPayload(): any {
@@ -2374,6 +2420,10 @@ export class BOTCWorker extends BaseGameWorker {
       // 邪恶双子必须在开局时绑定一名善良玩家，否则其信息和胜负条件都无法生效。
       this.assignEvilTwinPair();
 
+      // 恶魔首夜应得知三个未在场的善良角色作为伪装身份；必须在发送角色信息前生成，
+      // 并持久化到玩家私有状态，保证刷新/重连不会重新随机。
+      this.assignDemonBluffs();
+
       // 分配占卜师的"假恶魔"（Red Herring）标记 - 随机选择一个善良玩家
       const goodPlayersForHerring = Array.from(this.gamePlayers.values())
         .filter(p => !isEvilPlayer(p) && p.role?.id !== 'fortuneteller');
@@ -2433,6 +2483,12 @@ export class BOTCWorker extends BaseGameWorker {
     this.nightActions = [];
     this.firstNightInfoPlayerIds.clear();
     this.nightRound++;
+
+    // Butler 的 Master 只对“明天”有效。进入新夜后先清掉上一晚选择，避免 Butler
+    // 死亡、掉线或本夜超时未提交时把旧主人错误带到下一天。
+    this.gamePlayers.forEach(player => {
+      player.reminders = player.reminders.filter(reminder => reminder !== 'Master' && reminder !== '主人');
+    });
 
     // 重置玩家夜间行动状态
     this.gamePlayers.forEach(player => {
@@ -3141,6 +3197,26 @@ export class BOTCWorker extends BaseGameWorker {
     if (activeNomination.votes.find(v => v.playerId === playerId)) {
       this.sendToPlayer(playerId, 'actionError', { message: '已经投票过了' });
       return;
+    }
+
+    // Butler 的“投票”指举手赞成。由于本项目采用并行按钮投票而不是实体转盘逐席经过，
+    // 只有当主人已经在同一提名中投了赞成票时，才能安全接受 Butler 的赞成票；若 Butler
+    // 先点击则拒绝但不消耗其本次投票机会，主人举手后可立即重试。
+    if (voteValue === 'for' && !voter.isDead && this.getEffectiveRole(voter)?.id === 'butler') {
+      const master = Array.from(this.gamePlayers.values()).find(player =>
+        player.reminders.includes('Master') || player.reminders.includes('主人')
+      );
+      const masterVote = master
+        ? activeNomination.votes.find(vote => vote.playerId === master.playerId)
+        : undefined;
+      if (!master || masterVote?.vote !== 'for') {
+        this.sendToPlayer(playerId, 'actionError', {
+          message: master
+            ? `你的主人 ${this.getPlayerName(master.playerId)} 尚未在本次提名中投赞成票`
+            : '你今晚尚未选择有效的主人，暂时不能投赞成票'
+        });
+        return;
+      }
     }
 
     // 记录投票
@@ -4104,8 +4180,12 @@ export class BOTCWorker extends BaseGameWorker {
             await this.resolvePukkaPreviousTarget();
           }
 
-          // 中毒/醉酒角色仍可提交行动，但能力不产生真实效果。
-          if (abilityWorks) {
+          // 中毒/醉酒角色仍可提交行动，但能力不产生真实效果。Butler 的主人选择是个例外：
+          // 服务端仍需记住玩家实际选择的主人，既避免上一晚 Master 标记残留，也避免通过
+          // “服务端突然允许违规投票”反向泄露其中毒/醉酒状态。processButler 只产生 Master
+          // 提醒标记，因此在能力失效时应用这一项不会触发其他游戏效果。
+          const shouldTrackButlerMaster = effectiveRole?.id === 'butler';
+          if (abilityWorks || shouldTrackButlerMaster) {
             await this.applyNightEffects(result.effects || {}, action);
           }
           
