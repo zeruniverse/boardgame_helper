@@ -50,6 +50,22 @@ router.beforeEach((to: RouteLocationNormalized, _from: RouteLocationNormalized, 
     const gameType = pathToGameType[matchedGameType];
     const rawRoomId = to.params.id;
     const roomId = Array.isArray(rawRoomId) ? rawRoomId[0] : rawRoomId;
+    // 服务端生成的房间码始终为大写，但本地会话校验为了用户输入方便一直是
+    // 大小写不敏感。旧逻辑因此会让 /#/werewolf/abc123 通过路由守卫，随后各
+    // Room/Store 又把原始小写 roomId 发给服务端的大小写敏感 Map，造成“会话有效
+    // 但房间不存在”的假失败。进入任何游戏房间前统一重定向到规范大写房间码。
+    if (typeof roomId === 'string') {
+      const canonicalRoomId = roomId.trim().toUpperCase();
+      if (canonicalRoomId && canonicalRoomId !== roomId) {
+        next({
+          path: `${matchedGameType}/${canonicalRoomId}`,
+          query: to.query,
+          hash: to.hash,
+          replace: true
+        });
+        return;
+      }
+    }
     const canResumeRoom = typeof roomId === 'string'
       && hasExactStoredRoomSession(gameType, roomId);
 

@@ -2085,3 +2085,32 @@ Commit: fix(round45): 事务化重连座位迁移并隔离断线副作用
   - 第 45 轮 Controller 重连迁移专项回归通过：① 旧德州 Socket 保持在线时，新 Socket 在 Worker room sync 暂停窗口发送 fold 被明确拒绝且没有 game_action 到达 Worker；新 Socket 随后断线也没有触发 player_offline，事务失败后旧 Socket 仍拥有在线座位；② 旧、新 Socket 都在暂态窗口断开时，两次 disconnect 都不会抢跑离线副作用，失败回滚最终只发送一次 player_offline，且严格发生在权威 rollback update_room_data 之后；③ provisional 新连接主动 leave_room 只取消迁移、返回 clearSession=false，不触发 player_offline，旧连接/旧会话仍可继续持有座位。
   - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts 校验（仅 optional 原生依赖提示）。正式 npm run build 已再次执行；附件源码工作区没有 node_modules，backend tsc 因 fs/path/crypto/worker_threads/Node 类型及 Express/CORS/Socket.IO/UUID 等 package.json 已声明依赖无法解析而中止。frontend 的正式 npm --prefix frontend run build 也已单独执行并因 vue-tsc 未安装返回 127。相同 backend/src 已通过上述全量 strict/noEmit、隔离 CommonJS 编译与六 Worker 实际运行烟雾，因此没有把依赖未安装环境下的正式构建失败误判为源码错误；完整生产构建/直接部署仍需在 npm ci 能完整成功的本地或 CI 再执行 npm run build 最终确认。
 备注: 本轮未删除文件，未创建根目录 src/；所有后端源码修改仅位于 backend/src/，本轮没有前端源码修改；修复包只包含 backend/src/controllers/roomController.ts 与更新后的 repair_log.txt，可按相对路径直接覆盖。
+
+=== 当前请求第 46 轮修复记录 ===
+时间: 2026-08-08 11:49:32 UTC
+Commit: fix(round46): 隔离新增座位加入事务并规范房间路由码
+修改/新增文件:
+  - backend/src/controllers/roomController.ts
+  - frontend/src/router/index.ts
+  - repair_log.txt
+删除文件: 无
+构建测试: 部分通过（backend/src + frontend/src 当前全部 85 个源文件已完成静态扫描；backend/src 全量 strict/noEmit；六游戏 Worker prepare_room 烟雾；Controller 新增座位事务竞态专项回归；package-lock 依赖树检查均通过。正式 npm ci 被当前内部 npm 镜像对 TypeScript 5.8.3 tarball 的 404 阻塞，因此无法在本容器完成完整 frontend vue-tsc/Vite 生产构建与直接部署终验）
+本轮修复:
+  - 修复“新增座位”缺少与已有座位重连同等级事务隔离的问题。create_room、join_room、join_room_by_name 过去会先把新玩家以 online=true 写入 Controller room.players，再 await Socket.IO join、Worker 启动/同步和 join_room；在 Worker 尚未接纳该座位的窗口内，该 Socket 已能被 game_action/聊天/房主操作识别为正式成员，断线也会进入普通 player_offline。德州扑克因此可能对一个最终会回滚的临时座位执行自动弃牌，其他游戏也可能发生离线跳过/阶段推进等不可通过连接字段回滚的副作用。
+  - 新增 NewSeatConnection 临时事务登记，覆盖创建房间首席位和两条新增玩家加入入口。临时座位在 Worker join_room 成功且最终连接仍有效之前不视为已提交：game_action、旧版 transfer_host/chat_message、kick_player 以及依赖 getConnectedSocketPlayer 的房间状态访问均拒绝临时连接；disconnect/leave_room 只取消事务，不提前向 Worker 发送 player_offline/kick_out_player，由原加入处理器统一回滚座位和会话令牌。
+  - 修复临时新增座位可能参与房主选择的问题。离线房主自动接管、房主离开/被踢后的候选选择现在排除所有尚未提交的新座位；房主主动 transfer_host 或 kick_player 也不能把目标指向仍在加入事务中的座位。即使临时连接已经标记 aborted、但 finally 尚未清除，也仍保持“未提交”语义，避免断线回滚窗口被误选为房主。
+  - 收紧新增座位提交边界。getCommittedJoiningSeat 现在不仅检查 room/player/socketId/online，还确认临时事务未 aborted 且 Socket.IO 当前连接仍存在并 connected；创建/加入只有在最后一次检查通过后才清除临时标记并发布 room_joined/sessionToken。
+  - 修复所有游戏房间直链的房间码大小写分叉。服务端房间 Map 使用生成时的大写 6 位房间码，而本地 hasExactStoredRoomSession 为方便输入按大小写不敏感比较；旧路由因此可能让 /#/werewolf/abc123 通过本地会话守卫，却把小写 abc123 原样交给 Room/Store，最终被服务端判“房间不存在”。router 现在在进入六类游戏房间前先把 :id trim + upper-case 并 replace 到规范 URL，再进行精确会话校验，保证前端路由、Store 和后端房间键使用同一房间码。
+审查结果/本轮未改动重点:
+  - 本轮再次覆盖 backend/src 与 frontend/src 全部 85 个源文件，并重点复核 roomController、RoomThreadManager、BaseGameWorker、六个游戏 Worker、Router、各 Store/Room/ActionPanel/PlayerList/Chat 的连接事务、Worker/Controller 权威快照、会话令牌、共享 Socket 生命周期和前后端事件语义。本轮最高优先级的新确定性问题是第 45 轮只保护“已有座位迁移”、却没有保护“新增座位加入”的同类跨层事务窗口，以及房间直链大小写的前后端事实源分叉。
+  - 六游戏主规则继续按项目规则文档和现有实现交叉检查：狼人杀的狼人共识、预言家/女巫/守卫/猎人夜序、警长与放逐；杀人游戏的杀手/警察/医生/狙击手、医生空救/跳过、PK 与项目屠边；一夜狼人的玩家+3 中心牌、夜序/换牌后最终身份、平票/猎人/皮匠；阿瓦隆的标准任务人数、7 人以上第 4 任务双失败、五次组队否决、刺杀与湖上夫人；德州扑克的盲注/HU 顺序、短码 all-in/加注权、未跟注返还、边池/奇数筹码/burn card；血染钟楼的夜序、提名投票、说书人私密信息和终局。本轮未发现优先级高于新增座位事务竞态、且适合本批次低风险落地的新的确定性主流程规则阻断项。
+  - 前端 27 个 Vue SFC 继续复用现有 Room / ActionPanel / PlayerList / Chat、Element Plus 与共享 gameSession/gameSocket/store 工具；本轮只在统一 Router 守卫规范房间码，没有复制六套页面逻辑或增加新的样式体系，各游戏原有主题差异保持不变。
+  - 血染钟楼仍保留此前 repair_log 已记录、需要更大状态模型或真人说书人逐次裁决 UI 才能完整解决的架构级边界：特殊自定义夜序下 Pit-Hag 创建 Demon 后无法安全逆向更早已经真实落地并触发被动的死亡；真人说书人仍缺每次 Recluse/Spy registration 的逐次手工裁决 UI；自由文本/多重效果抵消等 Mathematician 极端情况仍缺统一逐次最终基准审计。本轮没有用不完整近似逻辑冒险修改这些边界。
+验证:
+  - backend/src + frontend/src 静态扫描通过：当前共 85 个源文件（34 个 backend TypeScript、22 个 frontend TypeScript、27 个 Vue SFC、1 个 CSS、1 个 SVG）；84 个 TS/Vue/CSS 源文件完成 TypeScript 语法/静态相对或 @/ 导入检查，SVG 可正常 XML 解析，无真实合并冲突标记，项目根目录不存在 src/。
+  - backend/src 全部 34 个 TypeScript 文件使用全局 TypeScript 5.8.3、strict 模式、真实全局 Node 类型与项目目录外的 Express/CORS/Socket.IO/UUID 临时声明桩完成 noEmit 类型检查，0 个源码类型错误；同一严格配置成功生成隔离 CommonJS 测试产物。临时声明、测试脚本和编译产物均位于 /mnt/data/boardgame_helper_round46/validation，不进入修复包。
+  - 六个实际游戏 Worker 使用本轮最新隔离编译产物执行 prepare_room 烟雾全部通过：狼人杀、杀人游戏、血染钟楼、一夜狼人、阿瓦隆、德州扑克均能启动 Worker 并完成房间初始化。
+  - 第 46 轮 Controller 新增座位竞态专项回归通过：德州房间中新玩家的 Worker join_room 被人为暂停时，该临时 Socket 的 fold/game_action 被 Controller 拒绝且没有到达 Worker；房主尝试把房主转让给该临时座位被拒绝；临时 Socket 随后断线不会向 Worker发送 player_offline；释放暂停后加入事务因连接失效而回滚，房间中不残留该座位，也没有产生临时玩家的离线游戏副作用。
+  - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts 校验，仅有 ws 的可选原生依赖提示。
+  - 正式 npm ci --ignore-scripts --no-audit --no-fund 已再次执行，但当前内部 npm 镜像请求 package-lock 锁定的 typescript-5.8.3.tgz 返回 404，因此无法形成完整 node_modules，也无法在本容器完成正式 npm run build / frontend vue-tsc + Vite 生产构建。后端源码已经通过上述全量 strict/noEmit 与六 Worker 实际运行烟雾，但“可直接部署”仍需在依赖镜像正常的本地或 CI 完成 npm ci && npm run build 最终确认。
+备注: 本轮未删除文件，未创建根目录 src/；所有后端源码修改仅位于 backend/src/，所有前端源码修改仅位于 frontend/src/；修复包只包含本轮修改源码文件与更新后的 repair_log.txt，可按相对路径直接覆盖。
