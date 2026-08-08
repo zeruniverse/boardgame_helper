@@ -11,6 +11,7 @@ import {
 import {
   getVoteResult,
   checkGameEnd,
+  getWolfKillConsensus,
   renderPlayersHTML
 } from './werewolfUtils';
 
@@ -609,16 +610,12 @@ export const WolfKillHandler: StateHandler = {
     // 计算狼人击杀结果
     const werewolves = Object.values(gameState.players).filter(p => p.character === 'WEREWOLF' && p.isAlive);
 
-    // 收集狼人投票
-    const votes: Vote[] = werewolves.map(p => ({
-      from: p.index,
-      voteAt: p.characterStatus.wantToKills?.[gameState.currentDay] || 0
-    }));
-
-    // 检查是否所有存活狼人都投票给同一个有效目标（要求全员一致；未投票/放弃不算一致）
-    const allWolvesVotedValidTarget = votes.length > 0 && votes.every(v => v.voteAt > 0);
-    const allWolvesAgree = allWolvesVotedValidTarget && votes.every(v => v.voteAt === votes[0].voteAt);
-    const unanimousTarget = allWolvesAgree ? votes[0].voteAt : 0;
+    // 与 Worker 的提前推进条件共用同一套共识判定，避免“Worker 认为已完成，
+    // 状态处理器却认为未达成一致”的语义分叉。0 表示全员明确空刀。
+    const consensus = getWolfKillConsensus(werewolves, gameState.currentDay);
+    const unanimousTarget = consensus.unanimous && consensus.target !== null
+      ? consensus.target
+      : 0;
 
     if (unanimousTarget > 0) {
       const targetPlayer = findPlayerByIndex(gameState.players, unanimousTarget);
@@ -640,12 +637,14 @@ export const WolfKillHandler: StateHandler = {
         });
       }
     } else {
-      // 狼人未达成一致或放弃杀人（只通知狼人）
+      // 超时或主动结算时区分“全员明确空刀”和“尚未达成一致”，
+      // 避免把合法的团队空刀提示成投票失败。
       const aliveWerewolves = Object.values(gameState.players).filter(p => p.character === 'WEREWOLF' && p.isAlive);
+      const message = consensus.unanimous && consensus.target === 0
+        ? '狼人一致选择放弃击杀'
+        : '狼人没有统一的击杀目标';
       aliveWerewolves.forEach(w => {
-        context.sendToPlayer(w.id, 'system_message', {
-          message: '狼人没有统一的击杀目标'
-        });
+        context.sendToPlayer(w.id, 'system_message', { message });
       });
     }
 

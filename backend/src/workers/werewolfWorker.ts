@@ -15,6 +15,7 @@ import {
 import {
   getVoteResult,
   checkGameEnd,
+  getWolfKillConsensus,
   validatePlayerAction,
   validateCharacterConfig,
   renderPlayersHTML,
@@ -1208,22 +1209,31 @@ class WerewolfWorker extends BaseGameWorker {
       });
     }
 
-    // 广播狼人投票给所有狼人
-    const allWerewolves = (Object.values(this.gameState.players) as WerewolfPlayerState[]).filter(p => p.character === 'WEREWOLF' && p.isAlive);
-    const votedCount = allWerewolves.filter(w =>
-      w.characterStatus.wantToKills && w.characterStatus.wantToKills[this.gameState.currentDay] !== undefined
-    ).length;
+    const allWerewolves = (Object.values(this.gameState.players) as WerewolfPlayerState[])
+      .filter(p => p.character === 'WEREWOLF' && p.isAlive);
+    const consensus = getWolfKillConsensus(allWerewolves, this.gameState.currentDay);
 
-    if (votedCount >= allWerewolves.length) {
-      // 所有狼人都已投票，提前结束状态
-      this.notifyAliveWerewolves('所有狼人已完成选择');
-
-      // 延迟进入下一状态
-      this.saveTimeout(() => {
-        const context = this.createContext();
-        stateHandlers[GameStatus.WOLF_KILL].endOfState(this.gameState, context);
-      }, 2000);
+    if (!consensus.allSubmitted) {
+      return;
     }
+
+    if (!consensus.unanimous) {
+      // 全员已经提交但目标分歧时必须留在狼人阶段，让仍在线的狼人继续协商、改票。
+      // 旧逻辑会在此处启动 2 秒延迟并强行结束阶段，最终被状态处理器当成“无统一目标”空刀。
+      this.notifyAliveWerewolves('狼人击杀目标尚未一致，请继续协商并可修改选择');
+      return;
+    }
+
+    this.notifyAliveWerewolves(
+      consensus.target === 0
+        ? '所有狼人一致选择放弃击杀'
+        : '所有狼人已达成一致'
+    );
+
+    // 达成共识后立即结算，避免旧的 2 秒延迟窗口里有人改票后，
+    // 一个已经排队的过期回调仍把分歧选择当作空刀推进到下一阶段。
+    const context = this.createContext();
+    stateHandlers[GameStatus.WOLF_KILL].endOfState(this.gameState, context);
   }
 
   // ==================== 预言家验人 ====================

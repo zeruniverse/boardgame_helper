@@ -64,6 +64,45 @@ export function getVoteSituation(votes: Vote[]): VoteSituation {
   return voteSituation;
 }
 
+export interface WolfKillConsensus {
+  allSubmitted: boolean;
+  unanimous: boolean;
+  target: number | null;
+}
+
+/**
+ * 计算存活狼人的当夜击杀共识。
+ * - undefined 表示该狼人尚未提交，不能视作空刀；
+ * - 0 表示明确选择空刀；
+ * - 只有全员都提交且选择完全一致时才形成共识。
+ */
+export function getWolfKillConsensus(
+  werewolves: WerewolfPlayerState[],
+  currentDay: number
+): WolfKillConsensus {
+  if (werewolves.length === 0) {
+    return { allSubmitted: false, unanimous: false, target: null };
+  }
+
+  const choices = werewolves.map(wolf =>
+    wolf.characterStatus.wantToKills?.[currentDay]
+  );
+  const allSubmitted = choices.every(choice => choice !== undefined);
+
+  if (!allSubmitted) {
+    return { allSubmitted: false, unanimous: false, target: null };
+  }
+
+  const target = choices[0] as number;
+  const unanimous = choices.every(choice => choice === target);
+
+  return {
+    allSubmitted: true,
+    unanimous,
+    target: unanimous ? target : null
+  };
+}
+
 /**
  * 检查游戏是否结束
  * @param players 玩家列表

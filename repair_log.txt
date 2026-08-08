@@ -1413,3 +1413,33 @@ Commit: fix(round24): 统一钟楼AI说书人配置并修复开局状态显示
   - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts 校验。
   - 正式 npm run build 已在本轮最终源码上执行，但当前工作区没有完整 node_modules，后端正式 tsc 因 Node/Express/Socket.IO/UUID/CORS 等已声明依赖/类型未安装而中止；随后 npm ci --ignore-scripts 再次尝试安装，当前内部 npm 源对 package-lock 锁定的 typescript-5.8.3.tgz 返回 404。因此本轮不能声称完整生产 npm 构建已在此容器通过；仍需在依赖源可用的本地或 CI 执行 npm ci && npm run build 做最终部署确认。
 备注: 本轮未删除文件，未创建根目录 src/；所有后端源码修改仅位于 backend/src/，所有前端源码修改仅位于 frontend/src/；修复包只包含本轮修改文件及 repair_log.txt，可按相对路径直接覆盖。
+
+=== 当前请求第 25 轮修复记录 ===
+时间: 2026-08-08 06:20:28 UTC
+Commit: fix(round25): 修复狼人分歧投票提前空刀与共识回调竞态
+修改/新增文件:
+  - backend/src/utils/werewolfUtils.ts
+  - backend/src/utils/werewolfStateHandlers.ts
+  - backend/src/workers/werewolfWorker.ts
+  - repair_log.txt
+删除文件: 无
+构建测试: 部分通过（backend/src 全量 strict/noEmit 与隔离编译、85 个源码文件静态扫描、六游戏 Worker prepare_room 烟雾、狼人击杀共识专项回归和 package-lock 依赖树检查通过；正式 npm ci / npm run build 仍受当前容器内部 npm 源缺少 package-lock 锁定 TypeScript 5.8.3 包阻塞）
+本轮修复:
+  - 修复狼人杀在多名存活狼人“都提交了选择但目标不一致”时仍自动结束 WOLF_KILL 的规则错误。原 Worker 只统计是否每人提交，不检查是否达成共识；2 秒后强制进入 WolfKillHandler，而状态处理器又会把分歧票解释为无击杀，造成狼人明明仍可协商却被系统强制空刀。现在只有所有存活狼人都提交且选择完全一致时才提前推进；分歧时继续停留在狼人阶段，并明确提示可继续协商、改票。
+  - 修复狼人达成一致后原有 2 秒延迟带来的竞态窗口。旧逻辑排队的回调不会绑定“当时的共识内容”，因此某狼人若在这 2 秒内改票，过期回调仍会结束阶段并把新的分歧状态结算成空刀。现在达成共识后立即由带 stateSeq/endingStateSeq 防重入的状态处理器结算，不再留下可被后续改票污染的陈旧共识回调。
+  - 抽出 getWolfKillConsensus 作为 Worker 与 WolfKillHandler 共用的唯一共识判定：undefined 明确表示尚未提交，0 明确表示主动空刀；只有全员已提交且值完全一致才算共识。这样“是否应该提前结束”和“最终应该击杀谁”不再维护两套容易漂移的判断。
+  - 补齐团队空刀语义：所有狼人一致选择 0 会作为合法共识立即推进，并提示“狼人一致选择放弃击杀”；超时、未提交或目标分歧仍提示“没有统一的击杀目标”。
+审查结果/本轮未改动重点:
+  - 重新覆盖 backend/src 与 frontend/src 当前全部 85 个 TypeScript/Vue/CSS/SVG 代码文件，重点复核六个游戏 Worker、狼人状态处理器、BaseGameWorker/RoomThreadManager/Controller 的状态版本与任务串行边界，以及各游戏 Room / ActionPanel / PlayerList / Store 的公开/私密状态消费。本轮最明确、可稳定复现且影响规则正确性的新增问题集中在狼人团队击杀共识，因此没有为了凑改动扩大前端或其他游戏回归面。
+  - 六个游戏主流程再次按项目规则文档核对：狼人杀的夜间角色链/共识击杀/投票与死亡链；杀人游戏的多杀手一致击杀、警察/医生/狙击手与胜负；血染钟楼的夜序、registration、动态角色与说书人裁决；一夜狼人的夜间换牌、并列处决与个人/阵营胜负；阿瓦隆的组队、任务失败票、五次否决、刺杀与湖上夫人；德州扑克的盲注、行动顺序、短码 all-in、未跟注筹码返还、边池和摊牌。本轮未发现优先级高于狼人共识错误、且适合低风险当前批次落地的其他确定性主流程阻断项。
+  - 前端 27 个 Vue SFC 继续通过 script/template/style 与相对/@ 导入扫描，各游戏仍复用既有 Room / ActionPanel / PlayerList / Chat、Element Plus 与本地玩家标识组件。游戏主题存在有意的视觉差异，但没有发现需要本轮跨游戏重构才能修复的构建或运行问题，因此未修改 frontend/src。
+  - BOTC 仍保留前轮已记录的两个高阶边界：自定义夜序中若死亡已在 Pit-Hag 制造 Demon 之前真实落地，当前“本夜死亡任意”机制无法安全逆向撤销已经触发的死亡/被动效果；真人说书人仍没有 Recluse/Spy 每次 registration 的逐次手工裁决 UI。本轮未对这两个需要更大状态模型/UI 设计的事项做冒险性修改。
+验证:
+  - backend/src 全部 34 个 TypeScript 文件使用 TypeScript 5.8.3、strict 模式、真实 Node 类型和位于项目外的 Express/CORS/Socket.IO/UUID 临时声明桩完成 noEmit 类型检查，0 个错误；同一严格配置成功生成 34 个 CommonJS 隔离编译文件。
+  - backend/src + frontend/src 全量静态扫描通过：共 85 个代码文件、83 个 TypeScript/Vue script 解析单元、27 个 Vue SFC、27 个 style 块、213 个相对/@ 静态导入均无 TypeScript 语法、SFC 块、CSS 花括号或失效导入错误；项目根目录不存在 src/。
+  - 六个实际游戏 Worker 使用本轮严格编译产物执行 prepare_room 烟雾全部通过：狼人杀、杀人游戏、血染钟楼、一夜狼人、阿瓦隆、德州扑克均能启动 Worker 并完成房间初始化。
+  - 狼人第 25 轮专项回归通过：两名狼人分别选择不同目标后，在 actionTime=0 的不限时模式等待 2.3 秒仍保持 WOLF_KILL；随后其中一人改票形成一致时立即进入 SEER_CHECK。将同一测试运行在本轮修改前源码上会稳定复现 2 秒后错误进入 SEER_CHECK，证明该回归覆盖了原缺陷。
+  - 狼人共识工具函数 6 组边界用例通过：未提交、目标分歧、同目标一致、全员空刀、空刀/目标混合、单狼人；另有 Worker 级全员空刀回归确认第二名狼人提交 0 后会立即推进到 SEER_CHECK 并发送一致空刀提示。
+  - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts；三个源码修改文件相对附件原始版本执行 diff --check 无新增空白错误。
+  - 正式 npm ci --ignore-scripts 已再次执行，但当前内部 npm 源对 package-lock 锁定的 typescript-5.8.3.tgz 返回 404；正式 npm run build 在依赖未完整安装的工作区执行时，后端 tsc 因 Node/Express/Socket.IO/UUID/CORS 等依赖/类型缺失而中止，根构建因此没有进入前端 vue-tsc/Vite。故本轮不能声称完整生产 npm 构建已在此容器通过；请在依赖源可用的本地或 CI 执行 npm ci && npm run build 做最终部署确认。
+备注: 本轮未删除文件，未创建根目录 src/；所有后端源码修改仅位于 backend/src/，未修改 frontend/src/；修复包只包含本轮修改文件及 repair_log.txt，可按相对路径直接覆盖。
