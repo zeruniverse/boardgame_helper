@@ -125,7 +125,26 @@ export const useMafiaStore = defineStore('mafia', {
       const activePlayers = this.room.players.filter(p => p.online !== false);
       const readyCount = activePlayers.filter(p => p.ready).length;
       // 与后端 MAFIA_TEAM_CONFIG 一致：仅在线玩家参与新局，支持 6-20 人。
-      return readyCount >= 6 && readyCount <= 20 && readyCount === activePlayers.length;
+      if (readyCount < 6 || readyCount > 20 || readyCount !== activePlayers.length) return false;
+
+      const config = this.room.config;
+      if (config?.roleCountsCustomized === true) {
+        const killerCount = config.killerCount ?? 0;
+        const copCount = config.copCount ?? 0;
+        const doctorCount = config.doctorCount ?? 0;
+        const sniperCount = config.sniperCount ?? 0;
+        const specialCount = killerCount + copCount + doctorCount + sniperCount;
+
+        // Worker 会按本局在线人数验证自定义阵容。前端也使用同一口径，
+        // 避免有离线席位时按钮可点、随后又被后端确定性拒绝。
+        if (killerCount < 1 || killerCount >= activePlayers.length ||
+            copCount < 0 || doctorCount < 0 || sniperCount < 0 || sniperCount > 1 ||
+            specialCount > activePlayers.length) {
+          return false;
+        }
+      }
+
+      return true;
     },
 
     canOperate(): boolean {

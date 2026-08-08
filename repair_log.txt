@@ -1889,3 +1889,35 @@ Commit: fix(round39): 收紧狼人杀竞选单次提交并解耦公开身份
   - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts 校验（仅可选原生依赖提示）。本轮修改源码无尾随空白/冲突标记，且相对附件原始版本仅修改上述 3 个源码文件与 repair_log.txt，无删除文件、无根目录 src/。
   - 正式 npm ci --ignore-scripts --no-audit --no-fund --registry=https://registry.npmjs.org 已尝试，但当前容器 120 秒超时前未完成，留下若干只有目录没有包文件的 node_modules 项。随后 npm run build 在该不完整依赖树上执行，backend tsc 因 body-parser/connect/cors/express/node/uuid/ws 等类型定义目录为空而中止，未进入完整 frontend vue-tsc/Vite。相同 backend/src 已通过上述严格隔离类型检查、六 Worker 实际运行烟雾和专项回归，因此没有把依赖安装中断误判成源码错误；完整生产构建/直接部署仍需在 npm ci 能完整成功的本地或 CI 执行 npm run build 做最终确认。
 备注: 本轮未删除文件，未创建根目录 src/；所有后端源码修改仅位于 backend/src/，所有前端源码修改仅位于 frontend/src/；修复包只包含本轮修改文件及 repair_log.txt，可按相对路径直接覆盖。
+
+=== 当前请求第 40 轮修复记录 ===
+时间: 2026-08-08 10:17:05 UTC
+Commit: fix(round40): 保留杀人游戏已提交夜间行动并统一在线人数配置
+修改/新增文件:
+  - backend/src/workers/mafiaWorker.ts
+  - frontend/src/components/MafiaPlayerList.vue
+  - frontend/src/store/mafia.ts
+  - doc/mafia.md
+  - repair_log.txt
+删除文件: 无
+构建测试: 部分通过（backend/src + frontend/src 全部 85 个代码文件静态扫描、backend/src 全量 strict/noEmit 与隔离 CommonJS 编译、六游戏 Worker prepare_room 烟雾、第 40 轮杀人游戏断线夜间行动专项回归、package-lock 依赖树检查均通过；正式 npm ci 在当前容器 180 秒内未完成，node_modules 仍不完整，因此根 npm run build 被缺失依赖类型阻塞）
+本轮修复:
+  - 修复杀人游戏夜间行动在玩家断线后被撤销的确定性状态/重连漏洞。旧逻辑会删除离线警察的 inspect、离线医生的 wantToSave/doctorSkipped 并回滚同夜 doctorSaves、删除离线杀手的 wantToKill；这使“已被 Worker 接受”的操作仅因网络抖动就改变。多警察局中尤为严重：警察 A 查验后断线，inspect[A] 被删除但 copVersion 已永久保留结果；若在警察 B 完成前重连，A 会再次获得本夜查验权，从而同一夜得到两次查验结果。
+  - 统一杀人游戏夜间断线语义为“已提交保留，未提交离线跳过”。警察已完成查验继续占用本夜单次行动权；医生已提交的救治/主动跳过继续有效且不再回滚连续救治历史；杀手已提交意见在断线后仍参与共识，不能通过提交异议后断线来删除自己的意见。所有在线同角色完成后仍会正常关闭该角色行动锁，离线且未提交者不会阻塞当前在线玩家。
+  - 重写夜间重连锁刷新中的杀手共识边界：共识现在同时考虑所有存活杀手已经提交的选择，但只要求当前在线杀手完成提交。离线前已形成一致意见仍可正常结算；离线已提交的异议会继续阻止共识，直到在线杀手协调或该玩家重连修改；若没有任何在线杀手且已提交意见彼此冲突，则本夜按未形成杀人共识处理，避免无限卡夜。
+  - 修复杀人游戏等待页面/开始按钮以“房间席位总数”计算阵容、但 Worker 实际以“在线参与人数”开局的前后端事实源分叉。MafiaPlayerList 现在显式展示在线人数与离线席位，推荐/自定义角色数和平民补足均按在线人数计算；在线人数变化会重新刷新默认阵容。mafia store 的 canStartGame 也会按在线人数校验自定义角色总数/杀手数/狙击手上限，避免按钮可点后被 Worker 确定性拒绝。
+  - 更新杀人游戏文档，明确仅在线玩家参与新局、已提交夜间行动不会因断线撤销、未提交离线角色按跳过处理，以及全员离线冻结流程；同时清理文档尾部重复损坏的版本文本。
+审查结果/本轮未改动重点:
+  - 再次覆盖 backend/src 与 frontend/src 当前全部 85 个 TypeScript/Vue/CSS/SVG 源文件，并复核六个游戏 Worker、BaseGameWorker、RoomThreadManager、roomController、各 Store/Room/ActionPanel/PlayerList 的串行任务、房间快照、公开/私密状态和断线重连。当前新增且可稳定复现的最高优先级问题集中在 Mafia 夜间提交结果可被断线撤销和等待页在线人数事实源分叉，因此本轮修改保持在既有 Mafia Worker/Store/PlayerList 与规则文档，没有新增平行状态层或目录。
+  - 狼人杀继续核对狼人共识、预言家/女巫/守卫/猎人、警长 1.5 票及竞选/放逐一次 PK；一夜狼人继续核对玩家+3 角色牌、独狼/换牌、最终身份投票与并列处决；阿瓦隆继续核对标准任务人数、7 人以上第 4 任务需 2 张失败、五次组队否决、刺杀和湖上夫人；德州扑克继续核对盲注/HU 顺序、短码 all-in、加注权、未跟注返还、边池与摊牌；杀人游戏继续核对杀手共识、警察/医生/狙击手、医生空救、第一天不可自投、一次 PK 与项目定义的屠边胜负。本轮未发现比本次断线重放/撤销漏洞更适合低风险当前批次落地的确定性主流程阻断项。
+  - Controller/RoomThreadManager/BaseGameWorker 的单房间任务串行、Worker messageChain、game_action acknowledgement、workerStateVersion/hostStateVersion/connectionStateVersion 合并继续复核；本轮问题发生在 Mafia Worker 对 controller-owned online 状态的业务解释，而非线程任务本身。修复后连接状态仍由 Controller 快照负责，Worker 只改变“已提交游戏行动是否保留”的语义。
+  - 前端 27 个 Vue SFC 仍复用现有 Room / ActionPanel / PlayerList / Chat、Element Plus 与共享 store/socket/session/playerName/messages 工具；本轮只在已有 MafiaPlayerList 中补充在线/离线展示并统一在线人数口径，没有新建重复组件或新的视觉体系，各游戏原有主题差异保持不变。
+  - 血染钟楼仍保留前轮已记录、需要更大状态模型或真人说书人裁决 UI 才能完整处理的高阶边界：特殊自定义夜序下 Pit-Hag 创建 Demon 后无法安全逆向更早已经真实落地并触发被动的死亡；真人说书人仍缺少每一次 Recluse/Spy registration 的逐次手工裁决 UI；自由文本/多重效果抵消等 Mathematician 极端情况仍缺统一的逐次最终基准审计。本轮没有用不完整的局部近似逻辑冒险修改这些架构级问题。
+验证:
+  - backend/src + frontend/src 全量静态扫描通过：共 85 个源码文件、83 个 TypeScript/Vue script 解析单元、27 个 Vue SFC、28 个 CSS/style 块、220 个静态相对/@ import/export 路径均无 TypeScript 语法、SFC 基本结构、CSS 花括号、真实合并冲突标记或失效导入错误；项目根目录不存在 src/。
+  - backend/src 全部 34 个 TypeScript 文件使用全局 TypeScript 5.8.3、strict 模式、真实全局 Node 类型与项目目录外的 Express/CORS/Socket.IO/UUID 临时声明桩完成 noEmit 类型检查，0 个源码类型错误；同一严格配置成功生成 34 个隔离 CommonJS 测试编译文件。
+  - 六个实际游戏 Worker 使用本轮最新隔离编译产物执行 prepare_room 烟雾全部通过：狼人杀、杀人游戏、血染钟楼、一夜狼人、阿瓦隆、德州扑克均能启动 Worker 并完成房间初始化。
+  - 第 40 轮杀人游戏专项 Worker 回归通过：6 人自定义 2 杀手/2 警察/2 医生局进入夜晚后，警察 A 查验→断线→重连后再次查验被拒绝；医生 A 救治→断线→重连后更换救治目标被拒绝；杀手 A 先提交目标 X 并断线，在线杀手 B 提交不同目标 Y 后仍保持 kill_pending 而不会把 A 的意见删除并立即结算，A 重连后显式改为 Y 才形成共识并产生 kill_result。
+  - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts 校验（仅可选原生依赖提示）。本轮源码差异未创建根目录 src/，后端源码修改仅位于 backend/src/，前端源码修改仅位于 frontend/src/。
+  - 正式 npm ci --ignore-scripts --no-audit --no-fund --registry=https://registry.npmjs.org 已再次尝试，但当前容器在 180 秒内仍未完成且没有形成完整 node_modules；随后 npm run build 在该不完整依赖树上执行，backend tsc 因 body-parser/connect/cors/express/node/uuid/ws 等类型定义目录缺失而中止，未进入完整 frontend vue-tsc/Vite。相同 backend/src 已通过严格隔离类型检查与六 Worker 实际运行烟雾，因此没有把依赖安装中断误判为源码错误；完整生产构建/直接部署仍需在 npm ci 能完整成功的本地或 CI 执行 npm run build 最终确认。
+备注: 本轮未删除文件，未创建根目录 src/；所有后端源码修改仅位于 backend/src/，所有前端源码修改仅位于 frontend/src/；修复包只包含本轮修改文件、规则文档及 repair_log.txt，可按相对路径直接覆盖。

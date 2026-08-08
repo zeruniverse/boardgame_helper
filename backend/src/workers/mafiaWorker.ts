@@ -1163,11 +1163,8 @@ class MafiaWorker extends BaseGameWorker {
     // 记录验人选择
     gameState.inspect[playerId] = suspectId;
     
-    // 移除离线警察的选择
-    const aliveOfflineCops = this.getAliveOfflineCops();
-    aliveOfflineCops.forEach(copId => {
-      delete gameState.inspect[copId];
-    });
+    // 已提交的夜间行动一经接受即保持有效。断线只跳过尚未提交的玩家，
+    // 不能撤销已完成验人，否则重连后会获得同一夜重复验人的机会。
 
     // 执行验人（每个警察独立查验，无需达成一致）
     const result = gameState.topSecret.killer.includes(suspectId);
@@ -1222,18 +1219,8 @@ class MafiaWorker extends BaseGameWorker {
       return;
     }
 
-    // 移除离线医生尚未结算的选择，并同步回滚本夜历史记录。
-    const aliveOfflineDoctors = this.getAliveOfflineDoctors();
-    aliveOfflineDoctors.forEach(docId => {
-      const abandonedTarget = gameState.wantToSave[docId];
-      delete gameState.wantToSave[docId];
-      delete gameState.doctorSkipped[docId];
-      const recordedSave = gameState.doctorSaves[docId];
-      if (abandonedTarget && recordedSave?.day === gameState.day && recordedSave.target === abandonedTarget) {
-        delete gameState.doctorSaves[docId];
-      }
-    });
-    gameState.personSaved = [...new Set(Object.values(gameState.wantToSave))];
+    // 已提交的救治/跳过在断线后仍然有效；仅未提交的离线医生会被夜晚锁跳过。
+    // 这样网络抖动不会改变已经被 Worker 接受的夜间结果。
 
     // 执行救人（每个医生独立选择，无需达成一致）
     // 检查不可连续两晚救同一人（按医生各自记录）
@@ -1300,18 +1287,8 @@ class MafiaWorker extends BaseGameWorker {
       return;
     }
 
-    // 与提交救治相同：离线医生的未结算操作不再阻塞当前在线玩家。
-    const aliveOfflineDoctors = this.getAliveOfflineDoctors();
-    aliveOfflineDoctors.forEach(docId => {
-      const abandonedTarget = gameState.wantToSave[docId];
-      delete gameState.wantToSave[docId];
-      delete gameState.doctorSkipped[docId];
-      const recordedSave = gameState.doctorSaves[docId];
-      if (abandonedTarget && recordedSave?.day === gameState.day && recordedSave.target === abandonedTarget) {
-        delete gameState.doctorSaves[docId];
-      }
-    });
-    gameState.personSaved = [...new Set(Object.values(gameState.wantToSave))];
+    // 与提交救治相同：已接受的跳过不会因断线被撤销；
+    // 离线但尚未提交的医生由夜晚锁自动跳过，不阻塞在线玩家。
 
     // 主动跳过只代表本夜不救人，不写入 doctorSaves；这样上一晚的救治历史仍按真实夜晚间隔判断。
     gameState.doctorSkipped[playerId] = true;
@@ -1443,11 +1420,8 @@ class MafiaWorker extends BaseGameWorker {
     // 否则在不限时或长夜晚配置下会一直等待共识，导致夜晚无法自然推进。
     gameState.wantToKill[playerId] = targetId;
     
-    // 移除离线杀手的选择
-    const aliveOfflineKillers = this.getAliveOfflineKillers();
-    aliveOfflineKillers.forEach(killerId => {
-      delete gameState.wantToKill[killerId];
-    });
+    // 已提交的杀手意见在断线后仍参与共识；未提交的离线杀手不阻塞在线杀手。
+    // 否则可以通过提交异议后断线来撤销自己的票并改变本夜结果。
 
     // 检查是否所有在线杀手都做出了选择
     const aliveOnlineKillers = this.getAliveOnlineKillers();
@@ -1899,10 +1873,8 @@ class MafiaWorker extends BaseGameWorker {
       return;
     }
 
-    const aliveOfflineCops = this.getAliveOfflineCops();
-    aliveOfflineCops.forEach(copId => {
-      delete gameState.inspect[copId];
-    });
+    // 断线只影响“谁还需要提交”，不会撤销已经被 Worker 接受的行动。
+    // 这与白天自动跳过和其他游戏 Worker 的重连语义保持一致，也避免通过网络抖动改写夜晚结果。
     if (gameState.copActionLock) {
       const aliveOnlineCops = this.getAliveOnlineCops();
       if (aliveOnlineCops.length === 0 || aliveOnlineCops.every(copId => copId in gameState.inspect)) {
@@ -1912,22 +1884,7 @@ class MafiaWorker extends BaseGameWorker {
     }
 
     if (gameState.doctorActionLock) {
-      const aliveOfflineDoctors = this.getAliveOfflineDoctors();
-      aliveOfflineDoctors.forEach(docId => {
-        const abandonedTarget = gameState.wantToSave[docId];
-        delete gameState.wantToSave[docId];
-        delete gameState.doctorSkipped[docId];
-
-        // 离线医生的本夜选择被明确撤销时，也必须撤销同一笔历史记录。
-        // 否则该选择既不会产生救治效果，却会错误阻止医生下一夜再次选择该目标。
-        const recordedSave = gameState.doctorSaves[docId];
-        if (abandonedTarget && recordedSave?.day === gameState.day && recordedSave.target === abandonedTarget) {
-          delete gameState.doctorSaves[docId];
-        }
-      });
-
-      // 仅在医生行动尚未结算时根据待选项重算。锁关闭后 wantToSave 会被清空，
-      // 此时 personSaved 是已经提交的夜晚结果，不能被后续断线事件覆盖。
+      // personSaved 必须包含所有已经提交的有效救治，包括随后掉线的医生。
       gameState.personSaved = [...new Set(Object.values(gameState.wantToSave))];
       const aliveOnlineDoctors = this.getAliveOnlineDoctors();
       if (aliveOnlineDoctors.length === 0 || aliveOnlineDoctors.every(docId =>
@@ -1944,30 +1901,32 @@ class MafiaWorker extends BaseGameWorker {
       gameState.wantToSnipe = {};
     }
 
-    const aliveOfflineKillers = this.getAliveOfflineKillers();
-    aliveOfflineKillers.forEach(killerId => {
-      delete gameState.wantToKill[killerId];
-    });
     if (gameState.killerActionLock) {
-      const aliveOnlineKillers = this.getAliveOnlineKillers();
-      if (aliveOnlineKillers.length === 0) {
+      const aliveKillers = gameState.topSecret.killer.filter(id => gameState.players[id]?.alive);
+      const aliveOnlineKillers = aliveKillers.filter(id => this.isPlayerOnline(id));
+      const submittedChoices = aliveKillers
+        .filter(killerId => killerId in gameState.wantToKill)
+        .map(killerId => gameState.wantToKill[killerId])
+        .filter((targetId): targetId is string => Boolean(targetId));
+      const allOnlineKillersChosen = aliveOnlineKillers.every(killerId => killerId in gameState.wantToKill);
+      const allSubmittedChoicesAgree = submittedChoices.length > 0 && new Set(submittedChoices).size === 1;
+
+      if (allOnlineKillersChosen && allSubmittedChoicesAgree) {
+        const personWillDie = submittedChoices[0];
+        gameState.personWillDie = personWillDie;
         gameState.killerActionLock = false;
         gameState.wantToKill = {};
-      } else {
-        const allKillersChosen = aliveOnlineKillers.every(killerId => killerId in gameState.wantToKill);
-        const choices = aliveOnlineKillers
-          .map(killerId => gameState.wantToKill[killerId])
-          .filter((targetId): targetId is string => Boolean(targetId));
-        const allSameChoice = choices.length > 0 && new Set(choices).size === 1;
-        if (allKillersChosen && allSameChoice) {
-          const personWillDie = choices[0];
-          gameState.personWillDie = personWillDie;
-          gameState.killerActionLock = false;
-          gameState.wantToKill = {};
 
-          const message = `你们合伙谋害了${this.getPlayerName(personWillDie)}`;
-          aliveOnlineKillers.forEach(kId => this.sendToPlayer(kId, 'kill_result', { message }));
-        }
+        const message = `你们合伙谋害了${this.getPlayerName(personWillDie)}`;
+        aliveOnlineKillers.forEach(kId => {
+          this.sendToPlayer(kId, 'kill_result', { message });
+          this.sendToPlayer(kId, 'secret_update', this.getSecretForPlayer(kId));
+        });
+      } else if (aliveOnlineKillers.length === 0) {
+        // 没有在线杀手时无法继续协调相互冲突的选择；无共识则按本夜放弃杀人处理。
+        // 如果离线前已经形成一致意见，上面的分支仍会保留并结算该目标。
+        gameState.killerActionLock = false;
+        gameState.wantToKill = {};
       }
     }
   }
@@ -1979,13 +1938,6 @@ class MafiaWorker extends BaseGameWorker {
     );
   }
 
-  private getAliveOfflineCops(): string[] {
-    const gameState = this.gameState as MafiaGameState;
-    return gameState.topSecret.cop.filter(id => 
-      gameState.players[id]?.alive && !this.isPlayerOnline(id)
-    );
-  }
-
   private getAliveOnlineKillers(): string[] {
     const gameState = this.gameState as MafiaGameState;
     return gameState.topSecret.killer.filter(id => 
@@ -1993,24 +1945,10 @@ class MafiaWorker extends BaseGameWorker {
     );
   }
 
-  private getAliveOfflineKillers(): string[] {
-    const gameState = this.gameState as MafiaGameState;
-    return gameState.topSecret.killer.filter(id => 
-      gameState.players[id]?.alive && !this.isPlayerOnline(id)
-    );
-  }
-
   private getAliveOnlineDoctors(): string[] {
     const gameState = this.gameState as MafiaGameState;
     return gameState.topSecret.doctor.filter(id => 
       gameState.players[id]?.alive && this.isPlayerOnline(id)
-    );
-  }
-
-  private getAliveOfflineDoctors(): string[] {
-    const gameState = this.gameState as MafiaGameState;
-    return gameState.topSecret.doctor.filter(id =>
-      gameState.players[id]?.alive && !this.isPlayerOnline(id)
     );
   }
 

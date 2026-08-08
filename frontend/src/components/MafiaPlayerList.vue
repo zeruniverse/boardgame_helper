@@ -1,7 +1,7 @@
 <template>
   <div class="mafia-player-list">
     <div class="list-header">
-      <h4>玩家列表 ({{ players.length }}/{{ maxPlayers }})</h4>
+      <h4>玩家列表 (在线 {{ activePlayerCount }} / 席位 {{ players.length }} / {{ maxPlayers }})</h4>
     </div>
 
     <div class="players">
@@ -22,6 +22,13 @@
               <House />
             </el-icon>
             <span class="player-name">{{ displayPlayerName(player) }}</span>
+            <el-tag
+              v-if="player.online === false"
+              type="info"
+              size="small"
+            >
+              离线
+            </el-tag>
             <el-tag 
               v-if="player.ready" 
               type="success" 
@@ -170,10 +177,11 @@
           </el-button>
           <span class="config-mode">{{ roleConfigModeLabel }}</span>
         </div>
-        <div class="config-tip" :class="{ invalid: roleConfigInvalid }">
-          当前 {{ players.length }} 人：杀手 {{ currentRoleConfig.killers }}、警察 {{ currentRoleConfig.cops }}、医生 {{ currentRoleConfig.doctors }}、狙击手 {{ currentRoleConfig.snipers }}、平民 {{ currentRoleConfig.civilians }}。
-          <span v-if="roleConfigInvalid">角色数量不合法，无法开始游戏。</span>
-          <span v-else>平民会自动补足剩余人数。</span>
+        <div class="config-tip" :class="{ invalid: participantCountInvalid || roleConfigInvalid }">
+          当前在线 {{ activePlayerCount }} 人：杀手 {{ currentRoleConfig.killers }}、警察 {{ currentRoleConfig.cops }}、医生 {{ currentRoleConfig.doctors }}、狙击手 {{ currentRoleConfig.snipers }}、平民 {{ currentRoleConfig.civilians }}。
+          <span v-if="participantCountInvalid">需要 6-20 名在线玩家才能开始游戏。</span>
+          <span v-else-if="roleConfigInvalid">角色数量不合法，无法开始游戏。</span>
+          <span v-else>平民会自动补足剩余在线人数。</span>
         </div>
       </template>
       <template v-else>
@@ -187,7 +195,7 @@
     <div v-if="!gameStarted" class="role-config">
       <el-divider>当前角色配置</el-divider>
       <div class="current-config">
-        <h5>{{ players.length }}人局配置:</h5>
+        <h5>在线 {{ activePlayerCount }} 人配置<span v-if="activePlayerCount < 6">（至少 6 人开局）</span>:</h5>
         <div class="roles">
           <el-tag type="danger" size="small">杀手 {{ currentRoleConfig.killers }}人</el-tag>
           <el-tag type="primary" size="small">警察 {{ currentRoleConfig.cops }}人</el-tag>
@@ -212,6 +220,7 @@ interface Player {
   nickname?: string
   index: number
   ready: boolean
+  online?: boolean
   alive?: boolean
   role?: 'KILLER' | 'COP' | 'DOCTOR' | 'SNIPER' | 'CIVILIAN' | 'GUEST'
   team?: 'RED' | 'BLUE' | 'NONE'
@@ -264,6 +273,8 @@ const actionTime = computed(() => props.roomConfig?.actionTime ?? 60)
 const nightTime = computed(() => props.roomConfig?.nightTime ?? 60)
 const lastWordRound = computed(() => props.roomConfig?.lastWordRound ?? 3)
 const maxPlayers = computed(() => props.roomConfig?.maxPlayers ?? 20)
+const activePlayers = computed(() => props.players.filter(player => player.online !== false))
+const activePlayerCount = computed(() => activePlayers.value.length)
 
 // 角色配置 - 与后端 MAFIA_TEAM_CONFIG 和 doc/mafia.md 一致
 const roleConfigs = {
@@ -304,12 +315,12 @@ const editableConfig = reactive({
   sniperCount: 1
 })
 
-const playersCountForConfig = computed(() => Math.max(6, Math.min(20, props.players.length || maxPlayers.value || 6)))
+const playersCountForConfig = computed(() => Math.max(6, Math.min(20, activePlayerCount.value || 6)))
 
 const currentDefaultRoleConfig = computed(() => getDefaultRoleConfig(playersCountForConfig.value))
 
 watch(
-  () => [props.roomConfig, props.players.length] as const,
+  () => [props.roomConfig, props.players.map(player => `${player.id}:${player.online === false ? 0 : 1}`).join('|')] as const,
   () => {
     const defaults = getDefaultRoleConfig(playersCountForConfig.value)
     editableConfig.speakTime = props.roomConfig?.speakTime ?? 60
@@ -339,18 +350,22 @@ const currentRoleConfig = computed(() => {
     cops: editableConfig.copCount,
     doctors: editableConfig.doctorCount,
     snipers: editableConfig.sniperCount,
-    civilians: Math.max(0, props.players.length - configuredSpecialCount.value)
+    civilians: Math.max(0, activePlayerCount.value - configuredSpecialCount.value)
   }
 })
 
 const roleConfigInvalid = computed(() => {
-  const totalPlayers = props.players.length
+  const totalPlayers = activePlayerCount.value
+  if (props.roomConfig?.roleCountsCustomized !== true) return false
+
   return totalPlayers > 0 && (
     editableConfig.killerCount >= totalPlayers ||
     editableConfig.sniperCount > MAX_SNIPER_COUNT ||
     configuredSpecialCount.value > totalPlayers
   )
 })
+
+const participantCountInvalid = computed(() => activePlayerCount.value < 6 || activePlayerCount.value > 20)
 
 const roleConfigModeLabel = computed(() => props.roomConfig?.roleCountsCustomized === true
   ? '当前为自定义角色数量'
