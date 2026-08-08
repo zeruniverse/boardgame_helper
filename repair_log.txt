@@ -2057,3 +2057,31 @@ Commit: fix(round44): 串行化房间连接并阻止断线重连幽灵席位
   - 第 44 轮前端会话代际专项回归通过：同房间但缺少旧 token 的迟到 ACK 不清理；旧 token 不匹配不清理；房间不匹配不清理；只有 roomId（大小写归一）+ 当前 token 同时匹配时才完整清除会话。
   - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts 校验（仅 optional 原生依赖提示）。正式 npm run build 已执行，backend tsc 因该提取工作区没有 node_modules，无法解析 fs/path/crypto/worker_threads 的 Node 类型及 Express/CORS/Socket.IO/UUID 等 package.json 已声明依赖而中止，未进入 frontend vue-tsc/Vite；直接访问公共 npm registry 的依赖查询在当前容器也超时。相同 backend/src 已通过上述全量 strict/noEmit、隔离 CommonJS 编译与六 Worker 实际运行烟雾，因此没有把依赖未安装/网络环境失败误判为源码错误；完整生产构建与直接部署仍需在 npm ci 能完整成功的本地或 CI 再执行 npm run build 最终确认。
 备注: 本轮未删除文件，未创建根目录 src/；所有后端源码修改仅位于 backend/src/，所有前端源码修改仅位于 frontend/src/；修复包只包含本轮修改源码文件与更新后的 repair_log.txt，可按相对路径直接覆盖。
+
+=== 当前请求第 45 轮修复记录 ===
+时间: 2026-08-08 11:34:38 UTC
+Commit: fix(round45): 事务化重连座位迁移并隔离断线副作用
+修改/新增文件:
+  - backend/src/controllers/roomController.ts
+  - repair_log.txt
+删除文件: 无
+构建测试: 部分通过（backend/src + frontend/src 当前全部 85 个代码文件全量静态扫描、backend/src 全量 strict/noEmit 与隔离 CommonJS 编译、六游戏 Worker prepare_room 烟雾、Controller 重连迁移竞态专项回归、package-lock 工作区依赖树检查均通过；正式 npm run build / frontend build 已执行，但附件提取工作区没有 node_modules，分别被缺失 Node/Express/CORS/Socket.IO/UUID 类型/依赖与 vue-tsc 阻塞）
+本轮修复:
+  - 修复已有座位重连/迁移在“Controller 已临时把座位 socketId 改成新连接、Worker 尚未确认迁移完成”窗口内的跨层竞态。旧逻辑虽然第 44 轮已经在关键 await 后检查 socket.connected，但新连接一旦在这个暂态窗口触发 disconnect，普通断线处理会把它当作已提交座位并立即向 Worker 发送 player_offline；德州扑克等游戏会把该事件解释成真实离线并执行自动弃牌等不可由连接字段回滚撤销的游戏副作用，即使旧连接其实仍然在线。
+  - 新增 ExistingSeatMigration 暂态事务登记。现有座位迁移从改写 Controller 座位开始，到 Worker update_room_data/player_online、旧 Socket 脱离和令牌轮换全部完成前，都明确标记为“尚未提交”。新 Socket 在此期间断线只把迁移标为 aborted，不走常规 player_offline；主动 leave_room 也只取消迁移且返回 clearSession=false，不销毁仍属于旧连接的会话令牌。
+  - 阻断暂态新连接在迁移提交前抢跑业务操作。game_action、kick_player、旧版 transfer_host/chat_message 以及依赖 getConnectedSocketPlayer 的状态访问都会识别 provisional migration 并拒绝，避免新 Socket 仅凭 Controller 暂时写入的 socketId 在 Worker 同步/鉴权事务尚未完成时提前下注、弃牌、踢人或改房主等。
+  - 修复“旧 Socket 在迁移暂态窗口断开但 disconnect 看不到其座位，随后新迁移又失败”造成的幽灵在线回滚。失败事务现在恢复旧 snapshot 前会实时核对旧 Socket 是否仍存在、connected 且仍订阅该房间；不可恢复时不再盲目写回旧 socketId/online=true，而是把座位落为真实离线状态。
+  - 对最终确实离线的失败迁移补齐 Worker 语义补偿：先把 Controller 权威 room 快照通过 update_room_data 回写 Worker，再发送一次 player_offline，使德州扑克自动弃牌等游戏级离线行为与最终连接事实一致；如果旧连接仍可恢复，则保持在线且不触发离线副作用。回滚后同时恢复房主离线接管/空房清理调度。
+  - reset/shutdown 路径同步清理 provisional migration 注册表，避免测试重置或服务关闭留下跨生命周期事务记录；本轮没有新增根目录 src/，没有改变既有 backend/src / frontend/src 目录边界。
+审查结果/本轮未改动重点:
+  - 再次覆盖 backend/src 与 frontend/src 当前全部 85 个源码文件，重点复核 roomController、RoomThreadManager、BaseGameWorker、六个游戏 Worker、各 Store/Room/ActionPanel/PlayerList/Chat 的连接生命周期、任务串行、Controller/Worker 房间快照、公开/私密状态以及前端共享 Socket/会话工具。本轮最高优先级的确定性问题是“已有座位迁移尚未提交，却已允许 disconnect/game_action 按已提交连接处理”的事务边界缺口，因此修复限定在 Controller，不额外引入前端平行状态。
+  - 六游戏主规则继续与项目文档及参考规则交叉检查：狼人杀的狼人共识、神职夜序、警长/放逐；杀人游戏的杀手/警察/医生/狙击手、医生跳过、PK 与项目屠边；一夜狼人的玩家+3 中心牌、换牌后身份、平票/猎人/皮匠；阿瓦隆的任务人数、7 人以上第 4 任务双失败、五次否决、刺杀与角色可见性；德州扑克的 HU、短 all-in/加注权、未跟注返还、边池/奇数筹码/burn card；血染钟楼的夜序、提名投票、说书人私密信息和终局。本轮没有发现比上述跨层连接竞态更高优先级、且适合当前批次低风险合入的新确定性主流程规则错误。
+  - 前端 27 个 Vue SFC 仍复用既有 Room / ActionPanel / PlayerList / Chat、Element Plus 与共享 gameSession/gameSocket/playerName/messages 工具；本轮无需前端改动，现有组件复用和主题差异没有新增不一致。
+  - 血染钟楼仍保留此前 repair_log 已记录、需要更大状态模型或真人说书人逐次裁决 UI 才能完整解决的架构级边界：特殊自定义夜序下 Pit-Hag 创建 Demon 后无法安全逆向更早已经真实落地并触发被动的死亡；真人说书人仍缺每次 Recluse/Spy registration 的逐次手工裁决 UI；自由文本/多重效果抵消等 Mathematician 极端情况仍缺统一逐次最终基准审计。本轮没有用不完整近似逻辑冒险修改这些边界。
+验证:
+  - backend/src + frontend/src 全量静态扫描通过：共 85 个源码文件、83 个 TypeScript/Vue script 解析单元、27 个 Vue SFC、220 个静态相对/@ import/export 路径；无 TypeScript 解析错误、CSS/style 花括号错误、真实合并冲突标记或失效相对/@ 导入；项目根目录不存在 src/。
+  - backend/src 全部 34 个 TypeScript 文件使用 strict 模式、真实全局 Node 类型与项目目录外的 Express/CORS/Socket.IO/UUID 临时声明桩完成 noEmit 类型检查，0 个源码类型错误；同一严格配置成功生成隔离 CommonJS 测试产物。临时声明与编译产物位于 /mnt/data/round45_validation，不进入修复包。
+  - 六个实际游戏 Worker 使用本轮最新隔离编译产物执行 prepare_room 烟雾全部通过：狼人杀、杀人游戏、血染钟楼、一夜狼人、阿瓦隆、德州扑克均能启动 Worker 并完成房间初始化。
+  - 第 45 轮 Controller 重连迁移专项回归通过：① 旧德州 Socket 保持在线时，新 Socket 在 Worker room sync 暂停窗口发送 fold 被明确拒绝且没有 game_action 到达 Worker；新 Socket 随后断线也没有触发 player_offline，事务失败后旧 Socket 仍拥有在线座位；② 旧、新 Socket 都在暂态窗口断开时，两次 disconnect 都不会抢跑离线副作用，失败回滚最终只发送一次 player_offline，且严格发生在权威 rollback update_room_data 之后；③ provisional 新连接主动 leave_room 只取消迁移、返回 clearSession=false，不触发 player_offline，旧连接/旧会话仍可继续持有座位。
+  - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts 校验（仅 optional 原生依赖提示）。正式 npm run build 已再次执行；附件源码工作区没有 node_modules，backend tsc 因 fs/path/crypto/worker_threads/Node 类型及 Express/CORS/Socket.IO/UUID 等 package.json 已声明依赖无法解析而中止。frontend 的正式 npm --prefix frontend run build 也已单独执行并因 vue-tsc 未安装返回 127。相同 backend/src 已通过上述全量 strict/noEmit、隔离 CommonJS 编译与六 Worker 实际运行烟雾，因此没有把依赖未安装环境下的正式构建失败误判为源码错误；完整生产构建/直接部署仍需在 npm ci 能完整成功的本地或 CI 再执行 npm run build 最终确认。
+备注: 本轮未删除文件，未创建根目录 src/；所有后端源码修改仅位于 backend/src/，本轮没有前端源码修改；修复包只包含 backend/src/controllers/roomController.ts 与更新后的 repair_log.txt，可按相对路径直接覆盖。

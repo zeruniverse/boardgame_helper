@@ -52,6 +52,22 @@ const HOST_DISCONNECT_FAILOVER_GRACE_MS = 15000;
 // 不进入 room_update / player.gameMetadata，避免房间内其他玩家凭公开 playerId 冒用座位。
 const playerSessionTokens: Map<string, string> = new Map();
 const existingSeatConnectionQueues: Map<string, Promise<void>> = new Map();
+
+interface ExistingSeatMigration {
+  roomId: string;
+  playerId: string;
+  newSocketId: string;
+  previousSocketId: string;
+  connectionStateVersion: number;
+  aborted: boolean;
+}
+
+// 已有座位迁移在 worker 同步完成前只是“临时绑定”。这段窗口里新 socket 可能断线、
+// 主动离房，甚至恶意抢先发送 game_action。若把临时绑定当成正式连接处理，断线事件
+// 会触发德州扑克自动弃牌/其他游戏离线代操作，产生无法通过连接字段回滚的游戏副作用。
+// 因此显式记录迁移事务，只有 connectExistingPlayerSeatUnlocked 成功返回后才视为提交。
+const existingSeatMigrationsBySocket: Map<string, ExistingSeatMigration> = new Map();
+
 // 同一个 Socket 在任一时刻只允许执行一次“占用/迁移房间座位”的异步事务。
 // Socket.IO 会并发调用 async 事件处理器；如果用户双击加入、同时创建/加入，或
 // 两个 reconnect_room 在第一个事务 await Worker 时交错执行，单纯检查 room.players
@@ -177,6 +193,28 @@ function endSocketRoomConnection(socket: Socket): void {
   socketRoomConnectionClaims.delete(socket.id);
 }
 
+function getExistingSeatMigration(socketId: string, roomId?: string, playerId?: string): ExistingSeatMigration | undefined {
+  const migration = existingSeatMigrationsBySocket.get(socketId);
+  if (!migration) return undefined;
+  if (roomId && migration.roomId !== roomId) return undefined;
+  if (playerId && migration.playerId !== playerId) return undefined;
+  return migration;
+}
+
+function rejectProvisionalSeatAction(
+  socket: Socket,
+  roomId: string,
+  playerId: string,
+  ack?: (response: any) => void
+): boolean {
+  if (!getExistingSeatMigration(socket.id, roomId, playerId)) {
+    return false;
+  }
+
+  sendErrorResponse(socket, '房间连接仍在确认中，请稍后重试', ack);
+  return true;
+}
+
 // 广播大厅更新函数，将在 roomController 中被赋值
 let broadcastLobbyUpdate: () => void = () => {
   console.warn('广播函数尚未初始化');
@@ -275,6 +313,9 @@ function toWorkerRoom(room: Room): Omit<Room, 'cleanupTimer'> {
 }
 
 function getConnectedSocketPlayer(room: Room, socket: Socket): Player | undefined {
+  if (getExistingSeatMigration(socket.id, room.id)) {
+    return undefined;
+  }
   return room.players.find(player =>
     player.socketId === socket.id &&
     player.online !== false
@@ -918,6 +959,8 @@ export function roomController(io: Server) {
       hostKickVotes.clear();
       playerSessionTokens.clear();
       existingSeatConnectionQueues.clear();
+      existingSeatMigrationsBySocket.clear();
+      socketRoomConnectionClaims.clear();
       
       // 6. 重新初始化线程管理器。若进程已开始关闭，不再创建新的 Worker 管理器。
       if (controllerShuttingDown) {
@@ -1468,6 +1511,8 @@ export function roomController(io: Server) {
     let playerSnapshot: PlayerConnectionSnapshot | undefined;
     let previousSocketId: string | undefined;
     let previousSocketInvalidated = false;
+    let activeMigration: ExistingSeatMigration | undefined;
+    let workerOnlineTaskQueued = false;
     const previousLastActiveTime = room.lastActiveTime;
     const hadCleanupTimer = Boolean(room.cleanupTimer);
     const socketWasInRoom = socket.rooms.has(room.id);
@@ -1509,10 +1554,24 @@ export function roomController(io: Server) {
       // 对最新座位拍快照，失败时也只回滚本事务改写的连接字段。
       playerSnapshot = snapshotPlayerConnection(transactionPlayer);
       previousSocketId = playerSnapshot.socketId;
+      activeMigration = {
+        roomId: transactionRoom.id,
+        playerId: transactionPlayer.id,
+        newSocketId: socket.id,
+        previousSocketId: previousSocketId || '',
+        connectionStateVersion: 0,
+        aborted: false
+      };
+      existingSeatMigrationsBySocket.set(socket.id, activeMigration);
+
       markPlayerOnlineForController(transactionRoom, transactionPlayer, socket.id, nickname);
+      activeMigration.connectionStateVersion = getPlayerConnectionStateVersion(transactionPlayer);
       transactionRoom.lastActiveTime = Date.now();
       await socket.join(transactionRoom.id);
       assertSocketConnected();
+      if (activeMigration.aborted || !socket.rooms.has(transactionRoom.id)) {
+        throw new Error('房间连接已在迁移期间取消，请重新连接后重试');
+      }
 
       // socket.join 也会让出事件循环。使用此时仍在 rooms 中的当前快照继续提交；
       // 不再调用 rooms.set(transactionRoom)，以免清理定时器在 join 期间删除房间后被复活。
@@ -1524,8 +1583,18 @@ export function roomController(io: Server) {
 
       threadManager.updateRoomData(joinedRoom.id, joinedRoom);
       await sendTaskToRoom(joinedRoom.id, 'update_room_data', { room: joinedRoom });
+      if (activeMigration.aborted || !socket.connected || !socket.rooms.has(joinedRoom.id)) {
+        throw new Error('房间连接已在同步期间取消，请重新连接后重试');
+      }
+      // 标记“已入队”而不是“已完成”：即使任务自身抛错，Worker 也可能已经执行了
+      // player_online 的部分副作用。若随后无法恢复旧在线连接，回滚必须补发
+      // player_offline，把德州扑克自动弃牌/各游戏离线代操作等语义恢复到一致状态。
+      workerOnlineTaskQueued = true;
       await sendTaskToRoom(joinedRoom.id, 'player_online', { playerId: joinedPlayer.id });
       assertSocketConnected();
+      if (activeMigration.aborted || !socket.rooms.has(joinedRoom.id)) {
+        throw new Error('房间连接已在同步期间取消，请重新连接后重试');
+      }
 
       let latestRoom = rooms.get(joinedRoom.id);
       let latestPlayer = latestRoom?.players.find(p => p.id === joinedPlayer.id);
@@ -1536,6 +1605,9 @@ export function roomController(io: Server) {
       // 只有控制层和 worker 都确认新连接后，才移除旧连接。离房会让出事件循环，
       // 因此轮换令牌前还要再次确认房间没有被清理、座位也没有被踢出。
       assertSocketConnected();
+      if (activeMigration.aborted || !socket.rooms.has(latestRoom.id)) {
+        throw new Error('房间连接已在提交期间取消，请重新连接后重试');
+      }
       previousSocketInvalidated = await detachSeatSocketById(
         latestRoom.id,
         previousSocketId,
@@ -1543,6 +1615,9 @@ export function roomController(io: Server) {
         previousSocketMessage
       );
       assertSocketConnected();
+      if (activeMigration.aborted || !socket.rooms.has(transactionRoom.id)) {
+        throw new Error('房间连接已在提交期间取消，请重新连接后重试');
+      }
       latestRoom = rooms.get(transactionRoom.id);
       latestPlayer = latestRoom?.players.find(p => p.id === transactionPlayer.id);
       if (!latestRoom || !latestPlayer || latestPlayer.socketId !== socket.id || latestPlayer.online === false) {
@@ -1576,18 +1651,37 @@ export function roomController(io: Server) {
         : undefined;
       const seatStillOwnedByFailedConnection = Boolean(
         rollbackPlayer &&
+        activeMigration &&
         rollbackPlayer.socketId === socket.id &&
-        rollbackPlayer.online !== false
+        rollbackPlayer.online !== false &&
+        getPlayerConnectionStateVersion(rollbackPlayer) === activeMigration.connectionStateVersion
       );
-      // 旧连接一旦被移除，或旧 socketId 已经不在 Socket.IO 映射中，就不能再把旧
-      // socketId 和 online=true 恢复回来，否则会制造已退订/不存在却仍在线的幽灵座位。
-      // 同时只回滚仍由本失败事务占用的座位，避免覆盖等待期间已经发生的新接管/踢人。
+
+      let rollbackEndedOffline = false;
       if (rollbackPlayer && playerSnapshot && seatStillOwnedByFailedConnection) {
+        // 迁移期间旧 socket 不再是 controller 的当前 socketId，因此它若恰好断线，普通
+        // disconnect 扫描不会把该座位置离线。失败回滚前必须实时确认旧连接是否仍真实
+        // 存活并仍订阅房间；否则恢复 snapshot.socketId 会制造幽灵在线座位。
+        let previousBindingInvalidated = previousSocketInvalidated;
+        if (playerSnapshot.online !== false) {
+          const snapshotSocketId = playerSnapshot.socketId;
+          const snapshotSocket = snapshotSocketId
+            ? io.sockets.sockets.get(snapshotSocketId)
+            : undefined;
+          const snapshotConnectionRecoverable = Boolean(
+            snapshotSocketId &&
+            snapshotSocket?.connected &&
+            snapshotSocket.rooms.has(rollbackRoom.id)
+          );
+          previousBindingInvalidated = previousBindingInvalidated || !snapshotConnectionRecoverable;
+        }
+
         rollbackPlayerConnectionAfterFailedMigration(
           rollbackPlayer,
           playerSnapshot,
-          previousSocketInvalidated
+          previousBindingInvalidated
         );
+        rollbackEndedOffline = rollbackPlayer.online === false || !rollbackPlayer.socketId;
       }
       // 使用新的时间戳标记回滚结果，避免稍晚到达的失败事务快照覆盖旧座位绑定。
       rollbackRoom.lastActiveTime = Math.max(previousLastActiveTime || 0, Date.now());
@@ -1596,7 +1690,18 @@ export function roomController(io: Server) {
 
       if (threadManager.getRoomThreadStatus(rollbackRoom.id) !== 'not_found') {
         try {
+          // 先把 Controller 权威连接快照恢复给 Worker，再补偿可能被迁移窗口吞掉的
+          // player_offline。特别是德州扑克会在该事件里自动弃牌；仅同步 room 字段不足以
+          // 恢复游戏语义，反过来先发 offline 又可能基于临时 online 快照执行错误逻辑。
           await sendTaskToRoom(rollbackRoom.id, 'update_room_data', { room: rollbackRoom });
+          const shouldNotifyWorkerOffline = Boolean(
+            rollbackEndedOffline &&
+            playerSnapshot &&
+            (workerOnlineTaskQueued || playerSnapshot.online !== false)
+          );
+          if (shouldNotifyWorkerOffline) {
+            await sendTaskToRoom(rollbackRoom.id, 'player_offline', { playerId: playerSnapshot!.id });
+          }
         } catch (rollbackError) {
           console.error(`回滚已有座位连接后同步房间状态失败: ${rollbackRoom.id}`, rollbackError);
         }
@@ -1605,10 +1710,17 @@ export function roomController(io: Server) {
       // 上面的 worker 同步同样会让出事件循环。只对仍存在的当前房间安排清理，
       // 避免失败回滚在房间已删除后通过 scheduleRoomCleanupIfNoOnlinePlayers 将其复活。
       const activeRollbackRoom = rooms.get(rollbackRoom.id);
-      if (activeRollbackRoom && (hadCleanupTimer || !activeRollbackRoom.players.some(player => player.online))) {
-        scheduleRoomCleanupIfNoOnlinePlayers(activeRollbackRoom);
+      if (activeRollbackRoom) {
+        scheduleOfflineHostFailoverIfNeeded(activeRollbackRoom);
+        if (hadCleanupTimer || !activeRollbackRoom.players.some(player => player.online)) {
+          scheduleRoomCleanupIfNoOnlinePlayers(activeRollbackRoom);
+        }
       }
       throw error;
+    } finally {
+      if (activeMigration && existingSeatMigrationsBySocket.get(socket.id) === activeMigration) {
+        existingSeatMigrationsBySocket.delete(socket.id);
+      }
     }
   }
 
@@ -2570,6 +2682,17 @@ export function roomController(io: Server) {
           return;
         }
 
+        const provisionalMigration = getExistingSeatMigration(socket.id, room.id);
+        if (provisionalMigration) {
+          // 新 socket 仍处于已有座位迁移事务中。主动离房只取消这次临时接管，
+          // 不能把座位标离线、触发 Worker 的离线副作用或销毁旧 sessionToken；
+          // 迁移 catch 会恢复仍然有效的旧连接，或在旧连接也已失效时统一降为离线。
+          provisionalMigration.aborted = true;
+          socket.emit('room_left', { roomId: room.id });
+          await leaveSocketRoomSafely(socket, room.id, '取消进行中的座位迁移');
+          return;
+        }
+
         const player = room.players.find(p => p.socketId === socket.id);
         if (!player) {
           // 玩家可能已先被具体游戏worker从房间移除（例如德州扑克cash out）。
@@ -2809,6 +2932,7 @@ export function roomController(io: Server) {
           sendErrorResponse(socket, '您不在此房间中', ack);
           return;
         }
+        if (rejectProvisionalSeatAction(socket, room.id, player.id, ack)) return;
 
         const payloadSizeResult = validateGameActionPayloadSize(data.actionData);
         if (!payloadSizeResult.valid) {
@@ -2915,6 +3039,7 @@ export function roomController(io: Server) {
           sendErrorResponse(socket, '您不在此房间中', ack);
           return;
         }
+        if (rejectProvisionalSeatAction(socket, room.id, player.id, ack)) return;
 
         const newHostId = data.newHostId || data.targetId || data.playerId || '';
         if (!isValidPlayerId(newHostId)) {
@@ -2946,6 +3071,7 @@ export function roomController(io: Server) {
         if (!room) { sendErrorResponse(socket, '房间不存在', ack); return; }
         const player = room.players.find(p => p.socketId === socket.id);
         if (!player) { sendErrorResponse(socket, '您不在此房间中', ack); return; }
+        if (rejectProvisionalSeatAction(socket, room.id, player.id, ack)) return;
 
         const payloadSizeResult = validateGameActionPayloadSize(data);
         if (!payloadSizeResult.valid) {
@@ -2997,6 +3123,7 @@ export function roomController(io: Server) {
           sendErrorResponse(socket, '您不在此房间中', ack);
           return;
         }
+        if (rejectProvisionalSeatAction(socket, room.id, player.id, ack)) return;
 
         const targetId = data.targetId || data.playerId || '';
         if (!isValidPlayerId(targetId)) {
@@ -3175,9 +3302,25 @@ export function roomController(io: Server) {
       // 断线后不再需要保留尚未完成的 socket 级连接 claim；正在 await 的处理器
       // 最终也会在 finally 中重复删除。仍扫描全部房间以兼容升级前已经产生的多房幽灵席位。
       socketRoomConnectionClaims.delete(socket.id);
+      const provisionalMigration = getExistingSeatMigration(socket.id);
+      if (provisionalMigration) {
+        // 临时迁移尚未提交时，新 socket 的 disconnect 只负责取消事务。若在这里按正式
+        // 座位断线处理，会提前触发 Worker 的自动弃牌/离线代操作，随后即使旧 socket
+        // 仍健康也无法回滚这些游戏副作用。connectExistingPlayerSeatUnlocked 的 catch
+        // 会在确认旧连接可恢复后保留在线，否则统一补发真正的 player_offline。
+        provisionalMigration.aborted = true;
+      }
       const memberships = Array.from(rooms.values()).flatMap(room => {
         const player = room.players.find(p => p.socketId === socket.id);
-        return player ? [{ room, player }] : [];
+        if (!player) return [];
+        if (
+          provisionalMigration &&
+          provisionalMigration.roomId === room.id &&
+          provisionalMigration.playerId === player.id
+        ) {
+          return [];
+        }
+        return [{ room, player }];
       });
 
       for (let { room: currentRoom, player: currentPlayer } of memberships) {
@@ -3321,6 +3464,8 @@ export function roomController(io: Server) {
     hostKickVotes.clear();
     playerSessionTokens.clear();
     existingSeatConnectionQueues.clear();
+    existingSeatMigrationsBySocket.clear();
+    socketRoomConnectionClaims.clear();
   }
 
   console.log('房间控制器初始化完成');
