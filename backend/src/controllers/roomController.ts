@@ -658,12 +658,16 @@ function shouldPreserveControllerOnlyPlayer(existingRoom: Room, workerRoom: Room
     return false;
   }
 
-  // New-seat membership is owned by the controller until join_room commits or rolls
-  // back. A Worker room_update may have a higher game revision while still being based
-  // on the pre-join member list (for example a timer fires while socket.join() awaits).
-  // workerStateVersion orders Worker game mutations, not Controller membership
-  // transactions, so revision alone cannot authorize removal of this provisional seat.
-  if (isPendingNewSeat(existingRoom.id, player.id)) {
+  // Seat membership is owned by the controller while a join/reconnect transaction is
+  // still committing. A Worker room_update may have a higher game revision while still
+  // being based on the pre-transaction member/connection list (for example an idle-player
+  // cleanup fires while a reconnect is awaiting Worker synchronization). workerStateVersion
+  // orders Worker game mutations, not Controller seat transactions, so revision alone cannot
+  // authorize removal of either a provisional new seat or an existing seat being migrated.
+  if (
+    isPendingNewSeat(existingRoom.id, player.id) ||
+    isPendingExistingSeatMigration(existingRoom.id, player.id)
+  ) {
     return true;
   }
 
@@ -707,7 +711,9 @@ function mergeRoomUpdateFromWorker(existingRoom: Room | undefined, workerRoom: R
   // a queued transfer-host snapshot reached the worker, even when its game
   // revision is newer. Keep the controller host while that player still
   // exists; only accept the worker host when the current host was removed.
-  const preserveControllerHost = incomingPlayerIds.has(existingRoom.hostId);
+  const controllerOnlyPlayerIds = new Set(controllerOnlyPlayers.map(player => player.id));
+  const preserveControllerHost = incomingPlayerIds.has(existingRoom.hostId) ||
+    controllerOnlyPlayerIds.has(existingRoom.hostId);
   const workerHostExists = incomingPlayerIds.has(workerRoom.hostId);
   const nextHostId = preserveControllerHost
     ? existingRoom.hostId
@@ -1225,13 +1231,14 @@ export function roomController(io: Server) {
     const removedPlayers = (existingRoom.players || [])
       .filter(player =>
         !incomingPlayerIds.has(player.id) &&
-        // A new seat is controller-authoritative until its join transaction has
-        // completed. While socket.join()/Worker startup is awaiting, an unrelated
-        // Worker timer or game action can legitimately emit a newer room_update that
-        // was created before update_room_data reached the Worker. Treating the missing
-        // provisional seat as a kick here would clear its token and detach its socket,
-        // causing a valid concurrent join to roll back.
-        !isPendingNewSeat(workerRoom.id, player.id)
+        // A seat connection is controller-authoritative until its join/reconnect
+        // transaction has completed. While socket.join()/Worker startup/sync is awaiting,
+        // an unrelated Worker timer or game action can legitimately emit a newer
+        // room_update that was created before update_room_data reached the Worker.
+        // Treating that missing seat as a kick here would clear its token and detach the
+        // new socket, causing a valid concurrent connection transaction to roll back.
+        !isPendingNewSeat(workerRoom.id, player.id) &&
+        !isPendingExistingSeatMigration(workerRoom.id, player.id)
       )
       .map(player => ({
         id: player.id,
@@ -1822,7 +1829,20 @@ export function roomController(io: Server) {
     let playerSnapshot: PlayerConnectionSnapshot | undefined;
     let previousSocketId: string | undefined;
     let previousSocketInvalidated = false;
-    let activeMigration: ExistingSeatMigration | undefined;
+    // Register the reconnect before the first await, not only after the controller has
+    // temporarily rebound socketId. Otherwise a Worker room_update can remove this seat
+    // (Texas Hold'em idle-offline cleanup is one concrete source) while ensureRoomThreadRunning
+    // is yielding, and the controller would treat the reconnecting socket as a legitimate kick.
+    // The early marker also makes room-wide start/auto-start gates cover the whole transaction.
+    let activeMigration: ExistingSeatMigration | undefined = {
+      roomId: room.id,
+      playerId: existingPlayer.id,
+      newSocketId: socket.id,
+      previousSocketId: existingPlayer.socketId || '',
+      connectionStateVersion: 0,
+      aborted: false
+    };
+    existingSeatMigrationsBySocket.set(socket.id, activeMigration);
     let workerOnlineTaskQueued = false;
     const previousLastActiveTime = room.lastActiveTime;
     const hadCleanupTimer = Boolean(room.cleanupTimer);
@@ -1847,6 +1867,9 @@ export function roomController(io: Server) {
         throw new Error('房间游戏线程启动失败');
       }
       assertSocketConnected();
+      if (activeMigration.aborted) {
+        throw new Error('房间连接已在迁移期间取消，请重新连接后重试');
+      }
 
       // prepare_room 可能在启动过程中回传新的 room 快照；后续必须基于最新对象提交，
       // 否则旧引用会覆盖 worker 已初始化的游戏状态。房间若已被清理则直接失败，
@@ -1865,15 +1888,10 @@ export function roomController(io: Server) {
       // 对最新座位拍快照，失败时也只回滚本事务改写的连接字段。
       playerSnapshot = snapshotPlayerConnection(transactionPlayer);
       previousSocketId = playerSnapshot.socketId;
-      activeMigration = {
-        roomId: transactionRoom.id,
-        playerId: transactionPlayer.id,
-        newSocketId: socket.id,
-        previousSocketId: previousSocketId || '',
-        connectionStateVersion: 0,
-        aborted: false
-      };
-      existingSeatMigrationsBySocket.set(socket.id, activeMigration);
+      // Refresh fields that must reflect the latest seat snapshot after Worker startup. The
+      // transaction marker itself intentionally stays the same object so disconnect/leave
+      // handlers that already marked it aborted cannot be overwritten by a late re-register.
+      activeMigration.previousSocketId = previousSocketId || '';
 
       markPlayerOnlineForController(transactionRoom, transactionPlayer, socket.id, nickname);
       activeMigration.connectionStateVersion = getPlayerConnectionStateVersion(transactionPlayer);
@@ -3543,6 +3561,49 @@ export function roomController(io: Server) {
           if (isPrivateChat) actionType = 'chat';
         }
 
+        const normalizedActionType = actionType.toLowerCase().replace(/[_-]/g, '');
+        if (room.type === 'texas-holdem' && normalizedActionType === 'cashout') {
+          // Cash Out is not an ordinary game-state action: the Worker removes the actor from
+          // room.players. Serialize that membership mutation with the same seat lock used by
+          // reconnect. Without this, a Cash Out already in flight can overlap an existing-seat
+          // migration; the reconnect protection in mergeRoomUpdateFromWorker would preserve the
+          // seat while the action still acknowledges success, leaving Controller and Worker with
+          // different membership. Whichever operation claims the seat lock first now wins.
+          const roomId = room.id;
+          const actorId = player.id;
+          const actorSocketId = socket.id;
+          const cashOutResult = await runSeatMutationExclusive(roomId, actorId, async () => {
+            const latestRoom = rooms.get(roomId);
+            const latestPlayer = latestRoom?.players.find(candidate =>
+              candidate.id === actorId &&
+              candidate.socketId === actorSocketId &&
+              candidate.online !== false
+            );
+            if (!latestRoom || !latestPlayer) {
+              return { success: false, error: '您的房间连接已变化，请重试' };
+            }
+
+            advancePlayerHeartbeat(latestPlayer);
+            latestRoom.lastActiveTime = Date.now();
+            const taskResponse = await sendTaskToRoom(
+              latestRoom.id,
+              'game_action',
+              { actionType, actionData },
+              socket.id,
+              latestPlayer.id
+            );
+            const actionFailure = readGameActionFailure(taskResponse);
+            if (actionFailure) {
+              return actionFailure;
+            }
+
+            await finalizeSelfRemovalByWorker(latestRoom.id, latestPlayer, socket);
+            return { success: true };
+          });
+          ack?.(cashOutResult);
+          return;
+        }
+
         // 更新玩家心跳和房间活跃时间
         advancePlayerHeartbeat(player);
         room.lastActiveTime = Date.now();
@@ -3565,10 +3626,6 @@ export function roomController(io: Server) {
           return;
         }
 
-        const normalizedActionType = actionType.toLowerCase().replace(/[_-]/g, '');
-        if (room.type === 'texas-holdem' && normalizedActionType === 'cashout') {
-          await finalizeSelfRemovalByWorker(room.id, player, socket);
-        }
         ack?.({ success: true });
       } catch (error) {
         console.error('处理游戏行动失败:', error);
