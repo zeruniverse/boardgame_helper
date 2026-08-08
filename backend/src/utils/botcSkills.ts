@@ -1312,7 +1312,7 @@ export function processDeathAbility(
       }
       break;
     case 'sweetheart':
-      // 甜心死亡时，一名玩家醉酒（由Worker的processPassiveEffects处理）
+      // 甜心死亡时，一名玩家醉酒（由 Worker 在实际死亡结算时立即处理）
       return { success: true, effects: { message: '甜心死亡，一名玩家将醉酒' } };
     case 'barber':
       // 理发师死亡时，恶魔可以交换两个玩家的角色

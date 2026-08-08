@@ -830,3 +830,34 @@ Commit: fix(round5): 修复钟楼小恶魔转移与管家主人标记
   - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts 校验；差异空白检查未报告新增问题。
   - 完整 npm ci 已尝试，但当前内部 npm 源对锁定的 typescript-5.8.3.tgz 返回 404；随后 npm run build 因 node_modules 未成功安装，在后端 tsc 阶段缺少 Node/Express/Socket.IO/UUID/CORS 等已声明依赖/类型而中止，前端 vue-tsc/Vite 未进入执行。因此无法在本容器给出“生产构建已通过”的结论，仍需在依赖源可用的本地或 CI 执行 npm ci && npm run build 做最终确认。
 备注: 本轮未删除文件，未创建根目录 src/；后端源码修改仅位于 backend/src/，前端源码修改仅位于 frontend/src/；修复包只包含本轮修改文件及 repair_log.txt，可按相对路径直接覆盖。
+
+=== 当前请求第 6 轮修复记录 ===
+时间: 2026-08-08 UTC
+Commit: fix(round6): 修正钟楼保护来源与普卡死亡时序
+修改/新增文件:
+  - backend/src/workers/botcWorker.ts
+  - backend/src/utils/botcSkills.ts
+  - frontend/src/components/BOTCActionPanel.vue
+  - repair_log.txt
+删除文件: 无
+构建测试: 部分通过（完整 npm build 受当前容器内部依赖源 404 阻塞）
+本轮修复:
+  - 血染钟楼把“受保护”从单一 isProtected 布尔值改为按来源结算：Monk/Soldier 只阻止恶魔能力造成的有害效果，Innkeeper/Tea Lady/Sailor 处理各自的死亡保护，Assassin 继续绕过通常的死亡保护。由此修复 Monk/Soldier 错误挡住 Godfather 等非恶魔死亡的问题。
+  - Monk/Soldier 的“免受恶魔能力影响”扩展到 Pukka/No Dashii 等恶魔造成的有害中毒；受 Monk/Soldier 保护而未真正被 Pukka 下毒的玩家不会被错误保存成下一夜延迟死亡目标。No Dashii 的持续中毒在黎明 Monk 保护结束后重新计算。
+  - Innkeeper 保护增加独立夜间来源标记并在黎明清除，避免夜间保护错误延续到白天、挡住 Witch 等白天死亡；Innkeeper 选择自己且自己被其能力灌醉时，两个目标都不会获得实际保护，但醉酒仍照常结算。
+  - Pukka 上一夜目标的延迟死亡从“整夜动作全部结束后”移动到 Pukka 本人的实际夜间顺序位置，并在死亡尝试后解除 Pukka 中毒；Pukka 被 Exorcist 跳过、醉酒或中毒时不会错误触发上一目标死亡。
+  - 血染钟楼提名规则前后端统一：死亡玩家不能发起提名，但死亡玩家仍可被提名/处决；禁止自我提名。前端提名列表不再过滤死亡目标，并继续复用现有死亡标签展示。
+  - Sweetheart 的死亡效果改为在“实际死亡发生时”立即让一名存活玩家醉酒，而不是等到后续夜晚被动阶段；同时死亡角色能力提示只发送给说书人，不再通过公共 gameMessage 泄露 Sweetheart/Barber/Klutz/Moonchild 等隐藏身份。
+  - BOTC 等待阶段的人数提示修正为 5-15 名实际玩家；人工说书人模式明确为额外 1 名说书人，避免把说书人错误计入游戏玩家数。
+审查结果/本轮未改动重点:
+  - 对 backend/src 与 frontend/src 当前全部 83 个 TypeScript/Vue/CSS 源码文件继续做静态结构、语法和相对导入检查；本轮最高优先级且可稳定复现的问题集中在 BOTC 保护来源混用、Pukka 时序、死亡角色信息泄露与提名目标过滤。
+  - 狼人杀、杀人游戏、一夜狼人、阿瓦隆、德州扑克本轮未修改，继续沿用前几轮已修复的遗言/隐私、权威计时、刺杀、掉线恢复、边池与加注权等路径；本轮没有发现优先级高于上述 BOTC 状态破坏问题且适合本批安全落地的新阻断项。
+  - BOTC 角色交互规模仍然很大，本轮不声称穷举验证全部角色组合。Vigormortis 的死亡爪牙保留能力/邻座中毒，以及 Barber、Klutz、Moonchild 等若干死亡触发角色的完整交互仍建议作为后续专项继续核对和补齐。
+  - 前端继续沿用现有 Room / ActionPanel / PlayerList / Chat 分层与既有 Element Plus 组件；本轮只调整 BOTCActionPanel 的规则相关展示与候选过滤，没有进行风险较高的跨游戏视觉重构。
+验证:
+  - backend/src 全量源码使用 TypeScript 5.8.3、strict 模式、真实 Node 类型与临时外部模块声明完成类型检查，0 个错误。
+  - backend/src + frontend/src 共 83 个源码文件（55 个 .ts、27 个 .vue、1 个 .css）完成静态扫描；208 个相对导入路径均可解析，根目录不存在 src/。
+  - BOTC 第 6 轮专项回归脚本通过：死亡目标可被提名且禁止自提名；Monk 可挡 Pukka 中毒但不挡 Godfather；安全的 Pukka 新目标不会进入延迟死亡；Soldier 挡 Demon 但不挡 Godfather；Innkeeper 自醉时两名目标均不受保护；普通 Innkeeper 夜间保护可挡夜死且黎明失效；受 Monk 保护的 Pukka 旧目标存活但恢复健康；Sweetheart 立即使一名存活玩家醉酒且不向公共房间泄露角色。
+  - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts；git diff --check 在打包前再次执行。
+  - 完整 npm ci --ignore-scripts 已尝试，但当前内部 npm 源对锁定的 typescript-5.8.3.tgz 返回 404，项目 node_modules 因此无法安装，无法在本容器完成正式 npm run build。该环境限制不影响上述源码 strict 类型检查和专项回归结果；仍需在依赖源可用的本地或 CI 执行 npm ci && npm run build 做最终生产构建确认。
+备注: 本轮未删除文件，未创建根目录 src/；所有后端源码修改均位于 backend/src/，所有前端源码修改均位于 frontend/src/；修复包只包含本轮修改文件及 repair_log.txt，可按相对路径直接覆盖。

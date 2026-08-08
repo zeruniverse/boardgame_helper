@@ -44,6 +44,9 @@ import { mergeRoomGameConfig } from '../utils/roomGameConfig';
 type DebuffType = 'Poisoned' | 'Drunk';
 type DebuffSourceMap = Record<string, Partial<Record<DebuffType, string[]>>>;
 
+const MONK_PROTECTION_REMINDER = 'Protected:Monk';
+const INNKEEPER_PROTECTION_REMINDER = 'Protected:Innkeeper';
+
 interface BOTCGameResultPlayer {
   id: string;
   name: string;
@@ -262,6 +265,86 @@ export class BOTCWorker extends BaseGameWorker {
 
   private deathProtectionBypassed(cause: string): boolean {
     return cause === 'assassin';
+  }
+
+  private isDemonAbilityCause(cause: string): boolean {
+    // Most Demon kills use the generic `demon` cause. Pukka keeps its own
+    // cause for delayed-death bookkeeping, while Fang Gu uses `fanggu` when
+    // checking whether the old Demon can die during a jump. All are harmful
+    // Demon ability effects for Monk/Soldier protection.
+    return cause === 'demon' || cause === 'pukka' || cause === 'fanggu';
+  }
+
+  private getDemonSafetyReason(player: GamePlayer): string | undefined {
+    if (player.reminders.includes(MONK_PROTECTION_REMINDER)) {
+      return '僧侣保护';
+    }
+
+    if (player.role?.id === 'soldier' && this.playerAbilityWorks(player)) {
+      return '士兵免疫恶魔能力';
+    }
+
+    return undefined;
+  }
+
+  /**
+   * Return the concrete protection that would prevent this death.  BOTC
+   * protection effects are not interchangeable: Monk/Soldier only stop
+   * harmful Demon ability effects, while Innkeeper/Tea Lady/Sailor stop any
+   * ordinary death. Keeping the source here prevents the generic UI
+   * `isProtected` flag from accidentally changing rules resolution.
+   */
+  private getDeathProtectionReason(player: GamePlayer, cause: string): string | undefined {
+    if (this.deathProtectionBypassed(cause)) {
+      return undefined;
+    }
+
+    if (this.isDemonAbilityCause(cause)) {
+      const demonSafetyReason = this.getDemonSafetyReason(player);
+      if (demonSafetyReason) {
+        return demonSafetyReason;
+      }
+    }
+
+    if (player.reminders.includes(INNKEEPER_PROTECTION_REMINDER)) {
+      return '旅店老板保护';
+    }
+
+    if (this.isTeaLadyProtected(player.playerId)) {
+      return '茶艺师保护';
+    }
+
+    if (this.isSoberSailor(player)) {
+      return '水手清醒，不能死亡';
+    }
+
+    return undefined;
+  }
+
+  private resolveSweetheartDeath(player: GamePlayer): void {
+    if (
+      player.role?.id !== 'sweetheart' ||
+      player.reminders.includes('sweetheartProcessed') ||
+      !this.playerAbilityWorks(player)
+    ) {
+      return;
+    }
+
+    this.addReminder(player, 'sweetheartProcessed');
+    const candidates = Array.from(this.gamePlayers.values()).filter(candidate => !candidate.isDead);
+    const target = candidates[Math.floor(Math.random() * candidates.length)];
+    if (!target) {
+      return;
+    }
+
+    // Sweetheart drunkenness starts when the Sweetheart actually dies, not at
+    // the end of the following night.  This matters for abilities that wake
+    // that same night after a daytime execution.
+    this.applyDebuff(target, 'Drunk', 'sweetheart');
+    this.sendToPlayer(this.gameConfig.storytellerId, 'sweetheartEffect', {
+      targetId: target.playerId,
+      targetName: this.getPlayerName(target.playerId)
+    });
   }
 
   private async resolveSurvivedExecution(player: GamePlayer, executedBy: string, reason?: string): Promise<void> {
@@ -613,7 +696,11 @@ export class BOTCWorker extends BaseGameWorker {
     }
 
     for (const neighbor of this.getNoDashiiPoisonTargets(nodashii.playerId)) {
-      this.applyDebuff(neighbor, 'Poisoned', 'nodashii');
+      // Soldier is always safe from harmful Demon effects. A player protected
+      // by the Monk is also safe from Demon-caused poisoning for that night.
+      if (!this.getDemonSafetyReason(neighbor)) {
+        this.applyDebuff(neighbor, 'Poisoned', 'nodashii');
+      }
     }
   }
 
@@ -685,10 +772,11 @@ export class BOTCWorker extends BaseGameWorker {
       return false;
     }
 
-    // The jump only happens if the Fang Gu would die and the Outsider would be
-    // killed by this attack. If either side is protected, fall back to the
-    // normal demon-kill path so protection rules stay centralized in killPlayer.
-    if (fangGu.isProtected || target.isProtected || this.getTeaLadyProtectedPlayerIds().has(target.playerId)) {
+    // The jump only happens if both deaths can actually happen.  Use the same
+    // source-aware protection rules as killPlayer rather than the generic
+    // isProtected UI flag (which otherwise makes Soldier/Monk/Innkeeper rules
+    // bleed into one another).
+    if (this.getDeathProtectionReason(target, 'demon') || this.getDeathProtectionReason(fangGu, 'fanggu')) {
       return false;
     }
 
@@ -1799,6 +1887,8 @@ export class BOTCWorker extends BaseGameWorker {
           r !== '被诅咒' &&
           r !== 'Cursed' &&
           r !== 'Protected' &&
+          r !== MONK_PROTECTION_REMINDER &&
+          r !== INNKEEPER_PROTECTION_REMINDER &&
           r !== 'Survives execution' &&
           r !== 'DA Protected' &&
           r !== 'Po Charged Used' &&
@@ -2049,6 +2139,29 @@ export class BOTCWorker extends BaseGameWorker {
     this.deathsToday = [];
     this.clearEndDayProposal();
 
+    // Monk/Innkeeper protection lasts for the night only.  Clear those
+    // markers at dawn before daytime deaths (for example Witch) can resolve.
+    // Tea Lady protection is continuous, so recompute its display marker after
+    // removing the temporary night protection state.
+    this.gamePlayers.forEach(player => {
+      player.isProtected = false;
+      player.reminders = player.reminders.filter(reminder =>
+        reminder !== 'Protected' &&
+        reminder !== MONK_PROTECTION_REMINDER &&
+        reminder !== INNKEEPER_PROTECTION_REMINDER
+      );
+    });
+    for (const protectedPlayerId of this.getTeaLadyProtectedPlayerIds()) {
+      const protectedPlayer = this.gamePlayers.get(protectedPlayerId);
+      if (protectedPlayer) {
+        protectedPlayer.isProtected = true;
+        this.addReminder(protectedPlayer, 'Protected');
+      }
+    }
+    // No Dashii poison is continuous. Monk safety ends at dawn, so refresh
+    // after clearing the night-only marker; Soldier safety remains in force.
+    this.refreshNoDashiiPoison();
+
     // 女巫在只剩3名存活玩家时失去能力，现有诅咒立即移除
     if (this.gameState.livingPlayers <= 3) {
       this.clearWitchCurseMarkers();
@@ -2253,7 +2366,14 @@ export class BOTCWorker extends BaseGameWorker {
       return;
     }
 
-    // 被提名者可以是死亡或存活，但每天只能被提名一次
+    // 标准规则要求提名“另一名玩家”；死亡玩家不能发起提名，但仍可被提名/处决。
+    // 这对僵怖（Zombuul）以及“处决但未造成死亡”的规则交互很重要。
+    if (nomineeId === playerId) {
+      this.sendToPlayer(playerId, 'actionError', { message: '不能提名自己' });
+      return;
+    }
+
+    // 每名玩家每天最多被提名一次。
     const alreadyNominated = this.gameState.nominations.some(n => n.nominee === nomineeId);
     if (alreadyNominated) {
       this.sendToPlayer(playerId, 'actionError', { message: '该玩家今天已经被提名过' });
@@ -2788,10 +2908,13 @@ export class BOTCWorker extends BaseGameWorker {
     this.noExecutionToday = false;
     this.recordDeathToday(player, 'execution');
 
-    // 处理死亡时的能力
+    this.resolveSweetheartDeath(player);
+
+    // 死亡不会公开翻开身份。角色专属死亡能力提示只能发给说书人，
+    // 否则 Sweetheart/Barber/Klutz/Moonchild 等角色会被系统直接泄露。
     const deathResult = processDeathAbility(playerId, Array.from(this.gamePlayers.values()), 'execution');
     if (deathResult.effects?.message) {
-      this.sendToRoom('gameMessage', { 
+      this.sendToPlayer(this.gameConfig.storytellerId, 'gameMessage', {
         message: deathResult.effects.message,
         type: 'warning'
       });
@@ -3271,6 +3394,14 @@ export class BOTCWorker extends BaseGameWorker {
           const abilityWorks = this.playerAbilityWorks(player);
           const effectiveRole = this.getEffectiveRole(player) || player.role;
 
+          // Pukka's previously poisoned player dies when the Pukka wakes,
+          // before the newly chosen player is poisoned. Resolving it here
+          // preserves night order and also respects Exorcist/poison/drunk
+          // because skipped or malfunctioning Pukka actions never reach this.
+          if (abilityWorks && effectiveRole?.id === 'pukka') {
+            await this.resolvePukkaPreviousTarget();
+          }
+
           // 中毒/醉酒角色仍可提交行动，但能力不产生真实效果。
           if (abilityWorks) {
             await this.applyNightEffects(result.effects || {}, action);
@@ -3311,8 +3442,7 @@ export class BOTCWorker extends BaseGameWorker {
     // 处理特殊信息角色的夜晚信息（Flowergirl、Towncrier等需要白天历史数据）
     await this.processSpecialNightInfo();
 
-    // 处理Pukka的延迟死亡
-    await this.processPukkaDelayedDeath();
+    // Pukka 的延迟死亡已在其夜间顺序位置即时结算。
 
     // 处理其他夜间被动效果
     await this.processPassiveEffects();
@@ -3400,26 +3530,65 @@ export class BOTCWorker extends BaseGameWorker {
    * 应用夜晚效果
    */
   private async applyNightEffects(effects: any, action: NightAction): Promise<void> {
-    // 处理中毒
+    // 处理中毒。Monk/Soldier 的“safe from the Demon”不仅阻止死亡，
+    // 也阻止 Pukka 等恶魔能力造成的有害中毒。
     if (effects.poisoned) {
       const actingPlayer = this.gamePlayers.get(action.playerId);
       const sourceRoleId = action.roleId || (actingPlayer ? this.getEffectiveRole(actingPlayer)?.id : '') || '';
+      const sourceRole = getRoleById(sourceRoleId);
       const source = sourceRoleId === 'poisoner' || sourceRoleId === 'pukka' ? sourceRoleId : undefined;
+      let pukkaPoisonedTarget: string | undefined;
       for (const playerId of effects.poisoned) {
         const player = this.gamePlayers.get(playerId);
-        if (player) {
-          this.applyDebuff(player, 'Poisoned', source);
+        if (!player) continue;
+
+        if (sourceRole?.team === Team.DEMON) {
+          const safetyReason = this.getDemonSafetyReason(player);
+          if (safetyReason) {
+            this.sendToPlayer(this.gameConfig.storytellerId, 'playerProtected', {
+              playerId,
+              playerName: this.getPlayerName(playerId),
+              reason: safetyReason
+            });
+            continue;
+          }
         }
+
+        this.applyDebuff(player, 'Poisoned', source);
+        if (sourceRoleId === 'pukka') {
+          pukkaPoisonedTarget = playerId;
+        }
+      }
+      if (sourceRoleId === 'pukka') {
+        // A safe target was never poisoned, so it must not become next
+        // night's delayed-death target.
+        this.previouslyPukkaTarget = pukkaPoisonedTarget || null;
       }
     }
 
-    // 处理保护
+    // 处理保护。isProtected/Protected 仅用于魔典展示；规则结算必须
+    // 保留保护来源，避免 Monk/Soldier/Innkeeper 被当成同一种免死。
     if (effects.protected) {
-      for (const playerId of effects.protected) {
-        const player = this.gamePlayers.get(playerId);
-        if (player) {
-          player.isProtected = true;
-          this.addReminder(player, 'Protected');
+      const actingPlayer = this.gamePlayers.get(action.playerId);
+      const protectionSource = action.roleId || (actingPlayer ? this.getEffectiveRole(actingPlayer)?.id : '') || '';
+      // If the Innkeeper chooses themself and their own ability makes them
+      // drunk, the Innkeeper immediately has no ability: neither chosen
+      // player is actually safe, although the drunkenness still applies.
+      const innkeeperDrankSelf = protectionSource === 'innkeeper' &&
+        Array.isArray(effects.drunk) && effects.drunk.includes(action.playerId);
+
+      if (!innkeeperDrankSelf) {
+        for (const playerId of effects.protected) {
+          const player = this.gamePlayers.get(playerId);
+          if (player) {
+            player.isProtected = true;
+            this.addReminder(player, 'Protected');
+            if (protectionSource === 'monk') {
+              this.addReminder(player, MONK_PROTECTION_REMINDER);
+            } else if (protectionSource === 'innkeeper') {
+              this.addReminder(player, INNKEEPER_PROTECTION_REMINDER);
+            }
+          }
         }
       }
     }
@@ -3783,35 +3952,22 @@ export class BOTCWorker extends BaseGameWorker {
   }
 
   /**
-   * 处理Pukka的延迟死亡
+   * Resolve the previous Pukka target at the Pukka's actual night-order
+   * position. The player becomes healthy after the death attempt even when a
+   * protection effect prevents the death.
    */
-  private async processPukkaDelayedDeath(): Promise<void> {
-    // 找到上一夜被Pukka下毒的玩家，让他们死亡
-    const pukkaAction = this.nightActions.find(a => {
-      const player = this.gamePlayers.get(a.playerId);
-      return Boolean(
-        player &&
-        this.getEffectiveRole(player)?.id === 'pukka' &&
-        this.playerAbilityWorks(player)
-      );
-    });
-
-    if (pukkaAction && this.previouslyPukkaTarget) {
-      // 前一晚中毒的玩家今夜死亡，随后解除Pukka留下的中毒来源。
-      await this.killPlayer(this.previouslyPukkaTarget, 'pukka');
-      const previousTarget = this.gamePlayers.get(this.previouslyPukkaTarget);
-      if (previousTarget) {
-        this.removeDebuffSource(previousTarget, 'Poisoned', 'pukka');
-      }
+  private async resolvePukkaPreviousTarget(): Promise<void> {
+    const previousTargetId = this.previouslyPukkaTarget;
+    if (!previousTargetId) {
+      return;
     }
 
-    // 更新前一夜的中毒目标
-    if (pukkaAction && pukkaAction.targets && pukkaAction.targets.length > 0) {
-      this.previouslyPukkaTarget = pukkaAction.targets[0];
-      const target = this.gamePlayers.get(this.previouslyPukkaTarget);
-      if (target) {
-        this.applyDebuff(target, 'Poisoned', 'pukka');
-      }
+    this.previouslyPukkaTarget = null;
+    await this.killPlayer(previousTargetId, 'pukka');
+
+    const previousTarget = this.gamePlayers.get(previousTargetId);
+    if (previousTarget) {
+      this.removeDebuffSource(previousTarget, 'Poisoned', 'pukka');
     }
   }
 
@@ -3820,36 +3976,18 @@ export class BOTCWorker extends BaseGameWorker {
    */
   private async processPassiveEffects(): Promise<void> {
     const allPlayers = Array.from(this.gamePlayers.values());
-    const alivePlayers = allPlayers.filter(p => !p.isDead);
 
     // 检查红颜（Scarlet Woman）- 恶魔死亡时成为恶魔
     this.promoteScarletWomanIfNeeded();
 
-    // 处理士兵的免疫（士兵始终免疫恶魔攻击）
-    const soldier = alivePlayers.find(p => p.role?.id === 'soldier');
-    if (soldier && this.playerAbilityWorks(soldier)) {
-      soldier.isProtected = true;
-    }
+    // 士兵的免疫在 killPlayer 中按死亡来源即时判断；不要写入通用
+    // isProtected，否则会被误解释为也能挡住 Godfather 等非恶魔死亡。
 
     // 诺达希（No Dashii）的邻座镇民中毒是持续效果；夜晚结束时刷新，供白天和下一夜使用。
     this.refreshNoDashiiPoison();
 
     // 维格莫提斯（Vigormortis）杀死的爪牙保留能力并毒化邻座镇民
     // 此效果在applyNightEffects中通过reminders处理
-
-    // 处理甜心（Sweetheart）死亡效果：随机一名玩家醉酒
-    const deadSweetheart = allPlayers.find(p => p.role?.id === 'sweetheart' && p.isDead);
-    if (deadSweetheart && this.playerAbilityWorks(deadSweetheart) && !deadSweetheart.reminders.includes('sweetheartProcessed')) {
-      deadSweetheart.reminders.push('sweetheartProcessed');
-      const randomAlive = alivePlayers[Math.floor(Math.random() * alivePlayers.length)];
-      if (randomAlive) {
-        this.applyDebuff(randomAlive, 'Drunk', 'sweetheart');
-        this.sendToPlayer(this.gameConfig.storytellerId, 'sweetheartEffect', {
-          targetId: randomAlive.playerId,
-          targetName: this.getPlayerName(randomAlive.playerId)
-        });
-      }
-    }
 
     // 同步茶艺师保护标记给魔典/信息角色查看；真正的死亡免疫在 killPlayer/executePlayer 中即时判断。
     for (const protectedPlayerId of this.getTeaLadyProtectedPlayerIds()) {
@@ -3886,30 +4024,12 @@ export class BOTCWorker extends BaseGameWorker {
     }
 
     const ignoresDeathProtection = this.deathProtectionBypassed(cause);
-
-    // 检查保护效果（僧侣等夜间保护）
-    if (player.isProtected && (cause === 'demon' || cause === 'godfather')) {
-      this.sendToPlayer(this.gameConfig.storytellerId, 'playerProtected', {
-        playerId,
-        playerName: this.getPlayerName(playerId)
-      });
-      return;
-    }
-
-    if (!ignoresDeathProtection && this.isTeaLadyProtected(playerId)) {
+    const protectionReason = this.getDeathProtectionReason(player, cause);
+    if (protectionReason) {
       this.sendToPlayer(this.gameConfig.storytellerId, 'playerProtected', {
         playerId,
         playerName: this.getPlayerName(playerId),
-        reason: '茶艺师保护'
-      });
-      return;
-    }
-
-    if (!ignoresDeathProtection && this.isSoberSailor(player)) {
-      this.sendToPlayer(this.gameConfig.storytellerId, 'playerProtected', {
-        playerId,
-        playerName: this.getPlayerName(playerId),
-        reason: '水手清醒，不能死亡'
+        reason: protectionReason
       });
       return;
     }
@@ -3918,16 +4038,6 @@ export class BOTCWorker extends BaseGameWorker {
     if (!ignoresDeathProtection && player.role?.id === 'fool' && this.playerAbilityWorks(player) && !player.reminders?.includes('foolUsed')) {
       this.addReminder(player, 'foolUsed');
       this.sendToRoom('gameMessage', { message: `${this.getPlayerName(playerId)} 使用了愚者的免死能力！`, type: 'info' });
-      return;
-    }
-
-    // 检查士兵保护
-    if (player.role?.id === 'soldier' && this.playerAbilityWorks(player) && cause === 'demon') {
-      this.sendToPlayer(this.gameConfig.storytellerId, 'playerProtected', {
-        playerId,
-        playerName: this.getPlayerName(playerId),
-        reason: '士兵免疫恶魔攻击'
-      });
       return;
     }
 
@@ -4077,6 +4187,7 @@ export class BOTCWorker extends BaseGameWorker {
     player.canVote = true; // 新死亡的玩家获得遗言票
     this.gameState.livingPlayers--;
     this.recordDeathToday(player, cause);
+    this.resolveSweetheartDeath(player);
 
     this.sendToRoom('playerDied', {
       playerId,

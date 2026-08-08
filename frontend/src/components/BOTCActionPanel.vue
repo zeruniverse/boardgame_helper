@@ -30,8 +30,8 @@
           <p>等待所有玩家加入房间，房主配置游戏并开始游戏。</p>
           <div class="player-count-info">
             <span>当前玩家数: {{ gameState.players?.length || gameState.playerCount || 0 }}人</span>
-            <span v-if="isAIStoryteller">建议人数: AI说书人模式下4-14名游戏玩家</span>
-            <span v-else>建议人数: 5-15人（含1名说书人）</span>
+            <span v-if="isAIStoryteller">建议人数: AI说书人模式下5-15名实际玩家</span>
+            <span v-else>建议人数: 5-15名实际玩家 + 1名说书人</span>
           </div>
           <el-button 
             v-if="isStoryteller && (gameState.players?.length >= 5 || gameState.playerCount >= 5)" 
@@ -629,7 +629,12 @@ const hasVoted = computed(() => {
 })
 
 const nominationTargets = computed(() => {
-  return props.gameState?.players || []
+  // Dead players may still be nominated/executed in BOTC; only the nominator
+  // must be alive.  Exclude just the current player because nominations are
+  // made against another player.
+  return props.gameState?.players?.filter((player: any) =>
+    player.id !== props.currentUserId
+  ) || []
 })
 
 const canRestartGame = computed(() => props.isHost || props.isStoryteller)
