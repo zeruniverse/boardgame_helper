@@ -1144,3 +1144,37 @@ Commit: fix(round15): 补齐钟楼坑巫任意死亡与侍女夜醒判定
   - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts 校验；本轮源码 diff --check 无尾随空白错误。
   - 正式 npm run build 已在本轮修改后再次执行，但当前项目 node_modules/类型依赖不完整，后端 tsc 因缺少 Node、Express、Socket.IO、UUID、CORS、worker_threads 等声明而中止，前端 vue-tsc/Vite 未进入生产构建。结合前几轮 npm ci 对当前内部源锁定 TypeScript 包返回 404 的记录，本轮仍不能声称完整生产构建已在此容器通过；需在依赖源可用的本地或 CI 执行 npm ci && npm run build 做最终部署确认。
 备注: 本轮未删除文件，未创建根目录 src/；所有后端源码修改仅位于 backend/src/，所有前端源码修改仅位于 frontend/src/；修复包只包含本轮修改文件及 repair_log.txt，可按相对路径直接覆盖。
+
+=== 当前请求第 16 轮修复记录 ===
+时间: 2026-08-08 04:08:02 UTC
+Commit: fix(round16): 补齐钟楼身份登记与昼间历史判定
+修改/新增文件:
+  - backend/src/utils/botcTypes.ts
+  - backend/src/utils/botcUtils.ts
+  - backend/src/utils/botcSkills.ts
+  - backend/src/workers/botcWorker.ts
+  - repair_log.txt
+删除文件: 无
+构建测试: 部分通过（后端全量 strict 类型检查/测试编译、85 个源码文件静态扫描、六 Worker prepare_room 烟雾及 BOTC 多组专项回归通过；正式 npm run build 因当前工作区未安装完整依赖而中止，隔离目录 npm ci 又受当前容器 DNS 无法访问 registry.npmjs.org 阻塞）
+本轮修复:
+  - 抽出 BOTC 可复用 registration 判定：Recluse（隐士）可在单次能力检查中登记为邪恶及具体 Minion/Demon，Spy（间谍）可登记为善良及具体 Townsfolk/Outsider；每次检查独立作出自动说书人裁决，中毒/醉酒会关闭其自身登记能力。实现同时严格区分“角色类型 team”和玩家真实 alignment，避免 Pit-Hag/Barber/阵营变化后把“拿着邪恶角色的善良玩家”错误当成邪恶阵营。
+  - 将 registration 接入当前核心检测链：洗衣妇、图书管理员、调查员、厨师、共情者、祖母、钟表匠首夜信息，以及 Worker 中的 Virgin、Ravenkeeper、Slayer、Empath、Fortune Teller、Dreamer、Seamstress、Oracle、Undertaker、Sage 等判断；从而不再把 Recluse/Spy 永久硬编码为真实身份。
+  - 修复 Slayer 对已死亡 Demon 目标仍公开表现为“再次死亡”的错误：普通死亡目标即使登记为 Demon 也不会再次死亡或产生成功死亡提示；Zombuul 首次公开登记死亡但仍功能性存活的情况保留为可真正击杀的例外。
+  - 修复 Flowergirl（花女）与 Town Crier（报信者）使用“夜晚醒来时当前角色”回看白天历史的规则错误：Vote/Nomination 现在记录投票/提名当时的角色类型快照。即使 Snake Charmer、Pit-Hag 等在夜间先把原 Demon/Minion 改成别的角色，花女仍能检测白天真正投过赞成票的原 Demon，报信者仍能检测白天真正发起过提名的原 Minion；角色未变化时仍允许 Recluse/Spy 在该次信息检查中重新登记。
+  - Virgin 触发立即处决时也会保存一次“不进入投票”的真实提名历史，避免该提名因为提前 return 而从 Town Crier 的当天记录中消失；Spy 可在 Virgin 检查中登记为 Townsfolk、又在 Town Crier 检查中独立作出新的合法登记。
+  - 修复 Sage（智者）健康信息只把“当前功能性存活 Demon”作为真候选的问题：死亡 Demon 仍是 Demon 角色，现可作为“二人中一人是 Demon”的真候选；Recluse 也可按其“即使死亡仍可登记”的能力成为候选。
+  - 顺手移除 botcSkills 夜间行动映射中重复的 witch 键，避免后续维护时出现同名处理器静默覆盖。
+审查结果/本轮未改动重点:
+  - 再次覆盖检查 backend/src 与 frontend/src 当前全部 85 个 TypeScript/Vue/CSS/SVG 代码文件，并复查 BaseGameWorker、RoomThreadManager、Controller 的任务串行、Worker/连接/房主状态版本和六种游戏的阶段推进边界。狼人杀、杀人游戏、一夜狼人、阿瓦隆、德州扑克未发现优先级高于本轮 BOTC 规则错误的新阻断项，因此本轮未修改这些游戏源码。
+  - 前端 27 个 Vue SFC 的 template/style/相对与 @ 导入结构重新扫描通过；本轮没有发现需要立即改动的跨游戏风格/组件复用阻断问题，因此不为了“统一样式”做高回归风险重构，也没有新增任何 frontend/src 文件。
+  - registration 本轮覆盖了当前最重要的角色/阵营检测和信息链，但项目仍没有“人类说书人对每一次 Recluse/Spy registration 手工选择登记结果”的独立交互 UI；自动流程采用合法的逐次自动裁决。自定义剧本中更少见的“registration 影响效果而不只是信息/检测”的跨剧本组合（例如 Tea Lady、Klutz、Moonchild 等）仍建议后续专项梳理，不能把本轮理解为已穷举所有可能角色组合。
+  - 第 15 轮已知的另外两个架构边界仍存在：夜晚开始时已死亡、在夜中由 Professor/Shabaloth 复活的角色，当前并行预收集器仍不能动态插入一个此前完全不存在的新交互；自定义夜序若死亡发生在 Pit-Hag 制造 Demon 之前，现有任意死亡机制不能逆向改写已经结算的早先死亡。
+验证:
+  - backend/src 全部 34 个 TypeScript 文件使用 strict/noEmit 配置、真实 Node 类型与位于项目外的 Express/CORS/Socket.IO/UUID 临时声明桩完成类型检查，0 个错误；同一配置成功重新生成 34 个 CommonJS 测试编译文件。
+  - backend/src + frontend/src 静态扫描通过：共 85 个代码文件、83 个 TypeScript/Vue script 解析单元、27 个 Vue SFC、27 个 style 块、312 个 import/export 路径检查均无语法、SFC 标签平衡、CSS 花括号或失效相对/@ 导入错误；项目根目录不存在 src/。
+  - 六个实际游戏 Worker 使用本轮最新 strict 编译产物执行 prepare_room 烟雾全部通过：狼人杀、杀人游戏、一夜狼人、阿瓦隆、血染钟楼、德州扑克均能启动并完成房间初始化。
+  - BOTC registration 工具/技能专项回归 7 组通过：Recluse/Spy 真实与替代登记、中毒/醉酒抑制、角色类型与玩家 alignment 分离、Chef 邻接邪恶计数、Washerwoman 识别登记为 Townsfolk 的 Spy、Slayer 击杀登记为 Demon 的 Recluse、Virgin 接受登记为 Townsfolk 的 Spy。
+  - BOTC Worker 专项回归通过：Slayer 指向普通已死亡 Demon 时消耗能力但不伪造第二次死亡；Flowergirl 在 Demon 投票后角色被改变仍得到正确历史结果；Town Crier 在 Minion 提名后角色被改变仍得到正确历史结果；Recluse/Spy 在历史类信息中可逐次独立登记；Sage 的健康死亡信息可把死亡 Demon 作为真实候选。
+  - package-lock 工作区依赖树继续通过 npm ls --package-lock-only --all --ignore-scripts 校验，本轮四个源码文件相对原始附件执行 diff --check 均无新增尾随空白错误。
+  - 正式 npm run build 已在本轮修改后再次执行：当前项目目录没有完整 node_modules，因此后端 tsc 在 Node/Express/Socket.IO/UUID/CORS/worker_threads 等声明缺失处中止，前端 vue-tsc/Vite 未进入执行。另在隔离副本尝试 npm ci --ignore-scripts --registry=https://registry.npmjs.org，容器对 registry.npmjs.org 的 DNS 请求返回 EAI_AGAIN，依赖无法下载。本轮因此不能声称完整生产构建已在此环境通过；仍需在可联网且依赖源正常的本地或 CI 执行 npm ci && npm run build 做最终部署确认。
+备注: 本轮未删除文件，未创建根目录 src/；所有源码修改均位于既有 backend/src/ 目录，未修改 frontend/src/；修复包只包含本轮修改文件及 repair_log.txt，可按相对路径直接覆盖。

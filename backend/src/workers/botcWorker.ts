@@ -38,7 +38,9 @@ import {
   hasVigormortisRetainedAbility,
   VIGORMORTIS_HAS_ABILITY_REMINDER,
   AI_STORYTELLER_MANUAL_ROLE_IDS,
-  shuffleArray
+  shuffleArray,
+  chooseRegisteredIdentity,
+  BotcRegisteredIdentity
 } from '../utils/botcUtils';
 import { EDITIONS, NIGHT_ORDER, getAllRoles, getEditionById, getRoleById, getRolesByTeam } from '../utils/botcData';
 import { processFirstNightInfo, processNightAction, processDeathAbility } from '../utils/botcSkills';
@@ -434,6 +436,48 @@ export class BOTCWorker extends BaseGameWorker {
     return this.shouldCorruptInfoForPlayer(player, effectiveRole)
       ? this.corruptInfo(information, roleId)
       : information;
+  }
+
+  /**
+   * Resolve Recluse/Spy registration for one concrete ability check.
+   * The target's own poison/drunkenness disables its registration ability;
+   * otherwise the automatic Storyteller may legally choose real or alternate
+   * identity independently for each check.
+   */
+  private getRegisteredIdentity(player: GamePlayer): BotcRegisteredIdentity {
+    return chooseRegisteredIdentity(
+      player,
+      this.gameConfig.edition,
+      this.playerAbilityWorks(player)
+    );
+  }
+
+  /**
+   * Resolve the team a history-based ability should see for an event that
+   * happened earlier in the day. If the character has changed since the
+   * event, use the event snapshot (Flowergirl/Town Crier care about who was a
+   * Demon/Minion when the vote/nomination happened). If the character is
+   * unchanged, resolve Recluse/Spy registration now for this ability check.
+   */
+  private getHistoricalRegisteredTeam(
+    playerId: string,
+    roleIdAtEvent: string | undefined,
+    teamAtEvent: Team | undefined,
+    registrationCache: Map<string, BotcRegisteredIdentity>
+  ): Team | null {
+    const player = this.gamePlayers.get(playerId);
+    if (!player) return teamAtEvent ?? null;
+
+    if (roleIdAtEvent && player.role?.id !== roleIdAtEvent) {
+      return teamAtEvent ?? null;
+    }
+
+    let identity = registrationCache.get(playerId);
+    if (!identity) {
+      identity = this.getRegisteredIdentity(player);
+      registrationCache.set(playerId, identity);
+    }
+    return identity.team ?? teamAtEvent ?? player.role?.team ?? null;
   }
 
   /**
@@ -3496,7 +3540,25 @@ export class BOTCWorker extends BaseGameWorker {
       const virginAbilityWorks = this.playerAbilityWorks(nominee);
       // Virgin 首次被提名后失去能力；若当时中毒/醉酒，则不产生立即处决。
       nominee.reminders.push('No ability');
-      if (virginAbilityWorks && nominator.role?.team === Team.TOWNSFOLK) {
+      const nominatorRegistration = this.getRegisteredIdentity(nominator);
+      if (virginAbilityWorks && nominatorRegistration.team === Team.TOWNSFOLK) {
+        // Virgin still represents a real nomination even though it immediately
+        // causes an execution and never opens a vote. Preserve that history so
+        // Town Crier can evaluate the nominator later that night.
+        const virginNomination: Nomination = {
+          nominator: playerId,
+          nominee: nomineeId,
+          nominatorRoleIdAtNomination: nominator.role?.id,
+          nominatorTeamAtNomination: nominator.role?.team,
+          votes: [],
+          votesFor: 0,
+          votesAgainst: 0,
+          isOnTrial: false,
+          timestamp: Date.now()
+        };
+        this.gameState.nominations.push(virginNomination);
+        nominator.nominations++;
+
         // 提名者是镇民，Virgin能力成功触发
         await this.executePlayer(playerId, nomineeId);
         this.sendToRoom('gameMessage', {
@@ -3541,6 +3603,8 @@ export class BOTCWorker extends BaseGameWorker {
     const nomination: Nomination = {
       nominator: playerId,
       nominee: nomineeId,
+      nominatorRoleIdAtNomination: nominator.role?.id,
+      nominatorTeamAtNomination: nominator.role?.team,
       votes: [],
       votesFor: 0,
       votesAgainst: 0,
@@ -3671,6 +3735,8 @@ export class BOTCWorker extends BaseGameWorker {
     const vote: Vote = {
       playerId,
       vote: voteValue,
+      voterRoleIdAtVote: voter.role?.id,
+      voterTeamAtVote: voter.role?.team,
       timestamp: Date.now()
     };
 
@@ -4198,11 +4264,12 @@ export class BOTCWorker extends BaseGameWorker {
       player.reminders = player.reminders.filter(reminder => reminder !== 'ravenkeeperDeathAbilityPending');
       player.reminders.push('ravenkeeperDeathAbilityUsed');
 
+      const targetRegistration = this.getRegisteredIdentity(target);
       const actualInformation = {
         playerId: target.playerId,
         playerName: this.getPlayerName(target.playerId),
-        roleName: target.role?.name,
-        roleId: target.role?.id
+        roleName: targetRegistration.role?.name,
+        roleId: targetRegistration.role?.id
       };
       // Ravenkeeper is an information Townsfolk. A poisoned/drunk Ravenkeeper may
       // receive arbitrary information, and Vortox requires false information.
@@ -4522,7 +4589,9 @@ export class BOTCWorker extends BaseGameWorker {
           return;
         }
         player.reminders.push('No ability'); // 标记能力已使用
-        if (!isDebuffed && target.role?.team === Team.DEMON) {
+        const targetRegistration = this.getRegisteredIdentity(target);
+        const targetCanStillDie = !target.isDead || isZombuulLivingWhileRegisteredDead(target);
+        if (!isDebuffed && targetCanStillDie && targetRegistration.team === Team.DEMON) {
           // 目标是恶魔，立即击杀
           await this.killPlayer(targetId, 'slayer');
           if (!isZombuulLivingWhileRegisteredDead(target)) {
@@ -5211,7 +5280,9 @@ export class BOTCWorker extends BaseGameWorker {
       try {
         if (roleId === 'empath') {
           const neighbors = getNeighbors(playerId, allPlayers);
-          const evilCount = neighbors.filter(neighbor => isEvilPlayer(neighbor)).length;
+          const evilCount = neighbors.filter(neighbor =>
+            this.getRegisteredIdentity(neighbor).alignment === 'evil'
+          ).length;
           sendInfo(playerId, player, roleId, { evilCount });
         }
 
@@ -5221,10 +5292,9 @@ export class BOTCWorker extends BaseGameWorker {
             this.sendToPlayer(playerId, 'actionError', { message: '占卜师必须选择两名玩家' });
             continue;
           }
-          const isDemon = targets.some(target => {
-            const targetRole = this.getEffectiveRole(target) || target.role;
-            return targetRole?.team === Team.DEMON || target.reminders.includes('Red herring');
-          });
+          const isDemon = targets.some(target =>
+            this.getRegisteredIdentity(target).team === Team.DEMON || target.reminders.includes('Red herring')
+          );
           sendInfo(playerId, player, roleId, { isDemon });
         }
 
@@ -5235,17 +5305,17 @@ export class BOTCWorker extends BaseGameWorker {
             continue;
           }
           const target = targets[0];
-          const realRole = this.getEffectiveRole(target) || target.role;
-          const fakeTeams = realRole?.team === Team.DEMON || realRole?.team === Team.MINION
+          const registeredRole = this.getRegisteredIdentity(target).role;
+          const fakeTeams = registeredRole?.team === Team.DEMON || registeredRole?.team === Team.MINION
             ? [Team.TOWNSFOLK, Team.OUTSIDER]
             : [Team.MINION, Team.DEMON];
           const rolePool = fakeTeams
             .flatMap(team => getRolesByTeam(this.gameConfig.edition, team))
-            .filter(role => role.id !== realRole?.id);
-          const fakeRole = rolePool[Math.floor(Math.random() * rolePool.length)] || realRole;
+            .filter(role => role.id !== registeredRole?.id);
+          const fakeRole = rolePool[Math.floor(Math.random() * rolePool.length)] || registeredRole;
           const roles = Math.random() < 0.5
-            ? [realRole, fakeRole]
-            : [fakeRole, realRole];
+            ? [registeredRole, fakeRole]
+            : [fakeRole, registeredRole];
           sendInfo(playerId, player, roleId, {
             playerId: target.playerId,
             playerName: this.getPlayerName(target.playerId),
@@ -5262,7 +5332,9 @@ export class BOTCWorker extends BaseGameWorker {
             this.sendToPlayer(playerId, 'actionError', { message: '女裁缝必须选择两名非自己的玩家' });
             continue;
           }
-          const sameAlignment = isEvilPlayer(targets[0]) === isEvilPlayer(targets[1]);
+          const firstAlignment = this.getRegisteredIdentity(targets[0]).alignment;
+          const secondAlignment = this.getRegisteredIdentity(targets[1]).alignment;
+          const sameAlignment = firstAlignment !== null && firstAlignment === secondAlignment;
           sendInfo(playerId, player, roleId, { sameAlignment });
           player.reminders.push('Seamstress used');
         }
@@ -5286,7 +5358,9 @@ export class BOTCWorker extends BaseGameWorker {
         }
 
         else if (roleId === 'oracle') {
-          const deadEvilCount = allPlayers.filter(p => p.isDead && isEvilPlayer(p)).length;
+          const deadEvilCount = allPlayers.filter(p =>
+            p.isDead && this.getRegisteredIdentity(p).alignment === 'evil'
+          ).length;
           sendInfo(playerId, player, roleId, { deadEvilCount });
         }
 
@@ -5305,11 +5379,12 @@ export class BOTCWorker extends BaseGameWorker {
         else if (roleId === 'undertaker') {
           const executedPlayerId = this.gameState.execution?.playerId;
           const executedPlayer = executedPlayerId ? this.gamePlayers.get(executedPlayerId) : undefined;
+          const executedRegistration = executedPlayer ? this.getRegisteredIdentity(executedPlayer) : null;
           sendInfo(playerId, player, roleId, {
             playerId: executedPlayerId || null,
             playerName: executedPlayerId ? this.getPlayerName(executedPlayerId) : null,
-            roleId: executedPlayer?.role?.id || null,
-            roleName: executedPlayer?.role?.name || null
+            roleId: executedRegistration?.role?.id || null,
+            roleName: executedRegistration?.role?.name || null
           });
         }
 
@@ -5346,13 +5421,18 @@ export class BOTCWorker extends BaseGameWorker {
    */
   private checkIfDemonVotedToday(): boolean {
     const todayNominations = this.gameState.nominations || [];
+    const registrationCache = new Map<string, BotcRegisteredIdentity>();
     for (const nom of todayNominations) {
       for (const vote of nom.votes) {
-        if (vote.vote === 'for') {
-          const voter = this.gamePlayers.get(vote.playerId);
-          if (voter?.role?.team === Team.DEMON) {
-            return true;
-          }
+        if (vote.vote !== 'for') continue;
+        const team = this.getHistoricalRegisteredTeam(
+          vote.playerId,
+          vote.voterRoleIdAtVote,
+          vote.voterTeamAtVote,
+          registrationCache
+        );
+        if (team === Team.DEMON) {
+          return true;
         }
       }
     }
@@ -5364,9 +5444,15 @@ export class BOTCWorker extends BaseGameWorker {
    */
   private checkIfMinionNominatedToday(): boolean {
     const todayNominations = this.gameState.nominations || [];
+    const registrationCache = new Map<string, BotcRegisteredIdentity>();
     for (const nom of todayNominations) {
-      const nominator = this.gamePlayers.get(nom.nominator);
-      if (nominator?.role?.team === Team.MINION) {
+      const team = this.getHistoricalRegisteredTeam(
+        nom.nominator,
+        nom.nominatorRoleIdAtNomination,
+        nom.nominatorTeamAtNomination,
+        registrationCache
+      );
+      if (team === Team.MINION) {
         return true;
       }
     }
@@ -5533,10 +5619,12 @@ export class BOTCWorker extends BaseGameWorker {
           pair = [first, second];
         }
       } else {
-        // Sage says Demon, not merely "evil". The previous code selected any
-        // evil player, so a Minion + Good pair could truthfully contain no Demon.
-        const demons = withoutSelf.filter(p =>
-          p.role?.team === Team.DEMON && this.isFunctionallyAlive(p)
+        // Sage says Demon, not merely "evil". Character detection still
+        // applies to dead players, and Recluse may register as a Demon even
+        // while dead. Resolve each candidate once so the pair is internally
+        // coherent for this single information result.
+        const demons = withoutSelf.filter(candidate =>
+          this.getRegisteredIdentity(candidate).team === Team.DEMON
         );
         const demon = pickRandom(demons);
         if (demon) {

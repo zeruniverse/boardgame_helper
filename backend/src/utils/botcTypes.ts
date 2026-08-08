@@ -96,6 +96,9 @@ export interface GameState {
 export interface Nomination {
   nominator: string;
   nominee: string;
+  /** Snapshot used by history-based abilities such as Town Crier. */
+  nominatorRoleIdAtNomination?: string;
+  nominatorTeamAtNomination?: Team;
   votes: Vote[];
   votesFor: number;
   votesAgainst: number;
@@ -106,6 +109,9 @@ export interface Nomination {
 export interface Vote {
   playerId: string;
   vote: 'for' | 'against' | 'abstain';
+  /** Snapshot used by history-based abilities such as Flowergirl. */
+  voterRoleIdAtVote?: string;
+  voterTeamAtVote?: Team;
   timestamp: number;
 }
 

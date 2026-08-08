@@ -471,6 +471,77 @@ export function isGoodPlayer(player: GamePlayer): boolean {
   return player.role?.team === Team.TOWNSFOLK || player.role?.team === Team.OUTSIDER;
 }
 
+export interface BotcRegisteredIdentity {
+  role: Role | null;
+  team: Team | null;
+  alignment: 'good' | 'evil' | null;
+  isAlternate: boolean;
+}
+
+function getAlignmentForTeam(team?: Team | null): 'good' | 'evil' | null {
+  if (team === Team.TOWNSFOLK || team === Team.OUTSIDER) return 'good';
+  if (team === Team.MINION || team === Team.DEMON) return 'evil';
+  return null;
+}
+
+/**
+ * Resolve one legal registration for a player for a single ability check.
+ *
+ * Recluse and Spy are deliberately evaluated per check: BOTC allows the
+ * Storyteller to make a fresh registration decision whenever an ability asks
+ * about alignment, character type, or character. The automatic Storyteller
+ * therefore picks either the real identity or one legal alternate identity
+ * for that check instead of hard-coding Recluse as always good / Spy as always
+ * evil. Suppression is handled by the caller that owns the registration
+ * ability; a poisoned Recluse/Spy should be passed with allowAlternate=false.
+ */
+export function chooseRegisteredIdentity(
+  player: GamePlayer,
+  editionId: string,
+  allowAlternate: boolean = true,
+  random: () => number = Math.random
+): BotcRegisteredIdentity {
+  const actualRole = player.role;
+  if (!actualRole) {
+    return { role: null, team: null, alignment: null, isAlternate: false };
+  }
+
+  const actualIdentity: BotcRegisteredIdentity = {
+    role: actualRole,
+    team: actualRole.team,
+    // Alignment is independent from character type in BOTC. Pit-Hag/Barber
+    // and alignment-changing abilities can leave a good player holding an evil
+    // character (or vice versa), so role.team is not a safe alignment source.
+    alignment: player.alignment ?? getAlignmentForTeam(actualRole.team),
+    isAlternate: false
+  };
+
+  if (!allowAlternate || (actualRole.id !== 'recluse' && actualRole.id !== 'spy')) {
+    return actualIdentity;
+  }
+
+  const alternateTeams = actualRole.id === 'recluse'
+    ? [Team.MINION, Team.DEMON]
+    : [Team.TOWNSFOLK, Team.OUTSIDER];
+  const alternateRoles = alternateTeams.flatMap(team => getRolesByTeam(editionId, team));
+
+  // Keeping the real identity is itself a legal Storyteller choice. A 50/50
+  // split avoids turning these "might register" abilities into always-on
+  // falsehoods while still allowing the automatic Storyteller to use them.
+  if (alternateRoles.length === 0 || random() < 0.5) {
+    return actualIdentity;
+  }
+
+  const boundedRoll = Math.min(Math.max(random(), 0), 0.9999999999999999);
+  const alternateRole = alternateRoles[Math.floor(boundedRoll * alternateRoles.length)] || actualRole;
+  return {
+    role: alternateRole,
+    team: alternateRole.team,
+    alignment: actualRole.id === 'recluse' ? 'evil' : 'good',
+    isAlternate: alternateRole.id !== actualRole.id
+  };
+}
+
 /**
  * 获取存活玩家
  */
@@ -489,17 +560,29 @@ export function getDeadPlayersWithGhostVote(gamePlayers: GamePlayer[]): GamePlay
  * 计算相邻邪恶玩家对的数量（厨师能力）
  * 根据官方规则，基于座位顺序的所有玩家（包括死亡玩家）计算
  */
-export function countAdjacentEvilPairs(gamePlayers: GamePlayer[]): number {
+export function countAdjacentEvilPairs(
+  gamePlayers: GamePlayer[],
+  editionId?: string,
+  canUseRegistration: (player: GamePlayer) => boolean = () => true
+): number {
   // 按座位顺序排序所有玩家（包括死亡玩家）
   const allPlayersBySeat = [...gamePlayers].sort((a, b) => a.seat - b.seat);
+  const registeredEvil = new Map<string, boolean>();
+  if (editionId) {
+    for (const player of allPlayersBySeat) {
+      const identity = chooseRegisteredIdentity(player, editionId, canUseRegistration(player));
+      registeredEvil.set(player.playerId, identity.alignment === 'evil');
+    }
+  }
   let pairs = 0;
 
   for (let i = 0; i < allPlayersBySeat.length; i++) {
     const current = allPlayersBySeat[i];
     const next = allPlayersBySeat[(i + 1) % allPlayersBySeat.length];
-    
-    // 厨师看到邪恶/善良基于角色的真实阵营，包括死亡玩家
-    if (isEvilPlayer(current) && isEvilPlayer(next)) {
+    const currentIsEvil = editionId ? registeredEvil.get(current.playerId) === true : isEvilPlayer(current);
+    const nextIsEvil = editionId ? registeredEvil.get(next.playerId) === true : isEvilPlayer(next);
+
+    if (currentIsEvil && nextIsEvil) {
       pairs++;
     }
   }

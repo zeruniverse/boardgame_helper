@@ -7,7 +7,9 @@ import {
   isEvilPlayer, 
   isGoodPlayer, 
   getNeighbors, 
-  countAdjacentEvilPairs 
+  countAdjacentEvilPairs,
+  chooseRegisteredIdentity,
+  isAbilitySuppressed
 } from './botcUtils';
 import { getAllRoles, getRoleById } from './botcData';
 
@@ -56,17 +58,17 @@ export function processFirstNightInfo(
     // Trouble Brewing
     washerwoman: () => processWasherwoman(player, allPlayers, editionId),
     librarian: () => processLibrarian(player, allPlayers, editionId),
-    investigator: () => processInvestigator(player, allPlayers),
-    chef: () => processChef(player, allPlayers),
-    empath: () => processEmpath(player, allPlayers),
+    investigator: () => processInvestigator(player, allPlayers, editionId),
+    chef: () => processChef(player, allPlayers, editionId),
+    empath: () => processEmpath(player, allPlayers, editionId),
     fortuneteller: () => processFortuneTeller(player, allPlayers),
     
     // Bad Moon Rising
-    grandmother: () => processGrandmother(player, allPlayers),
+    grandmother: () => processGrandmother(player, allPlayers, editionId),
     chambermaid: () => processChambermaid(player, allPlayers),
     
     // Sects & Violets
-    clockmaker: () => processClockmaker(player, allPlayers),
+    clockmaker: () => processClockmaker(player, allPlayers, editionId),
     dreamer: () => processDreamer(player, allPlayers),
     mathematician: () => processMathematician(player, allPlayers),
     flowergirl: () => processFlowergirl(player, allPlayers),
@@ -153,7 +155,13 @@ function processWasherwoman(
   allPlayers: GamePlayer[],
   editionId: string
 ): SkillResult {
-  const townsfolk = allPlayers.filter(p => p.role?.team === Team.TOWNSFOLK && p.playerId !== player.playerId);
+  const townsfolk = allPlayers
+    .filter(p => p.playerId !== player.playerId)
+    .map(target => ({
+      player: target,
+      identity: chooseRegisteredIdentity(target, editionId, !isAbilitySuppressed(target))
+    }))
+    .filter(entry => entry.identity.team === Team.TOWNSFOLK && entry.identity.role);
   
   if (townsfolk.length === 0) {
     return { 
@@ -165,7 +173,7 @@ function processWasherwoman(
 
   const randomTownsfolk = townsfolk[Math.floor(Math.random() * townsfolk.length)];
   const otherPlayers = allPlayers.filter(p => 
-    p.playerId !== player.playerId && p.playerId !== randomTownsfolk.playerId
+    p.playerId !== player.playerId && p.playerId !== randomTownsfolk.player.playerId
   );
   // 确保选择两个不同的玩家
   const randomOther = otherPlayers.length > 0 
@@ -177,22 +185,22 @@ function processWasherwoman(
     return {
       success: true,
       information: {
-        roleId: randomTownsfolk.role?.id,
-        roleName: randomTownsfolk.role?.name,
-        players: [randomTownsfolk.playerId]
+        roleId: randomTownsfolk.identity.role?.id,
+        roleName: randomTownsfolk.identity.role?.name,
+        players: [randomTownsfolk.player.playerId]
       }
     };
   }
 
   const chosenPlayers = Math.random() < 0.5 
-    ? [randomTownsfolk.playerId, randomOther.playerId]
-    : [randomOther.playerId, randomTownsfolk.playerId];
+    ? [randomTownsfolk.player.playerId, randomOther.playerId]
+    : [randomOther.playerId, randomTownsfolk.player.playerId];
 
   return {
     success: true,
     information: {
-      roleId: randomTownsfolk.role?.id,
-      roleName: randomTownsfolk.role?.name,
+      roleId: randomTownsfolk.identity.role?.id,
+      roleName: randomTownsfolk.identity.role?.name,
       players: chosenPlayers
     }
   };
@@ -206,7 +214,13 @@ function processLibrarian(
   allPlayers: GamePlayer[],
   editionId: string
 ): SkillResult {
-  const outsiders = allPlayers.filter(p => p.role?.team === Team.OUTSIDER);
+  const outsiders = allPlayers
+    .filter(p => p.playerId !== player.playerId)
+    .map(target => ({
+      player: target,
+      identity: chooseRegisteredIdentity(target, editionId, !isAbilitySuppressed(target))
+    }))
+    .filter(entry => entry.identity.team === Team.OUTSIDER && entry.identity.role);
   
   if (outsiders.length === 0) {
     return { 
@@ -218,7 +232,7 @@ function processLibrarian(
 
   const randomOutsider = outsiders[Math.floor(Math.random() * outsiders.length)];
   const otherPlayers = allPlayers.filter(p => 
-    p.playerId !== player.playerId && p.playerId !== randomOutsider.playerId
+    p.playerId !== player.playerId && p.playerId !== randomOutsider.player.playerId
   );
   // 确保选择两个不同的玩家
   const randomOther = otherPlayers.length > 0
@@ -229,22 +243,22 @@ function processLibrarian(
     return {
       success: true,
       information: {
-        roleId: randomOutsider.role?.id,
-        roleName: randomOutsider.role?.name,
-        players: [randomOutsider.playerId]
+        roleId: randomOutsider.identity.role?.id,
+        roleName: randomOutsider.identity.role?.name,
+        players: [randomOutsider.player.playerId]
       }
     };
   }
 
   const chosenPlayers = Math.random() < 0.5 
-    ? [randomOutsider.playerId, randomOther.playerId]
-    : [randomOther.playerId, randomOutsider.playerId];
+    ? [randomOutsider.player.playerId, randomOther.playerId]
+    : [randomOther.playerId, randomOutsider.player.playerId];
 
   return {
     success: true,
     information: {
-      roleId: randomOutsider.role?.id,
-      roleName: randomOutsider.role?.name,
+      roleId: randomOutsider.identity.role?.id,
+      roleName: randomOutsider.identity.role?.name,
       players: chosenPlayers
     }
   };
@@ -255,9 +269,16 @@ function processLibrarian(
  */
 function processInvestigator(
   player: GamePlayer,
-  allPlayers: GamePlayer[]
+  allPlayers: GamePlayer[],
+  editionId: string
 ): SkillResult {
-  const minions = allPlayers.filter(p => p.role?.team === Team.MINION);
+  const minions = allPlayers
+    .filter(p => p.playerId !== player.playerId)
+    .map(target => ({
+      player: target,
+      identity: chooseRegisteredIdentity(target, editionId, !isAbilitySuppressed(target))
+    }))
+    .filter(entry => entry.identity.team === Team.MINION && entry.identity.role);
   
   if (minions.length === 0) {
     return { 
@@ -269,7 +290,7 @@ function processInvestigator(
 
   const randomMinion = minions[Math.floor(Math.random() * minions.length)];
   const otherPlayers = allPlayers.filter(p => 
-    p.playerId !== player.playerId && p.playerId !== randomMinion.playerId
+    p.playerId !== player.playerId && p.playerId !== randomMinion.player.playerId
   );
   // 确保选择两个不同的玩家
   const randomOther = otherPlayers.length > 0
@@ -280,22 +301,22 @@ function processInvestigator(
     return {
       success: true,
       information: {
-        roleId: randomMinion.role?.id,
-        roleName: randomMinion.role?.name,
-        players: [randomMinion.playerId]
+        roleId: randomMinion.identity.role?.id,
+        roleName: randomMinion.identity.role?.name,
+        players: [randomMinion.player.playerId]
       }
     };
   }
 
   const chosenPlayers = Math.random() < 0.5 
-    ? [randomMinion.playerId, randomOther.playerId]
-    : [randomOther.playerId, randomMinion.playerId];
+    ? [randomMinion.player.playerId, randomOther.playerId]
+    : [randomOther.playerId, randomMinion.player.playerId];
 
   return {
     success: true,
     information: {
-      roleId: randomMinion.role?.id,
-      roleName: randomMinion.role?.name,
+      roleId: randomMinion.identity.role?.id,
+      roleName: randomMinion.identity.role?.name,
       players: chosenPlayers
     }
   };
@@ -304,8 +325,8 @@ function processInvestigator(
 /**
  * 厨师技能处理
  */
-function processChef(player: GamePlayer, allPlayers: GamePlayer[]): SkillResult {
-  const pairs = countAdjacentEvilPairs(allPlayers);
+function processChef(player: GamePlayer, allPlayers: GamePlayer[], editionId: string): SkillResult {
+  const pairs = countAdjacentEvilPairs(allPlayers, editionId, target => !isAbilitySuppressed(target));
   
   return {
     success: true,
@@ -316,10 +337,10 @@ function processChef(player: GamePlayer, allPlayers: GamePlayer[]): SkillResult 
 /**
  * 共情者技能处理
  */
-function processEmpath(player: GamePlayer, allPlayers: GamePlayer[]): SkillResult {
+function processEmpath(player: GamePlayer, allPlayers: GamePlayer[], editionId: string): SkillResult {
   const neighbors = getNeighbors(player.playerId, allPlayers);
-  const evilNeighbors = neighbors.filter(neighbor => 
-    isEvilPlayer(neighbor)
+  const evilNeighbors = neighbors.filter(neighbor =>
+    chooseRegisteredIdentity(neighbor, editionId, !isAbilitySuppressed(neighbor)).alignment === 'evil'
   );
   
   return {
@@ -351,47 +372,65 @@ function processFortuneTeller(player: GamePlayer, allPlayers: GamePlayer[]): Ski
 /**
  * 钟表匠技能处理 - 计算 Demon 到最近 Minion 的距离
  */
-function processClockmaker(player: GamePlayer, allPlayers: GamePlayer[]): SkillResult {
-  const demon = allPlayers.find(p => p.role?.team === Team.DEMON && !p.isDead);
-  if (!demon) {
-    return { success: true, information: { distance: 0 } };
-  }
-
-  // 找到所有存活的 Minions
-  const aliveMinions = allPlayers.filter(p => p.role?.team === Team.MINION && !p.isDead);
-  if (aliveMinions.length === 0) {
+function processClockmaker(
+  player: GamePlayer,
+  allPlayers: GamePlayer[],
+  editionId: string
+): SkillResult {
+  // Resolve each player's registration once for this single information check.
+  // This matters on custom/role-change states where Recluse or Spy can coexist
+  // with Clockmaker even though they are not on Sects & Violets itself.
+  const registered = allPlayers
+    .filter(target => !target.isDead)
+    .map(target => ({
+      player: target,
+      identity: chooseRegisteredIdentity(target, editionId, !isAbilitySuppressed(target))
+    }));
+  const demons = registered.filter(entry => entry.identity.team === Team.DEMON);
+  const minions = registered.filter(entry => entry.identity.team === Team.MINION);
+  if (demons.length === 0 || minions.length === 0) {
     return { success: true, information: { distance: 0 } };
   }
 
   // 使用原始总玩家数计算圆桌距离（座位号基于原始总数）
   const totalSeats = allPlayers.length;
 
-  // 计算 Demon 到每个 Minion 的圆桌距离，取最小值
+  // If multiple players legally register as Demon/Minion, any true distance is
+  // a legal automatic Storyteller result; choose the nearest registered pair.
   let minDistance = Infinity;
-  for (const minion of aliveMinions) {
-    const diff = Math.abs(demon.seat - minion.seat);
-    const circularDist = Math.min(diff, totalSeats - diff);
-    if (circularDist < minDistance) {
-      minDistance = circularDist;
+  for (const demon of demons) {
+    for (const minion of minions) {
+      if (demon.player.playerId === minion.player.playerId) continue;
+      const diff = Math.abs(demon.player.seat - minion.player.seat);
+      const circularDist = Math.min(diff, totalSeats - diff);
+      if (circularDist < minDistance) {
+        minDistance = circularDist;
+      }
     }
   }
-  
+
   return {
     success: true,
-    information: { distance: minDistance }
+    information: { distance: Number.isFinite(minDistance) ? minDistance : 0 }
   };
 }
 
 // Bad Moon Rising 信息技能
-function processGrandmother(player: GamePlayer, allPlayers: GamePlayer[]): SkillResult {
-  const goodPlayers = allPlayers.filter(p => isGoodPlayer(p) && p.playerId !== player.playerId);
+function processGrandmother(player: GamePlayer, allPlayers: GamePlayer[], editionId: string): SkillResult {
+  const goodPlayers = allPlayers
+    .filter(target => target.playerId !== player.playerId)
+    .map(target => ({
+      player: target,
+      identity: chooseRegisteredIdentity(target, editionId, !isAbilitySuppressed(target))
+    }))
+    .filter(entry => entry.identity.alignment === 'good' && entry.identity.role);
   const grandchild = goodPlayers[Math.floor(Math.random() * goodPlayers.length)];
   
   return {
     success: true,
     information: {
-      grandchild: grandchild?.playerId,
-      grandchildRole: grandchild?.role
+      grandchild: grandchild?.player.playerId,
+      grandchildRole: grandchild?.identity.role
     }
   };
 }
@@ -1196,7 +1235,8 @@ export function processDayAbility(
   playerId: string,
   ability: string,
   allPlayers: GamePlayer[],
-  data?: any
+  data?: any,
+  editionId: string = 'tb'
 ): SkillResult {
   const player = allPlayers.find(p => p.playerId === playerId);
   if (!player || !player.role) {
@@ -1205,9 +1245,9 @@ export function processDayAbility(
 
   switch (player.role.id) {
     case 'slayer':
-      return processSlayerAbility(playerId, data, allPlayers);
+      return processSlayerAbility(playerId, data, allPlayers, editionId);
     case 'virgin':
-      return processVirginAbility(playerId, data, allPlayers);
+      return processVirginAbility(playerId, data, allPlayers, editionId);
     case 'gunslinger':
       return processGunslingerAbility(playerId, data, allPlayers);
     default:
@@ -1215,14 +1255,22 @@ export function processDayAbility(
   }
 }
 
-function processSlayerAbility(playerId: string, data: any, allPlayers: GamePlayer[]): SkillResult {
+function processSlayerAbility(
+  playerId: string,
+  data: any,
+  allPlayers: GamePlayer[],
+  editionId: string
+): SkillResult {
   const target = data?.target;
   if (!target) {
     return { success: false, message: '杀手必须选择一个目标' };
   }
 
   const targetPlayer = allPlayers.find(p => p.playerId === target);
-  const isDemon = targetPlayer?.role?.team === Team.DEMON;
+  const targetIdentity = targetPlayer
+    ? chooseRegisteredIdentity(targetPlayer, editionId, !isAbilitySuppressed(targetPlayer))
+    : null;
+  const isDemon = targetIdentity?.team === Team.DEMON;
 
   return {
     success: true,
@@ -1233,14 +1281,22 @@ function processSlayerAbility(playerId: string, data: any, allPlayers: GamePlaye
   };
 }
 
-function processVirginAbility(playerId: string, data: any, allPlayers: GamePlayer[]): SkillResult {
+function processVirginAbility(
+  playerId: string,
+  data: any,
+  allPlayers: GamePlayer[],
+  editionId: string
+): SkillResult {
   const nominator = data?.nominator;
   if (!nominator) {
     return { success: false, message: '处女需要提名者信息' };
   }
 
   const nominatorPlayer = allPlayers.find(p => p.playerId === nominator);
-  const isTownsfolk = nominatorPlayer?.role?.team === Team.TOWNSFOLK;
+  const nominatorIdentity = nominatorPlayer
+    ? chooseRegisteredIdentity(nominatorPlayer, editionId, !isAbilitySuppressed(nominatorPlayer))
+    : null;
+  const isTownsfolk = nominatorIdentity?.team === Team.TOWNSFOLK;
 
   return {
     success: true,
