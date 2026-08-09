@@ -185,12 +185,19 @@ export const useAvalonStore = defineStore('avalon', {
       });
 
       // 游戏事件
-      on('game_start', (data: { game: AvalonGameState; secret: AvalonSecret }) => {
+      on('game_start', (data: { game: AvalonGameState; secret?: AvalonSecret; message?: string }) => {
         this.gameState = data.game;
-        this.playerSecret = data.secret;
+        // 兼容旧后端曾广播的 {game,message}：缺少 secret 时绝不能把刚同步到的
+        // 私密身份覆盖成 undefined。新版后端会给每位参赛者定向发送完整 payload。
+        if (data.secret && (!data.secret.playerId || data.secret.playerId === this.currentUserId)) {
+          this.playerSecret = data.secret;
+        }
         this.updateTimer();
         if (this.room) {
           this.room.gameStarted = true;
+        }
+        if (data.message) {
+          this.addSystemMessage(data.message);
         }
       });
 

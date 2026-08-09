@@ -1343,24 +1343,24 @@ class AvalonWorker extends BaseGameWorker {
     // 开始第一轮
     this.startNewRound();
 
-    this.sendToRoom('game_start', {
-      message: '游戏开始！请查看自己的角色信息',
-      game: this.getGameInfo()
-    });
-
-    // 为每个玩家发送角色分配信息
+    // game_start 是带玩家私密身份的定向事件，不能先广播一个缺少 secret 的同名
+    // payload。旧前端会把该广播解释成完整开始事件并清空已有身份，造成开局瞬间
+    // 角色闪烁；如果随后断线，还可能在重连前一直停留在无身份状态。
     const state = this.gameState as AvalonGameState;
+    const game = this.getGameInfo();
+    const message = '游戏开始！请查看自己的角色信息';
     for (const playerId of Object.keys(state.players)) {
       const secret = this.getSecretForPlayer(playerId);
       const roomPlayer = this.room.players.find(p => p.id === playerId);
       if (roomPlayer) {
+        this.sendToPlayer(playerId, 'game_start', { message, game, secret });
         this.sendToPlayer(playerId, 'role_assigned', {
           role: secret.role,
           team: secret.team,
           visions: secret.visions,
           playerId
         });
-        // 前端实际依赖 secret_update/game_state_sync 中的 secret；仅发送 role_assigned 会导致玩家视角一直是游客。
+        // 保留独立 secret_update 兼容只监听该事件的旧客户端。
         this.sendToPlayer(playerId, 'secret_update', secret);
       }
     }

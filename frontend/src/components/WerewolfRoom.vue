@@ -27,10 +27,7 @@
       <!-- 左侧游戏面板 -->
       <el-main class="game-main">
         <div class="game-content">
-          <RoomQuickNavigation
-            @go-action="scrollToActionArea"
-            @go-chat="scrollToChat"
-          />
+          <RoomQuickNavigation />
 
           <!-- 游戏状态显示 -->
           <div class="game-status" v-if="gameState">
@@ -80,7 +77,7 @@
             </div>
           </div>
 
-          <div class="player-list-slot">
+          <div id="room-player-section" class="player-list-slot" tabindex="-1">
             <WerewolfPlayerList
               :players="room?.players || []"
               :host-id="room?.hostId"
@@ -96,7 +93,7 @@
           </div>
 
           <!-- 游戏操作区域 -->
-          <div class="full-action-area">
+          <div id="room-action-section" class="full-action-area" tabindex="-1">
             <WerewolfActionPanel
               v-if="gameState"
               :game-state="gameState"
@@ -125,7 +122,7 @@
       </el-main>
 
       <!-- 右侧边栏 -->
-      <el-aside width="320px" class="game-sidebar">
+      <el-aside id="room-chat-section" width="320px" class="game-sidebar" tabindex="-1">
 
         <!-- 聊天区域 -->
         <WerewolfChat
@@ -280,12 +277,6 @@ const toggleRoomLock = () => {
   store.sendGameAction('toggleRoomLock', {})
 }
 
-const scrollToSelector = (selector: string) => {
-  document.querySelector(selector)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-}
-
-const scrollToActionArea = () => scrollToSelector('.full-action-area')
-const scrollToChat = () => scrollToSelector('.game-sidebar')
 
 // 检查房间状态
 const checkRoomStatus = () => {

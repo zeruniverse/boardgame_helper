@@ -3004,3 +3004,49 @@ Commit: fix(round11): 修复房间路由串线并落实一夜狼人终局隐私
   - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts 检查，仅显示正常的可选依赖缺失提示。
   - 正式 npm run build 已在最终源码上执行。当前工作区 node_modules 不完整，backend tsc 报缺失 body-parser/connect/cors/express/node/uuid/ws 等类型定义目录并中止，未进入 frontend vue-tsc/Vite；这不是本轮 Worker strict 编译或专项运行回归失败。完整 npm ci、正式 backend tsc、frontend vue-tsc/Vite、Docker 镜像和实际部署仍需在依赖源正常的本地或 CI 最终确认。
 备注: 本轮未删除文件，未创建根目录 src/；修复包只包含本轮修改/新增文件与更新后的 repair_log.txt，可按项目相对路径直接覆盖。
+
+=== 当前会话第 15 轮修复记录 ===
+时间: 2026-08-09 16:38:44 UTC
+Commit: fix(round15): 修复阿瓦隆开局同步并统一房间导航与德州交互
+修改/新增文件:
+  - backend/src/workers/avalonWorker.ts
+  - backend/src/workers/texasHoldemWorker.ts
+  - frontend/src/components/AvalonRoom.vue
+  - frontend/src/components/BOTCRoom.vue
+  - frontend/src/components/Lobby.vue
+  - frontend/src/components/MafiaRoom.vue
+  - frontend/src/components/OnuWerewolfRoom.vue
+  - frontend/src/components/RoomQuickNavigation.vue
+  - frontend/src/components/TexasHoldemActionBar.vue
+  - frontend/src/components/TexasHoldemChat.vue
+  - frontend/src/components/TexasHoldemRoom.vue
+  - frontend/src/components/WerewolfRoom.vue
+  - frontend/src/store/avalon.ts
+  - frontend/src/style.css
+  - repair_log.txt
+删除文件: 无
+构建测试: 部分通过（backend/src + frontend/src 当前全部 94 个源码/样式/资源文件完成静态审查；92 个 TypeScript/Vue script 单元、31 个 Vue 外层模板、31 个 CSS 单元和 282 次本地相对导入检查通过；backend/src 全部 35 个 TypeScript 文件 strict/noEmit 与隔离 CommonJS 编译通过；六个游戏 Worker prepare_room/未知任务拒绝烟雾通过；阿瓦隆开局私密 payload 专项运行回归通过；package-lock 工作区依赖树检查通过。正式 npm ci 因当前环境访问公共 npm registry 时发生 EAI_AGAIN 网络解析失败而未能补齐 node_modules，正式 npm run build 随后在 backend 缺失第三方类型目录阶段中止，未进入 frontend vue-tsc/Vite，因此完整生产构建与直接部署仍需在依赖源正常的本地或 CI 执行 npm ci && npm run build 终验）
+本轮修复:
+  - 修复阿瓦隆开局事件的后端/前端 payload 契约不一致。旧 Worker 先向全房间广播不带 secret 的 game_start，再分别发送 role_assigned/secret_update；前端却把 game_start 当作完整私密事件并直接覆盖 playerSecret，导致角色在开局瞬间被清空/闪烁，若此时断线还可能在重连前一直显示游客视角。现在 Worker 只给每位参赛玩家定向发送包含 message、game、secret 的完整 game_start，并保留 role_assigned 与 secret_update 兼容旧客户端。
+  - 阿瓦隆 Store 将 game_start.secret 改为可选并增加接收者校验。即使连接到尚未升级、仍广播 {game,message} 的旧后端，也不会再把已经同步到的私密身份覆盖成 undefined；开局提示同时进入统一系统消息流。
+  - 把 RoomQuickNavigation 从需要每个房间重复绑定 go-action/go-chat 的展示组件，改为自包含的“玩家列表/操作区/聊天”三段页面导航。导航使用稳定 aria-controls、尊重 prefers-reduced-motion，并在滚动后把键盘/读屏焦点移动到目标区域，减少移动端长页面中“滚到了但焦点仍停在顶部按钮”的交互断层。
+  - 狼人杀、杀人游戏、阿瓦隆、血染钟楼、一夜狼人、德州扑克六个房间统一接入同一导航目标 ID 与 tabindex=-1，删除五个房间各自重复的 querySelector/scrollIntoView 逻辑；德州扑克补齐此前缺失的共享导航入口。全局样式为目标区增加 sticky header 预留的 scroll-margin 和 focus-visible 轮廓。
+  - 修复全局主题变量别名缺失：补充 --app-panel-muted、--app-card、--app-text-muted，避免部分房间在明暗主题下回退到无效 CSS 值或各组件自行使用不一致的 fallback。
+  - 统一德州扑克面向玩家的操作术语与反馈。Cash In/Cash Out/Take/Take All、Check/Call/Bet/Raise/Fold/All-in 等可见按钮、确认框、错误、成功消息和线下发牌提示统一为“补充筹码/带走筹码并退出/领取/领取全部/过牌/跟注/下注/加注/弃牌/全下”；协议 actionType 保持不变，避免破坏 Worker/Controller 兼容性。
+  - 德州扑克聊天对既有英文动作 token 继续兼容，但展示层统一映射为中文；Worker 的线下分池、补充筹码、退出限制和领取奖池消息也同步使用相同术语，减少完整操作条、快捷区、聊天和帮助文案之间的概念漂移。
+  - 更新大厅帮助文案，明确补充筹码和带走筹码并退出只允许在空闲阶段，线下发牌由赢家手动领取底池，避免旧说明暗示牌局进行中也可退出或随时补充筹码。
+审查结果/本轮未改动重点:
+  - 本轮继续结合 repair_log 既有修复记录检查 backend/src 与 frontend/src 当前全部 94 个文件，重点复核 roomController、RoomThreadManager、BaseGameWorker、六个游戏 Worker、六套 Room/Store/ActionPanel/ActionBar/PlayerList/Chat，以及共享 socket/session/action feedback/theme/navigation 工具。当前最重要且可低风险确定修复的问题集中在阿瓦隆私密开局事件契约和前端跨游戏导航/术语一致性，因此没有扩大为高风险核心状态机重写。
+  - 狼人杀继续复核角色配置、夜序、狼人共识、女巫/守卫限制、警长权重、放逐及胜负；杀人游戏继续复核杀手/警察/医生/狙击手夜间结算、遗言和白天投票；一夜狼人继续复核中心牌、夜间换牌、最终身份、猎人连锁及阵营胜负；阿瓦隆继续复核任务人数、7 人以上第 4 任务双失败、连续 5 次否决、刺杀与湖上夫人；德州扑克继续复核盲注、行动顺序、完整加注/短码 all-in、未跟注返还、主边池和线下领取；血染钟楼继续复核提名、投票、处决、夜间能力及公开/私密状态边界。本轮六 Worker 初始化均通过，未发现优先级高于上述同步与交互问题、且可在当前批次安全确定修复的新主流程阻断项。
+  - Worker/Controller 的房间串行任务、workerStateVersion/connectionStateVersion/hostStateVersion 合并和 action acknowledgement 事实源保持不变；本轮阿瓦隆只收紧 game_start 的私密投递，不改变公开 game_update/重连 game_state_sync 协议。
+  - 血染钟楼仍保留 repair_log 已记录、需要更大状态模型或真人说书人逐次裁决 UI 才能完整覆盖的架构级边界：特殊自定义夜序下 Pit-Hag 创建 Demon 后无法安全逆向更早已真实落地并触发被动的死亡；Recluse/Spy registration 缺逐次人工裁决 UI；自由文本与多重效果抵消下 Mathematician 极端统计缺统一逐次最终基准审计。本轮没有使用近似逻辑强行覆盖。
+  - 项目根目录仍不存在 src/；所有后端源码修改只位于 backend/src/，所有前端源码修改只位于 frontend/src/，原有目录结构保持不变。
+验证:
+  - 全量源码审查脚本通过：backend/src + frontend/src 共 94 个文件，92 个 TypeScript/Vue script 单元均可由 TypeScript 5.8.3 解析；31 个 Vue 文件均存在有效外层模板，31 个 style/CSS 单元花括号平衡；282 次相对本地导入均可解析；未发现真实合并冲突标记或根目录 src/。
+  - 导航专项断言通过：六个活动房间均只挂载一次 RoomQuickNavigation，均包含唯一的 player/action/chat 焦点目标，旧 go-action/go-chat 与局部 scrollToSelector 实现已清理；共享组件包含三项 aria-controls、减弱动画偏好和焦点同步逻辑。
+  - backend/src 全部 35 个 TypeScript 文件使用 strict/noEmit、真实全局 Node 类型及项目目录外 Express/CORS/Socket.IO/UUID 临时声明桩完成类型检查，并成功生成隔离 CommonJS 测试产物；临时声明、脚本和产物只位于 /tmp，不进入修复包。
+  - 六个实际游戏 Worker 使用本轮最新隔离编译产物执行合法 prepare_room，并确认未知任务明确返回 success=false：狼人杀、杀人游戏、阿瓦隆、一夜狼人、血染钟楼、德州扑克全部通过。
+  - 阿瓦隆开局专项运行回归构造 5 名已准备玩家并真实启动 Worker：捕获到 5 条分别发给对应玩家、且 secret.playerId 与接收者一致的私密 game_start；全房间不再出现任何缺少 secret 的 game_start 广播。
+  - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts 检查，仅显示正常的可选原生依赖缺失提示。
+  - 正式 npm ci --ignore-scripts --no-audit --no-fund --registry=https://registry.npmjs.org 已尝试，下载过程中公共 registry 域名解析多次 EAI_AGAIN，依赖未能完整安装。正式 npm run build 已在最终源码上执行；因 node_modules 不完整，backend tsc 报 body-parser/connect/cors/express/node/uuid/ws 等类型目录缺失并中止，未进入 frontend vue-tsc/Vite。这不等同于本轮源码 strict 编译或 Worker 运行回归失败；完整生产构建、Vite 产物、Docker 镜像和实际部署仍需在依赖源正常的本地或 CI 最终确认。
+备注: 本轮未删除文件，未创建根目录 src/；修复包只包含本轮修改文件与更新后的 repair_log.txt，可按项目相对路径直接覆盖。

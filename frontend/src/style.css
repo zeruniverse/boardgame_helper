@@ -11,8 +11,11 @@
   --app-bg-soft: #edf2f7;
   --app-panel: #ffffff;
   --app-panel-strong: #f8fafc;
+  --app-panel-muted: var(--app-panel-strong);
+  --app-card: var(--app-panel);
   --app-text: #1f2937;
   --app-text-secondary: #64748b;
+  --app-text-muted: var(--app-text-secondary);
   --app-border: #d9e2ec;
   --app-primary: #2563eb;
   --app-primary-hover: #1d4ed8;
@@ -78,6 +81,19 @@ body,
 
 body {
   overflow-x: hidden;
+}
+
+#room-player-section,
+#room-action-section,
+#room-chat-section {
+  scroll-margin-top: 140px;
+}
+
+#room-player-section:focus-visible,
+#room-action-section:focus-visible,
+#room-chat-section:focus-visible {
+  outline: 3px solid var(--app-primary);
+  outline-offset: 4px;
 }
 
 button,

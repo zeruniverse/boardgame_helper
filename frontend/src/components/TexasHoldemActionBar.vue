@@ -4,29 +4,29 @@
                :disabled="!canExtend || !!store.pendingActionKey"
                :loading="store.pendingActionKey === 'extendTime'"
                :class="{ 'colored-border': store.gameActive && isMyTurn && isInGame, 'disabled-border': !store.gameActive || !isMyTurn || !isInGame }">
-      延时一次
+      延长行动时间
     </el-button>
     <el-button :disabled="!canCheck || !!store.pendingActionKey"
                :loading="store.pendingActionKey === 'playerAction:check'"
                @click="action('check')"
                :class="{ 'colored-border': canCheck, 'disabled-border': !canCheck }">
-      Check
+      过牌
     </el-button>
     <el-button :disabled="!canCall || !!store.pendingActionKey"
                :loading="store.pendingActionKey === 'playerAction:call'"
                @click="action('call')"
                :class="{ 'colored-border': store.gameActive && canCall && isInGame, 'disabled-border': !store.gameActive || !canCall || !isInGame }">
-      Call {{ toCall }}
+      跟注 {{ toCall }}
     </el-button>
     <div class="raise-row">
-      <el-input v-model.number="raiseAmount" type="number" placeholder="额外加注"
+      <el-input v-model.number="raiseAmount" type="number" placeholder="额外加注筹码"
                 :disabled="!canRaise || !!store.pendingActionKey" />
       <el-button type="warning"
                  :disabled="!canRaise || !!store.pendingActionKey"
                  :loading="store.pendingActionKey === 'playerAction:raise'"
                  @click="raise"
                  :class="{ 'colored-border': store.gameActive && canRaise, 'disabled-border': !store.gameActive || !canRaise }">
-        Raise
+        加注
       </el-button>
     </div>
     <el-button type="primary"
@@ -34,14 +34,14 @@
                :loading="store.pendingActionKey === 'playerAction:allin'"
                @click="action('allin')"
                :class="{ 'colored-border': canAllIn, 'disabled-border': !canAllIn }">
-      All-in
+      全下
     </el-button>
     <el-button type="danger"
                :disabled="!canFold || !!store.pendingActionKey"
                :loading="store.pendingActionKey === 'playerAction:fold'"
                @click="action('fold')"
                :class="{ 'colored-border': store.gameActive && isMyTurn && isInGame, 'disabled-border': !store.gameActive || !isMyTurn || !isInGame }">
-      Fold
+      弃牌
     </el-button>
   </div>
 </template>
@@ -88,7 +88,7 @@ async function raise() {
     return;
   }
   if (toCall.value + val > ownChips.value) {
-    ElMessage.warning('跟注加加注金额不能超过自身筹码；筹码不足请使用 All-in');
+    ElMessage.warning('跟注额与额外加注额之和不能超过自身筹码；筹码不足请使用“全下”');
     return;
   }
 

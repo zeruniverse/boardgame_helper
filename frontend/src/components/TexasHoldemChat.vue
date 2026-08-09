@@ -155,6 +155,14 @@ const formatMessage = (message: string): string => {
   const actionRegex = /(Fold|Call|Raise|Bet|All-in|Check)/g;
   formattedMessage = formattedMessage.replace(actionRegex, (action) => {
     let color = '';
+    const actionLabels: Record<string, string> = {
+      Fold: '弃牌',
+      Call: '跟注',
+      Raise: '加注',
+      Bet: '下注',
+      'All-in': '全下',
+      Check: '过牌'
+    };
     switch (action) {
       case 'Fold':
         color = '#e74c3c';
@@ -173,7 +181,7 @@ const formatMessage = (message: string): string => {
         color = '#27ae60';
         break;
     }
-    return `<span style="color: ${color}; font-weight: bold;">${action}</span>`;
+    return `<span style="color: ${color}; font-weight: bold;">${actionLabels[action] || action}</span>`;
   });
 
   return formattedMessage;

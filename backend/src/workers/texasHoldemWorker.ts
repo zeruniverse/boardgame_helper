@@ -665,7 +665,7 @@ class TexasHoldemWorker extends BaseGameWorker {
       this.sendToRoom('chat_broadcast', { message: reason, type: 'system' });
     }
     this.sendToRoom('chat_broadcast', {
-      message: `线下发牌模式：奖池 ${gs.pot}。请线下确认赢家，由赢家点击 Take 或 Take ALL 领取底池。`,
+      message: `线下发牌模式：奖池 ${gs.pot}。请线下确认赢家，由赢家点击“领取”或“领取全部”分配底池。`,
       type: 'system'
     });
     this.sendToRoom('room_update', this.room);
@@ -825,7 +825,7 @@ class TexasHoldemWorker extends BaseGameWorker {
 
     const gs = this.gameState as TexasHoldemGameState;
     if (gs.stage !== 'idle') {
-      this.sendToPlayer(playerId, 'error', { message: '牌局进行中或分奖池中，不能 Cash In；请在本局结束后再充值' });
+      this.sendToPlayer(playerId, 'error', { message: '牌局进行中或分奖池中，不能补充筹码；请在本局结束后再操作' });
       return;
     }
 
@@ -833,13 +833,13 @@ class TexasHoldemWorker extends BaseGameWorker {
     const rawAmount = data?.amount ?? defaultStack;
     const amount = Math.floor(Number(rawAmount));
     if (!Number.isFinite(amount) || amount <= 0) {
-      this.sendToPlayer(playerId, 'error', { message: '充值金额必须是正整数' });
+      this.sendToPlayer(playerId, 'error', { message: '补充筹码金额必须是正整数' });
       return;
     }
 
     const maxCashIn = Math.max(defaultStack * 100, 1000000);
     if (amount > maxCashIn) {
-      this.sendToPlayer(playerId, 'error', { message: `单次充值金额不能超过 ${maxCashIn}` });
+      this.sendToPlayer(playerId, 'error', { message: `单次补充筹码金额不能超过 ${maxCashIn}` });
       return;
     }
 
@@ -853,7 +853,7 @@ class TexasHoldemWorker extends BaseGameWorker {
 
     this.sendToRoom('room_update', this.room);
     this.sendToRoom('chat_broadcast', {
-      message: `${player.nickname} 充值了 ${amount} 筹码`
+      message: `${player.nickname} 补充了 ${amount} 筹码`
     });
   }
 
@@ -870,8 +870,8 @@ class TexasHoldemWorker extends BaseGameWorker {
     // 会让其失去摊牌/边池资格并破坏 currentTurn、庄位和奖池结算。因此 Cash Out 只能在空闲阶段执行。
     if (gs.stage !== 'idle') {
       const error = gs.stage === 'distribution'
-        ? '奖池结算中，请先完成分奖池后再 Cash Out'
-        : '牌局进行中，无法 Cash Out；请等待本局结算完成';
+        ? '奖池结算中，请先完成分奖池后再带走筹码并退出'
+        : '牌局进行中，无法带走筹码并退出；请等待本局结算完成';
       this.sendToPlayer(playerId, 'error', { message: error });
       return { success: false, error };
     }
@@ -1841,7 +1841,7 @@ class TexasHoldemWorker extends BaseGameWorker {
     const amount = data?.amount;
 
     if (this.config.allowSystemDealing) {
-      this.sendToPlayer(playerId, 'error', { message: '线上系统发牌模式不支持手动 Take' });
+      this.sendToPlayer(playerId, 'error', { message: '线上系统发牌模式不支持手动领取奖池' });
       return;
     }
 
@@ -1853,7 +1853,7 @@ class TexasHoldemWorker extends BaseGameWorker {
 
     const takeAmt = Math.floor(Number(amount));
     if (!Number.isFinite(takeAmt) || takeAmt <= 0) {
-      this.sendToPlayer(playerId, 'error', { message: 'Take 数量必须是正整数' });
+      this.sendToPlayer(playerId, 'error', { message: '领取数量必须是正整数' });
       return;
     }
 
@@ -1881,7 +1881,7 @@ class TexasHoldemWorker extends BaseGameWorker {
       gs.claimedWinners.push(playerId);
     }
 
-    this.sendToRoom('chat_broadcast', { message: `[玩家${player.nickname} take ${takeAmt}]` });
+    this.sendToRoom('chat_broadcast', { message: `[玩家${player.nickname} 领取 ${takeAmt} 筹码]` });
     this.sendToRoom('room_update', this.room);
     this.sendToRoom('game_state', this.buildPublicGameState());
 
@@ -1893,7 +1893,7 @@ class TexasHoldemWorker extends BaseGameWorker {
 
   private handleTakeAll(playerId: string) {
     if (this.config.allowSystemDealing) {
-      this.sendToPlayer(playerId, 'error', { message: '线上系统发牌模式不支持手动 Take' });
+      this.sendToPlayer(playerId, 'error', { message: '线上系统发牌模式不支持手动领取奖池' });
       return;
     }
 
@@ -1929,7 +1929,7 @@ class TexasHoldemWorker extends BaseGameWorker {
     }
     gs.winners = [...gs.claimedWinners];
 
-    this.sendToRoom('chat_broadcast', { message: `[玩家${player.nickname} take all ${takeAmt}]` });
+    this.sendToRoom('chat_broadcast', { message: `[玩家${player.nickname} 领取全部 ${takeAmt} 筹码]` });
     this.sendToRoom('room_update', this.room);
     this.sendToRoom('game_state', this.buildPublicGameState());
 

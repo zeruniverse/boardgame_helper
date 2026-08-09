@@ -23,8 +23,6 @@
     <RoomQuickNavigation
       v-else
       class="onu-quick-navigation"
-      @go-action="scrollToActionArea"
-      @go-chat="scrollToChat"
     />
 
     <!-- 游戏主区域 -->
@@ -37,7 +35,7 @@
         <div v-if="timeLeft > 0" class="mobile-info-row"><span>剩余时间</span><strong>{{ timeLeft }}s</strong></div>
       </div>
       <!-- 左侧：玩家列表 -->
-      <div class="left-panel">
+      <div id="room-player-section" class="left-panel" tabindex="-1">
         <OnuWerewolfPlayerList
           :players="gameState?.players || room?.players || []"
           :hostId="room?.hostId || ''"
@@ -51,7 +49,7 @@
       </div>
 
       <!-- 中间：操作面板 -->
-      <div class="center-panel full-action-area">
+      <div id="room-action-section" class="center-panel full-action-area" tabindex="-1">
         <OnuWerewolfActionPanel
           :gameState="gameState"
           :playerSecret="playerSecret"
@@ -73,7 +71,7 @@
       </div>
 
       <!-- 右侧：聊天区域 -->
-      <div class="right-panel chat-anchor">
+      <div id="room-chat-section" class="right-panel chat-anchor" tabindex="-1">
         <OnuWerewolfChat
           :messages="messages"
           :roomId="roomId"
@@ -160,13 +158,6 @@ const handleTransferHost = (playerId: string) => {
 const handleKickPlayer = (playerId: string) => {
   store.kickPlayer(playerId);
 };
-
-const scrollToSelector = (selector: string) => {
-  document.querySelector(selector)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-};
-
-const scrollToActionArea = () => scrollToSelector('.full-action-area');
-const scrollToChat = () => scrollToSelector('.chat-anchor');
 
 // 生命周期
 let componentActive = true;
