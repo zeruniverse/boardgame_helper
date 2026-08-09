@@ -1,25 +1,37 @@
 <template>
-  <div class="mafia-action-panel">
+  <div
+    class="mafia-action-panel"
+    :class="{ 'is-submitting': isSubmitting }"
+    :aria-busy="isSubmitting"
+  >
+    <ActionSubmissionStatus :pending="isSubmitting" />
+
     <!-- 等待开始阶段 -->
     <div v-if="gameState.status === 'WAITING'" class="waiting-actions">
       <el-button 
         v-if="!isReady" 
-        @click="ready" 
+        @click="ready"
         type="primary"
+        :loading="isPending('ready')"
+        :disabled="isSubmitting"
       >
         准备
       </el-button>
       <el-button 
         v-if="isReady" 
-        @click="unready" 
+        @click="unready"
         type="default"
+        :loading="isPending('unready')"
+        :disabled="isSubmitting"
       >
         取消准备
       </el-button>
       <el-button 
         v-if="isHost && canStartGame" 
-        @click="startGame" 
+        @click="startGame"
         type="success"
+        :loading="isPending('start-game')"
+        :disabled="isSubmitting"
       >
         开始游戏
       </el-button>
@@ -40,7 +52,8 @@
             v-for="player in getAliveEnemyPlayers()"
             :key="player.id"
             @click="killPerson(player.id)"
-            :disabled="!canOperate"
+            :loading="isPending(`kill:${player.id}`)"
+            :disabled="isSubmitting || !canOperate"
             size="small"
           >
             {{ displayPlayerName(player) }}
@@ -56,7 +69,8 @@
             v-for="player in getAliveOtherPlayers()"
             :key="player.id"
             @click="inspectSuspect(player.id)"
-            :disabled="!canOperate"
+            :loading="isPending(`inspect:${player.id}`)"
+            :disabled="isSubmitting || !canOperate"
             size="small"
           >
             {{ displayPlayerName(player) }}
@@ -72,14 +86,16 @@
             v-for="player in getAliveAllPlayers()"
             :key="player.id"
             @click="doctorSave(player.id)"
-            :disabled="!canOperate"
+            :loading="isPending(`doctor:${player.id}`)"
+            :disabled="isSubmitting || !canOperate"
             size="small"
           >
             {{ displayPlayerName(player) }}
           </el-button>
           <el-button
             @click="skipDoctorSave"
-            :disabled="!canOperate"
+            :loading="isPending('doctor-skip')"
+            :disabled="isSubmitting || !canOperate"
             size="small"
           >
             本夜不救治
@@ -95,14 +111,16 @@
             v-for="player in getAliveOtherPlayers()"
             :key="player.id"
             @click="sniperShoot(player.id)"
-            :disabled="!canUseSniper"
+            :loading="isPending(`sniper:${player.id}`)"
+            :disabled="isSubmitting || !canUseSniper"
             size="small"
           >
             {{ displayPlayerName(player) }}
           </el-button>
           <el-button
             @click="skipSnipe"
-            :disabled="!canUseSniper"
+            :loading="isPending('sniper-skip')"
+            :disabled="isSubmitting || !canUseSniper"
             size="small"
           >
             本夜不狙击（保留机会）
@@ -133,8 +151,10 @@
           :closable="false"
         />
         <el-button 
-          @click="endSpeak" 
-          type="primary" 
+          @click="endSpeak"
+          type="primary"
+          :loading="isPending('end-speak')"
+          :disabled="isSubmitting"
           style="margin-top: 10px;"
         >
           结束发言
@@ -154,7 +174,8 @@
           v-for="player in getVoteCandidates()"
           :key="player.id"
           @click="vote(player.id)"
-          :disabled="!canOperate || hasVoted"
+          :loading="isPending(`vote:${player.id}`)"
+          :disabled="isSubmitting || !canOperate || hasVoted"
           size="small"
           :type="getVoteButtonType(player.id)"
         >
@@ -187,8 +208,10 @@
           :closable="false"
         />
         <el-button 
-          @click="endLastWord" 
-          type="primary" 
+          @click="endLastWord"
+          type="primary"
+          :loading="isPending('end-last-word')"
+          :disabled="isSubmitting"
           style="margin-top: 10px;"
         >
           结束遗言
@@ -211,7 +234,12 @@
       </div>
 
       <div v-if="isHost" class="restart-game">
-        <el-button @click="restartGame" type="success">
+        <el-button
+          type="success"
+          :loading="isPending('restart-game')"
+          :disabled="isSubmitting"
+          @click="restartGame"
+        >
           重新开始游戏
         </el-button>
       </div>
@@ -219,7 +247,13 @@
 
     <!-- 特殊操作 -->
     <div v-if="canConfess" class="confess-action">
-      <el-button @click="confess" type="danger" size="small">
+      <el-button
+        type="danger"
+        size="small"
+        :loading="isPending('confess')"
+        :disabled="isSubmitting"
+        @click="confess"
+      >
         自爆
       </el-button>
     </div>
@@ -227,9 +261,11 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, watch } from 'vue'
 import { useMafiaGameStore } from '../store/mafia'
 import { formatPlayerName } from '../utils/playerName'
+import ActionSubmissionStatus from './ActionSubmissionStatus.vue'
+import { useActionSubmission } from '../utils/actionSubmission'
 
 interface Player {
   id: string
@@ -273,13 +309,13 @@ interface Props {
 const props = defineProps<Props>()
 
 const store = useMafiaGameStore()
+const { isSubmitting, isPending, submitAction, invalidatePending } = useActionSubmission()
 
 // 计算属性
 const isHost = computed(() => store.isHost)
 const isReady = computed(() => store.isReady)
 const canStartGame = computed(() => store.canStartGame)
 const canOperate = computed(() => store.canOperate)
-const isMyTurn = computed(() => store.isMyTurn)
 const isAlive = computed(() => store.isAlive)
 const canUseSniper = computed(() => {
   return canOperate.value &&
@@ -302,6 +338,17 @@ const canConfess = computed(() => {
          ['SPEAK', 'VOTE', 'PK'].includes(props.gameState.status)
 })
 
+watch(
+  () => [
+    props.gameState.status,
+    props.gameState.day,
+    props.gameState.lastWordPlayer,
+    props.playerSecret?.canOperate,
+    props.playerSecret?.actionLock
+  ] as const,
+  () => invalidatePending()
+)
+
 const displayPlayerName = (player?: Partial<Player> | null): string => {
   return formatPlayerName({ id: player?.id, name: player?.name, nickname: player?.nickname }, store.currentUserId)
 }
@@ -317,7 +364,6 @@ const getCurrentSpeaker = () => {
 
 const getAliveEnemyPlayers = (): Player[] => {
   if (!props.gameState.players) return []
-  const myTeam = props.playerSecret?.team
   return Object.entries(props.gameState.players)
     .filter(([id, player]: [string, any]) => {
       return player.alive && id !== store.currentUserId && !isTeammate(id)
@@ -391,38 +437,43 @@ const getNightActionDescription = (): string => {
   }
 }
 
-// 游戏操作方法 - 统一包装错误处理
-const safeAction = (action: () => void, actionName: string) => {
-  try {
-    action()
-  } catch (error) {
-    console.error(`[MafiaActionPanel] ${actionName} 失败:`, error)
-  }
+// 游戏操作统一等待 Worker acknowledgement。按钮在请求期间保持 loading，
+// 避免双击投票/夜间技能；失败时由共享 Socket 请求层展示原因并恢复可操作状态。
+const submitMafiaAction = (
+  actionKey: string,
+  actionType: string,
+  actionData: Record<string, unknown> = {}
+) => {
+  void submitAction(
+    actionKey,
+    () => store.sendGameAction(actionType, actionData)
+  )
 }
 
-const ready = () => safeAction(() => store.ready(), 'ready')
-const unready = () => safeAction(() => store.unready(), 'unready')
-const startGame = () => safeAction(() => store.startGame(), 'startGame')
-const killPerson = (targetId: string) => safeAction(() => store.killPerson(targetId), 'killPerson')
-const inspectSuspect = (targetId: string) => safeAction(() => store.inspectSuspect(targetId), 'inspectSuspect')
-const doctorSave = (targetId: string) => safeAction(() => store.doctorSave(targetId), 'doctorSave')
-const skipDoctorSave = () => safeAction(() => store.skipDoctorSave(), 'skipDoctorSave')
-const sniperShoot = (targetId: string) => safeAction(() => store.sniperShoot(targetId), 'sniperShoot')
-const skipSnipe = () => safeAction(() => store.skipSnipe(), 'skipSnipe')
-const vote = (targetId: string) => safeAction(() => store.vote(targetId), 'vote')
-const endSpeak = () => safeAction(() => store.endSpeak(), 'endSpeak')
-const confess = () => safeAction(() => store.confess(), 'confess')
-const endLastWord = () => safeAction(() => store.endLastWord(), 'endLastWord')
-const restartGame = () => safeAction(() => store.restartGame(), 'restartGame')
+const ready = () => submitMafiaAction('ready', 'ready')
+const unready = () => submitMafiaAction('unready', 'unready')
+const startGame = () => submitMafiaAction('start-game', 'startGame')
+const killPerson = (targetId: string) => submitMafiaAction(`kill:${targetId}`, 'kill_person', { targetId })
+const inspectSuspect = (targetId: string) => submitMafiaAction(`inspect:${targetId}`, 'inspect_suspect', { suspectId: targetId })
+const doctorSave = (targetId: string) => submitMafiaAction(`doctor:${targetId}`, 'doctor_save', { targetId })
+const skipDoctorSave = () => submitMafiaAction('doctor-skip', 'doctor_skip')
+const sniperShoot = (targetId: string) => submitMafiaAction(`sniper:${targetId}`, 'sniper_shoot', { targetId })
+const skipSnipe = () => submitMafiaAction('sniper-skip', 'sniper_skip')
+const vote = (targetId: string) => submitMafiaAction(`vote:${targetId}`, 'vote', { targetId })
+const endSpeak = () => submitMafiaAction('end-speak', 'end_speak')
+const confess = () => submitMafiaAction('confess', 'confess')
+const endLastWord = () => submitMafiaAction('end-last-word', 'end_last_word')
+const restartGame = () => submitMafiaAction('restart-game', 'restartGame')
+
 </script>
 
 <style scoped>
 .mafia-action-panel {
   background: var(--app-panel);
-  border: 1px solid #e4e7ed;
-  border-radius: 8px;
-  padding: 20px;
-  margin-bottom: 20px;
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius);
+  padding: var(--app-space-5);
+  margin-bottom: var(--app-space-5);
 }
 
 .action-header {
@@ -431,13 +482,13 @@ const restartGame = () => safeAction(() => store.restartGame(), 'restartGame')
 
 .action-header h4 {
   margin: 0 0 8px 0;
-  color: #303133;
+  color: var(--app-text);
   font-size: 16px;
 }
 
 .action-header p {
   margin: 0;
-  color: #606266;
+  color: var(--app-text-secondary);
   font-size: 14px;
 }
 
@@ -463,14 +514,14 @@ const restartGame = () => safeAction(() => store.restartGame(), 'restartGame')
 
 .night-actions h5 {
   margin: 0 0 8px 0;
-  color: #409eff;
+  color: var(--app-primary);
   font-size: 14px;
 }
 
 .civilian-wait {
   text-align: center;
   padding: 20px;
-  color: #909399;
+  color: var(--app-text-secondary);
 }
 
 .my-turn {
@@ -484,7 +535,7 @@ const restartGame = () => safeAction(() => store.restartGame(), 'restartGame')
 
 .pk-players h5 {
   margin: 0 0 8px 0;
-  color: #e6a23c;
+  color: var(--app-warning);
   font-size: 14px;
 }
 
@@ -509,6 +560,10 @@ const restartGame = () => safeAction(() => store.restartGame(), 'restartGame')
   margin-top: 16px;
   text-align: center;
   padding-top: 16px;
-  border-top: 1px solid #e4e7ed;
+  border-top: 1px solid var(--app-border);
+}
+.mafia-action-panel.is-submitting .player-buttons {
+  cursor: wait;
+  opacity: 0.82;
 }
 </style> 

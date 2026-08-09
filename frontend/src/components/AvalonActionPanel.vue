@@ -1,19 +1,29 @@
 <template>
-  <div class="avalon-action-panel">
+  <div
+    class="avalon-action-panel"
+    :class="{ 'is-submitting': isSubmitting }"
+    :aria-busy="isSubmitting"
+  >
+    <ActionSubmissionStatus :pending="isSubmitting" />
+
     <!-- 准备阶段 -->
     <div v-if="gameState.status === 0" class="action-section">
       <h4>游戏准备</h4>
       <div class="ready-actions">
         <el-button 
           v-if="!isReady" 
-          type="success" 
+          type="success"
+          :loading="isPending('ready')"
+          :disabled="isSubmitting"
           @click="handleReady"
         >
           准备
         </el-button>
         <el-button 
           v-else 
-          type="warning" 
+          type="warning"
+          :loading="isPending('unready')"
+          :disabled="isSubmitting"
           @click="handleUnready"
         >
           取消准备
@@ -21,7 +31,8 @@
         <el-button
           v-if="isHost"
           type="primary"
-          :disabled="!canStartGame"
+          :loading="isPending('start-game')"
+          :disabled="isSubmitting || !canStartGame"
           @click="handleStartGame"
         >
           开始游戏
@@ -37,13 +48,17 @@
       <h4>队长选择发言顺序</h4>
       <div class="captain-actions">
         <el-button 
-          type="primary" 
+          type="primary"
+          :loading="isPending('captain-speak-first')"
+          :disabled="isSubmitting"
           @click="handleCaptainSpeak(true)"
         >
           首先发言
         </el-button>
         <el-button 
-          type="primary" 
+          type="primary"
+          :loading="isPending('captain-speak-last')"
+          :disabled="isSubmitting"
           @click="handleCaptainSpeak(false)"
         >
           最后发言
@@ -59,6 +74,8 @@
         <div class="speak-actions">
           <el-button
             type="primary"
+            :loading="isPending('end-speak')"
+            :disabled="isSubmitting"
             @click="handleEndSpeak"
           >
             结束发言
@@ -87,12 +104,13 @@
         <div class="team-actions">
           <el-button 
             type="primary" 
-            :disabled="selectedTeam.length !== getTeamSize()"
+            :loading="isPending('pick-team')"
+            :disabled="isSubmitting || selectedTeam.length !== getTeamSize()"
             @click="handlePickTeam"
           >
             确认选择 ({{ selectedTeam.length }}/{{ getTeamSize() }})
           </el-button>
-          <el-button @click="clearSelection">清空选择</el-button>
+          <el-button :disabled="isSubmitting" @click="clearSelection">清空选择</el-button>
         </div>
       </div>
     </div>
@@ -115,13 +133,17 @@
         </div>
         <div class="vote-actions">
           <el-button 
-            type="success" 
+            type="success"
+            :loading="isPending('vote-agree')"
+            :disabled="isSubmitting"
             @click="handleVote(true)"
           >
             同意
           </el-button>
           <el-button 
-            type="danger" 
+            type="danger"
+            :loading="isPending('vote-reject')"
+            :disabled="isSubmitting"
             @click="handleVote(false)"
           >
             反对
@@ -142,14 +164,18 @@
         </p>
         <div class="task-actions">
           <el-button 
-            type="success" 
+            type="success"
+            :loading="isPending('mission-success')"
+            :disabled="isSubmitting"
             @click="handleTakeAction(true)"
           >
             任务成功
           </el-button>
           <el-button 
             v-if="playerSecret.team === 'red'"
-            type="danger" 
+            type="danger"
+            :loading="isPending('mission-fail')"
+            :disabled="isSubmitting"
             @click="handleTakeAction(false)"
           >
             任务失败
@@ -169,7 +195,7 @@
             :key="playerId"
             class="target-option"
             :class="{ selected: selectedTarget === playerId }"
-            @click="selectedTarget = String(playerId)"
+            @click="selectTarget(String(playerId))"
           >
             <span class="player-number">{{ String(player.index) }}</span>
             <span class="player-name">{{ displayPlayerName(playerId, player.name) }}</span>
@@ -178,7 +204,8 @@
         <div class="lady-actions">
           <el-button
             type="primary"
-            :disabled="!selectedTarget"
+            :loading="isPending('lady-inspect')"
+            :disabled="isSubmitting || !selectedTarget"
             @click="handleLadyInspect"
           >
             查验
@@ -198,7 +225,7 @@
             :key="playerId"
             class="target-option"
             :class="{ selected: selectedTarget === playerId }"
-            @click="selectedTarget = String(playerId)"
+            @click="selectTarget(String(playerId))"
           >
             <span class="player-number">{{ String(player.index) }}</span>
             <span class="player-name">{{ displayPlayerName(playerId, player.name) }}</span>
@@ -207,7 +234,8 @@
         <div class="assassinate-actions">
           <el-button
             type="danger"
-            :disabled="!selectedTarget"
+            :loading="isPending('assassinate')"
+            :disabled="isSubmitting || !selectedTarget"
             @click="handleAssassinate"
           >
             刺杀
@@ -252,7 +280,9 @@
         <p class="winner">{{ getWinnerText() }}</p>
         <el-button 
           v-if="isHost" 
-          type="primary" 
+          type="primary"
+          :loading="isPending('restart-game')"
+          :disabled="isSubmitting"
           @click="handleRestartGame"
         >
           重新开始
@@ -265,6 +295,8 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
 import { formatPlayerNameById } from '../utils/playerName'
+import ActionSubmissionStatus from './ActionSubmissionStatus.vue'
+import { useActionSubmission } from '../utils/actionSubmission'
 
 const props = defineProps<{
   gameState: any
@@ -273,18 +305,27 @@ const props = defineProps<{
   roomId: string
 }>()
 
+type ActionResultCallback = (success: boolean) => void
+
 const emit = defineEmits<{
-  gameAction: [actionType: string, actionData: any]
+  gameAction: [
+    actionType: string,
+    actionData: Record<string, unknown>,
+    onResult: ActionResultCallback
+  ]
 }>()
 
 const selectedTeam = ref<string[]>([])
 const selectedTarget = ref<string>('')
+
+const { isSubmitting, isPending, submitAction, invalidatePending } = useActionSubmission()
 
 // 操作超时/掉线代操作会在本地没有点击确认时推进阶段。清掉上一阶段的临时选择，
 // 避免玩家下一次获得队长、湖上夫人或刺客操作权时误带旧选择。
 watch(
   () => [props.gameState?.status, props.gameState?.mission, props.gameState?.step, props.gameState?.captain],
   () => {
+    invalidatePending()
     selectedTeam.value = []
     selectedTarget.value = ''
   }
@@ -447,6 +488,8 @@ const getWinnerText = (): string => {
 }
 
 const togglePlayerSelection = (playerId: string | number) => {
+  if (isSubmitting.value) return
+
   const playerIdStr = String(playerId)
   const index = selectedTeam.value.indexOf(playerIdStr)
   if (index > -1) {
@@ -457,67 +500,110 @@ const togglePlayerSelection = (playerId: string | number) => {
 }
 
 const clearSelection = () => {
-  selectedTeam.value = []
+  if (!isSubmitting.value) {
+    selectedTeam.value = []
+  }
 }
+
+const selectTarget = (playerId: string) => {
+  if (!isSubmitting.value) {
+    selectedTarget.value = playerId
+  }
+}
+
+const requestGameAction = (
+  actionType: string,
+  actionData: Record<string, unknown>
+): Promise<boolean> => new Promise(resolve => {
+  emit('gameAction', actionType, actionData, resolve)
+})
+
+const submitGameAction = (
+  actionKey: string,
+  actionType: string,
+  actionData: Record<string, unknown>,
+  onSuccess?: () => void
+) => submitAction(
+  actionKey,
+  () => requestGameAction(actionType, actionData),
+  onSuccess
+)
 
 // 事件处理
 const handleReady = () => {
-  emit('gameAction', 'ready', {})
+  void submitGameAction('ready', 'ready', {})
 }
 
 const handleUnready = () => {
-  emit('gameAction', 'unready', {})
+  void submitGameAction('unready', 'unready', {})
 }
 
 const handleStartGame = () => {
-  emit('gameAction', 'startGame', {})
+  void submitGameAction('start-game', 'startGame', {})
 }
 
 const handleCaptainSpeak = (speakFirst: boolean) => {
-  emit('gameAction', 'captainSpeak', { speakFirst })
+  void submitGameAction(
+    speakFirst ? 'captain-speak-first' : 'captain-speak-last',
+    'captainSpeak',
+    { speakFirst }
+  )
 }
 
 const handlePickTeam = () => {
-  emit('gameAction', 'pickTeam', { team: selectedTeam.value })
-  selectedTeam.value = []
+  const team = [...selectedTeam.value]
+  if (team.length !== getTeamSize()) return
+
+  void submitGameAction('pick-team', 'pickTeam', { team }, () => {
+    selectedTeam.value = []
+  })
 }
 
 const handleVote = (agree: boolean) => {
-  emit('gameAction', 'vote', { agree })
+  void submitGameAction(agree ? 'vote-agree' : 'vote-reject', 'vote', { agree })
 }
 
 const handleTakeAction = (success: boolean) => {
-  emit('gameAction', 'takeAction', { success })
+  void submitGameAction(
+    success ? 'mission-success' : 'mission-fail',
+    'takeAction',
+    { success }
+  )
 }
 
 const handleAssassinate = () => {
-  if (selectedTarget.value) {
-    emit('gameAction', 'assassinate', { targetId: selectedTarget.value })
-    selectedTarget.value = ''
+  const targetId = selectedTarget.value
+  if (targetId) {
+    void submitGameAction('assassinate', 'assassinate', { targetId }, () => {
+      selectedTarget.value = ''
+    })
   }
 }
 
 const handleEndSpeak = () => {
-  emit('gameAction', 'endSpeak', {})
+  void submitGameAction('end-speak', 'endSpeak', {})
 }
 
 const handleLadyInspect = () => {
-  if (selectedTarget.value) {
-    emit('gameAction', 'ladyInspect', { targetId: selectedTarget.value })
-    selectedTarget.value = ''
+  const targetId = selectedTarget.value
+  if (targetId) {
+    void submitGameAction('lady-inspect', 'ladyInspect', { targetId }, () => {
+      selectedTarget.value = ''
+    })
   }
 }
 
 const handleRestartGame = () => {
-  emit('gameAction', 'restartGame', {})
+  void submitGameAction('restart-game', 'restartGame', {})
 }
+
 </script>
 
 <style scoped>
 .avalon-action-panel {
-  padding: 20px;
-  background: var(--app-bg);
-  border-radius: 10px;
+  padding: var(--app-space-5);
+  background: var(--app-panel);
+  border-radius: var(--app-radius);
   border: 1px solid var(--app-border);
 }
 
@@ -589,14 +675,14 @@ const handleRestartGame = () => {
 
 .player-option:hover,
 .target-option:hover {
-  background: rgba(0, 0, 0, 0.05);
+  background: var(--app-panel-strong);
   border-color: var(--app-primary);
 }
 
 .player-option.selected,
 .target-option.selected {
-  background: rgba(33, 150, 243, 0.3);
-  border-color: #2196f3;
+  background: var(--app-bg-soft);
+  border-color: var(--app-primary);
 }
 
 .player-number {
@@ -605,7 +691,7 @@ const handleRestartGame = () => {
   width: 30px;
   height: 30px;
   border-radius: 50%;
-  background: rgba(0, 0, 0, 0.05);
+  background: var(--app-panel-strong);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -626,8 +712,8 @@ const handleRestartGame = () => {
 
 .team-member {
   padding: 5px 15px;
-  background: rgba(33, 150, 243, 0.3);
-  border: 1px solid #2196f3;
+  background: var(--app-bg-soft);
+  border: 1px solid var(--app-primary);
   border-radius: 20px;
   color: var(--app-text);
   font-weight: bold;
@@ -684,11 +770,11 @@ const handleRestartGame = () => {
 }
 
 .vote-agree .vote-label {
-  color: #059669;
+  color: var(--app-success);
 }
 
 .vote-disagree .vote-label {
-  color: #dc2626;
+  color: var(--app-danger);
 }
 
 .vote-names {
@@ -722,7 +808,7 @@ const handleRestartGame = () => {
 }
 
 .sabotage-number {
-  color: #dc2626;
+  color: var(--app-danger);
   font-weight: bold;
   font-size: 16px;
 }
@@ -733,10 +819,15 @@ const handleRestartGame = () => {
 }
 
 .mission-outcome.success {
-  color: #059669;
+  color: var(--app-success);
 }
 
 .mission-outcome.failure {
-  color: #dc2626;
+  color: var(--app-danger);
+}
+.avalon-action-panel.is-submitting .player-option,
+.avalon-action-panel.is-submitting .target-option {
+  cursor: wait;
+  opacity: 0.72;
 }
 </style> 

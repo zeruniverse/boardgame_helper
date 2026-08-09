@@ -3211,3 +3211,41 @@ Commit: fix(round28): 修复钟楼能力与遗言票状态并补强操作反馈
   - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts 检查，仅有正常可选依赖提示。
   - 正式 npm run build 已在最终源码上执行。当前 node_modules 不完整，backend tsc 因缺少 package.json 已声明依赖的类型目录而中止，前端 vue-tsc/Vite 未进入执行；此前 npm ci 被内部镜像缺失锁定的 typescript-5.8.3.tgz 阻塞。因此本轮不能声称完整生产构建已在此容器通过，仍需在依赖可用的本地或 CI 最终确认。
 备注: 本轮未删除文件，未创建根目录 src/；修复包只包含上述修改/新增文件与更新后的 repair_log.txt，可按项目相对路径直接覆盖。
+
+=== 当前会话第 30 轮修复记录 ===
+时间: 2026-08-09 19:06:43 UTC
+Commit: fix(round30): 统一三类游戏操作回执并修复重复提交竞态
+修改/新增文件:
+  - backend/src/workers/botcWorker.ts
+  - backend/src/workers/onuWerewolfWorker.ts
+  - frontend/src/components/ActionSubmissionStatus.vue（新增）
+  - frontend/src/components/AvalonActionPanel.vue
+  - frontend/src/components/AvalonRoom.vue
+  - frontend/src/components/MafiaActionPanel.vue
+  - frontend/src/components/MafiaRoom.vue
+  - frontend/src/components/WerewolfActionPanel.vue
+  - frontend/src/components/WerewolfRoom.vue
+  - frontend/src/utils/actionSubmission.ts（新增）
+  - repair_log.txt
+删除文件: 无
+构建测试: 部分通过（全量源码语法、Vue 结构和本地导入检查通过；本轮前端脚本 strict 类型检查、backend/src 全量 strict ES2021/ES2022 类型检查、六游戏 Worker prepare_room/未知任务拒绝烟雾及操作提交并发专项回归均通过。正式 npm ci 被当前内部 npm 镜像缺失 package-lock 锁定的 typescript-5.8.3.tgz、返回 404 阻塞，因此未能在本容器完成真实依赖下的 npm run build、Vite 产物和直接部署终验）
+本轮修复:
+  - 新增 useActionSubmission 共享提交控制器和 ActionSubmissionStatus 共享反馈组件，为狼人杀、阿瓦隆、杀人游戏操作面板提供统一的单请求在途锁、按钮 loading/disabled、无障碍提交提示和迟到回执代际保护，避免快速连点造成重复动作或界面进入与后端不同步的乐观完成态。
+  - 狼人杀的狼人刀人、预言家查验、女巫用药、守卫守护、警长竞选/投票、白天投票、猎人开枪、遗言、准备/开局/重开等操作统一等待 Room -> Store -> Controller/Worker 的真实 acknowledgement；只有 success=true 后才清空目标或遗言，规则拒绝、断线或超时会保留选择以便重试。
+  - 阿瓦隆的队长发言、组队、队伍表决、任务成功/失败、湖上夫人查验、刺杀梅林、准备/开局/重开统一使用相同回执链路；阶段、任务、步骤或队长变化会作废旧回调，避免迟到响应清空新阶段已选队伍/目标。
+  - 杀人游戏移除只捕获同步异常、却无法覆盖异步 Store 请求的 safeAction 包装。夜间杀手/警察/医生/狙击手操作、跳过、遗言、白天投票、认罪与重开现在直接等待 sendGameAction 的 Promise<boolean>，失败时不再误清界面或误提示已完成。
+  - WerewolfRoom 与 AvalonRoom 的 game-action 事件处理改为异步等待 Store 回执，并在 finally 中稳定回传成功布尔值；MafiaActionPanel 直接复用 Store 的可靠动作 API，MafiaRoom 删除已经失效的中转事件处理器，减少三套界面的协议分叉。
+  - 三套操作面板的卡片、边框、文本、禁用态和提交状态样式进一步改用全局主题变量，交互提示和响应式体验保持一致；在提交期间阻止修改当前目标，避免用户看到的选择与实际提交 payload 不一致。
+  - BOTCWorker 与 OnuWerewolfWorker 的 gameState 子类字段改为 TypeScript declare 声明，避免较新 class-field emit 语义在构造时生成未初始化的自有字段并遮蔽 BaseGameWorker 已建立的状态对象，提高不同 TypeScript target 下的构建和运行可移植性。
+审查结果/本轮未改动重点:
+  - 本轮结合 repair_log 既有记录继续检查 backend/src 与 frontend/src 当前全部代码，重点复核六游戏 Worker、Controller/Room/Store 回执链路、阶段同步、前端操作面板和主题复用。当前最重要且可低风险确定修复的问题，是狼人杀、阿瓦隆和杀人游戏仍缺少其他游戏已经具备的可靠提交状态，导致重复点击、失败后选择丢失和迟到响应污染新阶段，因此本批次优先统一该链路。
+  - 狼人杀继续复核角色配置、夜间顺序、狼人共识、女巫/守卫限制、警长权重、放逐及胜负；杀人游戏继续复核杀手/警察/医生/狙击手结算、遗言和白天投票；一夜狼人继续复核中心牌、夜间换牌、最终身份、猎人/皮匠胜负；阿瓦隆继续复核任务人数、7 人以上第 4 任务双失败、连续 5 次否决、刺杀和湖上夫人；德州扑克继续复核行动顺序、完整加注、短码 all-in、未跟注返还和主边池；血染钟楼继续复核提名、投票、处决、夜间行动及公开/私密状态。本轮没有发现优先级高于上述跨游戏提交竞态、且能在当前批次安全确定落地的新核心规则阻断项。
+  - 血染钟楼仍保留 repair_log 前序记录中需要更大状态模型或真人说书人逐次裁决界面才能完整覆盖的架构边界：特殊自定义夜序下 Pit-Hag 创建 Demon 后无法安全逆向更早已落地并触发被动的死亡；Recluse/Spy registration 缺逐次人工裁决；自由文本及多重效果抵消下 Mathematician 极端统计缺统一逐次最终基准审计。本轮没有使用近似逻辑强行覆盖。
+  - 项目根目录不存在 src/；所有后端源码修改仅位于 backend/src/，所有前端源码修改/新增仅位于 frontend/src/，原有目录结构保持不变。
+验证:
+  - 全量源码检查通过：96 个 TypeScript/Vue script 单元可解析，32 个 Vue 文件结构有效，294 次相对本地导入可解析；本轮 10 个源码修改/新增文件均位于约束目录，未发现根目录 src/。
+  - 本轮 7 个 Vue 组件脚本、共享 actionSubmission 工具及所需 Store/工具声明完成 strict ES2021 语义检查；backend/src 全部 TypeScript 文件分别在 strict ES2021 与 strict ES2022 配置下通过检查。
+  - 操作提交专项运行回归 3 组通过：同一时刻重复请求被阻止且成功回执只触发一次清理；success=false 不触发成功回调并解除 loading；阶段切换作废旧请求后新动作可立即提交，迟到成功不会污染新阶段。
+  - backend 隔离 CommonJS 编译通过；狼人杀、杀人游戏、阿瓦隆、血染钟楼、一夜狼人、德州扑克六个实际 Worker 均完成合法 prepare_room，并确认未知任务明确返回 success=false。
+  - 正式 npm ci --ignore-scripts --no-audit --no-fund 已尝试，当前内部 npm 镜像对 typescript-5.8.3.tgz 返回 404。由于依赖安装未完成，本轮不能声称正式 npm run build、frontend vue-tsc/Vite、Docker 镜像或直接部署已经在此容器通过；这些仍需在依赖源正常的本地或 CI 执行 npm ci && npm run build 终验。
+备注: 本轮未删除文件，未创建根目录 src/；修复包只包含上述修改/新增文件与更新后的 repair_log.txt，可按项目相对路径直接覆盖。

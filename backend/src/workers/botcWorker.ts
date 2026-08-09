@@ -124,7 +124,7 @@ interface BOTCGameResult {
  */
 export class BOTCWorker extends BaseGameWorker {
   private gameConfig!: GameConfig;
-  protected gameState!: GameState;
+  declare protected gameState: GameState;
   private gamePlayers: Map<string, GamePlayer> = new Map();
   private nightActions: NightAction[] = [];
   private dayTimers: Map<string, NodeJS.Timeout> = new Map();

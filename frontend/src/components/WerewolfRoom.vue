@@ -252,8 +252,19 @@ const getPlayerDisplayName = (playerId: string) => {
 }
 
 // 事件处理
-const handleGameAction = (actionType: string, actionData: any) => {
-  store.sendGameAction(actionType, actionData)
+const handleGameAction = async (
+  actionType: string,
+  actionData: Record<string, unknown>,
+  onResult?: (success: boolean) => void
+) => {
+  let success = false
+  try {
+    success = await store.sendGameAction(actionType, actionData)
+  } catch (error) {
+    console.error(`[GameRoom] ${actionType} failed:`, error)
+  } finally {
+    onResult?.(success)
+  }
 }
 
 const handleTransferHost = (newHostId: string) => {

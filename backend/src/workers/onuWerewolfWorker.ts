@@ -70,7 +70,7 @@ const OFFLINE_TIMER_RETRY_MS = 1000;
 
 class OnuWerewolfWorker extends BaseGameWorker {
   private config!: OnuWerewolfConfig;
-  protected gameState!: OnuWerewolfGameState;
+  declare protected gameState: OnuWerewolfGameState;
   private gameTimer: NodeJS.Timeout | null = null;
   private gameTimerDeadline: number | null = null;
   private gameTimerDurationMs = 0;

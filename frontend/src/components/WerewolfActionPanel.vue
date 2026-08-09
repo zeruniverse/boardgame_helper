@@ -1,5 +1,9 @@
 <template>
-  <div class="werewolf-action-panel">
+  <div
+    class="werewolf-action-panel"
+    :class="{ 'is-submitting': isSubmitting }"
+    :aria-busy="isSubmitting"
+  >
     <!-- 时间显示 -->
     <div v-if="timeLeft && timeLeft > 0" class="time-display">
       <el-progress
@@ -12,6 +16,8 @@
       </div>
     </div>
 
+    <ActionSubmissionStatus :pending="isSubmitting" />
+
     <!-- 准备阶段 -->
     <div v-if="gameState.status === 'WAITING' || gameState.status === 'preparing'" class="action-section">
       <h4>游戏准备</h4>
@@ -19,6 +25,8 @@
         <el-button
           v-if="!isReady"
           type="success"
+          :loading="isPending('ready')"
+          :disabled="isSubmitting"
           @click="handleReady"
         >
           准备
@@ -26,6 +34,8 @@
         <el-button
           v-else
           type="warning"
+          :loading="isPending('unready')"
+          :disabled="isSubmitting"
           @click="handleUnready"
         >
           取消准备
@@ -33,7 +43,12 @@
       </div>
       <div v-if="isHost" class="host-actions">
         <el-divider />
-        <el-button type="primary" @click="handleStartGame" :disabled="!canStartGame">
+        <el-button
+          type="primary"
+          :loading="isPending('start-game')"
+          :disabled="isSubmitting || !canStartGame"
+          @click="handleStartGame"
+        >
           开始游戏
         </el-button>
         <p v-if="!canStartGame" class="hint-text">所有在线玩家准备且人数符合角色配置后才能开始</p>
@@ -51,7 +66,7 @@
             :key="player.id"
             class="player-option"
             :class="{ selected: selectedTarget === player.id, dead: !player.alive }"
-            @click="selectedTarget = player.id"
+            @click="selectTarget(player.id)"
           >
             <span class="player-number">{{ player.index }}号</span>
             <span class="player-name">{{ displayPlayerName(player) }}</span>
@@ -60,12 +75,13 @@
         <div class="action-buttons">
           <el-button
             type="danger"
-            :disabled="!selectedTarget"
+            :loading="isPending('wolf-kill')"
+            :disabled="isSubmitting || !selectedTarget"
             @click="handleWolfKill"
           >
             杀害
           </el-button>
-          <el-button @click="handleWolfSkip">跳过</el-button>
+          <el-button :loading="isPending('wolf-skip')" :disabled="isSubmitting" @click="handleWolfSkip">跳过</el-button>
         </div>
       </div>
       <div v-else class="waiting-section">
@@ -85,7 +101,7 @@
             :key="player.id"
             class="player-option"
             :class="{ selected: selectedTarget === player.id }"
-            @click="selectedTarget = player.id"
+            @click="selectTarget(player.id)"
           >
             <span class="player-number">{{ player.index }}号</span>
             <span class="player-name">{{ displayPlayerName(player) }}</span>
@@ -94,12 +110,13 @@
         <div class="action-buttons">
           <el-button
             type="primary"
-            :disabled="!selectedTarget"
+            :loading="isPending('seer-check')"
+            :disabled="isSubmitting || !selectedTarget"
             @click="handleSeerCheck"
           >
             验证
           </el-button>
-          <el-button @click="handleSeerSkip">跳过</el-button>
+          <el-button :loading="isPending('seer-skip')" :disabled="isSubmitting" @click="handleSeerSkip">跳过</el-button>
         </div>
       </div>
       <div v-else class="waiting-section">
@@ -130,6 +147,8 @@
             <h5>使用解药救活昨晚被狼人杀的玩家</h5>
             <el-button
               type="success"
+              :loading="isPending('witch-antidote')"
+              :disabled="isSubmitting"
               @click="handleWitchAntidote"
             >
               使用解药救人
@@ -147,7 +166,7 @@
                 :key="player.id"
                 class="player-option"
                 :class="{ selected: selectedTarget === player.id }"
-                @click="selectedTarget = player.id"
+                @click="selectTarget(player.id)"
               >
                 <span class="player-number">{{ player.index }}号</span>
                 <span class="player-name">{{ displayPlayerName(player) }}</span>
@@ -155,7 +174,8 @@
             </div>
             <el-button
               type="danger"
-              :disabled="!selectedTarget"
+              :loading="isPending('witch-poison')"
+              :disabled="isSubmitting || !selectedTarget"
               @click="handleWitchPoison"
             >
               毒杀
@@ -164,7 +184,7 @@
 
           <el-divider v-if="playerSecret.potions?.antidote || playerSecret.potions?.poison" />
 
-          <el-button @click="handleWitchSkip">跳过</el-button>
+          <el-button :loading="isPending('witch-skip')" :disabled="isSubmitting" @click="handleWitchSkip">跳过</el-button>
         </div>
       </div>
       <div v-else class="waiting-section">
@@ -184,7 +204,7 @@
             :key="player.id"
             class="player-option"
             :class="{ selected: selectedTarget === player.id }"
-            @click="selectedTarget = player.id"
+            @click="selectTarget(player.id)"
           >
             <span class="player-number">{{ player.index }}号</span>
             <span class="player-name">{{ displayPlayerName(player) }}</span>
@@ -193,12 +213,13 @@
         <div class="action-buttons">
           <el-button
             type="primary"
-            :disabled="!selectedTarget"
+            :loading="isPending('guard-protect')"
+            :disabled="isSubmitting || !selectedTarget"
             @click="handleGuardProtect"
           >
             保护
           </el-button>
-          <el-button @click="handleGuardSkip">跳过</el-button>
+          <el-button :loading="isPending('guard-skip')" :disabled="isSubmitting" @click="handleGuardSkip">跳过</el-button>
         </div>
       </div>
       <div v-else class="waiting-section">
@@ -213,8 +234,17 @@
       <div v-if="isAlive && canOperate" class="sheriff-elect-section">
         <p>是否参与警长竞选？</p>
         <div class="action-buttons">
-          <el-button type="primary" @click="handleSheriffElect(true)">上警</el-button>
-          <el-button @click="handleSheriffElect(false)">不上警</el-button>
+          <el-button
+            type="primary"
+            :loading="isPending('sheriff-elect-join')"
+            :disabled="isSubmitting"
+            @click="handleSheriffElect(true)"
+          >上警</el-button>
+          <el-button
+            :loading="isPending('sheriff-elect-skip')"
+            :disabled="isSubmitting"
+            @click="handleSheriffElect(false)"
+          >不上警</el-button>
         </div>
       </div>
       <div v-else class="waiting-section">
@@ -234,7 +264,12 @@
           </p>
         </div>
         <div v-if="isCurrentSpeaker && canOperate" class="speak-actions">
-          <el-button type="warning" @click="handleEndSpeak">结束发言</el-button>
+          <el-button
+            type="warning"
+            :loading="isPending('end-speak')"
+            :disabled="isSubmitting"
+            @click="handleEndSpeak"
+          >结束发言</el-button>
         </div>
         <div v-else class="waiting-section">
           <p>等待当前候选人发言...</p>
@@ -253,17 +288,22 @@
             :key="player.id"
             class="player-option"
             :class="{ selected: selectedTarget === player.id }"
-            @click="selectedTarget = player.id"
+            @click="selectTarget(player.id)"
           >
             <span class="player-number">{{ player.index }}号</span>
             <span class="player-name">{{ displayPlayerName(player) }}</span>
           </div>
         </div>
         <div class="vote-actions">
-          <el-button type="primary" :disabled="!selectedTarget" @click="handleVote">
+          <el-button
+            type="primary"
+            :loading="isPending('vote-submit')"
+            :disabled="isSubmitting || !selectedTarget"
+            @click="handleVote"
+          >
             投票
           </el-button>
-          <el-button @click="handleSkipVote">弃权</el-button>
+          <el-button :loading="isPending('vote-skip')" :disabled="isSubmitting" @click="handleSkipVote">弃权</el-button>
         </div>
       </div>
       <div v-else class="waiting-section">
@@ -290,6 +330,8 @@
           <el-button
             v-if="isCurrentSpeaker"
             type="warning"
+            :loading="isPending('end-speak')"
+            :disabled="isSubmitting"
             @click="handleEndSpeak"
           >
             结束发言
@@ -313,7 +355,7 @@
             :key="player.id"
             class="player-option"
             :class="{ selected: selectedTarget === player.id }"
-            @click="selectedTarget = player.id"
+            @click="selectTarget(player.id)"
           >
             <span class="player-number">{{ player.index }}号</span>
             <span class="player-name">{{ displayPlayerName(player) }}</span>
@@ -325,12 +367,13 @@
         <div class="vote-actions">
           <el-button
             type="danger"
-            :disabled="!selectedTarget"
+            :loading="isPending('vote-submit')"
+            :disabled="isSubmitting || !selectedTarget"
             @click="handleVote"
           >
             投票
           </el-button>
-          <el-button @click="handleSkipVote">弃权</el-button>
+          <el-button :loading="isPending('vote-skip')" :disabled="isSubmitting" @click="handleSkipVote">弃权</el-button>
         </div>
       </div>
       <div v-else class="waiting-section">
@@ -350,7 +393,7 @@
             :key="player.id"
             class="player-option"
             :class="{ selected: selectedTarget === player.id }"
-            @click="selectedTarget = player.id"
+            @click="selectTarget(player.id)"
           >
             <span class="player-number">{{ player.index }}号</span>
             <span class="player-name">{{ displayPlayerName(player) }}</span>
@@ -359,12 +402,13 @@
         <div class="action-buttons">
           <el-button
             type="danger"
-            :disabled="!selectedTarget"
+            :loading="isPending('hunter-shoot')"
+            :disabled="isSubmitting || !selectedTarget"
             @click="handleHunterShoot"
           >
             开枪带走
           </el-button>
-          <el-button @click="handleHunterSkip">不开枪</el-button>
+          <el-button :loading="isPending('hunter-skip')" :disabled="isSubmitting" @click="handleHunterSkip">不开枪</el-button>
         </div>
       </div>
       <div v-else class="waiting-section">
@@ -383,7 +427,7 @@
             :key="player.id"
             class="player-option"
             :class="{ selected: selectedTarget === player.id }"
-            @click="selectedTarget = player.id"
+            @click="selectTarget(player.id)"
           >
             <span class="player-number">{{ player.index }}号</span>
             <span class="player-name">{{ displayPlayerName(player) }}</span>
@@ -392,12 +436,17 @@
         <div class="action-buttons">
           <el-button
             type="primary"
-            :disabled="!selectedTarget"
+            :loading="isPending('sheriff-assign')"
+            :disabled="isSubmitting || !selectedTarget"
             @click="handleSheriffAssign"
           >
             传递警徽
           </el-button>
-          <el-button @click="handleSheriffAssignSkip">撕毁警徽</el-button>
+          <el-button
+            :loading="isPending('sheriff-assign-skip')"
+            :disabled="isSubmitting"
+            @click="handleSheriffAssignSkip"
+          >撕毁警徽</el-button>
         </div>
       </div>
       <div v-else class="waiting-section">
@@ -415,9 +464,15 @@
           type="textarea"
           :rows="3"
           placeholder="输入你的遗言..."
+          :disabled="isSubmitting"
         />
         <div class="action-buttons">
-          <el-button type="primary" @click="handleLeaveMsg">发表遗言</el-button>
+          <el-button
+            type="primary"
+            :loading="isPending('leave-message')"
+            :disabled="isSubmitting"
+            @click="handleLeaveMsg"
+          >发表遗言</el-button>
         </div>
       </div>
       <div v-else class="waiting-section">
@@ -441,6 +496,8 @@
         <el-button
           v-if="isHost"
           type="primary"
+          :loading="isPending('restart-game')"
+          :disabled="isSubmitting"
           @click="handleRestartGame"
         >
           重新开始
@@ -461,6 +518,8 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
 import { formatPlayerName } from '../utils/playerName'
+import ActionSubmissionStatus from './ActionSubmissionStatus.vue'
+import { useActionSubmission } from '../utils/actionSubmission'
 
 interface GamePlayer {
   id: string
@@ -517,18 +576,27 @@ const props = defineProps<{
   timeLeft?: number
 }>()
 
+type ActionResultCallback = (success: boolean) => void
+
 const emit = defineEmits<{
-  gameAction: [actionType: string, actionData: Record<string, unknown>]
+  gameAction: [
+    actionType: string,
+    actionData: Record<string, unknown>,
+    onResult: ActionResultCallback
+  ]
 }>()
 
 const selectedTarget = ref<string>('')
 const leaveMsg = ref<string>('')
+
+const { isSubmitting, isPending, submitAction, invalidatePending } = useActionSubmission()
 
 // 公开会话身份必须独立于私密角色信息。重开/重连时 secret 可能短暂为空，
 // 但准备、发言、投票、警徽传递等公开操作仍应由 currentUserId 正确识别。
 watch(
   () => [props.gameState.status, props.gameState.day] as const,
   () => {
+    invalidatePending()
     selectedTarget.value = ''
     leaveMsg.value = ''
   }
@@ -545,6 +613,7 @@ const votableSignature = computed(() =>
 )
 
 watch(votableSignature, () => {
+  invalidatePending()
   selectedTarget.value = ''
 })
 
@@ -703,124 +772,175 @@ const getWinnerText = () => {
   return props.gameState.winner === 'werewolf' ? '狼人阵营胜利！' : '村民阵营胜利！'
 }
 
+const selectTarget = (playerId: string) => {
+  if (!isSubmitting.value) {
+    selectedTarget.value = playerId
+  }
+}
+
+const requestGameAction = (
+  actionType: string,
+  actionData: Record<string, unknown>
+): Promise<boolean> => new Promise(resolve => {
+  emit('gameAction', actionType, actionData, resolve)
+})
+
+const submitGameAction = (
+  actionKey: string,
+  actionType: string,
+  actionData: Record<string, unknown>,
+  onSuccess?: () => void
+) => submitAction(
+  actionKey,
+  () => requestGameAction(actionType, actionData),
+  onSuccess
+)
+
 // ==================== 事件处理 ====================
 
 const handleReady = () => {
-  emit('gameAction', 'ready', {})
+  void submitGameAction('ready', 'ready', {})
 }
 
 const handleUnready = () => {
-  emit('gameAction', 'unready', {})
+  void submitGameAction('unready', 'unready', {})
 }
 
 const handleStartGame = () => {
-  emit('gameAction', 'startGame', {})
+  void submitGameAction('start-game', 'startGame', {})
 }
 
 const handleWolfKill = () => {
-  if (selectedTarget.value) {
-    emit('gameAction', 'wolf_kill', { targetId: selectedTarget.value })
-    selectedTarget.value = ''
+  const targetId = selectedTarget.value
+  if (targetId) {
+    void submitGameAction('wolf-kill', 'wolf_kill', { targetId }, () => {
+      selectedTarget.value = ''
+    })
   }
 }
 
 const handleWolfSkip = () => {
-  emit('gameAction', 'wolf_kill', { targetId: null })
+  void submitGameAction('wolf-skip', 'wolf_kill', { targetId: null })
 }
 
 const handleSeerCheck = () => {
-  if (selectedTarget.value) {
-    emit('gameAction', 'seer_check', { targetId: selectedTarget.value })
-    selectedTarget.value = ''
+  const targetId = selectedTarget.value
+  if (targetId) {
+    void submitGameAction('seer-check', 'seer_check', { targetId }, () => {
+      selectedTarget.value = ''
+    })
   }
 }
 
 const handleSeerSkip = () => {
-  emit('gameAction', 'seer_check', { targetId: null })
+  void submitGameAction('seer-skip', 'seer_check', { targetId: null })
 }
 
 const handleWitchAntidote = () => {
-  emit('gameAction', 'witch_action', { actionType: 'antidote' })
+  void submitGameAction('witch-antidote', 'witch_action', { actionType: 'antidote' })
 }
 
 const handleWitchPoison = () => {
-  if (selectedTarget.value) {
-    emit('gameAction', 'witch_action', { actionType: 'poison', targetId: selectedTarget.value })
-    selectedTarget.value = ''
+  const targetId = selectedTarget.value
+  if (targetId) {
+    void submitGameAction(
+      'witch-poison',
+      'witch_action',
+      { actionType: 'poison', targetId },
+      () => {
+        selectedTarget.value = ''
+      }
+    )
   }
 }
 
 const handleWitchSkip = () => {
-  emit('gameAction', 'witch_action', { actionType: 'skip' })
+  void submitGameAction('witch-skip', 'witch_action', { actionType: 'skip' })
 }
 
 const handleGuardProtect = () => {
-  if (selectedTarget.value) {
-    emit('gameAction', 'guard_protect', { targetId: selectedTarget.value })
-    selectedTarget.value = ''
+  const targetId = selectedTarget.value
+  if (targetId) {
+    void submitGameAction('guard-protect', 'guard_protect', { targetId }, () => {
+      selectedTarget.value = ''
+    })
   }
 }
 
 const handleGuardSkip = () => {
-  emit('gameAction', 'guard_protect', { targetId: null })
+  void submitGameAction('guard-skip', 'guard_protect', { targetId: null })
 }
 
 const handleSheriffElect = (participate: boolean) => {
-  emit('gameAction', 'sheriff_elect', { participate })
+  void submitGameAction(
+    participate ? 'sheriff-elect-join' : 'sheriff-elect-skip',
+    'sheriff_elect',
+    { participate }
+  )
 }
 
 const handleEndSpeak = () => {
-  emit('gameAction', 'end_speak', {})
+  void submitGameAction('end-speak', 'end_speak', {})
 }
 
 const handleVote = () => {
-  if (selectedTarget.value) {
-    emit('gameAction', 'vote', { targetId: selectedTarget.value })
-    selectedTarget.value = ''
+  const targetId = selectedTarget.value
+  if (targetId) {
+    void submitGameAction('vote-submit', 'vote', { targetId }, () => {
+      selectedTarget.value = ''
+    })
   }
 }
 
 const handleSkipVote = () => {
-  emit('gameAction', 'vote', { targetId: null })
+  void submitGameAction('vote-skip', 'vote', { targetId: null })
 }
 
 const handleHunterShoot = () => {
-  if (selectedTarget.value) {
-    emit('gameAction', 'hunter_shoot', { targetId: selectedTarget.value })
-    selectedTarget.value = ''
+  const targetId = selectedTarget.value
+  if (targetId) {
+    void submitGameAction('hunter-shoot', 'hunter_shoot', { targetId }, () => {
+      selectedTarget.value = ''
+    })
   }
 }
 
 const handleHunterSkip = () => {
-  emit('gameAction', 'hunter_shoot', { targetId: null })
+  void submitGameAction('hunter-skip', 'hunter_shoot', { targetId: null })
 }
 
 const handleSheriffAssign = () => {
-  if (selectedTarget.value) {
-    emit('gameAction', 'sheriff_assign', { targetId: selectedTarget.value })
-    selectedTarget.value = ''
+  const targetId = selectedTarget.value
+  if (targetId) {
+    void submitGameAction('sheriff-assign', 'sheriff_assign', { targetId }, () => {
+      selectedTarget.value = ''
+    })
   }
 }
 
 const handleSheriffAssignSkip = () => {
-  emit('gameAction', 'sheriff_assign', { targetId: null })
+  void submitGameAction('sheriff-assign-skip', 'sheriff_assign', { targetId: null })
 }
 
 const handleLeaveMsg = () => {
-  emit('gameAction', 'leave_msg', { message: leaveMsg.value })
-  leaveMsg.value = ''
+  const message = leaveMsg.value
+  void submitGameAction('leave-message', 'leave_msg', { message }, () => {
+    leaveMsg.value = ''
+  })
 }
 
 const handleRestartGame = () => {
-  emit('gameAction', 'restartGame', {})
+  void submitGameAction('restart-game', 'restartGame', {})
 }
+
 </script>
 
 <style scoped>
 .werewolf-action-panel {
-  padding: 20px;
+  padding: var(--app-space-5);
   background: var(--app-panel);
-  border-radius: 8px;
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius);
 }
 
 .action-section {
@@ -860,7 +980,7 @@ const handleRestartGame = () => {
   flex-direction: column;
   align-items: center;
   padding: 12px;
-  border: 2px solid #e1e5e9;
+  border: 2px solid var(--app-border);
   border-radius: 6px;
   cursor: pointer;
   transition: all 0.2s;
@@ -869,12 +989,12 @@ const handleRestartGame = () => {
 
 .player-option:hover {
   border-color: var(--app-primary);
-  background: #f0f9ff;
+  background: var(--app-panel-strong);
 }
 
 .player-option.selected {
   border-color: var(--app-primary);
-  background: #e1f3fe;
+  background: var(--app-bg-soft);
 }
 
 .player-number {
@@ -890,7 +1010,7 @@ const handleRestartGame = () => {
 
 .vote-count {
   font-size: 12px;
-  color: #f56c6c;
+  color: var(--app-danger);
   margin-top: 2px;
 }
 
@@ -922,25 +1042,25 @@ const handleRestartGame = () => {
 }
 
 .potion.available {
-  background: #e1f3fe;
+  background: var(--app-bg-soft);
   color: var(--app-primary);
 }
 
 .potion:not(.available) {
-  background: #f5f5f5;
+  background: var(--app-panel-strong);
   color: var(--app-text-secondary);
 }
 
 .death-info {
-  background: #fef2f2;
+  background: var(--app-panel-strong);
   padding: 10px;
   border-radius: 4px;
-  border-left: 3px solid #f56c6c;
+  border-left: 3px solid var(--app-danger);
   margin: 10px 0;
 }
 
 .current-speaker {
-  background: #f0f9ff;
+  background: var(--app-panel-strong);
   padding: 10px;
   border-radius: 4px;
   border-left: 3px solid var(--app-primary);
@@ -948,7 +1068,7 @@ const handleRestartGame = () => {
 }
 
 .your-turn {
-  color: #67c23a;
+  color: var(--app-success);
   font-weight: bold;
 }
 
@@ -993,7 +1113,7 @@ const handleRestartGame = () => {
 }
 
 .hint {
-  color: #909399;
+  color: var(--app-text-secondary);
   font-size: 14px;
 }
 
@@ -1016,7 +1136,7 @@ const handleRestartGame = () => {
 .free-discuss {
   text-align: center;
   padding: 15px;
-  background: #f0f9ff;
+  background: var(--app-panel-strong);
   border-radius: 4px;
   margin-bottom: 15px;
 }
@@ -1025,4 +1145,9 @@ const handleRestartGame = () => {
   margin: 0;
   color: var(--app-primary);
 }
+.werewolf-action-panel.is-submitting .player-option {
+  cursor: wait;
+  opacity: 0.72;
+}
+
 </style>

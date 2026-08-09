@@ -134,7 +134,6 @@
               :game-state="gameState"
               :player-secret="playerSecret"
               :room-id="roomId"
-              @game-action="handleGameAction"
             />
           </div>
         </div>
@@ -332,10 +331,6 @@ const getMyNickname = (): string => {
   if (!gameState.value || !currentUserId.value) return currentUserId.value
   const player = gameState.value.players[currentUserId.value]
   return player?.name || currentUserId.value
-}
-
-const handleGameAction = (actionType: string, actionData: any) => {
-  store.sendGameAction(actionType, actionData)
 }
 
 const handleTransferHost = (newHostId: string) => {
