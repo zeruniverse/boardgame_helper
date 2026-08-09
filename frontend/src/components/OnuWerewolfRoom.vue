@@ -11,12 +11,10 @@
         <span class="room-id">房间号: {{ roomId }}</span>
       </div>
       <div class="header-actions">
+        <RoomConnectionStatus :connected="connected" />
         <el-button v-if="isHost" size="small" @click="toggleRoomLock" :type="room?.locked ? 'danger' : 'success'">
           {{ room?.locked ? '解锁房间' : '锁定房间' }}
         </el-button>
-        <div class="connection-status" :class="{ connected: connected }">
-          {{ connected ? '已连接' : '未连接' }}
-        </div>
       </div>
     </div>
 
@@ -95,6 +93,7 @@ import { Back } from '@element-plus/icons-vue';
 import OnuWerewolfActionPanel from './OnuWerewolfActionPanel.vue';
 import OnuWerewolfPlayerList from './OnuWerewolfPlayerList.vue';
 import OnuWerewolfChat from './OnuWerewolfChat.vue';
+import RoomConnectionStatus from './RoomConnectionStatus.vue';
 
 const route = useRoute();
 const router = useRouter();
@@ -230,17 +229,6 @@ onUnmounted(() => {
   border-radius: 4px;
 }
 
-.connection-status {
-  font-size: 14px;
-  padding: 4px 12px;
-  border-radius: 4px;
-  background: #dc3545;
-  transition: background 0.3s ease;
-}
-
-.connection-status.connected {
-  background: #28a745;
-}
 
 .game-layout {
   display: grid;
@@ -313,8 +301,7 @@ onUnmounted(() => {
   color: var(--app-text);
 }
 
-.room-id,
-.connection-status {
+.room-id {
   border: 1px solid var(--app-border);
   background: var(--app-panel-strong);
 }

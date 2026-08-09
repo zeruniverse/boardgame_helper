@@ -10,6 +10,7 @@
         <span class="room-name">{{ room?.name || '阿瓦隆房间' }}</span>
       </div>
       <div class="header-right">
+        <RoomConnectionStatus :connected="connected" />
         <span class="room-id">房间ID: {{ roomId }}</span>
         <el-button v-if="isHost" size="small" @click="toggleRoomLock" :type="room?.locked ? 'danger' : 'success'">
           {{ room?.locked ? '解锁房间' : '锁定房间' }}
@@ -176,6 +177,7 @@ import { Back, Loading } from '@element-plus/icons-vue'
 import AvalonActionPanel from './AvalonActionPanel.vue'
 import AvalonPlayerList from './AvalonPlayerList.vue'
 import AvalonChat from './AvalonChat.vue'
+import RoomConnectionStatus from './RoomConnectionStatus.vue'
 import { formatPlayerNameById } from '../utils/playerName'
 
 const route = useRoute()
@@ -194,6 +196,7 @@ const toggleRoomLock = () => {
 
 // 从store同步数据
 const room = computed(() => store.room)
+const connected = computed(() => store.connected)
 const gameState = computed(() => store.gameState)
 const playerSecret = computed(() => store.playerSecret)
 const timeLeft = computed(() => store.timeLeft)

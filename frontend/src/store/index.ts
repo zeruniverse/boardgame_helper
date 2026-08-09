@@ -7,6 +7,7 @@ import router from '../router';
 import { GAME_ROUTES } from '../utils/gameMeta';
 import { rememberGameSession, clearAllGameSessions } from '../utils/gameSession';
 import { normalizeErrorMessage } from '../utils/messages';
+import { redirectToLobbyAfterForcedExit } from '../utils/forcedExit';
 
 // 重新导出游戏特定的store
 export { useTexasHoldemStore } from './texas_holdem';
@@ -142,13 +143,13 @@ export const useMainStore = defineStore('main', {
       
       // 监听服务器重置开始事件
       const serverResetHandler = (data: { message: string }) => {
-        alert(data.message);
-        
         // 清理所有游戏的本地会话，避免重置后进入旧房间
         clearAllGameSessions();
         
         // 断开连接
         this.disconnectSocket();
+
+        redirectToLobbyAfterForcedExit(normalizeErrorMessage(data, '服务器正在重置，请稍后重新进入'));
       };
       this.socket.on('server_reset_start', serverResetHandler);
       this.socketListeners.push(['server_reset_start', serverResetHandler]);

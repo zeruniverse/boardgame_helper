@@ -18,6 +18,7 @@
 
 <script lang="ts" setup>
 import { computed, onMounted, ref, watch } from 'vue';
+import { ElMessageBox } from 'element-plus';
 
 const props = defineProps<{
   gameKey: string;
@@ -40,10 +41,30 @@ function loadMark() {
   }
 }
 
-function editMark() {
+async function editMark() {
   if (isKnown.value) return;
-  const next = window.prompt('仅本机可见，不会发送给后端。输入你认为他的身份；留空可清除：', mark.value);
-  if (next === null) return;
+
+  let next = '';
+  try {
+    const result = await ElMessageBox.prompt(
+      '该标注仅保存在当前浏览器，不会发送给后端。留空并保存可清除。',
+      '本地身份标注',
+      {
+        confirmButtonText: '保存',
+        cancelButtonText: '取消',
+        inputValue: mark.value,
+        inputPlaceholder: '例如：预言家、可疑、好人',
+        inputValidator: (value: string) => value.trim().length <= 40 || '标注请控制在 40 个字符以内'
+      }
+    );
+    next = String(result.value ?? '');
+  } catch (action) {
+    if (action !== 'cancel' && action !== 'close') {
+      console.warn('打开本地身份标注失败:', action);
+    }
+    return;
+  }
+
   const trimmed = next.trim();
   mark.value = trimmed;
   try {

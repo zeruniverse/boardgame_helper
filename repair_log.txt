@@ -2708,3 +2708,45 @@ Commit: fix(round1): 修复大厅房间交互与回执错误同步
   - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts 检查，仅显示可选原生依赖提示；backend/start-multithreaded.js、package/config/tsconfig JSON/JSONC、frontend/vite.config.ts 和 SVG 解析检查均通过。
   - 正式 npm ci --ignore-scripts --no-audit --no-fund 已执行，当前内部 npm 镜像请求 package-lock 锁定的 typescript-5.8.3.tgz 返回 404。正式 npm run build 也已执行；由于依赖未安装，backend tsc 在 Node/Express/CORS/Socket.IO/UUID 等 package.json 已声明依赖和类型解析阶段中止，未进入 frontend vue-tsc/Vite。失败安装/构建残留已清理；完整生产构建与“可直接部署”仍需在依赖可正常安装的本地或 CI 最终确认。
 备注: 本轮未删除文件，未创建根目录 src/；所有后端源码修改仅位于 backend/src/，所有前端源码修改仅位于 frontend/src/。修复包只包含上述 4 个修改文件，可按相对路径直接覆盖。
+
+=== 当前会话第 4 轮修复记录 ===
+时间: 2026-08-09 13:25:03 UTC
+Commit: fix(round4): 串行德州房间切换并统一前端交互反馈
+修改/新增文件:
+  - frontend/src/components/AvalonRoom.vue
+  - frontend/src/components/BOTCRoom.vue
+  - frontend/src/components/Lobby.vue
+  - frontend/src/components/LocalPlayerMark.vue
+  - frontend/src/components/MafiaRoom.vue
+  - frontend/src/components/OnuWerewolfRoom.vue
+  - frontend/src/components/RoomConnectionStatus.vue（新增）
+  - frontend/src/components/TexasHoldemActionBar.vue
+  - frontend/src/components/TexasHoldemRoom.vue
+  - frontend/src/components/WerewolfRoom.vue
+  - frontend/src/store/index.ts
+  - frontend/src/store/texas_holdem.ts
+  - frontend/src/utils/forcedExit.ts
+  - frontend/src/utils/gameSocket.ts
+  - repair_log.txt
+删除文件: 无
+构建测试: 部分通过（backend/src + frontend/src 当前全部 87 个源码文件静态扫描、backend/src 全部 35 个 TypeScript strict/noEmit 与隔离 CommonJS 编译、前端共享 Socket/会话/消息/强制退出工具 strict 类型检查、六游戏 Worker prepare_room 烟雾、共享 Socket 房间切换屏障与 game_action 回执专项运行回归、package-lock 工作区依赖树检查均通过；正式 npm ci 被当前内部 npm 镜像缺失 TypeScript 5.8.3 tarball 的 404 阻塞，正式 npm run build 因没有完整 node_modules 在 backend 的 Node/Express/CORS/Socket.IO/UUID 依赖与类型解析阶段中止，未进入 frontend vue-tsc/Vite，因此完整生产构建与直接部署仍需在依赖镜像正常的本地或 CI 执行 npm ci && npm run build 终验）
+本轮修复:
+  - 修复德州扑克与大厅复用同一个 Socket 时的真实跨房竞态。Socket.IO 只保证数据包发送顺序，并不会等待服务端 async leave_room 监听器完成；旧页面离房后立刻从大厅创建/加入另一房间时，旧 leave_room 与新 join_room/create_room 可以在 Controller/Worker 内并发提交，使同一 socket 短暂订阅两个房间、接收旧房私有事件，或让新连接状态被迟到的旧离房回写。gameSocket 现在提供共享房间切换 Promise 队列，德州 store 把 leave_room acknowledgement（含 12 秒兜底）纳入屏障，大厅创建/加入及德州房间挂载都会先等待旧离房事务完成。
+  - 德州 leaveRoom 继续先同步移除页面专属监听器和本地运行态，保证返回大厅立即干净；异步回执只清理由本次离房房间号和旧 sessionToken 精确匹配的本地会话，避免迟到 ACK 擦除用户已经加入的新会话。服务端返回 clearSession 时仍优先执行权威会话清理，失败和发送异常均会释放切换屏障，不会把后续房间操作永久锁死。
+  - 修复大厅创建德州房间在服务端成功前预写 nickname/currentRoom/texas_newJoin 的状态污染。旧逻辑在满房、配置非法、网络超时等创建失败后仍可能留下“刚加入德州”的标记和旧房覆盖；现在只由全局 room_joined 成功事件原子提交德州 store 与本地会话。
+  - 新增 emitGameActionRequest，将德州 Cash In、Cash Out、Take、Take All 改为统一的 game_action acknowledgement + 超时 Promise。界面增加互斥 pending/loading/disabled 状态，只有 Worker/Controller 明确成功后才清空输入或离开页面；请求失败、奖池被其他玩家先领取、连接不可用和超时均显示一致错误，不再出现重复点击、按钮无反馈或“客户端看似成功但服务端拒绝”的错觉。
+  - Cash In/Cash Out、本地身份标注、加注/Take 输入校验以及服务器重置/踢出提示全部移除浏览器原生 alert/confirm/prompt，统一改用 Element Plus ElMessage/ElMessageBox。LocalPlayerMark 的本地标注增加清晰隐私说明、占位示例、40 字限制和留空清除语义；强制退出提示改为非阻塞消息，并在 1.5 秒内合并来自多个 Socket 监听器的重复跳转/提示。
+  - 新增共享 RoomConnectionStatus 组件，六个游戏房间统一使用同一连接状态标签、状态点、成功/危险色、ARIA status 和“已连接/连接已断开”文案；一夜狼人删除原有单独实现的红绿状态块并统一操作顺序。德州状态改为使用主 Pinia store 的 reactive connected 字段，避免直接读取 socket.connected 导致网络变化时视图不刷新。
+审查结果/本轮未改动重点:
+  - 本轮继续检查 backend/src 与 frontend/src 当前全部 87 个源码文件，并结合 repair_log 既有修复重点复核 roomController、RoomThreadManager、BaseGameWorker、六个游戏 Worker、六套 Room/Store/ActionPanel/ActionBar/PlayerList/Chat，以及共享 session/socket/config/random/state/messages/forcedExit 工具。当前最重要且可低风险落地的问题集中在德州共享 Socket 的离房/入房事务边界和前端反馈一致性，因此本批次没有扩大为高风险后端规则重构。
+  - 狼人杀继续交叉检查狼人共识、预言家/女巫/守卫夜序、警长/平票 PK、放逐、遗言及猎人死亡链；杀人游戏继续检查杀手/警察/医生/狙击手、白天投票和 PK；一夜狼人继续检查玩家+3 中心牌、夜间换牌、最终身份及狼人/爪牙/皮匠/猎人胜负；阿瓦隆继续检查任务人数、7 人以上第 4 任务双失败、五次否决、刺杀和湖上夫人；德州扑克继续检查 HU 盲注与行动顺序、完整加注/短码 all-in、未跟注返还、主边池、奇数筹码、断线超时及线上/线下发牌。本轮未发现优先级高于共享 Socket 跨房竞态、且适合本批次安全合入的新确定性规则阻断项。
+  - 血染钟楼仍保留 repair_log 已记录、需要更大状态模型或真人说书人逐次裁决 UI 才能完整解决的架构级边界：特殊自定义夜序下 Pit-Hag 创建 Demon 后无法安全逆向更早已真实落地并触发被动的死亡；Recluse/Spy registration 缺逐次人工裁决 UI；自由文本、多重效果抵消等 Mathematician 极端情况缺统一逐次最终基准审计。本轮没有用近似逻辑强行覆盖这些边界。
+  - 后端本轮未新增源码修改。既有 Controller 的 leave_room acknowledgement 会在 finally 中返回，game_action 对 Cash Out 继续使用座位互斥并在 Worker 自移除后同步 Controller；本轮前端屏障和回执封装建立在这些权威协议上。后端 35 个 TypeScript 文件和六个实际 Worker 已再次编译/启动验证，没有发现需要本批次追加的确定性 Worker/Controller 协议分叉。
+验证:
+  - backend/src + frontend/src 全量静态扫描通过：共 87 个源码文件、85 个 TypeScript/Vue script 解析单元、29 个 style/CSS 单元、235 次本地相对/@ 导入解析检查；未发现 TypeScript 语法错误、Vue 标签失衡、CSS 花括号错误、真实合并冲突标记、失效本地导入或根目录 src/。源码仍只位于 backend/src 与 frontend/src。
+  - backend/src 全部 35 个 TypeScript 文件使用全局 TypeScript 5.8.3、strict 模式、真实全局 Node 类型及项目目录外 Express/CORS/Socket.IO/UUID 临时声明桩完成 noEmit 检查，0 个源码类型错误；同一严格配置成功生成 35 个隔离 CommonJS 测试文件。临时声明、脚本和编译产物仅位于 /mnt/data/boardgame_round4_validation，不进入修复包。
+  - 六个实际游戏 Worker 使用本轮最新隔离编译产物执行合法 prepare_room 烟雾全部通过：狼人杀、杀人游戏、血染钟楼、一夜狼人、阿瓦隆、德州扑克均能启动 Worker 并完成房间初始化。
+  - 前端 gameMeta/gameSession/messages/gameSocket/forcedExit 共享工具通过 strict TypeScript 检查。gameSocket 专项运行回归覆盖成功回执、失败回执、game_action payload、切换任务串行顺序及等待屏障，全部通过；源码扫描确认 frontend/src 不再存在原生 alert/confirm/prompt 调用。
+  - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts 检查，仅有可选依赖提示。
+  - 正式 npm ci --ignore-scripts --no-audit --no-fund 已在最终源码工作区执行，当前内部 npm 镜像请求 package-lock 锁定的 typescript-5.8.3.tgz 返回 404。正式 npm run build 也已执行；由于依赖未安装，backend tsc 在 Node 内建类型和 Express/CORS/Socket.IO/UUID 等 package.json 已声明依赖解析阶段中止，未进入 frontend vue-tsc/Vite。相同源码已通过上述 strict/noEmit、隔离 CommonJS 编译、六 Worker 实际运行烟雾和前端共享工具专项回归；完整生产构建与“可直接部署”仍需在依赖可正常安装的本地或 CI 最终确认。
+备注: 本轮未删除文件，未创建根目录 src/；所有前端源码修改/新增均位于 frontend/src/，本轮没有 backend/src 源码修改；修复包只包含本轮修改/新增文件与更新后的 repair_log.txt，可按相对路径直接覆盖。

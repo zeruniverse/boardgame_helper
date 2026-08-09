@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia';
 import { useMainStore } from './index';
-import { emitGameAction, emitRoomReconnect } from '../utils/gameSocket';
+import { emitGameAction, emitRoomReconnect, queueSharedSocketRoomTransition } from '../utils/gameSocket';
 import { appendLimitedMessage, normalizeIncomingMessage } from '../utils/messages';
 import { GAME_STORAGE_KEYS } from '../utils/gameMeta';
 import { clearGameSession, clearGameSessionIfMatches, ensureGameSession, getStoredSessionToken, rememberGameSession } from '../utils/gameSession';
@@ -530,16 +530,33 @@ export const useTexasHoldemStore = defineStore('texas_holdem', {
       this.detachFromRoom();
 
       if (departingSocket && departingRoomId) {
-        departingSocket.emit('leave_room', { roomId: departingRoomId }, (response: { success?: boolean; error?: string; clearSession?: boolean } = {}) => {
-          // clearSession 表示旧 token 已由服务端权威销毁，即使离房后续广播/清理步骤
-          // 返回失败，也必须先清掉与本次离房完全匹配的本地旧会话。
-          if (response.clearSession === true) {
-            clearGameSessionIfMatches('texas-holdem', departingRoomId, departingSessionToken);
+        void queueSharedSocketRoomTransition(() => new Promise<void>((resolve) => {
+          let settled = false;
+          const timer = setTimeout(() => finish(), 12000);
+
+          const finish = (response: { success?: boolean; error?: string; clearSession?: boolean } = {}) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timer);
+
+            // clearSession 表示旧 token 已由服务端权威销毁，即使离房后续广播/清理步骤
+            // 返回失败，也必须先清掉与本次离房完全匹配的本地旧会话。
+            if (response.clearSession === true) {
+              clearGameSessionIfMatches('texas-holdem', departingRoomId, departingSessionToken);
+            }
+            if (response.success === false) {
+              console.warn('德州扑克离开房间未被服务端确认:', response.error || '未知错误');
+            }
+            resolve();
+          };
+
+          try {
+            departingSocket.emit('leave_room', { roomId: departingRoomId }, finish);
+          } catch (error) {
+            console.warn('德州扑克离开房间请求发送失败:', error);
+            finish();
           }
-          if (response.success === false) {
-            console.warn('德州扑克离开房间未被服务端确认:', response.error || '未知错误');
-          }
-        });
+        }));
       }
     },
 

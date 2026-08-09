@@ -10,6 +10,7 @@
         <span class="room-name">{{ room?.name || '狼人杀房间' }}</span>
       </div>
       <div class="header-right">
+        <RoomConnectionStatus :connected="connected" />
         <span class="room-id">房间ID: {{ roomId }}</span>
         <span v-if="Number(gameState?.day) > 0" class="day-badge">第{{ Math.ceil(((gameState && gameState.day) || 0) / 2) }}天</span>
         <el-button v-if="isHost" size="small" @click="toggleRoomLock" :type="room?.locked ? 'danger' : 'success'">
@@ -175,6 +176,7 @@ import { Back, Loading } from '@element-plus/icons-vue'
 import WerewolfActionPanel from './WerewolfActionPanel.vue'
 import WerewolfPlayerList from './WerewolfPlayerList.vue'
 import WerewolfChat from './WerewolfChat.vue'
+import RoomConnectionStatus from './RoomConnectionStatus.vue'
 import { formatPlayerName, formatPlayerNameById } from '../utils/playerName'
 
 const route = useRoute()
@@ -186,6 +188,7 @@ const currentUserId = computed(() => store.currentUserId)
 
 // 游戏状态 - 直接从store获取，避免重复维护
 const room = computed(() => store.room)
+const connected = computed(() => store.connected)
 const gameState = computed(() => store.gameState)
 const playerSecret = computed(() => store.playerSecret)
 const timeLeft = computed(() => store.timeLeft)

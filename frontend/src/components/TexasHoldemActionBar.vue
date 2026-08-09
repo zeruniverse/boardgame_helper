@@ -42,6 +42,7 @@
 
 <script lang="ts" setup>
 import { ref, computed } from 'vue';
+import { ElMessage } from 'element-plus';
 import { useTexasHoldemStore } from '../store';
 import { emitGameAction } from '../utils/gameSocket';
 
@@ -102,17 +103,17 @@ function raise() {
   if (!store.socket || !store.currentRoom || !store.gameActive || !isInGame.value) return;
   const val = Math.floor(Number(raiseAmount.value));
   if (!Number.isFinite(val) || val <= 0) {
-    alert('请输入合法的正整数加注金额');
+    ElMessage.warning('请输入合法的正整数加注金额');
     return;
   }
   const currentChips = ownPlayer.value?.gameMetadata?.chips || 0;
   const callAmount = Math.max(toCall.value, 0);
   if (val < minRaiseDelta.value) {
-    alert(`最小额外加注为 ${minRaiseDelta.value}`);
+    ElMessage.warning(`最小额外加注为 ${minRaiseDelta.value}`);
     return;
   }
   if (callAmount + val > currentChips) {
-    alert('跟注加加注金额不能超过自身筹码；筹码不足请使用 All-in');
+    ElMessage.warning('跟注加加注金额不能超过自身筹码；筹码不足请使用 All-in');
     return;
   }
   // 计算新总下注额 = 当前已下注 + 需要跟注 + 额外加注

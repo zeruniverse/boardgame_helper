@@ -20,6 +20,31 @@ export interface SocketRequestOptions {
   failureMessage?: string;
 }
 
+let sharedSocketRoomTransition: Promise<void> = Promise.resolve();
+
+/**
+ * 德州扑克复用大厅主 Socket。Socket.IO 会保证 emit 的发送顺序，却不会等待服务端
+ * async 监听器完成：leave_room 尚在 Worker/Controller 提交时，紧随其后的 join_room
+ * 仍可能并发进入。把共享 Socket 的房间切换操作排成显式 Promise 链，下一次大厅
+ * 创建/加入房间前即可等待旧房间真正完成离开，避免同一 socket 短暂同时属于两间房。
+ */
+export function queueSharedSocketRoomTransition(task: () => void | Promise<void>): Promise<void> {
+  const queued = sharedSocketRoomTransition.then(
+    () => task(),
+    () => task()
+  );
+
+  sharedSocketRoomTransition = queued.catch((error) => {
+    console.warn('共享 Socket 房间切换未完成:', error);
+  });
+
+  return queued;
+}
+
+export function waitForSharedSocketRoomTransition(): Promise<void> {
+  return sharedSocketRoomTransition;
+}
+
 /**
  * 统一处理需要服务端 acknowledgement 的 Socket.IO 请求。
  *
@@ -152,6 +177,29 @@ export interface GameActionPayload {
   userId?: string;
   actionType: string;
   actionData: Record<string, any>;
+}
+
+export function emitGameActionRequest<TResponse extends SocketAckResponse = SocketAckResponse>(
+  socket: TimeoutCapableSocket | null | undefined,
+  roomId: string | undefined,
+  playerId: string | undefined,
+  actionType: string,
+  actionData: Record<string, any> = {},
+  options: SocketRequestOptions = {}
+): Promise<TResponse> {
+  if (!roomId || !actionType) {
+    return Promise.reject(new Error(options.failureMessage || '游戏操作失败'));
+  }
+
+  const payload: GameActionPayload = {
+    roomId,
+    playerId,
+    userId: playerId,
+    actionType,
+    actionData
+  };
+
+  return emitSocketRequest<TResponse>(socket, 'game_action', payload, options);
 }
 
 export function emitGameAction(

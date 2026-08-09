@@ -751,7 +751,7 @@
 
 <script lang="ts" setup>
 import { onMounted, ref } from 'vue';
-import { useMainStore, useTexasHoldemStore } from '../store';
+import { useMainStore } from '../store';
 import type { RoomInfo } from '../store';
 import { storeToRefs } from 'pinia';
 import { useRoute, useRouter } from 'vue-router';
@@ -759,7 +759,7 @@ import { ElMessage } from 'element-plus';
 import { SOCKET_URL } from '../config';
 import { GAME_META, GAME_TYPE_LIST } from '../utils/gameMeta';
 import { ensureGameSession, getStoredSessionToken, hasExactStoredRoomSession } from '../utils/gameSession';
-import { emitSocketRequest } from '../utils/gameSocket';
+import { emitSocketRequest, waitForSharedSocketRoomTransition } from '../utils/gameSocket';
 
 const store = useMainStore();
 const { rooms } = storeToRefs(store);
@@ -966,10 +966,6 @@ async function confirmJoinRoom() {
     return;
   }
 
-  if (!store.socket?.connected) {
-    store.initSocket();
-  }
-
   const roomId = joinRoomForm.value.roomName.trim().toUpperCase();
   const nickname = joinRoomForm.value.nickname.trim();
   const room = rooms.value.find(r => r.id === roomId || r.name === roomId);
@@ -980,6 +976,13 @@ async function confirmJoinRoom() {
 
   joiningRoom.value = true;
   try {
+    // 德州与大厅复用主 Socket。等待上一房间的 leave_room 完成，避免后端 async
+    // 处理尚未提交时并发加入新房，造成同一 socket 短暂接收两个房间的私有事件。
+    await waitForSharedSocketRoomTransition();
+    if (!store.socket?.connected) {
+      store.initSocket();
+    }
+
     // 参数名使用 roomId 与后端期望一致。统一 acknowledgement helper 会处理
     // 连接中的缓冲、超时、空回执和 success=false，避免按钮状态卡死或重复分支。
     await emitSocketRequest(store.socket, 'join_room', {
@@ -1013,6 +1016,7 @@ async function confirmCreateRoom() {
 
   try {
     creatingRoom.value = true;
+    await waitForSharedSocketRoomTransition();
     
     // 构建游戏配置
     const playerId = ensureLocalPlayer(createRoomForm.value.gameType, createRoomForm.value.nickname);
@@ -1063,15 +1067,6 @@ async function confirmCreateRoom() {
     // 通过socket创建房间
     if (!store.socket) {
       store.initSocket();
-    }
-
-    // 如果是德州扑克，设置昵称到store
-    if (createRoomForm.value.gameType === 'texas-holdem') {
-      const texasStore = useTexasHoldemStore();
-      texasStore.nickname = createRoomForm.value.nickname;
-      localStorage.setItem('texas_nickname', createRoomForm.value.nickname);
-      // 设置新加入标记
-      sessionStorage.setItem('texas_newJoin', 'true');
     }
 
     await emitSocketRequest(store.socket, 'create_room', {

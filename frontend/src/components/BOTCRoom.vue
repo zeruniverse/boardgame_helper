@@ -10,6 +10,7 @@
         <span class="room-name">{{ room?.name || '血染钟楼房间' }}</span>
       </div>
       <div class="header-right">
+        <RoomConnectionStatus :connected="store.connected" />
         <span class="room-id">房间ID: {{ roomId }}</span>
         <el-button v-if="isHost" size="small" @click="toggleRoomLock" :type="room?.locked ? 'danger' : 'success'">
           {{ room?.locked ? '解锁房间' : '锁定房间' }}
@@ -196,6 +197,7 @@ import { Back } from '@element-plus/icons-vue'
 import BOTCActionPanel from './BOTCActionPanel.vue'
 import BOTCPlayerList from './BOTCPlayerList.vue'
 import BOTCChat from './BOTCChat.vue'
+import RoomConnectionStatus from './RoomConnectionStatus.vue'
 import { formatPlayerName } from '../utils/playerName'
 import { formatBOTCNightInfo } from '../utils/botcNightInfo'
 

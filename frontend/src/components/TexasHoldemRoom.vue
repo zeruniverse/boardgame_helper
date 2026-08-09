@@ -10,6 +10,7 @@
         <span class="room-name">德州扑克房间</span>
       </div>
       <div class="header-right">
+        <RoomConnectionStatus :connected="connected" />
         <span class="room-id">房间ID: {{ displayRoomName }}</span>
         <el-button v-if="isHost" size="small" @click="toggleRoomLock"
                    :type="store.roomLocked ? 'danger' : 'success'"
@@ -48,10 +49,13 @@
                          :class="{ 'colored-border': canStartGame, 'disabled-border': !canStartGame }">
                 开始游戏
               </el-button>
-              <el-button @click="onCashIn" :class="{ 'colored-border': true }">
+              <el-button @click="onCashIn" :loading="cashInPending"
+                         :disabled="cashInPending || cashOutPending"
+                         :class="{ 'colored-border': true }">
                 Cash In
               </el-button>
-              <el-button type="danger" @click="onCashOut" :loading="cashOutPending" :disabled="cashOutPending"
+              <el-button type="danger" @click="onCashOut" :loading="cashOutPending"
+                         :disabled="cashInPending || cashOutPending"
                          :class="{ 'colored-border': true }">
                 Cash Out
               </el-button>
@@ -70,14 +74,17 @@
             </template>
 
             <template v-if="store.stage === 'distribution' && isInGame && !online">
-              <el-input v-model.number="takeAmount" type="number" placeholder="Take 数量" class="quick-take-input" />
+              <el-input v-model.number="takeAmount" type="number" placeholder="Take 数量"
+                        class="quick-take-input" :disabled="takePending" />
               <el-button type="primary" @click="onTake"
-                         :disabled="takeAmount <= 0"
+                         :loading="takePending"
+                         :disabled="takePending || takeAmount <= 0"
                          :class="{ 'colored-border': takeAmount > 0, 'disabled-border': takeAmount <= 0 }">
                 Take
               </el-button>
               <el-button type="warning" @click="onTakeAll"
-                         :disabled="store.pot === 0"
+                         :loading="takePending"
+                         :disabled="takePending || store.pot === 0"
                          :class="{ 'colored-border': store.pot > 0, 'disabled-border': store.pot === 0 }">
                 Take All
               </el-button>
@@ -124,15 +131,18 @@
           <div class="section-title">完整操作区</div>
           <template v-if="store.stage === 'distribution' && isInGame && !online">
             <div class="take-controls">
-              <el-input v-model.number="takeAmount" type="number" placeholder="Take 数量" class="take-input" />
+              <el-input v-model.number="takeAmount" type="number" placeholder="Take 数量"
+                        class="take-input" :disabled="takePending" />
               <el-button type="primary" @click="onTake"
-                         :disabled="takeAmount <= 0"
+                         :loading="takePending"
+                         :disabled="takePending || takeAmount <= 0"
                          :class="{ 'colored-border': takeAmount > 0, 'disabled-border': takeAmount <= 0 }"
                          class="take-btn">
                 Take
               </el-button>
               <el-button type="warning" @click="onTakeAll"
-                         :disabled="store.pot === 0"
+                         :loading="takePending"
+                         :disabled="takePending || store.pot === 0"
                          :class="{ 'colored-border': store.pot > 0, 'disabled-border': store.pot === 0 }"
                          class="take-btn">
                 Take All
@@ -169,15 +179,17 @@ import { useTexasHoldemStore, useMainStore } from '../store';
 import { storeToRefs } from 'pinia';
 import { useRouter, useRoute } from 'vue-router';
 import { Loading, Back } from '@element-plus/icons-vue';
-import { ElMessage } from 'element-plus';
+import { ElMessage, ElMessageBox } from 'element-plus';
 import TexasHoldemChat from './TexasHoldemChat.vue';
 import TexasHoldemPlayerList from './TexasHoldemPlayerList.vue';
 import TexasHoldemActionBar from './TexasHoldemActionBar.vue';
-import { emitGameAction } from '../utils/gameSocket';
+import RoomConnectionStatus from './RoomConnectionStatus.vue';
+import { emitGameAction, emitGameActionRequest, waitForSharedSocketRoomTransition } from '../utils/gameSocket';
 import { clearGameSession, ensureGameSession, rememberGameSession } from '../utils/gameSession';
 import { formatPlayerName } from '../utils/playerName';
 
 const store = useTexasHoldemStore();
+const mainStore = useMainStore();
 // 使用playerId而不是nickname来判断是否在房间
 const isInRoom = computed(() => store.players.some((p: { id: string }) => p.id === store.playerId));
 const { round } = storeToRefs(store);
@@ -192,8 +204,11 @@ const roomPreparing = ref(true); // 默认显示准备中
 const roomName = ref('');
 // 显示的房间号（优先使用服务器返回的名称，否则使用URL中的ID）
 const displayRoomName = computed(() => roomName.value || roomId);
+const connected = computed(() => mainStore.connected);
 const isHost = computed(() => store.isHost);
+const cashInPending = ref(false);
 const cashOutPending = ref(false);
+const takePending = ref(false);
 
 function sendTexasAction(
   actionType: string,
@@ -205,6 +220,7 @@ function sendTexasAction(
 
 // 房间状态检查定时器
 let statusCheckInterval: ReturnType<typeof setInterval> | null = null;
+let componentActive = true;
 
 // 请求房间状态的函数
 const requestRoomState = () => {
@@ -215,11 +231,15 @@ const requestRoomState = () => {
 };
 
 // 如果未加入此房间，则尝试重新加入
-onMounted(() => {
+onMounted(async () => {
+  // 直接在两个德州房间路由之间切换时，也必须等待旧房间 leave_room 完成；
+  // 不能只依赖大厅按钮的屏障。
+  await waitForSharedSocketRoomTransition();
+  if (!componentActive) return;
+
   // 确保主 socket 已存在，再注册德州扑克专属监听器。
   // 注意：socket.io 连接中的 socket 也可以先挂监听/缓存 emit；不要因为尚未 connected 就重新创建，
   // 否则直接刷新房间页时会丢失 game_state/deal_hand/current_turn 等监听器。
-  const mainStore = useMainStore();
   if (!store.socket) {
     mainStore.initSocket();
   }
@@ -310,6 +330,7 @@ function leaveCurrentRoom() {
 }
 
 onUnmounted(() => {
+  componentActive = false;
   if (statusCheckInterval) {
     clearInterval(statusCheckInterval);
     statusCheckInterval = null;
@@ -328,23 +349,66 @@ function goToLobby() {
   router.push({ name: 'Lobby' });
 }
 
-// Cash In - 使用game_action统一格式
-function onCashIn() {
-  if (confirm('确定要充值1000筹码吗？')) {
-    sendTexasAction('cashin', { amount: 1000 });
+async function confirmTexasAction(message: string, title: string): Promise<boolean> {
+  try {
+    await ElMessageBox.confirm(message, title, {
+      confirmButtonText: '确认',
+      cancelButtonText: '取消',
+      type: 'warning'
+    });
+    return true;
+  } catch (action) {
+    if (action !== 'cancel' && action !== 'close') {
+      console.warn(`${title}确认框异常:`, action);
+    }
+    return false;
   }
 }
-// Cash Out - 使用game_action统一格式
-function onCashOut() {
-  if (cashOutPending.value || !confirm('确定要 Cash Out 并退出房间吗？')) return;
+
+// Cash In - 使用带超时 acknowledgement 的game_action，防止重复点击或按钮永久等待
+async function onCashIn() {
+  if (cashInPending.value || cashOutPending.value) return;
+  if (!await confirmTexasAction('确定要充值 1000 筹码吗？', 'Cash In')) return;
+
+  cashInPending.value = true;
+  try {
+    await emitGameActionRequest(
+      store.socket,
+      store.currentRoom || roomId,
+      store.playerId,
+      'cashin',
+      { amount: 1000 },
+      {
+        timeoutMessage: 'Cash In 超时，请检查网络后重试',
+        failureMessage: 'Cash In 失败'
+      }
+    );
+    ElMessage.success('已充值 1000 筹码');
+  } catch (error) {
+    ElMessage.error(error instanceof Error ? error.message : 'Cash In 失败，请稍后重试');
+  } finally {
+    cashInPending.value = false;
+  }
+}
+
+// Cash Out - 使用带超时 acknowledgement 的game_action
+async function onCashOut() {
+  if (cashInPending.value || cashOutPending.value) return;
+  if (!await confirmTexasAction('确定要 Cash Out 并退出房间吗？', 'Cash Out')) return;
 
   cashOutPending.value = true;
-  const sent = sendTexasAction('cashout', {}, (response: any) => {
-    cashOutPending.value = false;
-    if (!response?.success) {
-      ElMessage.error(response?.error || 'Cash Out 失败，请稍后重试');
-      return;
-    }
+  try {
+    await emitGameActionRequest(
+      store.socket,
+      store.currentRoom || roomId,
+      store.playerId,
+      'cashout',
+      {},
+      {
+        timeoutMessage: 'Cash Out 超时，请检查网络后重试',
+        failureMessage: 'Cash Out 失败'
+      }
+    );
 
     // 只有服务端确认玩家已退出房间后才清理本地状态，避免请求被拒绝时客户端误退房。
     // Cash Out 已由 Worker/Controller 完成实际移除，此处只脱离德州页面监听，不再重复发 leave_room。
@@ -354,11 +418,10 @@ function onCashOut() {
     clearGameSession('texas-holdem');
     roomLeaveRequested = true;
     router.push({ name: 'Lobby' });
-  });
-
-  if (!sent) {
+  } catch (error) {
+    ElMessage.error(error instanceof Error ? error.message : 'Cash Out 失败，请稍后重试');
+  } finally {
     cashOutPending.value = false;
-    ElMessage.error('连接不可用，无法 Cash Out');
   }
 }
 // 开始游戏 - 使用game_action统一格式
@@ -509,32 +572,63 @@ function handleThirdQuickButton() {
 
 // 线下 take 操作 - 使用game_action统一格式
 const takeAmount = ref(0);
-function onTake() {
-  if (store.socket && store.currentRoom) {
-    const val = Math.floor(takeAmount.value);
-    if (isNaN(val) || val <= 0) {
-      alert('请输入合法的正整数Take金额');
-      return;
-    }
-    if (val > store.pot) {
-      alert('Take金额不能超过奖池');
-      return;
-    }
-    const sent = sendTexasAction('take', { amount: val }, (response: any) => {
-      // 仅在 Worker 确认领取成功后清空输入。奖池被其他赢家先领取等竞态下，
-      // 保留用户输入，便于按服务端最新状态调整，而不是制造“看似成功”的错觉。
-      if (response?.success) {
-        takeAmount.value = 0;
+async function onTake() {
+  if (takePending.value || !store.socket || !store.currentRoom) return;
+
+  const val = Math.floor(takeAmount.value);
+  if (!Number.isFinite(val) || val <= 0) {
+    ElMessage.warning('请输入合法的正整数 Take 金额');
+    return;
+  }
+  if (val > store.pot) {
+    ElMessage.warning('Take 金额不能超过奖池');
+    return;
+  }
+
+  takePending.value = true;
+  try {
+    await emitGameActionRequest(
+      store.socket,
+      store.currentRoom,
+      store.playerId,
+      'take',
+      { amount: val },
+      {
+        timeoutMessage: '领取奖池超时，请检查网络后重试',
+        failureMessage: '领取奖池失败'
       }
-    });
-    if (!sent) {
-      ElMessage.error('连接不可用，无法领取奖池');
-    }
+    );
+    // 仅在 Worker 确认领取成功后清空输入。奖池被其他赢家先领取等竞态下，
+    // 保留用户输入，便于按服务端最新状态调整，而不是制造“看似成功”的错觉。
+    takeAmount.value = 0;
+  } catch (error) {
+    ElMessage.error(error instanceof Error ? error.message : '领取奖池失败');
+  } finally {
+    takePending.value = false;
   }
 }
-function onTakeAll() {
-  if (store.socket && store.currentRoom) {
-    sendTexasAction('takeAll');
+
+async function onTakeAll() {
+  if (takePending.value || !store.socket || !store.currentRoom || store.pot <= 0) return;
+
+  takePending.value = true;
+  try {
+    await emitGameActionRequest(
+      store.socket,
+      store.currentRoom,
+      store.playerId,
+      'takeAll',
+      {},
+      {
+        timeoutMessage: '领取全部奖池超时，请检查网络后重试',
+        failureMessage: '领取全部奖池失败'
+      }
+    );
+    takeAmount.value = 0;
+  } catch (error) {
+    ElMessage.error(error instanceof Error ? error.message : '领取全部奖池失败');
+  } finally {
+    takePending.value = false;
   }
 }
 
