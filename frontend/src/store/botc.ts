@@ -4,7 +4,7 @@ import { io, Socket } from 'socket.io-client'
 import { ElMessage } from 'element-plus'
 import { SOCKET_URL } from '../config'
 import { clearGameSession, clearGameSessionIfMatches, ensureGameSession, getStoredSessionToken, rememberGameSession } from '../utils/gameSession'
-import { emitChatAction, emitRoomReconnect, leaveRoomAndDisconnect } from '../utils/gameSocket'
+import { emitChatAction, emitRoomReconnect, joinGameRoom, leaveRoomAndDisconnect, shouldClearSessionAfterSocketError } from '../utils/gameSocket'
 import { requestGameActionWithFeedback } from '../utils/gameActionFeedback'
 import { appendLimitedMessage, normalizeIncomingMessage } from '../utils/messages'
 import { getForcedExitMessage, redirectToLobbyAfterForcedExit, shouldClearSessionOnForcedExit } from '../utils/forcedExit'
@@ -120,7 +120,8 @@ export const useBOTCGameStore = defineStore('botc', () => {
 
         // worker 的普通行动错误使用 actionError，启动失败使用 gameError，
         // 房间控制器使用 error；统一处理，避免关键失败在客户端静默丢失。
-        const handleServerError = (data: unknown) => {
+        const handleServerError = (data: any) => {
+          if (data?.clearSession === true) clearGameSession('blood-on-the-clocktower')
           console.error('血染钟楼: 服务器错误:', data)
           showErrorFeedback(data, '发生未知错误')
         }
@@ -531,8 +532,21 @@ export const useBOTCGameStore = defineStore('botc', () => {
 
       currentUserId.value = userId
       currentRoomId.value = roomId
-      socket.value.emit('join_room', { roomId, gameType, playerId: userId, userId, nickname, sessionToken: session.sessionToken })
-      return { success: true }
+      try {
+        return await joinGameRoom(socket.value, {
+          roomId,
+          gameType,
+          playerId: userId,
+          userId,
+          nickname,
+          sessionToken: session.sessionToken
+        })
+      } catch (error) {
+        if (shouldClearSessionAfterSocketError(error)) {
+          clearGameSession('blood-on-the-clocktower')
+        }
+        throw error
+      }
     } catch (error) {
       console.error('血染钟楼: 连接房间失败:', error)
       throw error

@@ -2,7 +2,7 @@ import { defineStore } from 'pinia';
 import { io, Socket } from 'socket.io-client';
 import { SOCKET_URL } from '../config';
 import { clearGameSession, clearGameSessionIfMatches, ensureGameSession, getStoredSessionToken, rememberGameSession } from '../utils/gameSession';
-import { emitChatAction, emitRoomReconnect, leaveRoomAndDisconnect } from '../utils/gameSocket';
+import { emitChatAction, emitRoomReconnect, joinGameRoom, leaveRoomAndDisconnect, shouldClearSessionAfterSocketError } from '../utils/gameSocket';
 import { requestGameActionWithFeedback } from '../utils/gameActionFeedback';
 import { appendLimitedMessage, createSystemMessage, normalizeErrorMessage, normalizeIncomingMessage, normalizeSystemMessage } from '../utils/messages';
 import { getForcedExitMessage, redirectToLobbyAfterForcedExit, shouldClearSessionOnForcedExit } from '../utils/forcedExit';
@@ -470,7 +470,8 @@ export const useMafiaStore = defineStore('mafia', {
         showErrorFeedback(data);
       });
 
-      on('error', (error: unknown) => {
+      on('error', (error: any) => {
+        if (error?.clearSession === true) clearGameSession('mafia');
         const message = normalizeErrorMessage(error);
         this.errorMessage = message;
         this.addSystemMessage(`错误：${message}`);
@@ -528,7 +529,7 @@ export const useMafiaStore = defineStore('mafia', {
       });
     },
 
-    connectToRoom(roomId: string, gameType: string = 'mafia') {
+    async connectToRoom(roomId: string, gameType: string = 'mafia') {
       if (!this.socket || this.socketListeners.length === 0) {
         this.initSocket();
       }
@@ -540,14 +541,21 @@ export const useMafiaStore = defineStore('mafia', {
       this.currentUserId = userId;
       this.currentRoomId = roomId;
 
-      this.socket?.emit('join_room', {
-        roomId,
-        userId,
-        playerId: userId,
-        nickname,
-        gameType,
-        sessionToken: session.sessionToken
-      });
+      try {
+        return await joinGameRoom(this.socket, {
+          roomId,
+          userId,
+          playerId: userId,
+          nickname,
+          gameType,
+          sessionToken: session.sessionToken
+        });
+      } catch (error) {
+        if (shouldClearSessionAfterSocketError(error)) {
+          clearGameSession('mafia');
+        }
+        throw error;
+      }
     },
 
     disconnectFromRoom() {

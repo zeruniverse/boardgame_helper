@@ -22,8 +22,8 @@
         <div v-if="isHost" class="dealing-mode-control">
           <span>发牌模式</span>
           <el-radio-group v-model="dealingMode" size="small" :disabled="!canChangeDealingMode || roomActionBusy">
-            <el-radio-button label="online">线上发牌</el-radio-button>
-            <el-radio-button label="offline">线下发牌</el-radio-button>
+            <el-radio-button value="online">线上发牌</el-radio-button>
+            <el-radio-button value="offline">线下发牌</el-radio-button>
           </el-radio-group>
         </div>
       </div>
@@ -199,7 +199,7 @@ import TexasHoldemChat from './TexasHoldemChat.vue';
 import TexasHoldemPlayerList from './TexasHoldemPlayerList.vue';
 import TexasHoldemActionBar from './TexasHoldemActionBar.vue';
 import RoomConnectionStatus from './RoomConnectionStatus.vue';
-import { emitGameActionRequest, waitForSharedSocketRoomTransition } from '../utils/gameSocket';
+import { emitGameActionRequest, joinGameRoom, shouldClearSessionAfterSocketError, waitForSharedSocketRoomTransition } from '../utils/gameSocket';
 import { clearGameSession, ensureGameSession, rememberGameSession } from '../utils/gameSession';
 import { formatPlayerName } from '../utils/playerName';
 import { useTexasHoldemActionState } from '../utils/texasHoldemActionState';
@@ -307,7 +307,7 @@ onMounted(async () => {
   onRoomJoinedHandler = (data: { room: any; player: any; isHost: boolean; sessionToken?: string }) => {
     console.log('收到room_joined事件', data);
     if (data.room.type !== 'texas-holdem') {
-      router.push({ name: 'Lobby' });
+      router.replace({ name: 'Lobby' });
       return;
     }
     console.log('房间加入成功，类型匹配');
@@ -327,24 +327,34 @@ onMounted(async () => {
 
   // 直接进入/刷新房间页时使用普通加入流程：已有座位必须携带有效会话令牌，
   // 防止公开昵称被用于接管他人座位；reconnect_room 仅用于网络断线重连。
-  if (store.playerId && !isNewJoin) {
-    console.log(`尝试进入房间 ${roomId}，玩家ID ${store.playerId}`);
-    const session = ensureGameSession('texas-holdem', store.nickname || undefined, roomId);
-    socket.emit('join_room', {
-      roomId,
-      nickname: session.nickname,
-      playerId: session.playerId,
-      sessionToken: rememberedRoomId === roomId ? session.sessionToken : undefined
-    });
+  try {
+    if (!isNewJoin) {
+      const session = ensureGameSession('texas-holdem', store.nickname || undefined, roomId);
+      console.log(`尝试进入房间 ${roomId}，玩家ID ${session.playerId}`);
+      const response = await joinGameRoom(socket, {
+        roomId,
+        nickname: session.nickname,
+        playerId: session.playerId,
+        sessionToken: rememberedRoomId === roomId ? session.sessionToken : undefined
+      });
+      if (!componentActive) return;
+      if (response.room?.type && response.room.type !== 'texas-holdem') {
+        throw new Error('该房间不是德州扑克房间');
+      }
+      roomPreparing.value = false;
+    } else {
+      // 从大厅刚加入时，room_joined 已在路由切换前由 store 收到，主动拉取一次。
+      sessionStorage.removeItem('texas_newJoin');
+      requestRoomState();
+    }
+    statusCheckInterval = window.setInterval(requestRoomState, 3000);
+  } catch (error) {
+    if (!componentActive) return;
+    if (shouldClearSessionAfterSocketError(error)) clearGameSession('texas-holdem');
+    roomPreparing.value = false;
+    showErrorFeedback(error, '加入德州扑克房间失败');
+    router.replace({ name: 'Lobby' });
   }
-
-  // 从大厅刚加入时，room_joined 已在路由切换前由 store 收到，因此这里主动拉取一次；
-  // 直接刷新则等待本组件已注册的 room_joined，再由其拉取状态，避免与 join_room 竞态。
-  if (isNewJoin) {
-    sessionStorage.removeItem('texas_newJoin');
-    requestRoomState();
-  }
-  statusCheckInterval = window.setInterval(requestRoomState, 3000);
 });
 
 // 组件级事件处理器（提升到作用域顶部以便onUnmounted引用）
@@ -377,7 +387,7 @@ onUnmounted(() => {
 // 返回大厅
 function goToLobby() {
   leaveCurrentRoom();
-  router.push({ name: 'Lobby' });
+  router.replace({ name: 'Lobby' });
 }
 
 async function confirmTexasAction(message: string, title: string): Promise<boolean> {
@@ -448,7 +458,7 @@ async function onCashOut() {
     // 本地也必须完整清理，不能只删 roomId 后留下一个已失效 token。
     clearGameSession('texas-holdem');
     roomLeaveRequested = true;
-    router.push({ name: 'Lobby' });
+    router.replace({ name: 'Lobby' });
   } catch (error) {
     showErrorFeedback(error, 'Cash Out 失败，请稍后重试');
   } finally {

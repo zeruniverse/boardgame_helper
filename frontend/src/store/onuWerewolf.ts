@@ -2,7 +2,7 @@ import { defineStore } from 'pinia';
 import { io, Socket } from 'socket.io-client';
 import { SOCKET_URL } from '../config';
 import { clearGameSession, clearGameSessionIfMatches, ensureGameSession, getStoredSessionToken, rememberGameSession } from '../utils/gameSession';
-import { emitChatAction, emitRoomReconnect, leaveRoomAndDisconnect } from '../utils/gameSocket';
+import { emitChatAction, emitRoomReconnect, joinGameRoom, leaveRoomAndDisconnect, shouldClearSessionAfterSocketError } from '../utils/gameSocket';
 import { requestGameActionWithFeedback } from '../utils/gameActionFeedback';
 import { appendLimitedMessage, createSystemMessage, normalizeErrorMessage, normalizeIncomingMessage, normalizeSystemMessage } from '../utils/messages';
 import { getForcedExitMessage, redirectToLobbyAfterForcedExit, shouldClearSessionOnForcedExit } from '../utils/forcedExit';
@@ -707,7 +707,8 @@ export const useOnuWerewolfStore = defineStore('onuWerewolf', {
         showErrorFeedback(data);
       });
 
-      on('error', (error: unknown) => {
+      on('error', (error: any) => {
+        if (error?.clearSession === true) clearGameSession('one-night-werewolf');
         const message = normalizeErrorMessage(error);
         this.errorMessage = message;
         this.addSystemMessage(`错误：${message}`);
@@ -745,7 +746,7 @@ export const useOnuWerewolfStore = defineStore('onuWerewolf', {
       });
     },
 
-    connectToRoom(roomId: string, gameType: string = 'one-night-werewolf') {
+    async connectToRoom(roomId: string, gameType: string = 'one-night-werewolf') {
       if (!this.socket) {
         this.initSocket();
       }
@@ -757,14 +758,21 @@ export const useOnuWerewolfStore = defineStore('onuWerewolf', {
       this.currentUserId = userId;
       this.currentRoomId = roomId;
 
-      this.socket?.emit('join_room', {
-        roomId: roomId,
-        gameType: gameType,
-        playerId: userId,
-        userId,
-        nickname: nickname,
-        sessionToken: session.sessionToken
-      });
+      try {
+        return await joinGameRoom(this.socket, {
+          roomId: roomId,
+          gameType: gameType,
+          playerId: userId,
+          userId,
+          nickname: nickname,
+          sessionToken: session.sessionToken
+        });
+      } catch (error) {
+        if (shouldClearSessionAfterSocketError(error)) {
+          clearGameSession('one-night-werewolf');
+        }
+        throw error;
+      }
     },
 
     disconnectFromRoom() {

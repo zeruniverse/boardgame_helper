@@ -2878,3 +2878,49 @@ Commit: fix(round7): 复用六类聊天输入并封堵钟楼私聊断线竞态
   - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts 检查；仅有工具正常显示的可选依赖缺失提示。
   - 正式 npm ci --ignore-scripts 已在最终源码上执行，当前内部 npm 镜像请求 typescript-5.8.3.tgz 返回 404。由于完整依赖未能安装，本轮没有声称 npm run build、vue-tsc 或 Vite 生产构建通过；完整生产构建和“可直接部署”需在依赖源正常的本地或 CI 最终确认。
 备注: 本轮未删除文件；修复包只包含上述修改/新增文件与更新后的 repair_log.txt，可按项目相对路径直接覆盖。
+
+=== 当前会话第 8 轮修复记录 ===
+时间: 2026-08-09 15:10:42 UTC
+Commit: fix(round8): 统一房间加入回执并移除重复玩家面板
+修改/新增文件:
+  - .dockerignore（新增）
+  - Dockerfile（新增）
+  - backend/src/controllers/roomController.ts
+  - frontend/src/components/AvalonRoom.vue
+  - frontend/src/components/BOTCPlayerList.vue
+  - frontend/src/components/BOTCRoom.vue
+  - frontend/src/components/MafiaRoom.vue
+  - frontend/src/components/OnuWerewolfActionPanel.vue
+  - frontend/src/components/OnuWerewolfRoom.vue
+  - frontend/src/components/TexasHoldemRoom.vue
+  - frontend/src/components/WerewolfRoom.vue
+  - frontend/src/store/avalon.ts
+  - frontend/src/store/botc.ts
+  - frontend/src/store/mafia.ts
+  - frontend/src/store/onuWerewolf.ts
+  - frontend/src/store/werewolf.ts
+  - frontend/src/utils/gameSocket.ts
+  - repair_log.txt
+删除文件: 无
+构建测试: 部分通过（backend/src + frontend/src 当前全部 92 个源码/样式/资源文件已检查；90 个 TypeScript/Vue script 单元、372 次本地导入和 28 个 Vue 组件结构检查通过；backend/src 全部 35 个 TypeScript 文件 strict/noEmit 与隔离 CommonJS 编译通过；六游戏 Worker prepare_room 烟雾、房间加入回执 8 项运行回归、前端共享工具 strict 检查及 package-lock 工作区依赖树检查均通过。正式 npm ci 仍被当前内部 npm 镜像缺失 typescript-5.8.3.tgz、yn-3.1.1.tgz 等锁定 tarball 的 404 阻塞；正式 npm run build 因完整 node_modules 不存在，在 backend 的 Node/Express/CORS/Socket.IO/UUID 依赖解析阶段中止，未进入 frontend vue-tsc/Vite；当前环境也没有 Docker/Podman，因此完整生产构建和镜像构建需在依赖源正常的本地或 CI 终验）
+本轮修复:
+  - 为狼人杀、杀人游戏、一夜狼人、阿瓦隆、血染钟楼五套专用 Store 统一接入 join_room acknowledgement；德州扑克直接刷新房间页也改为等待同一可靠加入回执。页面不再在 Controller 与 Worker 尚未提交成员关系时并发轮询受保护状态，避免“偶发未加入/无权限”、空白页面和固定延时 loading 假成功。
+  - gameSocket 新增 SocketRequestError、joinGameRoom 及 clearSession 元数据判断。Controller 对失效座位会话返回 clearSession=true；Store 和页面会清理过期本地会话、显示一致错误并 replace 回大厅，房间不存在、已锁、已满、类型错误或加入超时不再把用户留在不可操作页面。
+  - 狼人杀、杀人游戏、阿瓦隆、血染钟楼房间移除桌面/移动端各挂载一套 PlayerList 的重复组件树，改为单个随现有纵向布局自然流动的玩家面板。避免隐藏组件仍运行 watcher、弹窗、配置状态和管理事件，降低重复确认框、状态漂移及不必要渲染；未改变项目当前桌面与移动端统一纵向布局。
+  - 统一六游戏房间的返回大厅行为为 router.replace，避免浏览器返回键再次进入已经失效的房间路由；异步加入在组件卸载后不会继续启动轮询或覆盖新页面状态。
+  - 修复 Element Plus 2.6+ 单选按钮取值 API：德州扑克发牌模式和一夜狼人预言家/村庄白痴选择由 label 改为 value，避免升级后选择值异常和弃用警告。
+  - 修复血染钟楼玩家数量提示硬编码 15 人的问题，改为读取当前配置的 maxPlayers，提示与房间配置一致。
+  - 新增根目录多阶段 Dockerfile 和 .dockerignore：在 workspace 中构建 backend/dist 与 frontend/dist，运行镜像仅安装生产依赖并由 backend/dist/server.js 同源托管前端产物。未新增根目录 src/，也未移动任何源码目录。
+审查结果/本轮未改动重点:
+  - 本轮继续检查 backend/src 与 frontend/src 当前全部 92 个文件，并结合 repair_log 前 7 轮记录重点复核 roomController、RoomThreadManager、BaseGameWorker、六个游戏 Worker、六套 Store/Room/ActionPanel/ActionBar/PlayerList/Chat 及共享 socket/session/state/config/random 工具。当前最高优先级且可低风险落地的问题集中在加入房间事务边界、重复前端组件树和部署入口，因此本批次没有扩大为高风险规则状态机重写。
+  - 狼人杀继续复核角色夜序、狼人共识、警长/平票/放逐和胜负；杀人游戏继续复核杀手/警察/医生/狙击手与白天投票；一夜狼人继续复核 3 张中心牌、夜序、最终身份与阵营胜负；阿瓦隆继续复核任务人数、7 人以上第 4 任务双失败、5 次否决、刺杀和湖上夫人；德州扑克继续复核盲注/行动顺序、完整加注与短码 all-in、未跟注返还、主边池；血染钟楼继续复核提名、投票、处决和夜间能力。本轮六 Worker 初始化烟雾均通过，未发现优先级高于上述加入竞态和前端重复挂载、且适合当前批次确定修复的新主流程阻断项。
+  - 血染钟楼仍保留 repair_log 已记录、需要更大状态模型或真人说书人逐次裁决 UI 才能完整解决的架构级边界：特殊自定义夜序下 Pit-Hag 创建 Demon 后无法安全逆向更早已经落地并触发被动的死亡；Recluse/Spy registration 缺逐次人工裁决 UI；自由文本、多重效果抵消下 Mathematician 极端统计缺统一逐次最终基准审计。本轮没有用近似逻辑强行覆盖。
+  - Worker/Controller 的串行任务、workerStateVersion/connectionStateVersion/hostStateVersion 合并及状态事实源保持不变；本轮后端只为失效会话补充结构化清理提示，前端在加入事务成功后才启动状态同步。
+验证:
+  - 全量静态检查通过：backend/src + frontend/src 共 61 个 .ts、29 个 .vue、1 个 .css 和 1 个 .svg；90 个 TypeScript/Vue script 单元、372 次本地相对导入均通过，未发现语法错误、失效导入、真实合并冲突标记或根目录 src/。
+  - 前端结构专项回归在 28 个 Vue 文件执行 60 项断言：四个目标房间均只挂载一个 PlayerList，旧 desktop/mobile 双插槽和 Teleport 残留均不存在；Element Plus radio 使用 value；BOTC 最大人数提示读取配置；返回大厅不再 push 失效房间历史。
+  - backend/src 全部 35 个 TypeScript 文件在 strict 配置下完成 noEmit 检查并生成隔离 CommonJS 产物；六个实际 Worker 使用该产物完成 prepare_room：狼人杀、杀人游戏、阿瓦隆、一夜狼人、血染钟楼、德州扑克全部通过。
+  - frontend/src/utils/gameSocket.ts、gameSession.ts、gameMeta.ts 通过 strict TypeScript 检查；房间加入专项运行回归覆盖成功回执、success=false 元数据保留、clearSession 判断、Socket.IO 原生超时、回退计时和空 socket，共 8 项断言通过。
+  - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts 检查，仅显示可选原生依赖提示。
+  - 正式 npm ci 与 npm run build 已尝试。npm ci 被当前内部 npm 镜像 404 阻塞；无完整 node_modules 时 npm run build 在 backend 依赖/类型解析阶段失败，未进入 frontend。Dockerfile 已做静态路径和构建阶段复核，但当前环境无 Docker/Podman，不能声称镜像已实际构建成功。
+备注: 本轮未删除文件，未创建根目录 src/；所有后端源码修改仅位于 backend/src/，所有前端源码修改仅位于 frontend/src/。修复包只包含本轮修改/新增文件与更新后的 repair_log.txt，可按项目相对路径直接覆盖。

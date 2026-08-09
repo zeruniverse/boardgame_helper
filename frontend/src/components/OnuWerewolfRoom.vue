@@ -94,6 +94,7 @@ import OnuWerewolfActionPanel from './OnuWerewolfActionPanel.vue';
 import OnuWerewolfPlayerList from './OnuWerewolfPlayerList.vue';
 import OnuWerewolfChat from './OnuWerewolfChat.vue';
 import RoomConnectionStatus from './RoomConnectionStatus.vue';
+import { showErrorFeedback } from '../utils/uiFeedback';
 
 const route = useRoute();
 const router = useRouter();
@@ -134,7 +135,7 @@ const nickname = computed(() => {
 // 游戏动作处理
 const goToLobby = () => {
   store.disconnectFromRoom();
-  router.push('/');
+  router.replace('/');
 };
 
 const toggleRoomLock = () => {
@@ -163,21 +164,26 @@ const scrollToActionArea = () => scrollToSelector('.full-action-area');
 const scrollToChat = () => scrollToSelector('.chat-anchor');
 
 // 生命周期
-onMounted(() => {
+let componentActive = true;
+
+onMounted(async () => {
   if (!roomId.value) {
     console.error('No roomId provided');
-    router.push('/');
+    router.replace('/');
     return;
   }
   try {
-    // connectToRoom 内部会自动调用 initSocket（如果 socket 未初始化）
-    store.connectToRoom(roomId.value, 'one-night-werewolf');
+    // 等待后端完成房间和 Worker 状态提交，失败时不把用户留在无反馈的空页面。
+    await store.connectToRoom(roomId.value, 'one-night-werewolf');
   } catch (error) {
-    console.error('Failed to connect to room:', error);
+    if (!componentActive) return;
+    showErrorFeedback(error, '加入一夜狼人房间失败');
+    router.replace('/');
   }
 });
 
 onUnmounted(() => {
+  componentActive = false;
   try {
     store.disconnectFromRoom();
   } catch (error) {

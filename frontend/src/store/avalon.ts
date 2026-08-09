@@ -2,7 +2,7 @@ import { defineStore } from 'pinia';
 import { io, Socket } from 'socket.io-client';
 import { SOCKET_URL } from '../config';
 import { clearGameSession, clearGameSessionIfMatches, ensureGameSession, getStoredSessionToken, rememberGameSession } from '../utils/gameSession';
-import { emitChatAction, emitRoomReconnect, leaveRoomAndDisconnect } from '../utils/gameSocket';
+import { emitChatAction, emitRoomReconnect, joinGameRoom, leaveRoomAndDisconnect, shouldClearSessionAfterSocketError } from '../utils/gameSocket';
 import { requestGameActionWithFeedback } from '../utils/gameActionFeedback';
 import { appendLimitedMessage, createSystemMessage, normalizeErrorMessage, normalizeIncomingMessage, normalizeSystemMessage } from '../utils/messages';
 import { getForcedExitMessage, redirectToLobbyAfterForcedExit, shouldClearSessionOnForcedExit } from '../utils/forcedExit';
@@ -280,7 +280,8 @@ export const useAvalonStore = defineStore('avalon', {
 
       // 错误事件：房间控制器使用 error，阿瓦隆 worker 使用 game_error。
       // 两种事件必须走同一处理逻辑，否则被后端拒绝的关键操作在前端会表现为“点击无反应”。
-      const handleServerError = (error: unknown) => {
+      const handleServerError = (error: any) => {
+        if (error?.clearSession === true) clearGameSession('avalon');
         const message = normalizeErrorMessage(error);
         this.errorMessage = message;
         this.addSystemMessage(`错误：${message}`);
@@ -316,7 +317,7 @@ export const useAvalonStore = defineStore('avalon', {
       });
     },
 
-    connectToRoom(roomId: string, gameType: string = 'avalon') {
+    async connectToRoom(roomId: string, gameType: string = 'avalon') {
       if (!this.socket || this.socketListeners.length === 0) {
         this.initSocket();
       }
@@ -328,14 +329,21 @@ export const useAvalonStore = defineStore('avalon', {
       this.currentUserId = userId;
       this.currentRoomId = roomId;
 
-      this.socket?.emit('join_room', {
-        roomId,
-        playerId: userId,
-        userId,
-        nickname,
-        gameType,
-        sessionToken: session.sessionToken
-      });
+      try {
+        return await joinGameRoom(this.socket, {
+          roomId,
+          playerId: userId,
+          userId,
+          nickname,
+          gameType,
+          sessionToken: session.sessionToken
+        });
+      } catch (error) {
+        if (shouldClearSessionAfterSocketError(error)) {
+          clearGameSession('avalon');
+        }
+        throw error;
+      }
     },
 
     disconnectFromRoom() {

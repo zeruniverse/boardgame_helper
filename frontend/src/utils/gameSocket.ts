@@ -14,6 +14,20 @@ export interface SocketAckResponse {
   [key: string]: any;
 }
 
+export class SocketRequestError extends Error {
+  readonly response?: SocketAckResponse;
+
+  constructor(message: string, response?: SocketAckResponse) {
+    super(message);
+    this.name = 'SocketRequestError';
+    this.response = response;
+  }
+}
+
+export function shouldClearSessionAfterSocketError(error: unknown): boolean {
+  return error instanceof SocketRequestError && error.response?.clearSession === true;
+}
+
 export interface SocketRequestOptions {
   timeoutMs?: number;
   timeoutMessage?: string;
@@ -86,7 +100,7 @@ export function emitSocketRequest<TResponse extends SocketAckResponse = SocketAc
         return;
       }
       if (response.success === false) {
-        finish(() => reject(new Error(response.error || failureMessage)));
+        finish(() => reject(new SocketRequestError(response.error || failureMessage, response)));
         return;
       }
       finish(() => resolve(response));
@@ -115,6 +129,40 @@ export function emitSocketRequest<TResponse extends SocketAckResponse = SocketAc
     } catch (error) {
       finish(() => reject(error instanceof Error ? error : new Error(failureMessage)));
     }
+  });
+}
+
+export interface JoinRoomPayload {
+  roomId?: string;
+  roomName?: string;
+  nickname?: string;
+  playerId?: string;
+  userId?: string;
+  gameType?: string;
+  sessionToken?: string;
+}
+
+export interface JoinRoomResponse extends SocketAckResponse {
+  room?: any;
+  player?: any;
+  playerId?: string;
+  sessionToken?: string;
+}
+
+/**
+ * Join requests must wait for the Controller and room Worker transaction to commit.
+ * Fire-and-forget joins let pages poll protected state before membership exists and
+ * leave loading masks stuck forever when the room is missing, locked, or full.
+ */
+export function joinGameRoom(
+  socket: TimeoutCapableSocket | null | undefined,
+  payload: JoinRoomPayload,
+  options: SocketRequestOptions = {}
+): Promise<JoinRoomResponse> {
+  return emitSocketRequest<JoinRoomResponse>(socket, 'join_room', payload, {
+    timeoutMessage: '加入房间超时，请检查网络后重试',
+    failureMessage: '加入房间失败',
+    ...options
   });
 }
 

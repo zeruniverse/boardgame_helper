@@ -13,7 +13,7 @@
     <!-- 头部导航 - 始终显示 -->
     <el-header class="room-header">
       <div class="header-left">
-        <el-button @click="$router.push('/')" type="primary" plain>
+        <el-button @click="$router.replace('/')" type="primary" plain>
           <el-icon><Back /></el-icon>
           返回大厅
         </el-button>
@@ -121,7 +121,7 @@
             </div>
           </div>
 
-          <div class="mobile-player-list-slot">
+          <div class="player-list-slot">
             <MafiaPlayerList
               :players="room?.players || []"
               :host-id="room?.hostId || ''"
@@ -153,23 +153,6 @@
 
       <!-- 右侧边栏 -->
       <el-aside width="300px" class="game-sidebar">
-        <!-- 玩家列表 -->
-        <div class="desktop-player-list-slot">
-          <MafiaPlayerList
-            :players="room?.players || []"
-            :host-id="room?.hostId || ''"
-            :current-user-id="currentUserId"
-            :game-players-by-id="gameState?.players"
-            :player-secret="playerSecret || undefined"
-            :game-state="gameState"
-            :operators="gameState?.operators"
-            :vote-result="gameState?.voteResult"
-            :room-config="room?.config"
-            @transfer-host="handleTransferHost"
-            @kick-player="handleKickPlayer"
-            @update-config="handleUpdateConfig"
-          />
-        </div>
 
         <!-- 聊天区域 -->
         <MafiaChat
@@ -196,6 +179,7 @@ import MafiaPlayerList from './MafiaPlayerList.vue'
 import MafiaChat from './MafiaChat.vue'
 import RoomConnectionStatus from './RoomConnectionStatus.vue'
 import { formatPlayerNameById } from '../utils/playerName'
+import { showErrorFeedback } from '../utils/uiFeedback'
 
 const route = useRoute()
 const router = useRouter()
@@ -223,6 +207,7 @@ const toggleRoomLock = () => {
 // 房间状态检查定时器
 let statusCheckInterval: ReturnType<typeof setInterval> | null = null
 let initialCheckTimeout: ReturnType<typeof setTimeout> | null = null
+let componentActive = true
 
 // 倒计时由 Pinia store 统一根据服务端截止时间维护，
 // 避免房间组件和 store 双重递减导致前端时间显示过快。
@@ -257,9 +242,9 @@ watch(room, (newRoom) => {
   }
 }, { immediate: true })
 
-onMounted(() => {
+onMounted(async () => {
   if (!roomId) {
-    router.push('/')
+    router.replace('/')
     return
   }
 
@@ -272,19 +257,26 @@ onMounted(() => {
   store.socket?.on('room_ready', onRoomReady)
 
   // 连接到房间
-  store.connectToRoom(roomId, 'mafia')
+  try {
+    await store.connectToRoom(roomId, 'mafia')
+    if (!componentActive) return
+    roomPreparing.value = false
 
-  // 开始定时检查房间状态
-  if (!statusCheckInterval) {
-    // 立即检查一次
-    initialCheckTimeout = setTimeout(checkRoomStatus, 500)
-    // 然后每3秒检查一次
-    statusCheckInterval = setInterval(checkRoomStatus, 3000)
+    // 加入事务提交后再轮询，避免受保护状态请求抢在 join_room 前执行。
+    if (!statusCheckInterval) {
+      initialCheckTimeout = setTimeout(checkRoomStatus, 500)
+      statusCheckInterval = setInterval(checkRoomStatus, 3000)
+    }
+  } catch (error) {
+    if (!componentActive) return
+    roomPreparing.value = false
+    showErrorFeedback(error, '加入杀人游戏房间失败')
+    router.replace('/')
   }
-
 })
 
 onUnmounted(() => {
+  componentActive = false
   // 清理定时器
   if (statusCheckInterval) {
     clearInterval(statusCheckInterval)
@@ -739,8 +731,7 @@ const scrollToChat = () => scrollToSelector('.game-sidebar')
   color: var(--app-text-secondary);
 }
 
-.mobile-quick-actions,
-.mobile-player-list-slot {
+.mobile-quick-actions {
   display: none;
 }
 
@@ -800,14 +791,6 @@ const scrollToChat = () => scrollToSelector('.game-sidebar')
     color: var(--app-text);
   }
 
-  .mobile-player-list-slot {
-    display: block;
-  }
-
-  .desktop-player-list-slot {
-    display: none;
-  }
-
   .game-status,
   .death-info,
   .role-info,
@@ -864,14 +847,6 @@ const scrollToChat = () => scrollToSelector('.game-sidebar')
   flex: 1;
   font-weight: 700;
   color: var(--app-text);
-}
-
-.mobile-player-list-slot {
-  display: block;
-}
-
-.desktop-player-list-slot {
-  display: none;
 }
 
 .game-sidebar {

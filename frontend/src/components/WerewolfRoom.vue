@@ -88,7 +88,7 @@
             </div>
           </div>
 
-          <div class="mobile-player-list-slot">
+          <div class="player-list-slot">
             <WerewolfPlayerList
               :players="room?.players || []"
               :host-id="room?.hostId"
@@ -134,21 +134,6 @@
 
       <!-- 右侧边栏 -->
       <el-aside width="320px" class="game-sidebar">
-        <!-- 玩家列表 -->
-        <div class="desktop-player-list-slot">
-          <WerewolfPlayerList
-            :players="room?.players || []"
-            :host-id="room?.hostId"
-            :current-user-id="currentUserId"
-            :game-players-by-id="gameState?.players"
-            :game-started="room?.gameStarted"
-            :game-state="gameState"
-            :player-secret="playerSecret"
-            @transfer-host="handleTransferHost"
-            @kick-player="handleKickPlayer"
-            @update-config="handleUpdateConfig"
-          />
-        </div>
 
         <!-- 聊天区域 -->
         <WerewolfChat
@@ -178,6 +163,7 @@ import WerewolfPlayerList from './WerewolfPlayerList.vue'
 import WerewolfChat from './WerewolfChat.vue'
 import RoomConnectionStatus from './RoomConnectionStatus.vue'
 import { formatPlayerName, formatPlayerNameById } from '../utils/playerName'
+import { showErrorFeedback } from '../utils/uiFeedback'
 
 const route = useRoute()
 const router = useRouter()
@@ -209,7 +195,7 @@ const gameHistory = ref<any[]>([])
 const roomPreparing = ref(true)
 let statusCheckInterval: ReturnType<typeof setInterval> | null = null
 let initialCheckTimeout: ReturnType<typeof setTimeout> | null = null
-let loadingTimeout: ReturnType<typeof setTimeout> | null = null
+let componentActive = true
 
 // 获取状态消息
 const getStatusMessage = () => {
@@ -292,7 +278,7 @@ const handleUpdateConfig = (config: any) => {
 // 返回大厅
 const goToLobby = () => {
   store.disconnectFromRoom()
-  router.push('/')
+  router.replace('/')
 }
 
 // 切换房间锁定
@@ -314,32 +300,34 @@ const checkRoomStatus = () => {
   }
 }
 
-onMounted(() => {
+onMounted(async () => {
   if (!roomId) {
-    router.push('/')
+    router.replace('/')
     return
   }
 
-  // 连接到房间
-  store.connectToRoom(roomId, 'werewolf')
-
-  // 2秒后关闭loading遮罩（等待初始连接）
-  loadingTimeout = setTimeout(() => {
+  try {
+    await store.connectToRoom(roomId, 'werewolf')
+    if (!componentActive) return
     roomPreparing.value = false
-  }, 2000)
 
-  // 定时检查房间状态
-  statusCheckInterval = setInterval(() => {
-    if (!gameState.value || !gameState.value.status || gameState.value.status === 'preparing') {
-      checkRoomStatus()
-    }
-  }, 3000)
-
-  // 立即检查一次
-  initialCheckTimeout = setTimeout(checkRoomStatus, 500)
+    // 只有加入事务提交后才能读取受保护的房间状态，避免 join/status 并发竞态。
+    statusCheckInterval = setInterval(() => {
+      if (!gameState.value || !gameState.value.status || gameState.value.status === 'preparing') {
+        checkRoomStatus()
+      }
+    }, 3000)
+    initialCheckTimeout = setTimeout(checkRoomStatus, 500)
+  } catch (error) {
+    if (!componentActive) return
+    roomPreparing.value = false
+    showErrorFeedback(error, '加入狼人杀房间失败')
+    router.replace('/')
+  }
 })
 
 onUnmounted(() => {
+  componentActive = false
   store.disconnectFromRoom()
   if (statusCheckInterval) {
     clearInterval(statusCheckInterval)
@@ -348,10 +336,6 @@ onUnmounted(() => {
   if (initialCheckTimeout) {
     clearTimeout(initialCheckTimeout)
     initialCheckTimeout = null
-  }
-  if (loadingTimeout) {
-    clearTimeout(loadingTimeout)
-    loadingTimeout = null
   }
 })
 </script>
@@ -742,8 +726,7 @@ onUnmounted(() => {
   color: var(--app-text-secondary);
 }
 
-.mobile-quick-actions,
-.mobile-player-list-slot {
+.mobile-quick-actions {
   display: none;
 }
 
@@ -803,14 +786,6 @@ onUnmounted(() => {
     color: var(--app-text);
   }
 
-  .mobile-player-list-slot {
-    display: block;
-  }
-
-  .desktop-player-list-slot {
-    display: none;
-  }
-
   .game-status,
   .role-info,
   .game-history,
@@ -866,14 +841,6 @@ onUnmounted(() => {
   flex: 1;
   font-weight: 700;
   color: var(--app-text);
-}
-
-.mobile-player-list-slot {
-  display: block;
-}
-
-.desktop-player-list-slot {
-  display: none;
 }
 
 .game-sidebar {

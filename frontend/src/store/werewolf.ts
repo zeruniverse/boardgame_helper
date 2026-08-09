@@ -2,7 +2,7 @@ import { defineStore } from 'pinia';
 import { io, Socket } from 'socket.io-client';
 import { SOCKET_URL } from '../config';
 import { clearGameSession, clearGameSessionIfMatches, ensureGameSession, getStoredSessionToken, rememberGameSession } from '../utils/gameSession';
-import { emitChatAction, emitRoomReconnect, leaveRoomAndDisconnect } from '../utils/gameSocket';
+import { emitChatAction, emitRoomReconnect, joinGameRoom, leaveRoomAndDisconnect, shouldClearSessionAfterSocketError } from '../utils/gameSocket';
 import { requestGameActionWithFeedback } from '../utils/gameActionFeedback';
 import { appendLimitedMessage, createSystemMessage, normalizeIncomingMessage } from '../utils/messages';
 import { getForcedExitMessage, redirectToLobbyAfterForcedExit, shouldClearSessionOnForcedExit } from '../utils/forcedExit';
@@ -422,6 +422,7 @@ export const useWerewolfStore = defineStore('werewolf', {
 
       // 错误事件
       on('error', (error: any) => {
+        if (error?.clearSession === true) clearGameSession('werewolf');
         const msg = typeof error === 'string' ? error : (error.message || '未知错误');
         this.errorMessage = msg;
         this.addSystemMessage(`错误：${msg}`);
@@ -521,7 +522,7 @@ export const useWerewolfStore = defineStore('werewolf', {
       }
     },
 
-    connectToRoom(roomId: string, gameType: string = 'werewolf') {
+    async connectToRoom(roomId: string, gameType: string = 'werewolf') {
       if (!this.socket || this.socketListeners.length === 0) {
         this.initSocket();
       }
@@ -532,14 +533,21 @@ export const useWerewolfStore = defineStore('werewolf', {
 
       this.currentUserId = userId;
       this.currentRoomId = roomId;
-      this.socket?.emit('join_room', {
-        roomId,
-        playerId: userId,
-        userId,
-        nickname,
-        gameType,
-        sessionToken: session.sessionToken
-      });
+      try {
+        return await joinGameRoom(this.socket, {
+          roomId,
+          playerId: userId,
+          userId,
+          nickname,
+          gameType,
+          sessionToken: session.sessionToken
+        });
+      } catch (error) {
+        if (shouldClearSessionAfterSocketError(error)) {
+          clearGameSession('werewolf');
+        }
+        throw error;
+      }
     },
 
     disconnectFromRoom() {

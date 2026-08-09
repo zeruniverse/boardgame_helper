@@ -148,8 +148,8 @@
           <div v-if="activeRole === OnuWerewolfRole.Seer" class="seer-select">
             <p>选择预言家查看方式:</p>
             <el-radio-group v-model="seerChoice" class="seer-mode">
-              <el-radio-button label="player">查看一名玩家</el-radio-button>
-              <el-radio-button label="center">查看两张中心卡</el-radio-button>
+              <el-radio-button value="player">查看一名玩家</el-radio-button>
+              <el-radio-button value="center">查看两张中心卡</el-radio-button>
             </el-radio-group>
 
             <div v-if="seerChoice === 'player'" class="player-select nested-select">
@@ -301,8 +301,8 @@
           <div v-else-if="activeRole === OnuWerewolfRole.VillageIdiot" class="selection-options">
             <p>选择将除自己外的其他可移动玩家角色卡整体移动方向:</p>
             <el-radio-group v-model="villageIdiotDirection">
-              <el-radio-button label="left">左移</el-radio-button>
-              <el-radio-button label="right">右移</el-radio-button>
+              <el-radio-button value="left">左移</el-radio-button>
+              <el-radio-button value="right">右移</el-radio-button>
             </el-radio-group>
           </div>
 

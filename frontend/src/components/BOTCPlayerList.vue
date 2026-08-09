@@ -281,6 +281,11 @@ const activeGamePlayerCount = computed(() => props.players.filter(player =>
   (selectedStorytellerIsComputer.value || player.id !== selectedStoryteller.value)
 ).length)
 
+const configuredMaxPlayers = computed(() => {
+  const configuredMax = Number(props.gameConfig?.maxPlayers)
+  return Number.isFinite(configuredMax) && configuredMax > 0 ? configuredMax : 15
+})
+
 const canStartGame = computed(() => {
   if (!selectedStoryteller.value) return false
 
@@ -289,9 +294,8 @@ const canStartGame = computed(() => {
     if (!storyteller || storyteller.online === false) return false
   }
 
-  const configuredMax = Number(props.gameConfig?.maxPlayers)
-  const maxPlayers = Number.isFinite(configuredMax) && configuredMax > 0 ? configuredMax : 15
-  return activeGamePlayerCount.value >= 5 && activeGamePlayerCount.value <= maxPlayers
+  return activeGamePlayerCount.value >= 5
+    && activeGamePlayerCount.value <= configuredMaxPlayers.value
 })
 
 const syncConfigSelection = () => {
@@ -453,7 +457,7 @@ const startGame = () => {
     return
   }
   if (!canStartGame.value) {
-    ElMessage.warning('排除真人说书人后，需要 5-15 名在线游戏玩家才能开始')
+    ElMessage.warning(`排除真人说书人后，需要 5-${configuredMaxPlayers.value} 名在线游戏玩家才能开始`)
     return
   }
   

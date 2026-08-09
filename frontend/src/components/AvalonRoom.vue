@@ -3,7 +3,7 @@
     <!-- 头部导航 - 始终显示 -->
     <el-header class="room-header">
       <div class="header-left">
-        <el-button @click="$router.push('/')" type="primary" plain>
+        <el-button @click="$router.replace('/')" type="primary" plain>
           <el-icon><Back /></el-icon>
           返回大厅
         </el-button>
@@ -108,7 +108,7 @@
             </div>
           </div>
 
-          <div class="mobile-player-list-slot">
+          <div class="player-list-slot">
             <AvalonPlayerList
               :players="room?.players || []"
               :host-id="room?.hostId"
@@ -137,19 +137,6 @@
 
       <!-- 右侧边栏 -->
       <el-aside width="300px" class="game-sidebar">
-        <!-- 玩家列表 -->
-        <div class="desktop-player-list-slot">
-          <AvalonPlayerList
-            :players="room?.players || []"
-            :host-id="room?.hostId"
-            :current-user-id="currentUserId"
-            :game-players-by-id="gameState?.players"
-            :game-state="gameState"
-            :player-secret="playerSecret"
-            @transfer-host="handleTransferHost"
-            @kick-player="handleKickPlayer"
-          />
-        </div>
 
         <!-- 聊天区域 -->
         <AvalonChat
@@ -179,6 +166,7 @@ import AvalonPlayerList from './AvalonPlayerList.vue'
 import AvalonChat from './AvalonChat.vue'
 import RoomConnectionStatus from './RoomConnectionStatus.vue'
 import { formatPlayerNameById } from '../utils/playerName'
+import { showErrorFeedback } from '../utils/uiFeedback'
 
 const route = useRoute()
 const router = useRouter()
@@ -214,6 +202,7 @@ const nickname = computed(() => {
 // 房间状态检查定时器
 let statusCheckInterval: ReturnType<typeof setInterval> | null = null
 let initialCheckTimeout: ReturnType<typeof setTimeout> | null = null
+let componentActive = true
 
 // 检查房间状态的函数
 const checkRoomStatus = () => {
@@ -235,9 +224,9 @@ const onGameStateSync = (data: any) => {
   roomPreparing.value = false
 }
 
-onMounted(() => {
+onMounted(async () => {
   if (!roomId) {
-    router.push('/')
+    router.replace('/')
     return
   }
 
@@ -252,15 +241,23 @@ onMounted(() => {
   // 监听游戏状态更新
   store.socket?.on('game_state_sync', onGameStateSync)
 
-  // 所有监听器就绪后再连接到房间
-  store.connectToRoom(roomId, 'avalon')
-
-  // 开始定时检查房间状态
-  statusCheckInterval = setInterval(checkRoomStatus, 3000)
-  initialCheckTimeout = setTimeout(checkRoomStatus, 500)
+  // 所有监听器就绪后再连接到房间，并等待 Worker/Controller 加入事务提交。
+  try {
+    await store.connectToRoom(roomId, 'avalon')
+    if (!componentActive) return
+    roomPreparing.value = false
+    statusCheckInterval = setInterval(checkRoomStatus, 3000)
+    initialCheckTimeout = setTimeout(checkRoomStatus, 500)
+  } catch (error) {
+    if (!componentActive) return
+    roomPreparing.value = false
+    showErrorFeedback(error, '加入阿瓦隆房间失败')
+    router.replace('/')
+  }
 })
 
 onUnmounted(() => {
+  componentActive = false
   if (statusCheckInterval) {
     clearInterval(statusCheckInterval)
     statusCheckInterval = null
@@ -646,8 +643,7 @@ const scrollToChat = () => scrollToSelector('.game-sidebar')
   border-color: #f44336;
 }
 
-.mobile-quick-actions,
-.mobile-player-list-slot {
+.mobile-quick-actions {
   display: none;
 }
 
@@ -707,14 +703,6 @@ const scrollToChat = () => scrollToSelector('.game-sidebar')
     color: var(--app-text);
   }
 
-  .mobile-player-list-slot {
-    display: block;
-  }
-
-  .desktop-player-list-slot {
-    display: none;
-  }
-
   .game-status,
   .mission-board,
   .role-info,
@@ -770,14 +758,6 @@ const scrollToChat = () => scrollToSelector('.game-sidebar')
   flex: 1;
   font-weight: 700;
   color: var(--app-text);
-}
-
-.mobile-player-list-slot {
-  display: block;
-}
-
-.desktop-player-list-slot {
-  display: none;
 }
 
 .game-sidebar {

@@ -1,0 +1,9 @@
+.git
+.gitignore
+**/node_modules
+**/dist
+**/*.log
+*.zip
+*.jpg
+*.jpeg
+.DS_Store

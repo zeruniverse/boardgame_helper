@@ -179,7 +179,7 @@ function clearRoomSessionTokens(roomId: string): void {
 }
 
 function rejectInvalidPlayerSession(socket: Socket, ack?: (response: any) => void): void {
-  sendErrorResponse(socket, INVALID_PLAYER_SESSION_MESSAGE, ack);
+  sendErrorResponse(socket, INVALID_PLAYER_SESSION_MESSAGE, ack, { clearSession: true });
 }
 
 function findSocketOwnedSeat(socketId: string): { room: Room; player: Player } | undefined {
@@ -798,8 +798,13 @@ function validateRoomExists(roomId: string, rooms: Map<string, Room>): Room | nu
   return rooms.get(roomId) || null;
 }
 
-function sendErrorResponse(socket: Socket, message: string, ack?: (response: any) => void): void {
-  const response = { success: false, error: message };
+function sendErrorResponse(
+  socket: Socket,
+  message: string,
+  ack?: (response: any) => void,
+  details: Record<string, unknown> = {}
+): void {
+  const response = { ...details, success: false, error: message };
   // acknowledgement 和 error 事件是两种替代响应通道，不能同时发送。大厅等新版
   // 客户端会为 create/join 请求等待 ack，同时又有全局 error 监听；旧实现会让同一
   // 次拒绝弹出两条完全相同的错误提示。无 ack 的旧客户端仍通过 error 事件获知失败。
@@ -807,7 +812,7 @@ function sendErrorResponse(socket: Socket, message: string, ack?: (response: any
     ack(response);
     return;
   }
-  socket.emit('error', { message });
+  socket.emit('error', { ...details, message });
 }
 
 function isLegacyGuestNickname(nickname: string): boolean {

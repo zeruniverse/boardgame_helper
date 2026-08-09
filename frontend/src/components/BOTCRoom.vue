@@ -3,7 +3,7 @@
     <!-- 头部导航 -->
     <el-header class="room-header">
       <div class="header-left">
-        <el-button @click="$router.push('/')" type="primary" plain>
+        <el-button @click="$router.replace('/')" type="primary" plain>
           <el-icon><Back /></el-icon>
           返回大厅
         </el-button>
@@ -111,7 +111,7 @@
             </div>
           </div>
 
-          <div class="mobile-player-list-slot">
+          <div class="player-list-slot">
             <BOTCPlayerList
               :players="store.room?.players || []"
               :host-id="store.room?.hostId"
@@ -152,24 +152,6 @@
 
       <!-- 右侧边栏 -->
       <el-aside width="300px" class="game-sidebar">
-        <!-- 玩家列表 -->
-        <div class="desktop-player-list-slot">
-          <BOTCPlayerList
-            :players="store.room?.players || []"
-            :host-id="store.room?.hostId"
-            :current-user-id="store.currentUserId"
-            :game-players="store.gameState?.players || []"
-            :is-storyteller="store.isStoryteller"
-            :storyteller-id="store.gameConfig?.storytellerId"
-            :game-config="store.gameConfig"
-            :player-role="store.playerRole"
-            @transfer-host="handleTransferHost"
-            @kick-player="handleKickPlayer"
-            @start-private-chat="handleStartPrivateChat"
-            @start-game="handleStartGame"
-            @storyteller-action="handleStorytellerCommand"
-          />
-        </div>
 
         <!-- 聊天区域 -->
         <BOTCChat
@@ -201,6 +183,7 @@ import BOTCChat from './BOTCChat.vue'
 import RoomConnectionStatus from './RoomConnectionStatus.vue'
 import { formatPlayerName } from '../utils/playerName'
 import { formatBOTCNightInfo } from '../utils/botcNightInfo'
+import { showErrorFeedback } from '../utils/uiFeedback'
 
 const route = useRoute()
 const router = useRouter()
@@ -218,6 +201,7 @@ const playerReminders = ref<string[]>([])
 const chatComponentRef = ref<any>(null)
 
 let timerInterval: ReturnType<typeof setInterval> | null = null
+let componentActive = true
 
 // 计算属性
 const currentNomination = computed(() => {
@@ -235,20 +219,25 @@ watch(() => store.gameConfig, (config) => {
   }
 }, { immediate: true })
 
-onMounted(() => {
+onMounted(async () => {
   if (!roomId) {
-    router.push('/')
+    router.replace('/')
     return
   }
 
-  // 连接到房间
-  store.connectToRoom(roomId, 'blood-on-the-clocktower')
-
-  // 启动计时器同步
-  startTimer()
+  try {
+    await store.connectToRoom(roomId, 'blood-on-the-clocktower')
+    if (!componentActive) return
+    startTimer()
+  } catch (error) {
+    if (!componentActive) return
+    showErrorFeedback(error, '加入血染钟楼房间失败')
+    router.replace('/')
+  }
 })
 
 onUnmounted(() => {
+  componentActive = false
   if (timerInterval) {
     clearInterval(timerInterval)
     timerInterval = null
@@ -763,8 +752,7 @@ const scrollToChat = () => scrollToSelector('.game-sidebar')
   color: var(--app-text-secondary) !important;
 }
 
-.mobile-quick-actions,
-.mobile-player-list-slot {
+.mobile-quick-actions {
   display: none;
 }
 
@@ -824,14 +812,6 @@ const scrollToChat = () => scrollToSelector('.game-sidebar')
     color: var(--app-text);
   }
 
-  .mobile-player-list-slot {
-    display: block;
-  }
-
-  .desktop-player-list-slot {
-    display: none;
-  }
-
   .game-status,
   .edition-info-card,
   .role-info,
@@ -888,14 +868,6 @@ const scrollToChat = () => scrollToSelector('.game-sidebar')
   flex: 1;
   font-weight: 700;
   color: var(--app-text);
-}
-
-.mobile-player-list-slot {
-  display: block;
-}
-
-.desktop-player-list-slot {
-  display: none;
 }
 
 .game-sidebar {
