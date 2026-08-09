@@ -2841,3 +2841,40 @@ Commit: fix(round6): 统一六类游戏聊天回执与连接反馈
   - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts 校验，仅有工具显示的可选依赖提示。
   - 正式 npm ci --ignore-scripts --prefer-offline --no-audit --no-fund 已在最终源码副本执行，当前内部 npm 镜像请求 package-lock 锁定的 typescript-5.8.3.tgz 返回 404。正式 npm run build 也已执行；因为依赖安装未完成，backend tsc 在 Node 内建类型及 Express/CORS/Socket.IO/UUID 等 package.json 已声明依赖解析阶段中止，未进入 frontend vue-tsc/Vite。相同 backend/src 已通过上述全量 strict 编译和六 Worker 实际启动，前端新增共享工具已通过 strict 编译与运行回归；完整生产构建与“可直接部署”仍需在依赖可正常安装的本地或 CI 最终确认。
 备注: 本轮未删除文件，未创建根目录 src/；所有前端源码修改/新增均位于 frontend/src/，本轮没有 backend/src 源码修改；修复包只包含本轮修改/新增文件与更新后的 repair_log.txt，可按相对路径直接覆盖。
+
+=== 当前会话第 7 轮修复记录 ===
+时间: 2026-08-09 14:37:15 UTC
+Commit: fix(round7): 复用六类聊天输入并封堵钟楼私聊断线竞态
+修改/新增文件:
+  - backend/src/controllers/roomController.ts
+  - backend/src/workers/botcWorker.ts
+  - frontend/src/components/GameChatComposer.vue（新增）
+  - frontend/src/components/AvalonChat.vue
+  - frontend/src/components/BOTCChat.vue
+  - frontend/src/components/MafiaChat.vue
+  - frontend/src/components/OnuWerewolfChat.vue
+  - frontend/src/components/TexasHoldemChat.vue
+  - frontend/src/components/WerewolfChat.vue
+  - repair_log.txt
+删除文件: 无
+构建测试: 部分通过（backend/src + frontend/src 全量 TypeScript/Vue/CSS/JSONC 静态解析与相对导入检查、聊天组件结构专项检查、德州扑克/狼人杀/一夜狼人关键规则工具 24 项运行断言、package-lock 依赖树检查均通过；正式 npm ci 被当前内部 npm 镜像缺失 package-lock 锁定的 typescript-5.8.3.tgz 的 404 阻塞，因此本轮无法执行完整 npm run build、vue-tsc 与 Vite 生产构建，完整生产构建和直接部署仍需在依赖镜像正常的本地或 CI 执行 npm ci && npm run build 终验）
+本轮修复:
+  - 新增 frontend/src/components/GameChatComposer.vue，把狼人杀、杀人游戏、血染钟楼、一夜狼人、阿瓦隆和德州扑克六套聊天输入区的文本框、发送按钮、loading/disabled、频道提示、状态提示和移动端换行布局收敛到一个共享组件。各游戏仍保留自己的频道、消息过滤和主题样式，避免把规则差异塞进巨型通用组件。
+  - 修复六套聊天均使用 @keyup.enter 导致中文、日文等输入法按 Enter 确认候选词时可能同时发送半成品消息的问题。共享组件改为 keydown 提交，并显式忽略 KeyboardEvent.isComposing 与 keyCode=229；按钮和 Enter 共用同一 canSubmit 判定，不再出现两套发送资格。
+  - 统一移动端聊天交互。此前一夜狼人使用 Element Plus append 按钮，其他游戏使用独立按钮，窄屏下按钮宽度、换行和触控高度不同；现在输入框在小屏独占一行，发送及附加操作按钮使用一致的最小高度和伸缩行为。
+  - 状态提示增加 role=status 与 aria-live=polite；发送中、断线、禁言或未选择私聊对象时，输入和按钮都使用同一 disabled/canSend 事实源，减少“按钮看似可点但 Worker 必然拒绝”的前端漂移。
+  - 修复血染钟楼私聊目标失效后的前端状态。用户切到“私聊”且尚未选择对象时会自动打开目标选择器；已选对象离线或从可用列表消失时会清空旧 targetId 并重新提示选择，避免继续向过期目标发送；断线时选择器和私聊快捷按钮同步禁用。
+  - 修复血染钟楼私聊的 Controller/Worker 断线竞态。Controller 过去只检查 room.players 中的 online/socketId；Socket.IO 已经移除目标连接但异步断线事务尚未提交 Room 的短窗口内，仍可能把消息送入 Worker并返回成功。现在 Controller 同时检查当前 Namespace 中真实存在且 connected 的目标 Socket。
+  - BOTC Worker 在真正执行串行任务时再次校验目标 online/socketId。若 Controller 校验后、Worker 执行前目标离线，Worker 发送 actionError，BaseGameWorker 会把该错误转换为 success=false 的游戏操作回执，前端保留原文并提示重试，不再给发送者制造“已发送”假象。Controller 的实时 Socket 检查与 Worker 的执行时状态检查形成双层防护。
+审查结果/本轮未改动重点:
+  - 本轮继续检查 backend/src 与 frontend/src 当前全部 92 个源码文件，并结合附件 repair_log 的既有轮次重点复核六个 Worker、roomController、RoomThreadManager、BaseGameWorker、六套 Store/Room/ActionPanel/ActionBar/PlayerList/Chat，以及共享 socket/session/config/messages/state/random 工具。当前适合低风险落地且用户可直接感知的最高优先级问题，是六套聊天输入重复实现造成的 IME/移动端交互漂移，以及 BOTC 私聊在连接事实源之间的短暂不一致，因此本批次集中修复这两类问题。
+  - 狼人杀继续复核角色夜序、狼人共识、警长 1.5 票、平票与胜负；杀人游戏继续复核杀手/警察/医生/狙击手、发言权限和阵营胜负；一夜狼人继续复核最高票至少 2 票才处决、最终身份、狼人/爪牙/皮匠与猎人连锁；阿瓦隆继续复核任务人数、7 人以上第 4 任务双失败、连续 5 次否决、刺杀与邪恶频道；德州扑克继续复核牌型、A2345、七选五、未跟注返还和主边池；血染钟楼继续复核提名投票、夜序、私聊/说书人定向投递及重连状态。本轮专项运行断言未发现优先级高于上述交互/竞态问题的新确定性核心规则错误。
+  - 血染钟楼仍保留 repair_log 已记录、需要更大状态模型或真人说书人逐次裁决 UI 才能完整解决的架构级边界，包括特殊夜序下 Pit-Hag 创建 Demon 后无法安全逆向更早已落地死亡、Recluse/Spy registration 缺逐次人工裁决、以及自由文本/多重效果抵消下 Mathematician 极端统计。此次没有用近似规则强行覆盖。
+  - 未创建项目根目录 src/；所有后端修改仅位于 backend/src/，所有前端修改/新增仅位于 frontend/src/，原有目录结构保持不变。
+验证:
+  - 全量静态检查通过：backend/src + frontend/src 共 61 个 .ts、29 个 .vue、1 个 .css 和 1 个 .svg；90 个 TypeScript/Vue script 解析单元、29 个 Vue style 单元、266 次相对本地导入解析和 9 个 JSON/JSONC 文件均通过。未发现 TypeScript 语法错误、CSS 解析错误、失效相对导入或根目录 src/。
+  - 六个活动聊天组件均确认导入并使用 GameChatComposer，且不存在遗留 @keyup.enter；共享组件确认包含 IME composition 防护和 aria-live 状态提示。BOTCChat 的过期目标清理/私聊选择器自动打开、Controller 的真实 Socket 连接检查、Worker 的执行时在线检查均有源码断言覆盖。
+  - 关键规则工具运行回归共 24 项断言通过：德州牌型层级、A2345 与 23456 顺子比较、七张牌最佳五张、非法牌格式、未跟注返还、主边池金额与资格；狼人杀警长加权票、平票、全弃票和狼人击杀共识；一夜狼人一票循环无人死亡、并列最高票处决、换牌后最终身份结算、皮匠与狼人同时死亡、无真狼爪牙胜负及多猎人复仇链。
+  - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts 检查；仅有工具正常显示的可选依赖缺失提示。
+  - 正式 npm ci --ignore-scripts 已在最终源码上执行，当前内部 npm 镜像请求 typescript-5.8.3.tgz 返回 404。由于完整依赖未能安装，本轮没有声称 npm run build、vue-tsc 或 Vite 生产构建通过；完整生产构建和“可直接部署”需在依赖源正常的本地或 CI 最终确认。
+备注: 本轮未删除文件；修复包只包含上述修改/新增文件与更新后的 repair_log.txt，可按项目相对路径直接覆盖。

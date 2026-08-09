@@ -15,22 +15,19 @@
       </div>
     </el-card>
 
-    <div class="chat-input">
-      <div v-if="activeChannel === 'werewolf'" class="input-info">
+    <GameChatComposer
+      v-model="input"
+      :placeholder="getInputPlaceholder()"
+      :max-length="MAX_CHAT_LENGTH"
+      :disabled="!canSendMessage || !props.connected"
+      :can-send="canSend"
+      :sending="sending"
+      @send="send"
+    >
+      <template v-if="activeChannel === 'werewolf'" #hint>
         <span class="channel-indicator">仅对存活狼人可见，夜间也可使用</span>
-      </div>
-      <div class="input-row">
-        <el-input
-          v-model="input"
-          @keyup.enter="send"
-          :placeholder="getInputPlaceholder()"
-          :maxlength="MAX_CHAT_LENGTH"
-          :disabled="!canSendMessage || sending || !props.connected"
-          style="flex:1; margin-right:8px;"
-        />
-        <el-button type="primary" @click="send" :disabled="!canSend" :loading="sending">发送</el-button>
-      </div>
-    </div>
+      </template>
+    </GameChatComposer>
   </div>
 </template>
 
@@ -40,6 +37,7 @@ import { MAX_CHAT_LENGTH } from '../utils/messages';
 import { safeHtml } from '../utils/html';
 import { formatPlayerNameById } from '../utils/playerName';
 import { useChatActionFeedback } from '../utils/chatActionFeedback';
+import GameChatComposer from './GameChatComposer.vue';
 
 interface Props {
   messages: any[]
@@ -308,23 +306,9 @@ watch(activeChannel, () => {
   background: rgba(185, 28, 28, 0.08);
   border-left: 3px solid #b91c1c;
 }
-
-.chat-input {
-  margin-top: auto;
-}
-
-.input-info {
-  margin-bottom: 4px;
-}
-
 .channel-indicator {
   color: #b91c1c;
   font-size: 12px;
   font-weight: 600;
-}
-
-.input-row {
-  display: flex;
-  align-items: center;
 }
 </style>

@@ -1082,7 +1082,10 @@ function normalizeChatActionPayload(
     sendErrorResponse(socket, '不能给自己发送私聊消息', ack);
     return null;
   }
-  if (target.online === false || !target.socketId) {
+  // Room 在线字段的更新需要经过断线事务与 Worker 同步；Socket.IO 已经移除连接、
+  // 但 room.players 尚未提交离线状态的短窗口内，不能继续把私聊确认成成功。
+  const liveTargetSocket = target.socketId ? socket.nsp.sockets.get(target.socketId) : undefined;
+  if (target.online === false || !target.socketId || !liveTargetSocket?.connected) {
     sendErrorResponse(socket, '私聊对象当前不在线', ack);
     return null;
   }

@@ -6606,6 +6606,12 @@ export class BOTCWorker extends BaseGameWorker {
       this.sendToPlayer(playerId, 'actionError', { message: '私聊对象不存在' });
       return;
     }
+    // Controller 已做首次在线校验，但校验与 Worker 串行任务真正执行之间仍有
+    // 异步窗口；目标若恰在此时断线，不能只给发送者返回“已发送”而静默丢消息。
+    if (target.online === false || !target.socketId) {
+      this.sendToPlayer(playerId, 'actionError', { message: '私聊对象当前离线，请稍后再试' });
+      return;
+    }
     if (!message) {
       this.sendToPlayer(playerId, 'actionError', { message: '消息内容不能为空' });
       return;

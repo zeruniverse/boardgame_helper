@@ -6,17 +6,15 @@
         <span v-html="safeHtml(formatMessage(getDisplayMessage(msg)))"></span>
       </div>
     </el-card>
-    <div class="chat-input">
-      <el-input 
-        v-model="input" 
-        @keyup.enter="send" 
-        :placeholder="inputPlaceholder" 
-        :maxlength="MAX_CHAT_LENGTH"
-        :disabled="sending || !props.connected"
-        style="flex:1; margin-right:8px;" 
-      />
-      <el-button type="primary" @click="send" :disabled="!canSend" :loading="sending">发送</el-button>
-    </div>
+    <GameChatComposer
+      v-model="input"
+      :placeholder="inputPlaceholder"
+      :max-length="MAX_CHAT_LENGTH"
+      :disabled="!props.connected"
+      :can-send="canSend"
+      :sending="sending"
+      @send="send"
+    />
   </div>
 </template>
 
@@ -25,6 +23,7 @@ import { ref, nextTick, watch, computed } from 'vue';
 import { MAX_CHAT_LENGTH } from '../utils/messages';
 import { safeHtml } from '../utils/html';
 import { useChatActionFeedback } from '../utils/chatActionFeedback';
+import GameChatComposer from './GameChatComposer.vue';
 import { formatPlayerNameById } from '../utils/playerName';
 
 interface Props {
@@ -219,13 +218,6 @@ async function send() {
   background: var(--app-panel);
   border: 1px solid var(--app-border);
 }
-
-.chat-input {
-  display: flex;
-  padding: 8px 0;
-  flex-shrink: 0;
-}
-
 /* 德州扑克主题样式 */
 .chat-messages :deep(.el-card__body) {
   padding: 12px;
@@ -254,21 +246,6 @@ async function send() {
   .chat-messages {
     min-height: 300px;
     max-height: 400px;
-  }
-  
-  .chat-input {
-    flex-direction: column;
-    gap: 8px;
-    padding: 12px 0;
-  }
-  
-  .chat-input .el-input {
-    margin-right: 0 !important;
-  }
-  
-  .chat-input .el-button {
-    align-self: stretch;
-    height: 40px;
   }
 }
 

@@ -30,30 +30,17 @@
       </div>
     </div>
 
-    <div class="chat-input" v-if="canChat">
-      <el-input
-        v-model="inputMessage"
-        :placeholder="inputPlaceholder"
-        @keyup.enter="sendMessage"
-        :disabled="!canSendMessage || sending"
-        :maxlength="MAX_CHAT_LENGTH"
-      >
-        <template #append>
-          <el-button 
-            @click="sendMessage" 
-            :disabled="!canSendMessage || !inputMessage.trim() || sending"
-            :loading="sending"
-            type="primary"
-          >
-            发送
-          </el-button>
-        </template>
-      </el-input>
-      
-      <div class="chat-status" v-if="!canSendMessage">
-        <span class="status-text">{{ getChatStatusText() }}</span>
-      </div>
-    </div>
+    <GameChatComposer
+      v-if="canChat"
+      v-model="inputMessage"
+      :placeholder="inputPlaceholder"
+      :max-length="MAX_CHAT_LENGTH"
+      :disabled="!canSendMessage"
+      :can-send="canSendMessage && Boolean(inputMessage.trim())"
+      :sending="sending"
+      :status-text="!canSendMessage ? getChatStatusText() : ''"
+      @send="sendMessage"
+    />
 
     <div class="chat-disabled" v-else>
       <p>{{ getDisabledReason() }}</p>
@@ -68,6 +55,7 @@ import type { Socket } from 'socket.io-client';
 import { formatPlayerNameById } from '../utils/playerName';
 import { OnuWerewolfGameStatus } from '../store/onuWerewolf';
 import { useChatActionFeedback } from '../utils/chatActionFeedback';
+import GameChatComposer from './GameChatComposer.vue';
 
 interface Message {
   id: number;
@@ -293,23 +281,6 @@ watch(() => props.messages.length, scrollToBottom, { flush: 'post' });
   font-size: 11px;
   color: #6c757d;
   flex-shrink: 0;
-}
-
-.chat-input {
-  padding: 15px 20px;
-  background: var(--app-panel);
-  border-top: 1px solid var(--app-border);
-  border-radius: 0 0 8px 8px;
-}
-
-.chat-status {
-  margin-top: 8px;
-  text-align: center;
-}
-
-.status-text {
-  font-size: 12px;
-  color: #dc3545;
 }
 
 .chat-disabled {

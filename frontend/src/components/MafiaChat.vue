@@ -6,19 +6,15 @@
         <span v-html="safeHtml(formatMessage(formatChatMessage(msg)))"></span>
       </div>
     </el-card>
-    <div class="chat-input">
-      <div class="input-row">
-        <el-input
-          v-model="input"
-          @keyup.enter="send"
-          :placeholder="inputPlaceholder"
-          :maxlength="MAX_CHAT_LENGTH"
-          :disabled="!canSpeak || sending || !store.connected"
-          style="flex:1; margin-right:8px;"
-        />
-        <el-button type="primary" @click="send" :disabled="!canSend" :loading="sending">发送</el-button>
-      </div>
-    </div>
+    <GameChatComposer
+      v-model="input"
+      :placeholder="inputPlaceholder"
+      :max-length="MAX_CHAT_LENGTH"
+      :disabled="!canSpeak || !store.connected"
+      :can-send="canSend"
+      :sending="sending"
+      @send="send"
+    />
   </div>
 </template>
 
@@ -29,6 +25,7 @@ import { safeHtml } from '../utils/html';
 import { formatPlayerNameById } from '../utils/playerName';
 import { useMafiaGameStore } from '../store/mafia';
 import { useChatActionFeedback } from '../utils/chatActionFeedback';
+import GameChatComposer from './GameChatComposer.vue';
 
 interface Props {
   messages: any[]
@@ -191,19 +188,6 @@ async function send() {
   min-height: 250px;
   max-height: 500px; /* 设置最大高度为500px */
 }
-
-.chat-input {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 8px 0;
-  flex-shrink: 0;
-}
-
-.input-row {
-  display: flex;
-}
-
 /* 消息样式 */
 .chat-messages :deep(.el-card__body) {
   padding: 8px 12px;
@@ -275,22 +259,7 @@ async function send() {
     min-height: 300px;
     max-height: 400px; /* 移动设备上设置较小的最大高度 */
   }
-  
-  /* 移动端输入框改为两行布局 */
-  .chat-input {
-    flex-direction: column;
-    gap: 8px;
-    padding: 12px 0;
-  }
-  
-  .chat-input .el-input {
-    margin-right: 0 !important;
-  }
-  
-  .chat-input .el-button {
-    align-self: stretch;
-    height: 40px;
-  }
+
 }
 
 /* 大屏幕优化 */

@@ -15,7 +15,7 @@
         v-model="privateTarget"
         placeholder="选择私聊对象"
         size="small"
-        :disabled="sending"
+        :disabled="sending || !props.connected"
         @change="onPrivateTargetChange"
       >
         <el-option
@@ -38,30 +38,29 @@
       </div>
     </el-card>
     
-    <div class="chat-input">
-      <div class="input-info" v-if="currentChannel !== 'all'">
+    <GameChatComposer
+      v-model="input"
+      :placeholder="getInputPlaceholder()"
+      :max-length="MAX_CHAT_LENGTH"
+      :disabled="inputDisabled"
+      :can-send="canSend"
+      :sending="sending"
+      @send="send"
+    >
+      <template v-if="currentChannel !== 'all'" #hint>
         <span class="channel-indicator">{{ getChannelName() }}</span>
-      </div>
-      <div class="input-row">
-        <el-input 
-          v-model="input" 
-          @keyup.enter="send" 
-          :placeholder="getInputPlaceholder()"
-          :maxlength="MAX_CHAT_LENGTH"
-          :disabled="inputDisabled"
-          style="flex:1; margin-right:8px;"
-        />
-        <el-button type="primary" @click="send" :disabled="!canSend" :loading="sending">发送</el-button>
-        <el-button 
-          type="info" 
+      </template>
+      <template #actions>
+        <el-button
+          type="info"
           plain
-          :disabled="sending"
+          :disabled="sending || !props.connected"
           @click="togglePrivateSelector"
         >
           {{ currentChannel === 'private' ? '选择对象' : '私聊' }}
         </el-button>
-      </div>
-    </div>
+      </template>
+    </GameChatComposer>
   </div>
 </template>
 
@@ -70,6 +69,7 @@ import { ref, nextTick, watch, computed } from 'vue';
 import { MAX_CHAT_LENGTH } from '../utils/messages';
 import { formatPlayerName } from '../utils/playerName';
 import { useChatActionFeedback } from '../utils/chatActionFeedback';
+import GameChatComposer from './GameChatComposer.vue';
 
 interface Props {
   messages: any[]
@@ -302,6 +302,26 @@ watch(
   }
 );
 
+watch(currentChannel, (channel) => {
+  if (channel === 'private' && !privateTarget.value) {
+    showPrivateSelector.value = true;
+  } else if (channel !== 'private') {
+    showPrivateSelector.value = false;
+  }
+  scrollToBottom();
+});
+
+watch(
+  () => availablePrivateTargets.value.map(player => player.id).join('|'),
+  () => {
+    if (privateTarget.value && !availablePrivateTargets.value.some(player => player.id === privateTarget.value)) {
+      privateTarget.value = '';
+      if (currentChannel.value === 'private') {
+        showPrivateSelector.value = true;
+      }
+    }
+  }
+);
 
 defineExpose({
   startPrivateChat
@@ -390,15 +410,6 @@ defineExpose({
   opacity: 0.7;
 }
 
-.chat-input {
-  padding: 8px;
-  border-top: 1px solid #f0f0f0;
-}
-
-.input-info {
-  margin-bottom: 4px;
-}
-
 .channel-indicator {
   font-size: 12px;
   color: #7c3aed;
@@ -406,11 +417,5 @@ defineExpose({
   background: #f3e5f5;
   padding: 2px 6px;
   border-radius: 3px;
-}
-
-.input-row {
-  display: flex;
-  gap: 4px;
-  align-items: center;
 }
 </style>

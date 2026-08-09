@@ -15,22 +15,19 @@
       </div>
     </el-card>
     
-    <div class="chat-input">
-      <div v-if="activeChannel === 'evil'" class="input-info">
+    <GameChatComposer
+      v-model="input"
+      :placeholder="getInputPlaceholder()"
+      :max-length="MAX_CHAT_LENGTH"
+      :disabled="!props.connected"
+      :can-send="canSend"
+      :sending="sending"
+      @send="send"
+    >
+      <template v-if="activeChannel === 'evil'" #hint>
         <span class="channel-indicator">仅对除奥伯伦外的邪恶阵营可见</span>
-      </div>
-      <div class="input-row">
-        <el-input 
-          v-model="input" 
-          @keyup.enter="send" 
-          :placeholder="getInputPlaceholder()"
-          :maxlength="MAX_CHAT_LENGTH"
-          :disabled="sending || !props.connected"
-          style="flex:1; margin-right:8px;" 
-        />
-        <el-button type="primary" @click="send" :disabled="!canSend" :loading="sending">发送</el-button>
-      </div>
-    </div>
+      </template>
+    </GameChatComposer>
   </div>
 </template>
 
@@ -40,6 +37,7 @@ import { MAX_CHAT_LENGTH } from '../utils/messages';
 import { safeHtml } from '../utils/html';
 import { formatPlayerNameById } from '../utils/playerName';
 import { useChatActionFeedback } from '../utils/chatActionFeedback';
+import GameChatComposer from './GameChatComposer.vue';
 
 interface Props {
   messages: any[]
@@ -271,15 +269,6 @@ async function send() {
   background: var(--app-panel);
   border: 1px solid var(--app-border);
 }
-
-.chat-input {
-  flex-shrink: 0;
-}
-
-.input-info {
-  margin-bottom: 4px;
-}
-
 .channel-indicator {
   color: #8b0000;
   font-size: 12px;
@@ -288,12 +277,6 @@ async function send() {
   padding: 2px 6px;
   border-radius: 3px;
 }
-
-.input-row {
-  display: flex;
-  padding: 8px 0;
-}
-
 /* 阿瓦隆主题样式 */
 .chat-messages :deep(.el-card__body) {
   padding: 12px;
@@ -336,21 +319,6 @@ async function send() {
   .chat-messages {
     min-height: 300px;
     max-height: 400px;
-  }
-  
-  .input-row {
-    flex-direction: column;
-    gap: 8px;
-    padding: 12px 0;
-  }
-  
-  .input-row .el-input {
-    margin-right: 0 !important;
-  }
-  
-  .input-row .el-button {
-    align-self: stretch;
-    height: 40px;
   }
 }
 
