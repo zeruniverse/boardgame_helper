@@ -751,14 +751,14 @@
 
 <script lang="ts" setup>
 import { onMounted, ref } from 'vue';
-import { useMainStore } from '../store';
+import { useMainStore, useTexasHoldemStore } from '../store';
 import type { RoomInfo } from '../store';
 import { storeToRefs } from 'pinia';
 import { useRoute, useRouter } from 'vue-router';
 import { ElMessage } from 'element-plus';
 import { SOCKET_URL } from '../config';
-import { GAME_META, GAME_TYPE_LIST } from '../utils/gameMeta';
-import { ensureGameSession, getStoredSessionToken, hasExactStoredRoomSession } from '../utils/gameSession';
+import { GAME_META, GAME_ROUTES, GAME_TYPE_LIST } from '../utils/gameMeta';
+import { ensureGameSession, getStoredSessionToken, hasExactStoredRoomSession, rememberGameSession } from '../utils/gameSession';
 import { emitSocketRequest, waitForSharedSocketRoomTransition } from '../utils/gameSocket';
 
 const store = useMainStore();
@@ -819,6 +819,39 @@ function ensureLocalPlayer(gameType: string, nickname: string, roomId?: string) 
 interface StoredRoomSession {
   playerId: string;
   sessionToken?: string;
+}
+
+interface JoinedRoomResponse {
+  success?: boolean;
+  room?: RoomInfo & { type: string };
+  player?: { id?: string; playerId?: string; nickname?: string; name?: string };
+  playerId?: string;
+  sessionToken?: string;
+}
+
+async function navigateToJoinedRoom(response: JoinedRoomResponse, fallbackNickname: string): Promise<void> {
+  const room = response.room;
+  const playerId = response.player?.id || response.player?.playerId || response.playerId;
+  if (!room?.id || !room.type || !playerId) {
+    throw new Error('服务器返回的房间信息不完整，请重试');
+  }
+
+  const player = {
+    ...response.player,
+    id: playerId,
+    nickname: response.player?.nickname || response.player?.name || fallbackNickname
+  };
+  const routeName = GAME_ROUTES[room.type];
+  if (!routeName) {
+    throw new Error('服务器返回了不支持的游戏类型');
+  }
+
+  // 必须先提交本地会话，再进入受路由守卫保护的房间页。
+  rememberGameSession(room, player, response.sessionToken);
+  if (room.type === 'texas-holdem') {
+    useTexasHoldemStore().setNicknameAndRoom(player.nickname, room.id, player.id);
+  }
+  await router.push({ name: routeName, params: { id: room.id } });
 }
 
 function hasReconnectSession(room: RoomInfo): boolean {
@@ -985,7 +1018,7 @@ async function confirmJoinRoom() {
 
     // 参数名使用 roomId 与后端期望一致。统一 acknowledgement helper 会处理
     // 连接中的缓冲、超时、空回执和 success=false，避免按钮状态卡死或重复分支。
-    await emitSocketRequest(store.socket, 'join_room', {
+    const response = await emitSocketRequest<JoinedRoomResponse>(store.socket, 'join_room', {
       roomId,
       nickname,
       playerId,
@@ -995,6 +1028,7 @@ async function confirmJoinRoom() {
       timeoutMessage: '加入房间超时，请稍后重试',
       failureMessage: '加入房间失败'
     });
+    await navigateToJoinedRoom(response, nickname);
     joinRoomDialogVisible.value = false;
   } catch (error) {
     ElMessage.error(error instanceof Error ? error.message : '加入房间失败');
@@ -1069,7 +1103,7 @@ async function confirmCreateRoom() {
       store.initSocket();
     }
 
-    await emitSocketRequest(store.socket, 'create_room', {
+    const response = await emitSocketRequest<JoinedRoomResponse>(store.socket, 'create_room', {
       gameType: createRoomForm.value.gameType,
       gameConfig,
       isPrivate: createRoomForm.value.isPrivate
@@ -1077,6 +1111,7 @@ async function confirmCreateRoom() {
       timeoutMessage: '创建房间超时，请检查网络后重试',
       failureMessage: '创建房间失败'
     });
+    await navigateToJoinedRoom(response, createRoomForm.value.nickname.trim());
     ElMessage.success('房间创建成功');
     createRoomDialogVisible.value = false;
   } catch (error) {

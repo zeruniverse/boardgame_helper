@@ -105,7 +105,7 @@ const filteredMessages = computed(() => {
 });
 
 const getInputPlaceholder = () => {
-  if (!props.connected) return '连接已断开，请等待重连...';
+  if (!props.connected) return '连接未就绪，请稍候...';
   if (!props.isAlive) return '死亡玩家无法发言...';
   if (!canSendMessage.value) return '当前阶段无法使用此频道...';
   return activeChannel.value === 'werewolf' ? '输入狼人频道消息...' : '输入公共聊天消息...';

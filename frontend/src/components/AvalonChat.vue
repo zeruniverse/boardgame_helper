@@ -91,7 +91,7 @@ const filteredMessages = computed(() => {
 });
 
 const getInputPlaceholder = () => {
-  if (!props.connected) return '连接已断开，请等待重连...';
+  if (!props.connected) return '连接未就绪，请稍候...';
   return activeChannel.value === 'evil'
     ? '输入邪恶阵营消息...'
     : '输入公共聊天消息...';

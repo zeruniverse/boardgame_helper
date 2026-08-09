@@ -114,7 +114,8 @@ export const useBOTCGameStore = defineStore('botc', () => {
               onRecovered: () => { connected.value = true }
             })
           } else {
-            connected.value = true
+            // 传输层建立连接不代表 join_room 已提交；仅 room_joined/重连 ACK 可标记房间就绪。
+            connected.value = false
           }
           hasConnectedOnce = true
           resolve(void 0)

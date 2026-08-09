@@ -29,7 +29,7 @@
     <div v-if="!roomPreparing" class="game-layout">
       <div class="mobile-game-info-slot">
         <h3>游戏信息</h3>
-        <div class="mobile-info-row"><span>阶段</span><strong>{{ gameState?.status || gameState?.currentPhase || '等待开始' }}</strong></div>
+        <div class="mobile-info-row"><span>阶段</span><strong>{{ gameState?.currentPhase || gameState?.status || '等待开始' }}</strong></div>
         <div class="mobile-info-row"><span>我的身份</span><strong>{{ myRoleName }}</strong></div>
         <div class="mobile-info-row"><span>在线玩家</span><strong>{{ activeRoomPlayerCount }}/{{ room?.players?.length || '?' }}</strong></div>
         <div v-if="timeLeft > 0" class="mobile-info-row"><span>剩余时间</span><strong>{{ timeLeft }}s</strong></div>

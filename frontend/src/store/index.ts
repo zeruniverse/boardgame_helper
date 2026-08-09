@@ -125,17 +125,28 @@ export const useMainStore = defineStore('main', {
       this.socket.on('lobby_update', lobbyUpdateHandler);
       this.socketListeners.push(['lobby_update', lobbyUpdateHandler]);
 
-      // 监听房间加入成功事件 - 通用路由处理
+      // room_joined 也会在断线重连时触发。全局大厅 Socket 只能为当前已打开的
+      // 同一房间刷新会话，不能据此导航；否则旧加入/重连的迟到事件会把用户从
+      // 其他游戏或大厅强制拉回旧房间。大厅的创建/加入改由请求 ACK 显式导航。
       const roomJoinedHandler = (data: { room: any; player: any; playerId?: string; isHost: boolean; sessionToken?: string }) => {
-        rememberGameSession(data.room, data.player, data.sessionToken);
-        // 根据房间类型导航到对应的游戏页面
         const routeName = GAME_ROUTES[data.room?.type];
+        const currentRoute = router.currentRoute.value;
+        const currentRoomId = Array.isArray(currentRoute.params.id)
+          ? currentRoute.params.id[0]
+          : currentRoute.params.id;
+        const joinedRoomId = String(data.room?.id || '').toUpperCase();
+        const isCurrentRoom = Boolean(
+          routeName
+          && currentRoute.name === routeName
+          && typeof currentRoomId === 'string'
+          && currentRoomId.toUpperCase() === joinedRoomId
+        );
+        if (!isCurrentRoom) return;
+
+        rememberGameSession(data.room, data.player, data.sessionToken);
         if (data.room?.type === 'texas-holdem' && data.player) {
           const texasStore = useTexasHoldemStore();
           texasStore.setNicknameAndRoom(data.player.nickname, data.room.id, data.player.id);
-        }
-        if (router && routeName) {
-          router.push({ name: routeName, params: { id: data.room.id } });
         }
       };
       this.socket.on('room_joined', roomJoinedHandler);

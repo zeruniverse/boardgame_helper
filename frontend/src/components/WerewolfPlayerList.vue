@@ -3,8 +3,8 @@
     <template #header>
       <div class="card-header">
         <span>玩家列表 ({{ players.length }}人)</span>
-        <div v-if="Number(gameState?.day) > 0" class="day-info">
-          第{{ Math.ceil((gameState?.day || 0) / 2) }}天
+        <div v-if="werewolfRoundText" class="day-info">
+          {{ werewolfRoundText }}
         </div>
       </div>
     </template>
@@ -150,6 +150,7 @@
 import { ref, computed, watch } from 'vue'
 import { More } from '@element-plus/icons-vue'
 import { formatPlayerName } from '../utils/playerName'
+import { formatWerewolfRound } from '../utils/werewolfDisplay'
 import LocalPlayerMark from './LocalPlayerMark.vue'
 
 interface Player {
@@ -213,6 +214,8 @@ const emit = defineEmits<{
   kickPlayer: [playerId: string]
   updateConfig: [config: any]
 }>()
+
+const werewolfRoundText = computed(() => formatWerewolfRound(props.gameState?.day, props.gameState?.status))
 
 const ROLE_ORDER = ['WEREWOLF', 'VILLAGER', 'SEER', 'WITCH', 'HUNTER', 'GUARD'] as const
 const SINGLE_ACTION_ROLES = new Set<string>(['SEER', 'WITCH', 'GUARD'])

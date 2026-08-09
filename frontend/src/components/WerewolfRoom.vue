@@ -12,7 +12,7 @@
       <div class="header-right">
         <RoomConnectionStatus :connected="connected" />
         <span class="room-id">房间ID: {{ roomId }}</span>
-        <span v-if="Number(gameState?.day) > 0" class="day-badge">第{{ Math.ceil(((gameState && gameState.day) || 0) / 2) }}天</span>
+        <span v-if="werewolfRoundText" class="day-badge">{{ werewolfRoundText }}</span>
         <el-button v-if="isHost" size="small" @click="toggleRoomLock" :type="room?.locked ? 'danger' : 'success'">
           {{ room?.locked ? '解锁房间' : '锁定房间' }}
         </el-button>
@@ -33,7 +33,7 @@
           <div class="game-status" v-if="gameState">
             <h3 class="status-title">{{ getStatusMessage() }}</h3>
             <div class="status-info">
-              <span v-if="Number(gameState?.day) > 0">第{{ Math.ceil((gameState?.day || 0) / 2) }}天 {{ (gameState?.day || 0) % 2 === 1 ? '白天' : '夜晚' }}</span>
+              <span v-if="werewolfRoundText">{{ werewolfRoundText }}</span>
               <span v-if="timeLeft > 0" class="time-left">剩余时间: {{ timeLeft }}s</span>
               <span v-if="playerSecret && playerSecret.role && playerSecret.role !== 'UNKNOWN'" class="my-role-badge" :class="playerSecret.team">
                 {{ getRoleName(playerSecret.role) }}
@@ -155,6 +155,7 @@ import RoomLoadingOverlay from './RoomLoadingOverlay.vue'
 import RoomQuickNavigation from './RoomQuickNavigation.vue'
 import { formatPlayerName, formatPlayerNameById } from '../utils/playerName'
 import { showErrorFeedback } from '../utils/uiFeedback'
+import { formatWerewolfRound } from '../utils/werewolfDisplay'
 
 const route = useRoute()
 const router = useRouter()
@@ -174,6 +175,7 @@ const isHost = computed(() => store.isHost)
 const isReady = computed(() => store.isReady)
 const canStartGame = computed(() => store.canStartGame)
 const isAlive = computed(() => store.isAlive)
+const werewolfRoundText = computed(() => formatWerewolfRound(gameState.value?.day, gameState.value?.status))
 
 const currentUserNickname = computed(() => {
   const player = room.value?.players.find((p: any) => p.id === currentUserId.value)

@@ -3091,3 +3091,49 @@ Commit: fix(round18): 修复六类游戏重连回执与房间就绪竞态
   - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts 检查，仅有可选依赖提示。
   - 正式 npm ci --ignore-scripts --prefer-offline --no-audit --no-fund 已执行，当前内部 npm 镜像对 typescript-5.8.3.tgz 返回 404。正式 npm run build 也已在最终源码上执行；因为依赖安装未完成，backend tsc 在 Node/Express/CORS/Socket.IO/UUID 等 package.json 已声明依赖的类型解析阶段中止，未进入 frontend vue-tsc/Vite。这不等同于上述源码 strict 检查、隔离编译、Worker 烟雾或重连运行回归失败；完整生产构建、Docker 镜像和实际部署仍需在依赖源正常的本地或 CI 最终确认。
 备注: 本轮未删除文件，未创建根目录 src/；修复包只包含上述修改/新增文件与更新后的 repair_log.txt，可按项目相对路径直接覆盖。
+
+=== 当前会话第 19 轮修复记录 ===
+时间: 2026-08-09 17:30:57 UTC
+Commit: fix(round19): 修复房间就绪竞态与跨游戏路由串线
+修改/新增文件:
+  - frontend/src/components/AvalonChat.vue
+  - frontend/src/components/BOTCChat.vue
+  - frontend/src/components/Lobby.vue
+  - frontend/src/components/MafiaChat.vue
+  - frontend/src/components/OnuWerewolfChat.vue
+  - frontend/src/components/OnuWerewolfRoom.vue
+  - frontend/src/components/TexasHoldemChat.vue
+  - frontend/src/components/TexasHoldemRoom.vue
+  - frontend/src/components/WerewolfChat.vue
+  - frontend/src/components/WerewolfPlayerList.vue
+  - frontend/src/components/WerewolfRoom.vue
+  - frontend/src/store/avalon.ts
+  - frontend/src/store/botc.ts
+  - frontend/src/store/index.ts
+  - frontend/src/store/mafia.ts
+  - frontend/src/store/onuWerewolf.ts
+  - frontend/src/store/werewolf.ts
+  - frontend/src/utils/werewolfDisplay.ts（新增）
+  - repair_log.txt
+删除文件: 无
+构建测试: 部分通过（backend/src + frontend/src 当前全部 96 个源码/样式/资源文件完成静态审查；94 个 TypeScript/Vue script 单元、31 个样式单元和 289 次本地相对导入解析通过；狼人杀轮次显示工具 strict 编译及本轮 32 项前端状态/结构回归通过；backend/src 全部 35 个 TypeScript 文件 strict 隔离编译通过；六个游戏 Worker prepare_room/未知任务拒绝烟雾和 package-lock 工作区依赖树检查通过。正式 npm run build 已在最终源码上执行，但当前 node_modules 是依赖安装失败后的不完整目录，backend tsc 因 body-parser/connect/cors/express/node/uuid/ws 等声明目录缺失而中止，未进入 frontend vue-tsc/Vite；完整生产构建、Docker 镜像和直接部署仍需在依赖源正常的本地或 CI 执行 npm ci && npm run build 终验）
+本轮修复:
+  - 修复狼人杀、杀人游戏、一夜狼人、阿瓦隆、血染钟楼五套专用 Store 的首次连接就绪竞态。旧逻辑在底层 Socket.IO connect 时立即把 connected 设为 true，虽然 join_room 仍可能在 Controller/Worker 事务中；聊天和游戏操作因此可能在座位尚未提交时提前开放。现在首次传输连接保持未就绪，只有当前房间的 room_joined 或可靠重连 ACK 才能开放房间操作。
+  - 收紧大厅共享 Socket 的全局 room_joined 处理。旧处理器会对任何迟到的加入/重连事件直接 router.push，用户已经进入另一游戏或返回大厅后仍可能被旧事件强制拉回。现在全局处理器只为“当前路由已经是同一游戏、同一房间”的事件刷新会话，不再承担导航。
+  - 大厅创建和加入房间改为只依据 create_room/join_room 的成功 acknowledgement 导航，并在进入受保护路由前先原子保存 roomId、playerId、nickname、sessionToken。服务端回包不完整或游戏类型未知会明确报错，不再依赖全局事件的先后顺序碰运气。
+  - 德州扑克房间的共享 Socket room_joined 监听先校验房间 ID，再处理游戏类型。来自其他房间的迟到事件会被忽略，不再错误地把当前德州页面当作类型不匹配并送回大厅；当前房间确实类型错误时仍会给出明确反馈。
+  - 修复狼人杀轮次/昼夜显示。后端 currentDay 是“每次进入夜晚递增一次”的局数计数，旧前端却用 Math.ceil(day / 2) 和奇偶性推算昼夜，导致第 2 轮仍显示第 1 天且昼夜相反。新增共享 werewolfDisplay 工具，按真实状态枚举显示“第 N 轮 · 夜晚/白天”，房间页与玩家列表复用同一结果；无法仅凭状态确定昼夜的死亡善后阶段只显示轮次，避免猜测性标注。
+  - 一夜狼人移动端优先展示后端提供的 currentPhase 友好中文阶段，避免原始 status 枚举遮住可读文案。
+  - 六类游戏聊天输入框统一未就绪文案为“连接未就绪，请稍候...”，与 RoomConnectionStatus 及可靠房间 ACK 语义一致，不再把“传输已恢复、房间尚未恢复”的状态误报成单纯断线。
+审查结果/本轮未改动重点:
+  - 本轮继续结合 repair_log 前 18 轮记录检查 backend/src 与 frontend/src 当前全部代码，重点复核 roomController 的 create/join/reconnect 回执事务、共享与专用 Socket Store、路由守卫、六套 Room/Chat/玩家面板、游戏阶段展示，以及六个 Worker 的初始化与任务拒绝。当前最高优先级且可低风险确定修复的问题集中在首次加入就绪事实源、全局事件导航串线和前端阶段文案，因此本批次未改动后端规则状态机。
+  - 狼人杀、杀人游戏、一夜狼人、阿瓦隆、德州扑克与血染钟楼的合法 prepare_room 和未知任务拒绝均使用最新隔离编译产物通过运行烟雾；本轮没有发现优先级高于上述房间竞态、且可在本批次安全确定修复的新主流程阻断项。
+  - 血染钟楼仍保留既有 repair_log 已记录、需要更大状态模型或真人说书人逐次裁决 UI 才能完整覆盖的架构级边界：特殊夜序下 Pit-Hag 创建 Demon 后无法安全逆向更早已落地并触发被动的死亡；Recluse/Spy registration 缺逐次人工裁决；自由文本及多重效果抵消下 Mathematician 极端统计缺统一逐次最终基准审计。本轮没有用近似逻辑强行覆盖。
+  - Worker/Controller 的串行任务、workerStateVersion/connectionStateVersion/hostStateVersion 合并及状态事实源保持不变；项目根目录仍不存在 src/，本轮所有源码修改/新增均位于 frontend/src/，原有目录结构保持不变。
+验证:
+  - 全量静态检查通过：backend/src + frontend/src 共 96 个源码/样式/资源文件；94 个 TypeScript/Vue script 解析单元、31 个 standalone/Vue style 单元和 289 次相对本地导入均通过，未发现 TypeScript 语法错误、失效导入、真实合并冲突标记、异常 JSON/Vue 结构或根目录 src/。
+  - 狼人杀显示工具使用 TypeScript 5.8.3 strict 编译；本轮专项运行/源码回归共 32 项断言通过，覆盖轮次归一化及昼夜标签、五套 Store 首次 connect 保持未就绪并由 room_joined 开放、全局 room_joined 不再导航且过滤当前房间、大厅 ACK 导航与会话写入顺序、德州房间事件隔离、旧 Math.ceil/奇偶显示清理、一夜狼人友好阶段优先及六套聊天文案一致性。
+  - backend/src 全部 35 个 TypeScript 文件使用 strict 配置、真实 Node 类型及隔离声明完成 CommonJS 编译；六个实际 Worker 使用该产物完成合法 prepare_room，并确认未知任务返回 success=false：狼人杀、杀人游戏、阿瓦隆、一夜狼人、血染钟楼、德州扑克全部通过。
+  - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts 检查，仅有正常的可选依赖提示。
+  - 正式 npm run build 已在最终源码上执行。当前工作区 node_modules 不完整，backend tsc 报缺失 body-parser/connect/cors/express/node/uuid/ws 等 package.json 已声明依赖的类型目录并中止，未进入 frontend vue-tsc/Vite；这不等同于上述源码静态检查、backend strict 隔离编译或 Worker 烟雾失败。完整 npm ci、正式 backend tsc、frontend vue-tsc/Vite、Docker 镜像与实际部署仍需在依赖源正常的本地或 CI 最终确认。
+备注: 本轮未删除文件，未创建根目录 src/；修复包只包含上述修改/新增文件与更新后的 repair_log.txt，可按项目相对路径直接覆盖。

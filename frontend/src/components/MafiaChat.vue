@@ -75,7 +75,7 @@ const canSend = computed(() => {
 })
 
 const inputPlaceholder = computed(() => {
-  if (!store.connected) return '连接已断开，请等待重连...'
+  if (!store.connected) return '连接未就绪，请稍候...'
   if (isMuted.value) return '当前阶段无法发言...'
   return '输入公共聊天消息...'
 })

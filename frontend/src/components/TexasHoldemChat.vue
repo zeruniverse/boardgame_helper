@@ -61,7 +61,7 @@ const canSend = computed(() => {
 
 const inputPlaceholder = computed(() => {
   return !props.connected
-    ? '连接已断开，请等待重连...'
+    ? '连接未就绪，请稍候...'
     : '输入公共聊天消息...'
 })
 

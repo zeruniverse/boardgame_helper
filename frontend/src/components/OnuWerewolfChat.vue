@@ -105,7 +105,7 @@ const canSendMessage = computed(() => {
 });
 
 const inputPlaceholder = computed(() => {
-  if (!props.connected) return '连接已断开，请等待重连...';
+  if (!props.connected) return '连接未就绪，请稍候...';
   return '输入公共聊天消息...';
 });
 

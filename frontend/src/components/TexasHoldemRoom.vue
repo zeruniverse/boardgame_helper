@@ -305,11 +305,13 @@ onMounted(async () => {
   // 监听房间加入成功事件（用于验证房间类型）
   onRoomJoinedHandler = (data: { room: any; player: any; isHost: boolean; sessionToken?: string }) => {
     console.log('收到room_joined事件', data);
-    if (data.room.type !== 'texas-holdem') {
+    const joinedRoomId = String(data.room?.id || '').toUpperCase();
+    if (!joinedRoomId || joinedRoomId !== roomId.toUpperCase()) return;
+    if (data.room?.type !== 'texas-holdem') {
+      showErrorFeedback('该房间不是德州扑克房间', '该房间不是德州扑克房间');
       router.replace({ name: 'Lobby' });
       return;
     }
-    if (String(data.room.id).toUpperCase() !== roomId.toUpperCase()) return;
     console.log('房间加入成功，类型匹配');
     store.roomConnected = true;
     // 保存后端分配的playerId

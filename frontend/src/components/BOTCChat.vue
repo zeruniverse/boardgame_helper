@@ -168,7 +168,7 @@ const getChannelName = () => {
 }
 
 const getInputPlaceholder = () => {
-  if (!props.connected) return '连接已断开，请等待重连...'
+  if (!props.connected) return '连接未就绪，请稍候...'
   switch (currentChannel.value) {
     case 'storyteller':
       return '向说书人发送消息...'
