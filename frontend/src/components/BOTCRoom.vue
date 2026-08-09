@@ -396,18 +396,12 @@ const handleStorytellerCommand = (command: any) => {
 
 // 处理转移房主
 const handleTransferHost = (targetId: string) => {
-  store.transferHost?.(targetId) || store.socket?.emit('transfer_host', {
-    roomId: roomId,
-    targetId: targetId
-  })
+  void store.transferHost(targetId)
 }
 
 // 处理踢出玩家
 const handleKickPlayer = (targetId: string) => {
-  store.kickPlayer?.(targetId) || store.socket?.emit('kick_player', {
-    roomId: roomId,
-    targetId: targetId
-  })
+  void store.kickPlayer(targetId)
 }
 
 // 处理开始私聊 - 使用ref代替DOM操作

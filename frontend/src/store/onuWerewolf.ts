@@ -2,9 +2,11 @@ import { defineStore } from 'pinia';
 import { io, Socket } from 'socket.io-client';
 import { SOCKET_URL } from '../config';
 import { clearGameSession, clearGameSessionIfMatches, ensureGameSession, getStoredSessionToken, rememberGameSession } from '../utils/gameSession';
-import { emitChatAction, emitGameAction, emitRoomReconnect, leaveRoomAndDisconnect } from '../utils/gameSocket';
+import { emitChatAction, emitRoomReconnect, leaveRoomAndDisconnect } from '../utils/gameSocket';
+import { requestGameActionWithFeedback } from '../utils/gameActionFeedback';
 import { appendLimitedMessage, createSystemMessage, normalizeErrorMessage, normalizeIncomingMessage, normalizeSystemMessage } from '../utils/messages';
 import { getForcedExitMessage, redirectToLobbyAfterForcedExit, shouldClearSessionOnForcedExit } from '../utils/forcedExit';
+import { showErrorFeedback } from '../utils/uiFeedback';
 
 // 角色枚举
 export enum OnuWerewolfRole {
@@ -702,12 +704,14 @@ export const useOnuWerewolfStore = defineStore('onuWerewolf', {
         const message = normalizeErrorMessage(data);
         this.errorMessage = message;
         this.addSystemMessage(`错误：${message}`);
+        showErrorFeedback(data);
       });
 
       on('error', (error: unknown) => {
         const message = normalizeErrorMessage(error);
         this.errorMessage = message;
         this.addSystemMessage(`错误：${message}`);
+        showErrorFeedback(error);
       });
 
       // 游戏状态同步（用于重连）
@@ -805,7 +809,7 @@ export const useOnuWerewolfStore = defineStore('onuWerewolf', {
 
     // 游戏操作方法
     sendGameAction(actionType: string, actionData: any = {}) {
-      emitGameAction(this.socket, this.currentRoomId, this.currentUserId, actionType, actionData);
+      return requestGameActionWithFeedback(this.socket, this.currentRoomId, this.currentUserId, actionType, actionData);
     },
 
     sendMessage(message: string) {
@@ -813,17 +817,11 @@ export const useOnuWerewolfStore = defineStore('onuWerewolf', {
     },
 
     transferHost(newHostId: string) {
-      this.socket?.emit('transfer_host', {
-        roomId: this.currentRoomId,
-        newHostId
-      });
+      return this.sendGameAction('transfer_host', { newHostId });
     },
 
     kickPlayer(playerId: string) {
-      this.socket?.emit('kick_player', {
-        roomId: this.currentRoomId,
-        targetId: playerId
-      });
+      return this.sendGameAction('kick_player', { targetId: playerId });
     },
 
     ready() {

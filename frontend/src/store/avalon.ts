@@ -2,9 +2,11 @@ import { defineStore } from 'pinia';
 import { io, Socket } from 'socket.io-client';
 import { SOCKET_URL } from '../config';
 import { clearGameSession, clearGameSessionIfMatches, ensureGameSession, getStoredSessionToken, rememberGameSession } from '../utils/gameSession';
-import { emitChatAction, emitGameAction, emitRoomReconnect, leaveRoomAndDisconnect } from '../utils/gameSocket';
+import { emitChatAction, emitRoomReconnect, leaveRoomAndDisconnect } from '../utils/gameSocket';
+import { requestGameActionWithFeedback } from '../utils/gameActionFeedback';
 import { appendLimitedMessage, createSystemMessage, normalizeErrorMessage, normalizeIncomingMessage, normalizeSystemMessage } from '../utils/messages';
 import { getForcedExitMessage, redirectToLobbyAfterForcedExit, shouldClearSessionOnForcedExit } from '../utils/forcedExit';
+import { showErrorFeedback } from '../utils/uiFeedback';
 
 interface AvalonPlayer {
   id: string;
@@ -282,6 +284,7 @@ export const useAvalonStore = defineStore('avalon', {
         const message = normalizeErrorMessage(error);
         this.errorMessage = message;
         this.addSystemMessage(`错误：${message}`);
+        showErrorFeedback(error);
       };
       on('game_error', handleServerError);
       on('error', handleServerError);
@@ -379,7 +382,7 @@ export const useAvalonStore = defineStore('avalon', {
 
     // 游戏动作
     sendGameAction(actionType: string, actionData: any) {
-      emitGameAction(this.socket, this.currentRoomId, this.currentUserId, actionType, actionData);
+      return requestGameActionWithFeedback(this.socket, this.currentRoomId, this.currentUserId, actionType, actionData);
     },
 
     // 房间动作

@@ -2,9 +2,11 @@ import { defineStore } from 'pinia';
 import { io, Socket } from 'socket.io-client';
 import { SOCKET_URL } from '../config';
 import { clearGameSession, clearGameSessionIfMatches, ensureGameSession, getStoredSessionToken, rememberGameSession } from '../utils/gameSession';
-import { emitChatAction, emitGameAction, emitRoomReconnect, leaveRoomAndDisconnect } from '../utils/gameSocket';
+import { emitChatAction, emitRoomReconnect, leaveRoomAndDisconnect } from '../utils/gameSocket';
+import { requestGameActionWithFeedback } from '../utils/gameActionFeedback';
 import { appendLimitedMessage, createSystemMessage, normalizeIncomingMessage } from '../utils/messages';
 import { getForcedExitMessage, redirectToLobbyAfterForcedExit, shouldClearSessionOnForcedExit } from '../utils/forcedExit';
+import { showErrorFeedback } from '../utils/uiFeedback';
 
 interface WerewolfPlayer {
   id: string;
@@ -423,6 +425,7 @@ export const useWerewolfStore = defineStore('werewolf', {
         const msg = typeof error === 'string' ? error : (error.message || '未知错误');
         this.errorMessage = msg;
         this.addSystemMessage(`错误：${msg}`);
+        showErrorFeedback(error, '未知错误');
       });
 
       // 房间准备/配置确认（worker 实际广播事件）
@@ -580,12 +583,13 @@ export const useWerewolfStore = defineStore('werewolf', {
       const msg = typeof error === 'string' ? error : (error?.message || '未知错误');
       this.errorMessage = msg;
       this.addSystemMessage(`错误：${msg}`);
+      showErrorFeedback(error, '未知错误');
       console.error('WerewolfStore error:', error);
     },
 
     // 统一使用game_action发送，动作类型与后端匹配
     sendGameAction(actionType: string, actionData: any) {
-      emitGameAction(this.socket, this.currentRoomId, this.currentUserId, actionType, actionData);
+      return requestGameActionWithFeedback(this.socket, this.currentRoomId, this.currentUserId, actionType, actionData);
     },
 
     sendMessage(message: string, channel: string = 'all') {

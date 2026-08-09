@@ -3577,6 +3577,10 @@ export function roomController(io: Server) {
             return;
           }
           const result = await transferHostInRoom(room, player, targetId);
+          if (!result.success) {
+            sendErrorResponse(socket, result.error || '转让房主失败', ack);
+            return;
+          }
           ack?.(result);
           return;
         }
@@ -3588,6 +3592,10 @@ export function roomController(io: Server) {
             return;
           }
           const result = await kickPlayerFromRoom(room, player, targetId);
+          if (!result.success) {
+            sendErrorResponse(socket, result.error || '踢出玩家失败', ack);
+            return;
+          }
           ack?.(result);
           return;
         }
@@ -3655,6 +3663,10 @@ export function roomController(io: Server) {
             await finalizeSelfRemovalByWorker(latestRoom.id, latestPlayer, socket);
             return { success: true };
           });
+          if (!cashOutResult.success) {
+            sendErrorResponse(socket, cashOutResult.error || 'Cash Out 失败', ack);
+            return;
+          }
           ack?.(cashOutResult);
           return;
         }
@@ -3677,7 +3689,7 @@ export function roomController(io: Server) {
 
         const actionFailure = readGameActionFailure(taskResponse);
         if (actionFailure) {
-          ack?.(actionFailure);
+          sendErrorResponse(socket, actionFailure.error || '操作未被游戏接受', ack);
           return;
         }
 
@@ -3770,7 +3782,7 @@ export function roomController(io: Server) {
         );
         const actionFailure = readGameActionFailure(taskResponse);
         if (actionFailure) {
-          ack?.(actionFailure);
+          sendErrorResponse(socket, actionFailure.error || '发送聊天失败', ack);
           return;
         }
         ack?.({ success: true });

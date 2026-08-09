@@ -62,6 +62,7 @@ import { ref, nextTick, watch, computed, onUnmounted } from 'vue';
 import { MAX_CHAT_LENGTH } from '../utils/messages';
 import { emitChatAction } from '../utils/gameSocket';
 import { formatPlayerName } from '../utils/playerName';
+import { showErrorFeedback } from '../utils/uiFeedback';
 
 interface Props {
   messages: any[]
@@ -265,6 +266,7 @@ const send = () => {
     if (sendAttemptId === attemptId) {
       sending.value = false;
       sendTimeout = null;
+      showErrorFeedback('消息发送超时，请检查网络后重试', '消息发送失败')
     }
   }, 10000);
   sendTimeout = timeoutId;
@@ -286,6 +288,8 @@ const send = () => {
       sending.value = false;
       if (response?.success === true && input.value.trim() === message) {
         input.value = '';
+      } else if (response?.success === false) {
+        showErrorFeedback(response, '消息发送失败')
       }
     }
   );
@@ -296,6 +300,7 @@ const send = () => {
       sendTimeout = null;
       sending.value = false;
     }
+    showErrorFeedback('连接未建立，请稍后重试', '消息发送失败')
   }
 };
 

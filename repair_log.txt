@@ -2750,3 +2750,49 @@ Commit: fix(round4): 串行德州房间切换并统一前端交互反馈
   - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts 检查，仅有可选依赖提示。
   - 正式 npm ci --ignore-scripts --no-audit --no-fund 已在最终源码工作区执行，当前内部 npm 镜像请求 package-lock 锁定的 typescript-5.8.3.tgz 返回 404。正式 npm run build 也已执行；由于依赖未安装，backend tsc 在 Node 内建类型和 Express/CORS/Socket.IO/UUID 等 package.json 已声明依赖解析阶段中止，未进入 frontend vue-tsc/Vite。相同源码已通过上述 strict/noEmit、隔离 CommonJS 编译、六 Worker 实际运行烟雾和前端共享工具专项回归；完整生产构建与“可直接部署”仍需在依赖可正常安装的本地或 CI 最终确认。
 备注: 本轮未删除文件，未创建根目录 src/；所有前端源码修改/新增均位于 frontend/src/，本轮没有 backend/src 源码修改；修复包只包含本轮修改/新增文件与更新后的 repair_log.txt，可按相对路径直接覆盖。
+
+=== 当前会话第 5 轮修复记录 ===
+时间: 2026-08-09 13:47:16 UTC
+Commit: fix(round5): 统一游戏操作回执并收敛德州行动判定
+修改/新增文件:
+  - backend/src/controllers/roomController.ts
+  - frontend/src/components/BOTCChat.vue
+  - frontend/src/components/BOTCRoom.vue
+  - frontend/src/components/TexasHoldemActionBar.vue
+  - frontend/src/components/TexasHoldemRoom.vue
+  - frontend/src/store/avalon.ts
+  - frontend/src/store/botc.ts
+  - frontend/src/store/index.ts
+  - frontend/src/store/mafia.ts
+  - frontend/src/store/onuWerewolf.ts
+  - frontend/src/store/texas_holdem.ts
+  - frontend/src/store/werewolf.ts
+  - frontend/src/utils/gameActionFeedback.ts（新增）
+  - frontend/src/utils/texasHoldemActionState.ts（新增）
+  - frontend/src/utils/uiFeedback.ts（新增）
+  - repair_log.txt
+删除文件: 无
+构建测试: 部分通过（backend/src + frontend/src 当前全部 88 个源码文件静态解析与相对导入检查、28 个 Vue 模板标签检查、backend/src strict/noEmit 与隔离 CommonJS 编译、前端本轮共享工具 strict 类型检查、六游戏 Worker prepare_room/未知任务拒绝烟雾、游戏操作回执及德州行动资格运行回归、package-lock 工作区依赖树检查均通过；正式 npm ci 仍被当前内部 npm 镜像缺失 typescript-5.8.3.tgz、yn-3.1.1.tgz 等锁定 tarball 的 404 阻塞，正式 npm run build 因没有完整 node_modules 在 backend 的 Node/Express/CORS/Socket.IO/UUID 依赖与类型解析阶段中止，未进入 frontend vue-tsc/Vite，因此完整生产构建与直接部署仍需在依赖镜像正常的本地或 CI 执行 npm ci && npm run build 终验）
+本轮修复:
+  - 修复 Controller 对 Worker 规则拒绝只在存在 acknowledgement 时返回、旧客户端或 fire-and-forget 调用完全没有错误反馈的问题。通用 game_action、兼容聊天入口、转让房主、踢出玩家及德州 Cash Out 的失败分支现在统一走 sendErrorResponse：现代调用得到 success=false ACK，未传 ACK 的旧调用得到 error 事件，不再静默失败；成功分支仍只返回一次 ACK。
+  - 新增 frontend/src/utils/gameActionFeedback.ts，把六个游戏 Store 的玩法操作统一改为带 Socket.IO acknowledgement、12 秒超时和错误提示的请求。相同 Socket/房间一次只允许一个玩法操作在途，避免双击准备、投票、夜间技能、配置修改或房间管理造成重复提交；缺少连接、Controller 校验失败、Worker 规则拒绝及网络超时均得到一致反馈。
+  - 新增 frontend/src/utils/uiFeedback.ts，统一 Element Plus 错误/信息提示，并在 1.5 秒内合并相同文案。Worker 往操作者发送的私有错误事件与 Controller 随后的失败 ACK 可能来自同一操作，前端不再连续弹出两条相同消息；主 Store 与狼人杀、杀人游戏、一夜狼人、阿瓦隆、血染钟楼、德州扑克 Store 均复用该入口。
+  - 修复血染钟楼聊天的失败反馈：此前已经传 ACK，但忽略 success=false，且超时只结束 loading 不提示用户。现在无效回执、服务端拒绝、连接未建立及 10 秒超时均明确提示，只有成功 ACK 且输入仍对应本次消息时才清空文本。
+  - 修复 BOTCRoom 转让房主/踢人使用“Promise 真值 || socket.emit 兜底”的错误写法。异步 Store 方法返回 Promise 后右侧永远不会执行，而旧 Store 又是不带 ACK 的直接 emit；现在房间组件只调用统一 Store 动作，Store 通过通用 game_action 走 Controller 权限校验和回执协议。
+  - 新增 frontend/src/utils/texasHoldemActionState.ts，让德州快捷操作区和完整 ActionBar 共用同一套行动资格：当前行动者、跟注差额、最小完整加注、短码 all-in 后的加注锁、对手是否仍有筹码可响应、All-in 是跟注还是加注、Fold/延时资格。修复快捷区在未重新开放加注权或没有可继续行动对手时仍显示 Raise/All-in、点击后才被 Worker 拒绝的界面与规则漂移。
+  - 德州 Store 新增全房间玩法操作在途锁，快捷区与完整 ActionBar 即使同时挂载也不能跨组件重复下注。开始游戏、自动开始、锁房、发牌模式、Check/Call/Raise/All-in/Fold/延时均显示与具体动作对应的 loading/disabled；Raise 输入只在成功 ACK 后清空，Take/Cash In/Cash Out 与普通游戏操作也互斥，避免多个状态写入并发。
+  - 德州快捷按钮文案和实际 payload 由同一个动作描述生成；Raise 的 amount 继续严格使用 Worker 约定的“本轮加注到的总下注额”，短码跟注则使用 All-in。非法攻击性动作不再显示为可点击按钮，界面反馈与完整操作条一致。
+审查结果/本轮未改动重点:
+  - 本轮继续检查 backend/src 与 frontend/src 全部源码文件，并结合 repair_log 既有记录重点复核 roomController、RoomThreadManager、BaseGameWorker、六个游戏 Worker、六套前端 Store/Room/ActionPanel/ActionBar/Chat 及共享 socket/session/messages/config/state 工具。当前优先级最高且适合安全小批次落地的问题集中在“Worker 已拒绝但客户端没有可靠反馈”和“德州两套操作区规则/在途状态漂移”，因此本轮没有扩大为高风险规则状态机重写。
+  - 狼人杀、杀人游戏、一夜狼人、阿瓦隆、德州扑克和血染钟楼的主流程继续按当前项目文档、角色/人数配置、阶段推进、重连同步及既有专项修复交叉检查。六个 Worker 均能完成合法 prepare_room；本轮没有发现优先级高于上述跨游戏回执与德州行动资格问题、且可在当前批次确定修复的新主流程阻断项。
+  - 血染钟楼仍保留 repair_log 已记录、需要更大状态模型或真人说书人逐次裁决 UI 才能完整解决的架构级边界：特殊自定义夜序下 Pit-Hag 创建 Demon 后无法安全逆向更早已真实落地并触发被动的死亡；Recluse/Spy registration 缺逐次人工裁决 UI；自由文本与多重效果抵消等 Mathematician 极端情况缺统一逐次最终基准审计。本轮没有使用近似逻辑强行覆盖。
+  - 项目根目录仍不存在 src/；所有后端源文件修改只位于 backend/src/，所有前端源文件修改/新增只位于 frontend/src/。未改变原有目录结构，也未删除任何文件。
+验证:
+  - 全量静态扫描通过：backend/src + frontend/src 共 88 个源码文件、88 个 TypeScript/JavaScript/Vue script 解析单元、255 次相对本地导入解析，0 个语法或失效导入错误；28 个 Vue SFC 模板标签平衡检查全部通过；未发现根目录 src/。
+  - backend/src 全部 TypeScript 使用 strict/noEmit、真实全局 Node 类型及项目目录外 Express/CORS/Socket.IO/UUID 临时声明桩完成类型检查，并成功生成隔离 CommonJS 测试产物；临时声明和产物仅位于 /tmp，不进入修复包。
+  - 前端本轮共享 messages/gameMeta/gameSession/gameSocket/uiFeedback/gameActionFeedback/texasHoldemActionState 工具通过 strict TypeScript 检查。gameActionFeedback 运行回归覆盖成功 ACK、Worker failure ACK、同房间重复请求拦截、重复提示合并和缺少 Socket；德州行动资格回归覆盖正常完整加注、短码 all-in 加注锁、短码跟注 All-in、无可响应对手及 Check 条件，全部通过。
+  - 六个实际游戏 Worker 使用本轮最新隔离编译产物执行合法 prepare_room，并验证未知任务明确返回 success=false：狼人杀、杀人游戏、血染钟楼、一夜狼人、阿瓦隆、德州扑克全部通过。
+  - Controller 专项断言确认通用 Worker actionFailure 与旧聊天 actionFailure 已不再直接 ack 可选链，均通过 sendErrorResponse 路由；六个游戏 Store 均已接入 requestGameActionWithFeedback。
+  - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts 校验，仅有可选原生依赖提示。
+  - 正式 npm ci --ignore-scripts --prefer-offline --no-audit --no-fund 尝试仍被当前内部 npm 镜像缺失锁定 tarball 的 404 阻塞。正式 npm run build 已在最终源码上执行；因为没有完整 node_modules，backend tsc 在 Node 内建类型及 Express/CORS/Socket.IO/UUID 等 package.json 已声明依赖解析阶段中止，未进入 frontend vue-tsc/Vite。构建生成的临时 backend/dist 已清理；完整生产构建与“可直接部署”仍需在依赖可正常安装的本地或 CI 最终确认。
+备注: 本轮未删除文件，未创建根目录 src/；修复包只包含本轮修改/新增文件与更新后的 repair_log.txt，可按相对路径直接覆盖。

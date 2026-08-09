@@ -1,12 +1,12 @@
 import { defineStore } from 'pinia';
 import { io, Socket } from 'socket.io-client';
-import { ElMessage } from 'element-plus';
 import { SOCKET_URL } from '../config';
 import { useTexasHoldemStore } from './texas_holdem';
 import router from '../router';
 import { GAME_ROUTES } from '../utils/gameMeta';
 import { rememberGameSession, clearAllGameSessions } from '../utils/gameSession';
 import { normalizeErrorMessage } from '../utils/messages';
+import { showErrorFeedback } from '../utils/uiFeedback';
 import { redirectToLobbyAfterForcedExit } from '../utils/forcedExit';
 
 // 重新导出游戏特定的store
@@ -106,7 +106,7 @@ export const useMainStore = defineStore('main', {
       const serverErrorHandler = (error: unknown) => {
         const message = normalizeErrorMessage(error);
         console.error('Socket server error:', error);
-        ElMessage.error(message);
+        showErrorFeedback(message);
       };
       this.socket.on('error', serverErrorHandler);
       this.socketListeners.push(['error', serverErrorHandler]);

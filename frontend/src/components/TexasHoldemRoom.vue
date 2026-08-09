@@ -14,12 +14,14 @@
         <span class="room-id">房间ID: {{ displayRoomName }}</span>
         <el-button v-if="isHost" size="small" @click="toggleRoomLock"
                    :type="store.roomLocked ? 'danger' : 'success'"
+                   :loading="store.pendingActionKey === 'toggleRoomLock'"
+                   :disabled="roomActionBusy"
                    :class="{ 'colored-border': true }">
           {{ store.roomLocked ? '解锁房间' : '锁定房间' }}
         </el-button>
         <div v-if="isHost" class="dealing-mode-control">
           <span>发牌模式</span>
-          <el-radio-group v-model="dealingMode" size="small" :disabled="!canChangeDealingMode">
+          <el-radio-group v-model="dealingMode" size="small" :disabled="!canChangeDealingMode || roomActionBusy">
             <el-radio-button label="online">线上发牌</el-radio-button>
             <el-radio-button label="offline">线下发牌</el-radio-button>
           </el-radio-group>
@@ -45,46 +47,56 @@
           <div class="quick-action-buttons">
             <template v-if="store.stage === 'idle' && isInRoom">
               <el-button v-if="isHost" type="success" @click="onStartGame"
-                         :disabled="!canStartGame"
+                         :loading="store.pendingActionKey === 'startGame'"
+                         :disabled="!canStartGame || roomActionBusy"
                          :class="{ 'colored-border': canStartGame, 'disabled-border': !canStartGame }">
                 开始游戏
               </el-button>
               <el-button @click="onCashIn" :loading="cashInPending"
-                         :disabled="cashInPending || cashOutPending"
+                         :disabled="roomActionBusy"
                          :class="{ 'colored-border': true }">
                 Cash In
               </el-button>
               <el-button type="danger" @click="onCashOut" :loading="cashOutPending"
-                         :disabled="cashInPending || cashOutPending"
+                         :disabled="roomActionBusy"
                          :class="{ 'colored-border': true }">
                 Cash Out
               </el-button>
             </template>
 
-            <template v-if="store.stage === 'playing' && isInGame && isMyTurn">
-              <el-button @click="extendTime" :class="{ 'colored-border': true }">
+            <template v-if="store.stage === 'playing' && store.gameActive && isInGame && isMyTurn">
+              <el-button v-if="canExtend" @click="extendTime"
+                         :loading="store.pendingActionKey === 'extendTime'"
+                         :disabled="roomActionBusy"
+                         :class="{ 'colored-border': true }">
                 延时
               </el-button>
-              <el-button @click="handleSecondQuickButton" :class="{ 'colored-border': true }">
+              <el-button v-if="quickPrimaryAction" @click="handleSecondQuickButton"
+                         :loading="store.pendingActionKey === quickPrimaryAction.key"
+                         :disabled="roomActionBusy"
+                         :class="{ 'colored-border': true }">
                 {{ secondQuickButtonText }}
               </el-button>
-              <el-button @click="handleThirdQuickButton" :class="{ 'colored-border': true }">
+              <el-button v-if="canCheck || canFold" @click="handleThirdQuickButton"
+                         :loading="store.pendingActionKey === thirdQuickActionKey"
+                         :disabled="roomActionBusy"
+                         :class="{ 'colored-border': true }">
                 {{ thirdQuickButtonText }}
               </el-button>
             </template>
 
             <template v-if="store.stage === 'distribution' && isInGame && !online">
               <el-input v-model.number="takeAmount" type="number" placeholder="Take 数量"
-                        class="quick-take-input" :disabled="takePending" />
+                        class="quick-take-input" :disabled="roomActionBusy" />
               <el-button type="primary" @click="onTake"
                          :loading="takePending"
-                         :disabled="takePending || takeAmount <= 0"
+                         :disabled="roomActionBusy || takeAmount <= 0"
                          :class="{ 'colored-border': takeAmount > 0, 'disabled-border': takeAmount <= 0 }">
                 Take
               </el-button>
               <el-button type="warning" @click="onTakeAll"
                          :loading="takePending"
-                         :disabled="takePending || store.pot === 0"
+                         :disabled="roomActionBusy || store.pot === 0"
                          :class="{ 'colored-border': store.pot > 0, 'disabled-border': store.pot === 0 }">
                 Take All
               </el-button>
@@ -92,6 +104,8 @@
 
             <el-button v-if="isHost" size="small" @click="toggleAutoStart"
                        :type="store.autoStart ? 'warning' : 'info'"
+                       :loading="store.pendingActionKey === 'toggleAutoStart'"
+                       :disabled="roomActionBusy"
                        :class="{ 'colored-border': true }">
               {{ store.autoStart ? '关闭自动开始' : '开启自动开始' }}
             </el-button>
@@ -132,17 +146,17 @@
           <template v-if="store.stage === 'distribution' && isInGame && !online">
             <div class="take-controls">
               <el-input v-model.number="takeAmount" type="number" placeholder="Take 数量"
-                        class="take-input" :disabled="takePending" />
+                        class="take-input" :disabled="roomActionBusy" />
               <el-button type="primary" @click="onTake"
                          :loading="takePending"
-                         :disabled="takePending || takeAmount <= 0"
+                         :disabled="roomActionBusy || takeAmount <= 0"
                          :class="{ 'colored-border': takeAmount > 0, 'disabled-border': takeAmount <= 0 }"
                          class="take-btn">
                 Take
               </el-button>
               <el-button type="warning" @click="onTakeAll"
                          :loading="takePending"
-                         :disabled="takePending || store.pot === 0"
+                         :disabled="roomActionBusy || store.pot === 0"
                          :class="{ 'colored-border': store.pot > 0, 'disabled-border': store.pot === 0 }"
                          class="take-btn">
                 Take All
@@ -184,9 +198,11 @@ import TexasHoldemChat from './TexasHoldemChat.vue';
 import TexasHoldemPlayerList from './TexasHoldemPlayerList.vue';
 import TexasHoldemActionBar from './TexasHoldemActionBar.vue';
 import RoomConnectionStatus from './RoomConnectionStatus.vue';
-import { emitGameAction, emitGameActionRequest, waitForSharedSocketRoomTransition } from '../utils/gameSocket';
+import { emitGameActionRequest, waitForSharedSocketRoomTransition } from '../utils/gameSocket';
 import { clearGameSession, ensureGameSession, rememberGameSession } from '../utils/gameSession';
 import { formatPlayerName } from '../utils/playerName';
+import { useTexasHoldemActionState } from '../utils/texasHoldemActionState';
+import { showErrorFeedback } from '../utils/uiFeedback';
 
 const store = useTexasHoldemStore();
 const mainStore = useMainStore();
@@ -206,6 +222,20 @@ const roomName = ref('');
 const displayRoomName = computed(() => roomName.value || roomId);
 const connected = computed(() => mainStore.connected);
 const isHost = computed(() => store.isHost);
+const {
+  ownChips,
+  ownBet,
+  isInGame,
+  isMyTurn,
+  toCall,
+  canCall,
+  canCheck,
+  canRaise,
+  canAllIn,
+  canFold,
+  canExtend,
+  minRaiseDelta
+} = useTexasHoldemActionState(store);
 const cashInPending = ref(false);
 const cashOutPending = ref(false);
 const takePending = ref(false);
@@ -213,9 +243,9 @@ const takePending = ref(false);
 function sendTexasAction(
   actionType: string,
   actionData: Record<string, any> = {},
-  ack?: (response: any) => void
+  actionKey = actionType
 ) {
-  return emitGameAction(store.socket, store.currentRoom || roomId, store.playerId, actionType, actionData, ack);
+  return store.sendGameAction(actionType, actionData, actionKey);
 }
 
 // 房间状态检查定时器
@@ -367,7 +397,7 @@ async function confirmTexasAction(message: string, title: string): Promise<boole
 
 // Cash In - 使用带超时 acknowledgement 的game_action，防止重复点击或按钮永久等待
 async function onCashIn() {
-  if (cashInPending.value || cashOutPending.value) return;
+  if (roomActionBusy.value) return;
   if (!await confirmTexasAction('确定要充值 1000 筹码吗？', 'Cash In')) return;
 
   cashInPending.value = true;
@@ -385,7 +415,7 @@ async function onCashIn() {
     );
     ElMessage.success('已充值 1000 筹码');
   } catch (error) {
-    ElMessage.error(error instanceof Error ? error.message : 'Cash In 失败，请稍后重试');
+    showErrorFeedback(error, 'Cash In 失败，请稍后重试');
   } finally {
     cashInPending.value = false;
   }
@@ -393,7 +423,7 @@ async function onCashIn() {
 
 // Cash Out - 使用带超时 acknowledgement 的game_action
 async function onCashOut() {
-  if (cashInPending.value || cashOutPending.value) return;
+  if (roomActionBusy.value) return;
   if (!await confirmTexasAction('确定要 Cash Out 并退出房间吗？', 'Cash Out')) return;
 
   cashOutPending.value = true;
@@ -419,7 +449,7 @@ async function onCashOut() {
     roomLeaveRequested = true;
     router.push({ name: 'Lobby' });
   } catch (error) {
-    ElMessage.error(error instanceof Error ? error.message : 'Cash Out 失败，请稍后重试');
+    showErrorFeedback(error, 'Cash Out 失败，请稍后重试');
   } finally {
     cashOutPending.value = false;
   }
@@ -427,31 +457,25 @@ async function onCashOut() {
 // 开始游戏 - 使用game_action统一格式
 function onStartGame() {
   if (store.socket && store.currentRoom) {
-    sendTexasAction('startGame');
+    void sendTexasAction('startGame', {}, 'startGame');
   }
 }
 
 // 切换自动开始 - 使用game_action统一格式
 function toggleAutoStart() {
   if (store.socket && store.currentRoom) {
-    sendTexasAction('toggleAutoStart');
+    void sendTexasAction('toggleAutoStart', {}, 'toggleAutoStart');
   }
 }
 
 // 切换房间锁定 - 使用game_action统一格式
 function toggleRoomLock() {
   if (store.socket && store.currentRoom) {
-    sendTexasAction('toggleRoomLock');
+    void sendTexasAction('toggleRoomLock', {}, 'toggleRoomLock');
   }
 }
 
 // 快捷操作计算属性和方法
-// 使用playerId比较，而不是nickname
-const isMyTurn = computed(() => store.currentTurn === store.playerId);
-const toCall = computed(() => Math.max(store.currentBet - (store.bets[store.playerId] || 0), 0));
-const ownPlayer = computed(() => store.players.find((p: any) => p.id === store.playerId));
-const canCheck = computed(() => isMyTurn.value && toCall.value === 0);
-const minRaiseDelta = computed(() => Math.max(1, store.lastRaiseAmount || 0));
 const quickBetAmount = computed(() => Math.max(minRaiseDelta.value, Math.floor(store.pot / 2)));
 const canStartGame = computed(() => {
   // 与 Worker 开局条件保持一致：离线保留席位、明确 sit out 的玩家以及无筹码玩家
@@ -463,14 +487,52 @@ const canStartGame = computed(() => {
   );
   return isHost.value && eligiblePlayers.length >= 2;
 });
-// 使用playerId判断是否在参与游戏中
-const isInGame = computed(() => {
-  return store.participants.includes(store.playerId);
+const roomActionBusy = computed(() =>
+  cashInPending.value || cashOutPending.value || takePending.value || Boolean(store.pendingActionKey)
+);
+
+interface TexasQuickAction {
+  label: string
+  action: 'call' | 'raise' | 'allin'
+  amount?: number
+  key: string
+}
+
+// 快捷区不再自行放宽规则。短码 All-in 未重新开放加注权、没有可继续行动的
+// 对手等场景，会与完整操作条一样隐藏无效的攻击性按钮，而不是让用户点后才报错。
+const quickPrimaryAction = computed<TexasQuickAction | null>(() => {
+  if (!isMyTurn.value || !isInGame.value) return null;
+
+  if (canCheck.value) {
+    const amount = quickBetAmount.value;
+    if (amount >= ownChips.value) {
+      return canAllIn.value
+        ? { label: 'All-in', action: 'allin', key: 'playerAction:allin' }
+        : null;
+    }
+    if (!canRaise.value) return null;
+    return {
+      label: `${store.currentBet > 0 ? 'Raise' : 'Bet'} ${amount}`,
+      action: 'raise',
+      amount: ownBet.value + amount,
+      key: 'playerAction:raise'
+    };
+  }
+
+  if (toCall.value >= ownChips.value) {
+    return canAllIn.value
+      ? { label: 'All-in', action: 'allin', key: 'playerAction:allin' }
+      : null;
+  }
+  return canCall.value
+    ? { label: `Call ${toCall.value}`, action: 'call', key: 'playerAction:call' }
+    : null;
 });
 
 const hasQuickActionButtons = computed(() => {
   return (store.stage === 'idle' && isInRoom.value) ||
-    (store.stage === 'playing' && isInGame.value && isMyTurn.value) ||
+    (store.stage === 'playing' && store.gameActive && isInGame.value && isMyTurn.value &&
+      (canExtend.value || Boolean(quickPrimaryAction.value) || canCheck.value || canFold.value)) ||
     (store.stage === 'distribution' && isInGame.value && !online.value) ||
     isHost.value;
 });
@@ -491,89 +553,32 @@ function extendTime() {
   store.extendTime();
 }
 
-// 新的智能快捷按钮逻辑
-// 第二个快捷按钮的文本
-const secondQuickButtonText = computed(() => {
-  if (!isMyTurn.value || !isInGame.value) return '';
+// 快捷行动文案与执行都来自同一个动作描述，避免显示内容和实际 payload 漂移。
+const secondQuickButtonText = computed(() => quickPrimaryAction.value?.label || '');
+const thirdQuickButtonText = computed(() => canCheck.value ? 'Check' : 'Fold');
+const thirdQuickActionKey = computed(() => canCheck.value ? 'playerAction:check' : 'playerAction:fold');
 
-  if (canCheck.value) {
-    // 玩家可以check的情况，显示 Bet/Raise X（不低于后端最小加注）
-    const betAmount = quickBetAmount.value;
-    const chips = ownPlayer.value?.gameMetadata?.chips || 0;
-    if (betAmount >= chips) {
-      return 'All-in';
-    }
-    const label = store.currentBet > 0 ? 'Raise' : 'Bet';
-    return `${label} ${betAmount}`;
-  } else {
-    // 玩家不能check的情况，显示 Call X
-    const callAmount = toCall.value;
-    if (callAmount >= (ownPlayer.value?.gameMetadata?.chips || 0)) {
-      return 'All-in';
-    }
-    return `Call ${callAmount}`;
-  }
-});
-
-// 第三个快捷按钮的文本
-const thirdQuickButtonText = computed(() => {
-  if (!isMyTurn.value || !isInGame.value) return '';
-
-  if (canCheck.value) {
-    return 'Check';
-  } else {
-    return 'Fold';
-  }
-});
-
-// 处理第二个快捷按钮点击
 function handleSecondQuickButton() {
-  if (!store.socket || !store.currentRoom || !isMyTurn.value || !isInGame.value) return;
+  const quickAction = quickPrimaryAction.value;
+  if (!quickAction || roomActionBusy.value) return;
 
-  if (canCheck.value) {
-    // 玩家可以check的情况，执行 Bet/Raise X 或 All-in
-    const betAmount = quickBetAmount.value;
-    const chips = ownPlayer.value?.gameMetadata?.chips || 0;
-    if (betAmount >= chips) {
-      // All-in
-      sendTexasAction('playerAction', { action: 'allin' });
-    } else {
-      // 使用raise，amount为新总下注额
-      const currentBet = store.bets[store.playerId] || 0;
-      const totalBetAmount = currentBet + betAmount;
-      sendTexasAction('playerAction', { action: 'raise', amount: totalBetAmount });
-    }
-  } else {
-    // 玩家不能check的情况，执行 Call X 或 All-in
-    const callAmount = toCall.value;
-    const chips = ownPlayer.value?.gameMetadata?.chips || 0;
-    if (callAmount >= chips) {
-      // All-in
-      sendTexasAction('playerAction', { action: 'allin' });
-    } else {
-      // Call
-      sendTexasAction('playerAction', { action: 'call' });
-    }
+  const actionData: Record<string, any> = { action: quickAction.action };
+  if (quickAction.action === 'raise') {
+    actionData.amount = quickAction.amount;
   }
+  void sendTexasAction('playerAction', actionData, quickAction.key);
 }
 
-// 处理第三个快捷按钮点击
 function handleThirdQuickButton() {
-  if (!store.socket || !store.currentRoom || !isMyTurn.value || !isInGame.value) return;
-
-  if (canCheck.value) {
-    // Check
-    sendTexasAction('playerAction', { action: 'check' });
-  } else {
-    // Fold
-    sendTexasAction('playerAction', { action: 'fold' });
-  }
+  if (!isMyTurn.value || !isInGame.value || (!canCheck.value && !canFold.value) || roomActionBusy.value) return;
+  const action = canCheck.value ? 'check' : 'fold';
+  void sendTexasAction('playerAction', { action }, thirdQuickActionKey.value);
 }
 
 // 线下 take 操作 - 使用game_action统一格式
 const takeAmount = ref(0);
 async function onTake() {
-  if (takePending.value || !store.socket || !store.currentRoom) return;
+  if (roomActionBusy.value || !store.socket || !store.currentRoom) return;
 
   const val = Math.floor(takeAmount.value);
   if (!Number.isFinite(val) || val <= 0) {
@@ -602,14 +607,14 @@ async function onTake() {
     // 保留用户输入，便于按服务端最新状态调整，而不是制造“看似成功”的错觉。
     takeAmount.value = 0;
   } catch (error) {
-    ElMessage.error(error instanceof Error ? error.message : '领取奖池失败');
+    showErrorFeedback(error, '领取奖池失败');
   } finally {
     takePending.value = false;
   }
 }
 
 async function onTakeAll() {
-  if (takePending.value || !store.socket || !store.currentRoom || store.pot <= 0) return;
+  if (roomActionBusy.value || !store.socket || !store.currentRoom || store.pot <= 0) return;
 
   takePending.value = true;
   try {
@@ -626,7 +631,7 @@ async function onTakeAll() {
     );
     takeAmount.value = 0;
   } catch (error) {
-    ElMessage.error(error instanceof Error ? error.message : '领取全部奖池失败');
+    showErrorFeedback(error, '领取全部奖池失败');
   } finally {
     takePending.value = false;
   }
@@ -634,7 +639,7 @@ async function onTakeAll() {
 
 // online根据系统发牌配置动态判断（非系统发牌=线下模式）
 const online = computed(() => store.allowSystemDealing);
-const canChangeDealingMode = computed(() => isHost.value && store.stage === 'idle');
+const canChangeDealingMode = computed(() => isHost.value && store.stage === 'idle' && !roomActionBusy.value);
 const dealingMode = computed({
   get: () => (store.allowSystemDealing ? 'online' : 'offline'),
   set: (mode: string) => {
@@ -642,10 +647,10 @@ const dealingMode = computed({
     const nextAllowSystemDealing = normalized === 'online';
     if (store.allowSystemDealing === nextAllowSystemDealing) return;
     if (!canChangeDealingMode.value) return;
-    sendTexasAction('updateConfig', {
+    void sendTexasAction('updateConfig', {
       allowSystemDealing: nextAllowSystemDealing,
       dealingMode: normalized
-    });
+    }, 'updateConfig');
   }
 });
 

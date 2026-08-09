@@ -4,9 +4,11 @@ import { io, Socket } from 'socket.io-client'
 import { ElMessage } from 'element-plus'
 import { SOCKET_URL } from '../config'
 import { clearGameSession, clearGameSessionIfMatches, ensureGameSession, getStoredSessionToken, rememberGameSession } from '../utils/gameSession'
-import { emitChatAction, emitGameAction, emitRoomReconnect, leaveRoomAndDisconnect } from '../utils/gameSocket'
-import { appendLimitedMessage, normalizeErrorMessage, normalizeIncomingMessage } from '../utils/messages'
+import { emitChatAction, emitRoomReconnect, leaveRoomAndDisconnect } from '../utils/gameSocket'
+import { requestGameActionWithFeedback } from '../utils/gameActionFeedback'
+import { appendLimitedMessage, normalizeIncomingMessage } from '../utils/messages'
 import { getForcedExitMessage, redirectToLobbyAfterForcedExit, shouldClearSessionOnForcedExit } from '../utils/forcedExit'
+import { showErrorFeedback } from '../utils/uiFeedback'
 
 export const useBOTCGameStore = defineStore('botc', () => {
   // 状态
@@ -120,7 +122,7 @@ export const useBOTCGameStore = defineStore('botc', () => {
         // 房间控制器使用 error；统一处理，避免关键失败在客户端静默丢失。
         const handleServerError = (data: unknown) => {
           console.error('血染钟楼: 服务器错误:', data)
-          ElMessage.error(normalizeErrorMessage(data, '发生未知错误'))
+          showErrorFeedback(data, '发生未知错误')
         }
         on('actionError', handleServerError)
         on('gameError', handleServerError)
@@ -564,8 +566,14 @@ export const useBOTCGameStore = defineStore('botc', () => {
   }
 
   // 发送游戏操作
-  const sendGameAction = (action: string, data: any) => {
-    emitGameAction(socket.value, currentRoomId.value, currentUserId.value, action, data)
+  const sendGameAction = (action: string, data: any = {}) => {
+    return requestGameActionWithFeedback(
+      socket.value,
+      currentRoomId.value,
+      currentUserId.value,
+      action,
+      data
+    )
   }
 
   // 发送聊天消息
@@ -575,19 +583,11 @@ export const useBOTCGameStore = defineStore('botc', () => {
 
   // 房间管理
   const transferHost = (newHostId: string) => {
-    if (socket.value && currentRoomId.value) {
-      socket.value.emit('transfer_host', { roomId: currentRoomId.value, targetId: newHostId })
-      return true
-    }
-    return false
+    return sendGameAction('transfer_host', { targetId: newHostId })
   }
 
   const kickPlayer = (playerId: string) => {
-    if (socket.value && currentRoomId.value) {
-      socket.value.emit('kick_player', { roomId: currentRoomId.value, playerId })
-      return true
-    }
-    return false
+    return sendGameAction('kick_player', { playerId })
   }
 
   // 创建房间

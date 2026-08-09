@@ -1,38 +1,44 @@
 <template>
   <div class="texas-action-bar">
     <el-button @click="extendTime"
-               :disabled="!store.gameActive || !isMyTurn || !isInGame"
+               :disabled="!canExtend || !!store.pendingActionKey"
+               :loading="store.pendingActionKey === 'extendTime'"
                :class="{ 'colored-border': store.gameActive && isMyTurn && isInGame, 'disabled-border': !store.gameActive || !isMyTurn || !isInGame }">
       延时一次
     </el-button>
-    <el-button :disabled="!canCheck"
+    <el-button :disabled="!canCheck || !!store.pendingActionKey"
+               :loading="store.pendingActionKey === 'playerAction:check'"
                @click="action('check')"
                :class="{ 'colored-border': canCheck, 'disabled-border': !canCheck }">
       Check
     </el-button>
-    <el-button :disabled="!store.gameActive || !canCall || !isInGame"
+    <el-button :disabled="!canCall || !!store.pendingActionKey"
+               :loading="store.pendingActionKey === 'playerAction:call'"
                @click="action('call')"
                :class="{ 'colored-border': store.gameActive && canCall && isInGame, 'disabled-border': !store.gameActive || !canCall || !isInGame }">
       Call {{ toCall }}
     </el-button>
     <div class="raise-row">
       <el-input v-model.number="raiseAmount" type="number" placeholder="额外加注"
-                :disabled="!canRaise" />
+                :disabled="!canRaise || !!store.pendingActionKey" />
       <el-button type="warning"
-                 :disabled="!store.gameActive || !canRaise"
+                 :disabled="!canRaise || !!store.pendingActionKey"
+                 :loading="store.pendingActionKey === 'playerAction:raise'"
                  @click="raise"
                  :class="{ 'colored-border': store.gameActive && canRaise, 'disabled-border': !store.gameActive || !canRaise }">
         Raise
       </el-button>
     </div>
     <el-button type="primary"
-               :disabled="!canAllIn"
+               :disabled="!canAllIn || !!store.pendingActionKey"
+               :loading="store.pendingActionKey === 'playerAction:allin'"
                @click="action('allin')"
                :class="{ 'colored-border': canAllIn, 'disabled-border': !canAllIn }">
       All-in
     </el-button>
     <el-button type="danger"
-               :disabled="!store.gameActive || !isMyTurn || !isInGame"
+               :disabled="!canFold || !!store.pendingActionKey"
+               :loading="store.pendingActionKey === 'playerAction:fold'"
                @click="action('fold')"
                :class="{ 'colored-border': store.gameActive && isMyTurn && isInGame, 'disabled-border': !store.gameActive || !isMyTurn || !isInGame }">
       Fold
@@ -41,90 +47,66 @@
 </template>
 
 <script lang="ts" setup>
-import { ref, computed } from 'vue';
+import { ref } from 'vue';
 import { ElMessage } from 'element-plus';
 import { useTexasHoldemStore } from '../store';
-import { emitGameAction } from '../utils/gameSocket';
+import { useTexasHoldemActionState } from '../utils/texasHoldemActionState';
 
 const store = useTexasHoldemStore();
 const raiseAmount = ref(0);
-// 使用playerId而不是nickname来查找下注额
-const toCall = computed(() => Math.max(store.currentBet - (store.bets[store.playerId] || 0), 0));
-// 使用playerId查找自己的玩家信息，从gameMetadata中获取筹码
-const ownPlayer = computed(() => store.players.find((p: any) => p.id === store.playerId));
-const isInGame = computed(() => store.participants.includes(store.playerId));
-// 使用playerId比较而不是nickname
-const isMyTurn = computed(() => store.currentTurn === store.playerId && isInGame.value);
-// canCall: 需要跟注金额 > 0 且有筹码即可call（筹码不足时自动转为all-in call）
-const canCall = computed(() => isMyTurn.value && toCall.value > 0 && (ownPlayer.value?.gameMetadata?.chips || 0) > 0);
-const canCheck = computed(() => isMyTurn.value && toCall.value === 0);
-const isRaiseLocked = computed(() => store.raiseLocked.includes(store.playerId));
-const minRaiseTo = computed(() => Math.max(store.minRaiseTo || 0, store.currentBet + 1));
-const minRaiseDelta = computed(() => {
-  const currentBet = store.bets[store.playerId] || 0;
-  const callAmount = toCall.value;
-  return Math.max(1, minRaiseTo.value - currentBet - callAmount);
-});
-const hasOtherActivePlayerWithChips = computed(() =>
-  store.participants.some((playerId) => {
-    if (playerId === store.playerId || store.folded.includes(playerId)) return false;
-    const player = store.players.find((candidate: any) => candidate.id === playerId);
-    return Number(player?.gameMetadata?.chips || 0) > 0;
-  })
-);
-const canRaise = computed(() => {
-  const chips = Number(ownPlayer.value?.gameMetadata?.chips || 0);
-  return store.gameActive &&
-    isMyTurn.value &&
-    !isRaiseLocked.value &&
-    hasOtherActivePlayerWithChips.value &&
-    chips >= toCall.value + minRaiseDelta.value;
-});
-const canAllIn = computed(() => {
-  if (!store.gameActive || !isMyTurn.value) return false;
-  const chips = Number(ownPlayer.value?.gameMetadata?.chips || 0);
-  if (chips <= 0) return false;
-  const ownBet = Number(store.bets[store.playerId] || 0);
-  const allInTotal = ownBet + chips;
-  if (allInTotal <= store.currentBet) return true;
-  // 高于当前注额的 All-in 属于加注；后端要求拥有加注权，且至少还有一名
-  // 未弃牌、仍有筹码的对手能够继续行动，避免产生无人可跟的“空边池”。
-  return !isRaiseLocked.value && hasOtherActivePlayerWithChips.value;
-});
+const {
+  ownChips,
+  ownBet,
+  isInGame,
+  isMyTurn,
+  toCall,
+  canCall,
+  canCheck,
+  canRaise,
+  canAllIn,
+  canFold,
+  canExtend,
+  minRaiseDelta
+} = useTexasHoldemActionState(store);
 
-// 使用game_action统一格式发送玩家操作
-function action(type: string) {
-  if (!store.socket || !store.currentRoom || !store.gameActive || !isInGame.value) return;
-  emitGameAction(store.socket, store.currentRoom, store.playerId, 'playerAction', { action: type });
+// 使用带 acknowledgement 的统一动作入口；store 的房间级在途锁同时约束快捷区，
+// 避免同一回合从两个组件重复提交操作。
+function action(type: 'check' | 'call' | 'allin' | 'fold') {
+  if (!store.gameActive || !isInGame.value) return;
+  void store.sendGameAction('playerAction', { action: type }, `playerAction:${type}`);
 }
 
-// Raise操作使用game_action统一格式
-function raise() {
-  if (!store.socket || !store.currentRoom || !store.gameActive || !isInGame.value) return;
+async function raise() {
+  if (!store.gameActive || !isInGame.value || !canRaise.value) return;
   const val = Math.floor(Number(raiseAmount.value));
   if (!Number.isFinite(val) || val <= 0) {
     ElMessage.warning('请输入合法的正整数加注金额');
     return;
   }
-  const currentChips = ownPlayer.value?.gameMetadata?.chips || 0;
-  const callAmount = Math.max(toCall.value, 0);
   if (val < minRaiseDelta.value) {
     ElMessage.warning(`最小额外加注为 ${minRaiseDelta.value}`);
     return;
   }
-  if (callAmount + val > currentChips) {
+  if (toCall.value + val > ownChips.value) {
     ElMessage.warning('跟注加加注金额不能超过自身筹码；筹码不足请使用 All-in');
     return;
   }
-  // 计算新总下注额 = 当前已下注 + 需要跟注 + 额外加注
-  const currentBet = store.bets[store.playerId] || 0;
-  const totalRaiseAmount = currentBet + callAmount + val;
-  emitGameAction(store.socket, store.currentRoom, store.playerId, 'playerAction', { action: 'raise', amount: totalRaiseAmount });
+
+  // Worker 的 amount 口径是“本轮加注到的总下注额”。
+  const totalRaiseAmount = ownBet.value + toCall.value + val;
+  const succeeded = await store.sendGameAction(
+    'playerAction',
+    { action: 'raise', amount: totalRaiseAmount },
+    'playerAction:raise'
+  );
+  if (succeeded) {
+    raiseAmount.value = 0;
+  }
 }
 
 function extendTime() {
-  if (!store.gameActive || !isMyTurn.value || !isInGame.value) return;
-  store.extendTime();
+  if (!canExtend.value) return;
+  void store.extendTime();
 }
 </script>
 

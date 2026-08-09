@@ -1,10 +1,12 @@
 import { defineStore } from 'pinia';
 import { useMainStore } from './index';
-import { emitGameAction, emitRoomReconnect, queueSharedSocketRoomTransition } from '../utils/gameSocket';
+import { emitRoomReconnect, queueSharedSocketRoomTransition } from '../utils/gameSocket';
+import { requestGameActionWithFeedback } from '../utils/gameActionFeedback';
 import { appendLimitedMessage, normalizeIncomingMessage } from '../utils/messages';
 import { GAME_STORAGE_KEYS } from '../utils/gameMeta';
 import { clearGameSession, clearGameSessionIfMatches, ensureGameSession, getStoredSessionToken, rememberGameSession } from '../utils/gameSession';
 import { getForcedExitMessage, redirectToLobbyAfterForcedExit, shouldClearSessionOnForcedExit } from '../utils/forcedExit';
+import { showErrorFeedback, showInfoFeedback } from '../utils/uiFeedback';
 
 const TEXAS_STORAGE = GAME_STORAGE_KEYS['texas-holdem'];
 const TEXAS_ROOM_KEY = TEXAS_STORAGE.room || 'texas_currentRoom';
@@ -40,6 +42,8 @@ export const useTexasHoldemStore = defineStore('texas_holdem', {
     allowSystemDealing: true, // 是否系统发牌模式，影响线下分池UI显示
     // 游戏阶段：'idle'(未开始/已结束), 'playing'(游戏中), 'distribution'(分池中)
     stage: 'idle' as 'idle' | 'playing' | 'distribution',
+    pendingActionKey: '' as string,
+    actionRequestVersion: 0,
     socketListeners: [] as Array<[string, (...args: any[]) => void]>,
   }),
 
@@ -262,6 +266,7 @@ export const useTexasHoldemStore = defineStore('texas_holdem', {
       on('error', (msg: string | { message?: string }) => {
         const text = typeof msg === 'string' ? msg : (msg.message || '未知错误');
         this.addMessage({ message: `[系统] ${text}` });
+        showErrorFeedback(msg, '未知错误');
       });
 
       // 房间更新 - 使用Room数据结构中的正确字段
@@ -437,10 +442,39 @@ export const useTexasHoldemStore = defineStore('texas_holdem', {
       }, 1000);
     },
 
-    // 延长时间 - 使用game_action统一格式
+    // 所有德州玩法操作共用一个房间级在途锁。快捷区和完整操作条会同时挂载，
+    // 若各自只做局部 loading，双击或跨组件点击仍可能向 Worker 排入两个行动。
+    async sendGameAction(
+      actionType: string,
+      actionData: Record<string, any> = {},
+      actionKey = actionType
+    ): Promise<boolean> {
+      if (this.pendingActionKey) {
+        showInfoFeedback('上一项操作正在处理中，请稍候');
+        return false;
+      }
+
+      const requestVersion = ++this.actionRequestVersion;
+      this.pendingActionKey = actionKey;
+      try {
+        return await requestGameActionWithFeedback(
+          this.socket,
+          this.currentRoom || undefined,
+          this.playerId,
+          actionType,
+          actionData,
+          { errorFallback: '德州扑克操作失败' }
+        );
+      } finally {
+        if (this.actionRequestVersion === requestVersion) {
+          this.pendingActionKey = '';
+        }
+      }
+    },
+
+    // 延长时间 - 使用带回执的game_action统一格式
     extendTime() {
-      const mainStore = useMainStore();
-      emitGameAction(mainStore.socket, this.currentRoom || undefined, this.playerId, 'extendTime', {});
+      return this.sendGameAction('extendTime', {}, 'extendTime');
     },
 
     // 重置游戏状态
@@ -480,6 +514,8 @@ export const useTexasHoldemStore = defineStore('texas_holdem', {
     // Socket 那样断开；同时保留 localStorage 会话，以便牌局中离开后仍可凭
     // sessionToken 恢复被 Worker 保留的离线座位。
     detachFromRoom() {
+      this.actionRequestVersion += 1;
+      this.pendingActionKey = '';
       this.removeSocketListeners();
       this.resetGameState();
       this.messages = [];
