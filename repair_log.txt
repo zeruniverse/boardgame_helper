@@ -3176,3 +3176,38 @@ Commit: fix(round20): 修复跨局身份残留并统一钟楼私聊交互
   - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts 检查，仅有正常的可选依赖提示。
   - 正式 npm run build 已在最终源码上执行。当前附件内 node_modules 为不完整空目录集合，backend tsc 报缺失 body-parser/connect/cors/express/node/uuid/ws 等 package.json 已声明依赖的类型定义并中止，未进入 frontend vue-tsc/Vite；这不等同于上述 backend strict 隔离编译、六 Worker 运行烟雾或源码静态检查失败。完整 npm ci、正式 backend tsc、frontend vue-tsc/Vite、Docker 镜像和实际部署仍需在依赖源正常的本地或 CI 最终确认。
 备注: 本轮未删除文件，未创建根目录 src/；修复包只包含上述修改/新增文件与更新后的 repair_log.txt，可按项目相对路径直接覆盖。
+
+=== 当前会话第 28 轮修复记录 ===
+时间: 2026-08-09 18:37:50 UTC
+Commit: fix(round28): 修复钟楼能力与遗言票状态并补强操作反馈
+修改/新增文件:
+  - backend/src/workers/botcWorker.ts
+  - frontend/src/components/BOTCActionPanel.vue
+  - frontend/src/components/BOTCRoom.vue
+  - frontend/src/components/Lobby.vue
+  - frontend/src/components/OnuWerewolfActionPanel.vue
+  - frontend/src/components/OnuWerewolfRoom.vue
+  - repair_log.txt
+删除文件: 无
+构建测试: 部分通过（backend/src 全部 35 个 TypeScript 文件使用 strict/noEmit 与隔离 CommonJS 配置编译通过；backend/src + frontend/src 当前 95 个 TypeScript/Vue script 单元解析通过；436 项本轮结构、状态、目录、JSON/Vue 和本地导入专项断言通过；六个实际游戏 Worker 使用最终隔离编译产物完成 prepare_room 并明确拒绝未知任务；BOTC Slayer/Artist 权威 dayAbilityUsed 运行回归与 package-lock 依赖树检查通过。正式 npm run build 已在最终源码上再次执行，但附件中的 node_modules 是此前安装失败后的不完整目录，backend tsc 因缺失 body-parser/connect/cors/express/node/uuid/ws 等已声明类型目录中止，未进入 frontend vue-tsc/Vite；此前 npm ci 又被当前内部 npm 源对锁定的 typescript-5.8.3.tgz 返回 404 阻塞，因此完整生产构建和直接部署仍需在依赖源正常的本地或 CI 执行 npm ci && npm run build 终验）
+本轮修复:
+  - 修复血染钟楼杀手与艺术家白天一次性能力在当前页面、刷新和重连之间的状态不一致。Worker 现在把 No ability 标记转换为 roleAssigned.abilityState.dayAbilityUsed，并在能力成功消耗后立即补发私密权威快照；前端同时读取该状态，不再只依赖本地临时变量。
+  - 收敛 BOTC 夜间行动、白天能力和死亡触发能力的提交竞态。操作面板新增提交中禁用、加载/等待提示和请求代际；只有 Controller/Worker 的可靠 acknowledgement 返回 success=true 后才进入完成态，规则拒绝、断线或超时后仍可修改并重试，阶段/身份/提示切换会使迟到回调失效。
+  - 修复血染钟楼死亡玩家遗言票界面与后端规则不一致。当前死亡玩家只在 canVote=true 时可对本次提名投票；遗言票已用完会明确提示。未投票列表现包含所有仍有投票资格的存活玩家和死亡玩家，并为后者标注“遗言票”，不再错误地把可投票的死亡玩家排除。
+  - 修复一夜狼人技能、跳过技能和跳过讨论的乐观成功状态。按钮现在区分“使用技能/跳过技能”的具体提交中状态，仅在可靠回执成功后显示已提交或锁定跳过讨论；失败后自动解除提交态并保留重试，角色/阶段变化会作废迟到回调。
+  - BOTCRoom 与 OnuWerewolfRoom 现在等待 Store 的可靠动作 Promise，并把成功结果回传操作面板，保持前端显示与 Worker/Controller 实际处理结果一致。
+  - 修复大厅重复打开创建房间对话框时 allowPrivateChat 没有恢复默认值的问题；创建表单初始化字段与重置字段再次保持一致，避免上一次房间的私聊选项意外带入下一次创建。
+审查结果/本轮未改动重点:
+  - 本轮结合 repair_log 既有记录继续检查 backend/src 与 frontend/src 当前全部 96 个源码/样式/资源文件，重点复核六游戏 Worker 的准备入口和未知任务拒绝、BOTC 白天能力/提名投票/私密状态同步、一夜狼人技能与讨论阶段操作、六套 Store/Room 的可靠 acknowledgement 链路，以及创建房间配置重置。当前最重要且可低风险确定修复的问题集中在前端乐观完成态、遗言票可见性和 BOTC 一次性能力权威状态，因此本批次未重写其他游戏的核心规则状态机。
+  - 狼人杀、杀人游戏、一夜狼人、阿瓦隆、血染钟楼、德州扑克六个 Worker 的合法 prepare_room 与未知任务拒绝均使用本轮最终 backend 隔离产物通过；本轮没有发现优先级高于上述前端/同步问题、且适合当前批次确定落地的新核心规则阻断项。
+  - 血染钟楼仍保留前序记录中需要扩展状态模型或真人说书人逐次裁决 UI 才能完整覆盖的架构级边界：特殊自定义夜序下 Pit-Hag 创建 Demon 后无法安全逆向更早已经落地并触发被动的死亡；Recluse/Spy registration 缺逐次人工裁决界面；自由文本和多重效果抵消下 Mathematician 极端统计缺统一逐次最终基准审计。本轮没有用近似逻辑强行覆盖。
+  - 项目根目录不存在 src/；所有后端源码修改仅位于 backend/src/，所有前端源码修改仅位于 frontend/src/，原有目录结构保持不变。
+验证:
+  - 全量语法/结构检查通过：95 个 TypeScript/Vue script 解析单元无错误；31 个 Vue SFC 的 template/script/style 块结构平衡；9 个 JSON/JSONC 配置可解析；176 次相对本地 import/require 均能解析到项目文件；未发现根目录 src/ 或越界源码修改。
+  - 本轮 436 项专项断言通过，覆盖创建表单初始化/重置键集合、allowPrivateChat 默认恢复、BOTC dayAbilityUsed 权威快照与双能力即时补发、三类 BOTC 操作只在成功回执后完成、死亡玩家 canVote/遗言票列表、ONU 技能/跳过讨论回执状态、Room 到 Store 的 Promise 回传及修改文件目录约束。
+  - backend/src 全部 35 个 TypeScript 文件使用全局 TypeScript 5.8.3、strict/noEmit、真实 Node 类型与项目外部声明桩通过检查，并成功隔离编译为 CommonJS 运行产物。
+  - 六个实际 Worker 使用最终隔离产物完成合法 prepare_room，并确认未知任务返回 success=false：狼人杀、杀人游戏、一夜狼人、阿瓦隆、血染钟楼、德州扑克全部通过。
+  - BOTC 权威能力状态专项运行回归确认：Slayer/Artist 未使用时 dayAbilityUsed=false，存在 No ability 标记时为 true；非该两角色即使存在同名 reminder 也不会误报。
+  - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts 检查，仅有正常可选依赖提示。
+  - 正式 npm run build 已在最终源码上执行。当前 node_modules 不完整，backend tsc 因缺少 package.json 已声明依赖的类型目录而中止，前端 vue-tsc/Vite 未进入执行；此前 npm ci 被内部镜像缺失锁定的 typescript-5.8.3.tgz 阻塞。因此本轮不能声称完整生产构建已在此容器通过，仍需在依赖可用的本地或 CI 最终确认。
+备注: 本轮未删除文件，未创建根目录 src/；修复包只包含上述修改/新增文件与更新后的 repair_log.txt，可按项目相对路径直接覆盖。

@@ -437,13 +437,20 @@
         </div>
         
         <div class="skill-actions">
-          <el-button type="primary" @click="executeSkill" :disabled="!canExecuteSkill">
+          <el-button
+            type="primary"
+            @click="executeSkill"
+            :loading="skillSubmittingAction === 'use'"
+            :disabled="!canExecuteSkill || skillSubmittingAction !== null"
+          >
             使用技能
           </el-button>
           <el-button
             v-if="canSkipSkill"
             type="info"
             @click="skipSkill"
+            :loading="skillSubmittingAction === 'skip'"
+            :disabled="skillSubmittingAction !== null"
             class="skip-button"
           >
             跳过技能
@@ -469,9 +476,10 @@
         <el-button 
           type="warning"
           @click="skipDiscussion"
-          :disabled="hasSkippedDiscussion"
+          :loading="discussionSkipSubmitting"
+          :disabled="hasSkippedDiscussion || discussionSkipSubmitting"
         >
-          {{ hasSkippedDiscussion ? '已申请跳过讨论' : '跳过讨论' }}
+          {{ hasSkippedDiscussion ? '已申请跳过讨论' : discussionSkipSubmitting ? '正在提交...' : '跳过讨论' }}
         </el-button>
         <div v-if="skipDiscussionCount > 0" class="skip-info">
           {{ skipDiscussionCount }}/{{ skipDiscussionTotal }} 人同意跳过讨论
@@ -677,7 +685,11 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
-  'game-action': [actionType: string, actionData?: any];
+  'game-action': [
+    actionType: string,
+    actionData?: any,
+    onResult?: (success: boolean) => void
+  ];
 }>();
 
 const countRoleIn = (roles: OnuWerewolfRole[], role: OnuWerewolfRole) => roles.filter(r => r === role).length;
@@ -686,6 +698,10 @@ const countRoleIn = (roles: OnuWerewolfRole[], role: OnuWerewolfRole) => roles.f
 const selectedRoles = ref<OnuWerewolfRole[]>([]);
 const allowRoleReveal = ref(false);
 const hasSkippedDiscussion = ref(false);
+const skillSubmittingAction = ref<'use' | 'skip' | null>(null);
+const discussionSkipSubmitting = ref(false);
+let skillRequestVersion = 0;
+let discussionSkipRequestVersion = 0;
 
 // 技能选择状态 (H1 fix)
 const selectedPlayer = ref<number | undefined>(undefined);
@@ -1003,14 +1019,26 @@ const unready = () => emit('game-action', 'unready');
 const startGame = () => emit('game-action', 'startGame');
 
 const executeSkill = () => {
+  if (skillSubmittingAction.value !== null || !canExecuteSkill.value) return;
   const actionData = buildSkillSelection();
-  emit('game-action', 'use_skill', actionData);
-  skillResult.value = '技能已使用，等待结果...';
+  const requestVersion = ++skillRequestVersion;
+  skillSubmittingAction.value = 'use';
+  emit('game-action', 'use_skill', actionData, (success) => {
+    if (requestVersion !== skillRequestVersion) return;
+    skillSubmittingAction.value = null;
+    skillResult.value = success ? '技能已提交，等待结果...' : '';
+  });
 };
 
 const skipSkill = () => {
-  emit('game-action', 'skip_skill');
-  skillResult.value = '';
+  if (skillSubmittingAction.value !== null) return;
+  const requestVersion = ++skillRequestVersion;
+  skillSubmittingAction.value = 'skip';
+  emit('game-action', 'skip_skill', undefined, (success) => {
+    if (requestVersion !== skillRequestVersion) return;
+    skillSubmittingAction.value = null;
+    if (success) skillResult.value = '';
+  });
 };
 
 const skipOptionalLoneWolfPeek = () => {
@@ -1033,8 +1061,14 @@ const vote = (targetSeat: number) => {
 };
 
 const skipDiscussion = () => {
-  emit('game-action', 'skip_discussion');
-  hasSkippedDiscussion.value = true;
+  if (hasSkippedDiscussion.value || discussionSkipSubmitting.value) return;
+  const requestVersion = ++discussionSkipRequestVersion;
+  discussionSkipSubmitting.value = true;
+  emit('game-action', 'skip_discussion', undefined, (success) => {
+    if (requestVersion !== discussionSkipRequestVersion) return;
+    discussionSkipSubmitting.value = false;
+    if (success) hasSkippedDiscussion.value = true;
+  });
 };
 
 // 辅助方法
@@ -1111,6 +1145,8 @@ const watchConfig = watch(() => props.gameState?.config, (newConfig) => {
 
 // 重置技能选择状态当角色变化时
 const watchRole = watch(() => activeRole.value, () => {
+  skillRequestVersion++;
+  skillSubmittingAction.value = null;
   selectedPlayer.value = undefined;
   selectedPlayer1.value = undefined;
   selectedPlayer2.value = undefined;
@@ -1149,6 +1185,8 @@ const watchWitchCardPosition = watch(
 );
 
 const watchDiscussionPhase = watch(isDiscussionPhase, (isOpen) => {
+  discussionSkipRequestVersion++;
+  discussionSkipSubmitting.value = false;
   if (isOpen) hasSkippedDiscussion.value = false;
 });
 

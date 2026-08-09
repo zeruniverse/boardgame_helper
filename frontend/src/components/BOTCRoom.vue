@@ -362,9 +362,21 @@ const getVoteProgressColor = () => {
   return '#67c23a'
 }
 
-// 处理游戏操作 - 使用store的方法
-const handleGameAction = (action: any) => {
-  store.sendGameAction(action.type, action.data)
+interface BOTCGameActionRequest {
+  type: string
+  data: any
+  onResult?: (success: boolean) => void
+}
+
+// 处理游戏操作，并把 Controller/Worker 的可靠 acknowledgement 交还给面板。
+// 面板只在 success=true 后进入完成态，规则拒绝或超时后仍可修改并重试。
+const handleGameAction = async (action: BOTCGameActionRequest) => {
+  let success = false
+  try {
+    success = await store.sendGameAction(action.type, action.data)
+  } finally {
+    action.onResult?.(success)
+  }
 }
 
 // 处理说书人回复玩家问题

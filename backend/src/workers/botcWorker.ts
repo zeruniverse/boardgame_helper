@@ -267,6 +267,8 @@ export class BOTCWorker extends BaseGameWorker {
         poCharged: effectiveRole?.id === 'po' &&
           player.reminders.includes('Po Charged') &&
           !player.reminders.includes('Po Charged Used'),
+        dayAbilityUsed: (effectiveRole?.id === 'slayer' || effectiveRole?.id === 'artist') &&
+          player.reminders.includes('No ability'),
         ...((effectiveRole?.id === 'exorcist' || effectiveRole?.id === 'devilsadvocate')
           ? { lastNightTargetId: this.getPreviousNightTarget(player.playerId, effectiveRole.id) }
           : {})
@@ -5169,6 +5171,9 @@ export class BOTCWorker extends BaseGameWorker {
           return;
         }
         player.reminders.push('No ability'); // 标记能力已使用
+        // 立即补发私密权威状态。否则刷新/重连能恢复使用状态，但当前页面在本次
+        // 操作后仍会继续显示可用按钮，并把后续点击交给 Worker 再拒绝。
+        this.sendRoleStateToPlayer(playerId, false);
         const targetRegistration = this.getRegisteredIdentity(target);
         const registeredAsDemon = targetRegistration.team === Team.DEMON;
         const actuallyDemon = target.role?.team === Team.DEMON;
@@ -5238,6 +5243,7 @@ export class BOTCWorker extends BaseGameWorker {
         }
 
         player.reminders.push('No ability');
+        this.sendRoleStateToPlayer(playerId, false);
         this.sendStorytellerQuestion(playerId, 'yesNo', {
           question,
           actualAnswer: this.inferArtistActualAnswer(question)

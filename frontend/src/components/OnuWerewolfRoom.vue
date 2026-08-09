@@ -145,8 +145,17 @@ const toggleRoomLock = () => {
   store.sendGameAction('toggleRoomLock', {});
 };
 
-const handleGameAction = (actionType: string, actionData?: any) => {
-  store.sendGameAction(actionType, actionData);
+const handleGameAction = async (
+  actionType: string,
+  actionData?: any,
+  onResult?: (success: boolean) => void
+) => {
+  let success = false;
+  try {
+    success = await store.sendGameAction(actionType, actionData);
+  } finally {
+    onResult?.(success);
+  }
 };
 
 // 转让房主

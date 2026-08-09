@@ -41,13 +41,14 @@
           v-for="target in deathAbilityTargets"
           :key="target.playerId"
           @click="useDeathAbility(target.playerId)"
-          :disabled="deathAbilityCompleted"
+          :disabled="deathAbilityCompleted || deathAbilitySubmitting"
           size="small"
         >
           {{ displayPlayerNameById(target.playerId, target.playerName) }}
         </el-button>
       </div>
-      <p v-if="deathAbilityCompleted" class="completed-status">死亡能力已提交</p>
+      <p v-if="deathAbilitySubmitting" class="pending-status">正在提交死亡能力...</p>
+      <p v-else-if="deathAbilityCompleted" class="completed-status">死亡能力已提交</p>
     </el-card>
 
     <!-- 游戏等待阶段 -->
@@ -87,7 +88,7 @@
             v-for="target in dayAbilityTargets"
             :key="target.id"
             @click="selectDayTarget(target.id)"
-            :disabled="dayAbilityCompleted"
+            :disabled="dayAbilityFinished || dayAbilitySubmitting"
             :type="selectedDayTarget === target.id ? 'primary' : 'default'"
             size="small"
           >
@@ -96,22 +97,24 @@
         </div>
 
         <el-input
-          v-if="playerRole?.id === 'artist' && !dayAbilityCompleted"
+          v-if="playerRole?.id === 'artist' && !dayAbilityFinished"
           v-model="dayAbilityInput"
+          :disabled="dayAbilitySubmitting"
           placeholder="填写你的艺术家是/否问题"
           class="day-ability-input"
           size="small"
         />
 
         <el-button
-          v-if="!dayAbilityCompleted"
+          v-if="!dayAbilityFinished"
           type="primary"
-          :disabled="!canConfirmDayAbility"
+          :loading="dayAbilitySubmitting"
+          :disabled="!canConfirmDayAbility || dayAbilitySubmitting"
           @click="submitDayAbility"
         >
           使用能力
         </el-button>
-        <p v-else class="completed-status">白天能力已提交</p>
+        <p v-else class="completed-status">白天能力已使用</p>
       </el-card>
 
       <!-- 提名区域 -->
@@ -149,21 +152,22 @@
               <el-button 
                 type="danger" 
                 @click="vote('for')"
-                :disabled="hasVoted"
+                :disabled="hasVoted || !canVoteCurrentNomination"
               >
                 赞成处死 ({{ currentNomination.votesFor || 0 }})
               </el-button>
               <el-button 
                 type="info" 
                 @click="vote('abstain')"
-                :disabled="hasVoted"
+                :disabled="hasVoted || !canVoteCurrentNomination"
               >
                 弃权
               </el-button>
             </div>
             <p v-if="hasVoted" class="vote-status">你已投票</p>
-            <div v-if="currentNomination.votes && currentNomination.votes.length > 0" class="voting-players">
-              <p class="hint-text">未投票的存活玩家:</p>
+            <p v-else-if="currentPlayer?.isDead && !canVoteCurrentNomination" class="hint-text">你的遗言票已用完，本次提名不能再投票</p>
+            <div class="voting-players">
+              <p class="hint-text">未投票的可投票玩家:</p>
               <div class="unvoted-players">
                 <el-tag 
                   v-for="player in getUnvotedPlayers()" 
@@ -171,7 +175,7 @@
                   type="warning"
                   size="small"
                 >
-                  {{ displayPlayer(player) }}
+                  {{ displayPlayer(player) }}{{ player.isDead ? '（遗言票）' : '' }}
                 </el-tag>
                 <span v-if="getUnvotedPlayers().length === 0" class="all-voted">全部已投票</span>
               </div>
@@ -338,7 +342,7 @@
                 v-for="target in availableTargets"
                 :key="target.id"
                 @click="selectNightTarget(target.id)"
-                :disabled="nightActionCompleted"
+                :disabled="nightActionCompleted || nightActionSubmitting"
                 :type="isNightTargetSelected(target.id) ? 'primary' : 'default'"
                 size="small"
               >
@@ -350,6 +354,7 @@
             <el-input
               v-if="needsExtraInput && !nightActionCompleted"
               v-model="nightExtraInput"
+              :disabled="nightActionSubmitting"
               :placeholder="extraInputPlaceholder"
               class="night-extra-input"
               size="small"
@@ -364,12 +369,14 @@
               v-if="!nightActionCompleted && showNightConfirmButton"
               @click="confirmNightAction"
               type="primary"
-              :disabled="!canConfirmNightAction"
+              :loading="nightActionSubmitting"
+              :disabled="!canConfirmNightAction || nightActionSubmitting"
             >
               确认
             </el-button>
             
-            <p v-if="nightActionCompleted" class="completed-status">行动已完成</p>
+            <p v-if="nightActionSubmitting" class="pending-status">正在提交行动...</p>
+            <p v-else-if="nightActionCompleted" class="completed-status">行动已完成</p>
           </div>
           
           <div v-else class="waiting-night">
@@ -578,8 +585,14 @@ interface Props {
   aiStorytellerMessages?: string[]
 }
 
+interface GameActionRequest {
+  type: string
+  data: any
+  onResult?: (success: boolean) => void
+}
+
 interface Emits {
-  (e: 'game-action', action: { type: string, data: any }): void
+  (e: 'game-action', action: GameActionRequest): void
   (e: 'storyteller-response', response: { playerId: string, answer: string }): void
 }
 
@@ -596,8 +609,14 @@ const props = withDefaults(defineProps<Props>(), {
 const emit = defineEmits<Emits>()
 
 const nightActionCompleted = ref(false)
+const nightActionSubmitting = ref(false)
 const dayAbilityCompleted = ref(false)
+const dayAbilitySubmitting = ref(false)
 const deathAbilityCompleted = ref(false)
+const deathAbilitySubmitting = ref(false)
+let nightActionRequestVersion = 0
+let dayAbilityRequestVersion = 0
+let deathAbilityRequestVersion = 0
 const selectedNightTargets = ref<string[]>([])
 const selectedDayTarget = ref('')
 const selectedBarberSwapTargets = ref<string[]>([])
@@ -609,13 +628,17 @@ const endDayTimeLeft = ref(60)
 let endDayTimerInterval: ReturnType<typeof setInterval> | null = null
 
 function resetNightActionInput() {
+  nightActionRequestVersion++
   nightActionCompleted.value = false
+  nightActionSubmitting.value = false
   selectedNightTargets.value = []
   nightExtraInput.value = ''
 }
 
 function resetDayAbilityInput() {
+  dayAbilityRequestVersion++
   dayAbilityCompleted.value = false
+  dayAbilitySubmitting.value = false
   selectedDayTarget.value = ''
   dayAbilityInput.value = ''
 }
@@ -633,9 +656,11 @@ const watchRole = watch(() => props.playerRole?.id, () => {
   resetDayAbilityInput()
 })
 
-const watchDeathAbility = watch(() => props.nightInfo, (info) => {
-  if (info?.isDeathAbilityPrompt) {
+const watchDeathAbility = watch(() => props.nightInfo, (info, previousInfo) => {
+  if (info?.isDeathAbilityPrompt && info !== previousInfo) {
+    deathAbilityRequestVersion++
     deathAbilityCompleted.value = false
+    deathAbilitySubmitting.value = false
   }
 })
 
@@ -654,6 +679,8 @@ const watchPitHagArbitraryDeaths = watch(
 
 const watchNightActionConfirmation = watch(() => props.nightInfo, (info) => {
   if (info?.playerId === props.currentUserId && info?.actionType) {
+    nightActionRequestVersion++
+    nightActionSubmitting.value = false
     nightActionCompleted.value = true
   }
 })
@@ -761,6 +788,16 @@ const hasVoted = computed(() => {
   return currentNomination.value.votes?.some((v: any) => v.playerId === props.currentUserId)
 })
 
+const currentPlayer = computed(() => {
+  if (!props.currentUserId) return null
+  return props.gameState?.players?.find((player: any) => player.id === props.currentUserId) || null
+})
+
+const canVoteCurrentNomination = computed(() => {
+  if (!currentNomination.value || hasVoted.value || !currentPlayer.value) return false
+  return !currentPlayer.value.isDead || currentPlayer.value.canVote === true
+})
+
 const nominationTargets = computed(() => {
   // Dead players may still be nominated/executed in BOTC; only the nominator
   // must be alive.  Exclude just the current player because nominations are
@@ -780,11 +817,16 @@ const canUseDayAbility = computed(() => {
   return Boolean(me && !me.isDead)
 })
 
+const dayAbilityFinished = computed(() => {
+  return dayAbilityCompleted.value || props.playerRole?.abilityState?.dayAbilityUsed === true
+})
+
 const dayAbilityTargets = computed(() => {
   return props.gameState?.players || []
 })
 
 const canConfirmDayAbility = computed(() => {
+  if (dayAbilityFinished.value || dayAbilitySubmitting.value) return false
   if (props.playerRole?.id === 'slayer') return Boolean(selectedDayTarget.value)
   if (props.playerRole?.id === 'artist') return dayAbilityInput.value.trim().length > 0
   return false
@@ -997,12 +1039,12 @@ const nominate = (targetId: string) => {
 }
 
 const selectDayTarget = (targetId: string) => {
-  if (dayAbilityCompleted.value) return
+  if (dayAbilityFinished.value || dayAbilitySubmitting.value) return
   selectedDayTarget.value = targetId
 }
 
 const submitDayAbility = () => {
-  if (!canConfirmDayAbility.value) return
+  if (!canConfirmDayAbility.value || dayAbilitySubmitting.value) return
   const roleId = props.playerRole?.id || ''
   const data: any = {
     abilityType: roleId
@@ -1010,10 +1052,16 @@ const submitDayAbility = () => {
   if (roleId === 'slayer') data.targetId = selectedDayTarget.value
   if (roleId === 'artist') data.question = dayAbilityInput.value.trim()
 
-  dayAbilityCompleted.value = true
+  const requestVersion = ++dayAbilityRequestVersion
+  dayAbilitySubmitting.value = true
   emit('game-action', {
     type: 'dayAbility',
-    data
+    data,
+    onResult: (success) => {
+      if (requestVersion !== dayAbilityRequestVersion) return
+      dayAbilitySubmitting.value = false
+      if (success) dayAbilityCompleted.value = true
+    }
   })
 }
 
@@ -1075,8 +1123,9 @@ const stopEndDayTimer = () => {
 const getUnvotedPlayers = () => {
   if (!currentNomination.value || !props.gameState?.players) return []
   const votedIds = new Set(currentNomination.value.votes?.map((v: any) => v.playerId) || [])
-  return props.gameState.players.filter((p: any) => {
-    return !p.isDead && !votedIds.has(p.id)
+  return props.gameState.players.filter((player: any) => {
+    const isEligible = !player.isDead || player.canVote === true
+    return isEligible && !votedIds.has(player.id)
   })
 }
 
@@ -1105,15 +1154,24 @@ const buildNightActionData = () => {
 }
 
 const submitNightAction = () => {
-  if (!canConfirmNightAction.value) return
+  if (!canConfirmNightAction.value || nightActionSubmitting.value) return
+  const requestVersion = ++nightActionRequestVersion
+  nightActionSubmitting.value = true
   emit('game-action', {
     type: 'nightAction',
-    data: buildNightActionData()
+    data: buildNightActionData(),
+    onResult: (success) => {
+      if (requestVersion !== nightActionRequestVersion) return
+      nightActionSubmitting.value = false
+      // acknowledgement 由 Controller/Worker 在规则校验完成后返回，成功即可
+      // 锁定本次行动；随后到达的 nightActionConfirmed/nightInfo 会继续补充结果。
+      nightActionCompleted.value = success
+    }
   })
 }
 
 const selectNightTarget = (targetId: string) => {
-  if (nightActionCompleted.value) return
+  if (nightActionCompleted.value || nightActionSubmitting.value) return
   const existingIndex = selectedNightTargets.value.indexOf(targetId)
   if (existingIndex >= 0) {
     selectedNightTargets.value.splice(existingIndex, 1)
@@ -1134,10 +1192,17 @@ const confirmNightAction = () => {
 }
 
 const useDeathAbility = (targetId: string) => {
-  deathAbilityCompleted.value = true
+  if (deathAbilityCompleted.value || deathAbilitySubmitting.value) return
+  const requestVersion = ++deathAbilityRequestVersion
+  deathAbilitySubmitting.value = true
   emit('game-action', {
     type: 'deathAbilityAction',
-    data: { targetId }
+    data: { targetId },
+    onResult: (success) => {
+      if (requestVersion !== deathAbilityRequestVersion) return
+      deathAbilitySubmitting.value = false
+      if (success) deathAbilityCompleted.value = true
+    }
   })
 }
 
@@ -1486,6 +1551,11 @@ const formatNightInfo = (info: any) => formatBOTCNightInfo(
   justify-content: center;
   min-height: 80px;
   color: var(--app-text-secondary);
+}
+
+.pending-status {
+  color: var(--app-text-secondary);
+  font-weight: 600;
 }
 
 .completed-status {

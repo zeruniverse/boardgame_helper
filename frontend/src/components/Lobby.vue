@@ -974,6 +974,7 @@ function showCreateRoomDialog() {
   Object.assign(createRoomForm.value, {
     maxPlayers: 8,
     allowSystemDealing: true,
+    allowPrivateChat: true,
     enableLady: false,
     nickname: '',
     gameType: '',
