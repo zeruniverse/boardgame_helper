@@ -10,11 +10,12 @@
       <el-input 
         v-model="input" 
         @keyup.enter="send" 
-        placeholder="输入消息" 
+        :placeholder="inputPlaceholder" 
         :maxlength="MAX_CHAT_LENGTH"
+        :disabled="sending || !props.connected"
         style="flex:1; margin-right:8px;" 
       />
-      <el-button type="primary" @click="send" :disabled="!canSend">发送</el-button>
+      <el-button type="primary" @click="send" :disabled="!canSend" :loading="sending">发送</el-button>
     </div>
   </div>
 </template>
@@ -23,7 +24,7 @@
 import { ref, nextTick, watch, computed } from 'vue';
 import { MAX_CHAT_LENGTH } from '../utils/messages';
 import { safeHtml } from '../utils/html';
-import { emitChatAction } from '../utils/gameSocket';
+import { useChatActionFeedback } from '../utils/chatActionFeedback';
 import { formatPlayerNameById } from '../utils/playerName';
 
 interface Props {
@@ -32,6 +33,7 @@ interface Props {
   nickname?: string
   playerId?: string
   socket?: any
+  connected?: boolean
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -39,15 +41,29 @@ const props = withDefaults(defineProps<Props>(), {
   roomId: '',
   nickname: '',
   playerId: '',
-  socket: null
+  socket: null,
+  connected: false
 })
 
 const input = ref('');
+const { sending, sendChat } = useChatActionFeedback(input);
 const chatContainer = ref<HTMLElement>();
 
 // 检查是否可以发送消息
 const canSend = computed(() => {
-  return props.socket && props.roomId && props.nickname && input.value.trim()
+  return Boolean(
+    props.connected &&
+    props.roomId &&
+    props.playerId &&
+    input.value.trim() &&
+    !sending.value
+  )
+})
+
+const inputPlaceholder = computed(() => {
+  return !props.connected
+    ? '连接已断开，请等待重连...'
+    : '输入公共聊天消息...'
 })
 
 // 滚动到底部
@@ -172,12 +188,16 @@ watch(
   }
 );
 
-// 使用game_action统一格式发送聊天消息
-function send() {
-  if (canSend.value) {
-    emitChatAction(props.socket, props.roomId, undefined, input.value.trim());
-    input.value = '';
-  }
+// 使用统一 game_action acknowledgement 发送聊天消息
+async function send() {
+  if (!canSend.value) return
+
+  await sendChat({
+    socket: props.socket,
+    roomId: props.roomId,
+    playerId: props.playerId,
+    channel: 'all'
+  })
 }
 </script>
 

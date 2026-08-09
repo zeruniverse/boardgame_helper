@@ -222,6 +222,30 @@ export function emitGameAction(
   return true;
 }
 
+export function emitChatActionRequest<TResponse extends SocketAckResponse = SocketAckResponse>(
+  socket: TimeoutCapableSocket | null | undefined,
+  roomId: string | undefined,
+  playerId: string | undefined,
+  message: string,
+  channel = 'all',
+  targetId?: string,
+  options: SocketRequestOptions = {}
+): Promise<TResponse> {
+  const trimmed = message.trim();
+  if (!trimmed) {
+    return Promise.reject(new Error(options.failureMessage || '消息不能为空'));
+  }
+
+  return emitGameActionRequest<TResponse>(
+    socket,
+    roomId,
+    playerId,
+    'chat_message',
+    { message: trimmed, channel, targetId },
+    options
+  );
+}
+
 export function emitChatAction(
   socket: SocketEmitter | null | undefined,
   roomId: string | undefined,

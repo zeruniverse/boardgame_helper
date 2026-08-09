@@ -11,11 +11,12 @@
         <el-input
           v-model="input"
           @keyup.enter="send"
-          placeholder="输入公聊消息"
+          :placeholder="inputPlaceholder"
           :maxlength="MAX_CHAT_LENGTH"
+          :disabled="!canSpeak || sending || !store.connected"
           style="flex:1; margin-right:8px;"
         />
-        <el-button type="primary" @click="send" :disabled="!canSend">发送</el-button>
+        <el-button type="primary" @click="send" :disabled="!canSend" :loading="sending">发送</el-button>
       </div>
     </div>
   </div>
@@ -27,6 +28,7 @@ import { MAX_CHAT_LENGTH } from '../utils/messages';
 import { safeHtml } from '../utils/html';
 import { formatPlayerNameById } from '../utils/playerName';
 import { useMafiaGameStore } from '../store/mafia';
+import { useChatActionFeedback } from '../utils/chatActionFeedback';
 
 interface Props {
   messages: any[]
@@ -51,23 +53,34 @@ const props = withDefaults(defineProps<Props>(), {
 const store = useMafiaGameStore();
 
 const input = ref('');
+const { sending, sendChat } = useChatActionFeedback(input);
 const chatContainer = ref<HTMLElement>();
 
+const playerId = computed(() => props.currentUserId || store.currentUserId)
+
 const isMuted = computed(() => {
-  return !!props.currentUserId && props.gameState?.muteList?.includes(props.currentUserId)
+  return Boolean(playerId.value && props.gameState?.muteList?.includes(playerId.value))
 })
 
-// 检查玩家是否死亡 - 使用currentUserId而非nickname
-const isPlayerAlive = computed(() => {
-  if (!props.gameState || !props.currentUserId) return true
-  const player = props.gameState.players?.[props.currentUserId] as any
-  return player ? player.alive !== false : true
-})
+// Worker 会把当前不能发言的玩家放进 muteList。直接复用服务端权威结果，
+// 避免游戏结束后仍因本地 alive=false 被错误拦截，也避免非当前遗言玩家误发。
+const canSpeak = computed(() => Boolean(playerId.value) && !isMuted.value)
 
-// 检查是否可以发送消息 - 使用 store.socket 替代 props.socket
-// 因为父组件未传递 socket prop
 const canSend = computed(() => {
-  return !!(store.socket?.connected && props.roomId && props.nickname && input.value.trim() && !isMuted.value)
+  return Boolean(
+    store.connected &&
+    props.roomId &&
+    playerId.value &&
+    input.value.trim() &&
+    canSpeak.value &&
+    !sending.value
+  )
+})
+
+const inputPlaceholder = computed(() => {
+  if (!store.connected) return '连接已断开，请等待重连...'
+  if (isMuted.value) return '当前阶段无法发言...'
+  return '输入公共聊天消息...'
 })
 
 // 滚动到底部
@@ -150,18 +163,15 @@ watch(
   }
 );
 
-function send() {
-  if (canSend.value && input.value.trim()) {
-    // 检查死亡玩家是否能发言
-    if (!isPlayerAlive.value && props.gameState?.status !== 'LAST_WORD' && props.gameState?.status !== 'LAST_WORD_DAYTIME') {
-      return; // 死亡玩家在非遗言阶段不能发言
-    }
-    
-    // 使用store的统一消息发送方法
-    store.sendMessage(input.value.trim(), 'all');
-    
-    input.value = '';
-  }
+async function send() {
+  if (!canSend.value) return
+
+  await sendChat({
+    socket: store.socket,
+    roomId: props.roomId,
+    playerId: playerId.value,
+    channel: 'all'
+  })
 }
 </script>
 

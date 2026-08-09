@@ -2796,3 +2796,48 @@ Commit: fix(round5): 统一游戏操作回执并收敛德州行动判定
   - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts 校验，仅有可选原生依赖提示。
   - 正式 npm ci --ignore-scripts --prefer-offline --no-audit --no-fund 尝试仍被当前内部 npm 镜像缺失锁定 tarball 的 404 阻塞。正式 npm run build 已在最终源码上执行；因为没有完整 node_modules，backend tsc 在 Node 内建类型及 Express/CORS/Socket.IO/UUID 等 package.json 已声明依赖解析阶段中止，未进入 frontend vue-tsc/Vite。构建生成的临时 backend/dist 已清理；完整生产构建与“可直接部署”仍需在依赖可正常安装的本地或 CI 最终确认。
 备注: 本轮未删除文件，未创建根目录 src/；修复包只包含本轮修改/新增文件与更新后的 repair_log.txt，可按相对路径直接覆盖。
+
+=== 当前会话第 6 轮修复记录 ===
+时间: 2026-08-09 14:11:00 UTC
+Commit: fix(round6): 统一六类游戏聊天回执与连接反馈
+修改/新增文件:
+  - frontend/src/components/AvalonChat.vue
+  - frontend/src/components/AvalonRoom.vue
+  - frontend/src/components/BOTCChat.vue
+  - frontend/src/components/BOTCRoom.vue
+  - frontend/src/components/MafiaChat.vue
+  - frontend/src/components/OnuWerewolfChat.vue
+  - frontend/src/components/OnuWerewolfRoom.vue
+  - frontend/src/components/TexasHoldemChat.vue
+  - frontend/src/components/TexasHoldemRoom.vue
+  - frontend/src/components/WerewolfChat.vue
+  - frontend/src/components/WerewolfRoom.vue
+  - frontend/src/utils/chatActionFeedback.ts（新增）
+  - frontend/src/utils/gameSocket.ts
+  - repair_log.txt
+删除文件: 无
+构建测试: 部分通过（backend/src + frontend/src 当前全部 91 个源码文件静态解析、Vue 模板/CSS/相对导入检查、backend/src 全部 35 个 TypeScript strict 编译、六游戏 Worker prepare_room 烟雾、前端聊天共享工具 strict 类型检查与回执/拒绝/重复提交/断线专项运行回归、package-lock 工作区依赖树检查均通过；正式 npm ci 仍被当前内部 npm 镜像缺失 typescript-5.8.3.tgz 的 404 阻塞，正式 npm run build 因没有完整 node_modules 在 backend 的 Node/Express/CORS/Socket.IO/UUID 依赖与类型解析阶段中止，未进入 frontend vue-tsc/Vite，因此完整生产构建与直接部署仍需在依赖镜像正常的本地或 CI 执行 npm ci && npm run build 终验）
+本轮修复:
+  - 新增 frontend/src/utils/chatActionFeedback.ts，统一六类游戏聊天输入的发送语义：同一组件一次只允许一条消息在途，等待 Controller/Worker acknowledgement 后才清空输入；服务端拒绝、断线、无效房间和 12 秒超时均保留原文并显示统一错误；组件卸载后忽略迟到回执，避免旧请求改写新页面状态。
+  - 在 gameSocket 中新增 emitChatActionRequest，复用既有 emitGameActionRequest 的 Socket.IO timeout/fallback timer、空回执校验和 success=false 处理，并统一发送 game_action/chat_message 的 playerId、userId、channel、targetId 结构。原 emitChatAction 保留兼容 Store/旧调用，不破坏现有协议。
+  - 狼人杀、阿瓦隆、一夜狼人、杀人游戏、血染钟楼和德州扑克聊天组件全部改为使用同一回执工具。旧实现中多数聊天发送后立即清空输入，Worker 规则拒绝或网络闪断时用户消息会无提示丢失；现在发送按钮统一显示 loading，输入与频道切换在请求期间禁用，只有成功 ACK 才清空，失败可直接修改并重试。
+  - 修复把 socket.connected 当作 Vue 响应式字段直接读取造成的断线/重连界面漂移。WerewolfRoom、AvalonRoom、OnuWerewolfRoom、BOTCRoom、TexasHoldemRoom 现在把各 Store 已维护的 reactive connected 显式传给聊天组件；断线后输入立即禁用并显示“连接已断开，请等待重连...”，重连后也会正确恢复。
+  - 修复杀人游戏死亡玩家在游戏结束后仍被前端本地 alive 条件永久禁言的问题。Mafia Worker 的 muteList 是发言权限权威来源，状态 OVER 时会解除全部禁言；MafiaChat 现在只依据当前 playerId 与服务端 muteList 判定，不再用过期的本地存活状态覆盖 Worker 规则，因此终局复盘聊天与后端一致，同时遗言/夜间等阶段仍由 muteList 和 Worker 双重校验。
+  - 收敛血染钟楼聊天的身份字段和 Element Plus 控件语义：将此前实际承载玩家 ID 的 nickname prop 更名为 currentUserId，私聊过滤、自身消息样式、目标排除和 game_action payload 均使用同一 ID；el-radio-button 从已弃用的 label 取值改为 value；公共/说书人/私聊频道、目标选择器和取消操作在发送期间保持一致的不可重复操作状态。
+  - 删除 WerewolfRoom、AvalonRoom、OnuWerewolfRoom 中仅负责转发 fire-and-forget 消息的局部事件处理器，聊天组件直接走共享可靠请求层，减少 Room/Chat/Store 三处重复发送逻辑。未删除任何源文件，目录结构保持不变。
+审查结果/本轮未改动重点:
+  - 本轮继续扫描 backend/src 与 frontend/src 当前全部 91 个源码文件，并结合 repair_log 既有修复重点复核 roomController、RoomThreadManager、BaseGameWorker、六个游戏 Worker、六套 Store/Room/ActionPanel/ActionBar/PlayerList/Chat 及共享 socket/session/config/random/state/messages 工具。当前最重要且适合低风险落地的问题集中在“聊天仍绕过第 5 轮已建立的可靠游戏操作回执”和“连接状态/禁言状态在前端存在事实源漂移”，因此本批次优先统一聊天交互，没有扩大为高风险状态机重写。
+  - Controller 的聊天入口继续统一校验长度、频道和血染钟楼私聊目标，再把 chat_message 送入 Worker；BaseGameWorker 会把发给当前操作者的 error/game_error/actionError/onu_error 等私有拒绝事件收敛为 task response，Controller 再返回 success=false ACK。本轮前端已完整消费这条权威链路，后端协议无需追加修改。
+  - 狼人杀继续复核狼人频道可见性、夜间公聊限制、死亡玩家禁言及终局；杀人游戏继续复核等待/夜间/白天/遗言/终局 muteList；一夜狼人继续复核等待、夜间和讨论投票阶段发言；阿瓦隆继续复核公共/邪恶频道权限；血染钟楼继续复核公共/说书人/私聊的定向投递；德州扑克继续复核等待和牌局内公共聊天。本轮未发现优先级高于上述消息丢失与状态漂移、且适合本批次安全修复的新确定性聊天规则错误。
+  - 六个游戏的核心主流程（狼人杀角色与夜序/警长/放逐，杀人游戏杀手/警察/医生/狙击手与投票，一夜狼人中心牌/夜序/最终身份/胜负，阿瓦隆任务/五次否决/刺杀/湖上夫人，德州扑克盲注/行动顺序/加注权/主边池，血染钟楼提名投票处决与夜间能力）继续结合现有实现和既有专项记录交叉复核；本轮未发现比聊天可靠性更高优先级、可在当前小批次确定落地的新阻断项。
+  - 血染钟楼仍保留 repair_log 已记录、需要更大状态模型或真人说书人逐次裁决 UI 才能完整解决的架构级边界：特殊自定义夜序下 Pit-Hag 创建 Demon 后无法安全逆向更早已真实落地并触发被动的死亡；Recluse/Spy registration 缺逐次人工裁决 UI；自由文本与多重效果抵消等 Mathematician 极端情况缺统一逐次最终基准审计。本轮没有用近似逻辑强行覆盖。
+  - 前端继续保持现有 Element Plus、Room + PlayerList + ActionPanel/ActionBar + Chat 分层。本轮没有强行把视觉结构不同的六套聊天合并成单一巨型组件，而是抽取真正一致的网络状态、ACK、超时、错误和输入保留逻辑；各游戏专有频道、消息样式与规则提示继续留在对应组件，复用边界更清晰。
+验证:
+  - backend/src + frontend/src 全量静态扫描通过：共 91 个源码文件、89 个 TypeScript/Vue script 解析单元、28 个 Vue SFC、29 个 style/CSS 单元、251 次静态本地导入解析检查；未发现 TypeScript 语法错误、Vue 标签失衡、CSS 花括号错误、真实合并冲突标记或失效本地导入。项目根目录不存在 src/，源码仍只位于 backend/src 与 frontend/src。
+  - backend/src 全部 35 个 TypeScript 文件使用 strict 模式、真实全局 Node 类型与项目目录外 Express/CORS/Socket.IO/UUID 临时声明桩完成全量编译，0 个源码类型错误；临时声明和编译产物仅位于 /mnt/data/round6_validation_backend_full，不进入修复包。
+  - 六个实际游戏 Worker 使用本轮最新隔离编译产物执行合法 prepare_room 烟雾全部通过：狼人杀、杀人游戏、血染钟楼、一夜狼人、阿瓦隆、德州扑克均能启动 Worker 并完成房间初始化。
+  - 前端 chatActionFeedback/gameSocket/uiFeedback/messages/gameSession/gameMeta 共享工具通过 strict TypeScript 编译。专项运行回归覆盖成功 ACK 后清空、Worker success=false 拒绝后保留原文并提示、发送中重复提交拦截、断线不发送并提示，全部通过。
+  - 组件/房间引用扫描确认六个活动聊天组件均只有对应房间入口；狼人杀、阿瓦隆、一夜狼人、血染钟楼、德州扑克均从 reactive Store 字段传入 connected，杀人游戏直接复用 Store reactive connected；旧 Room 层 send-message 转发已清理。
+  - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts 校验，仅有工具显示的可选依赖提示。
+  - 正式 npm ci --ignore-scripts --prefer-offline --no-audit --no-fund 已在最终源码副本执行，当前内部 npm 镜像请求 package-lock 锁定的 typescript-5.8.3.tgz 返回 404。正式 npm run build 也已执行；因为依赖安装未完成，backend tsc 在 Node 内建类型及 Express/CORS/Socket.IO/UUID 等 package.json 已声明依赖解析阶段中止，未进入 frontend vue-tsc/Vite。相同 backend/src 已通过上述全量 strict 编译和六 Worker 实际启动，前端新增共享工具已通过 strict 编译与运行回归；完整生产构建与“可直接部署”仍需在依赖可正常安装的本地或 CI 最终确认。
+备注: 本轮未删除文件，未创建根目录 src/；所有前端源码修改/新增均位于 frontend/src/，本轮没有 backend/src 源码修改；修复包只包含本轮修改/新增文件与更新后的 repair_log.txt，可按相对路径直接覆盖。

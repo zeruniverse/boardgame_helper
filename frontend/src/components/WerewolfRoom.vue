@@ -156,12 +156,12 @@
           :room-id="roomId"
           :nickname="currentUserNickname"
           :socket="store.socket as any"
+          :connected="store.connected"
           :player-role="playerSecret?.role"
           :player-team="playerSecret?.team"
           :game-state="gameState"
           :is-alive="isAlive"
           :current-user-id="currentUserId"
-          @send-message="handleSendMessage"
         />
       </el-aside>
     </el-container>
@@ -287,10 +287,6 @@ const handleKickPlayer = (playerId: string) => {
 
 const handleUpdateConfig = (config: any) => {
   store.sendGameAction('update_config', config)
-}
-
-const handleSendMessage = (message: string, channel: string) => {
-  store.sendMessage(message, channel)
 }
 
 // 返回大厅

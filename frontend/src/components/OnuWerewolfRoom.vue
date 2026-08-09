@@ -76,9 +76,9 @@
           :roomId="roomId"
           :nickname="nickname"
           :socket="store.socket as any"
+          :connected="store.connected"
           :gameState="gameState"
           :currentUserId="currentUserId"
-          @send-message="handleSendMessage"
         />
       </div>
     </div>
@@ -143,11 +143,6 @@ const toggleRoomLock = () => {
 
 const handleGameAction = (actionType: string, actionData?: any) => {
   store.sendGameAction(actionType, actionData);
-};
-
-// 发送聊天消息
-const handleSendMessage = (message: string) => {
-  store.sendMessage(message);
 };
 
 // 转让房主

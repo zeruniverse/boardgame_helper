@@ -1,7 +1,7 @@
 <template>
   <div class="avalon-chat-wrapper">
     <div v-if="canUseEvilChannel" class="chat-tabs">
-      <el-radio-group v-model="activeChannel" size="small">
+      <el-radio-group v-model="activeChannel" size="small" :disabled="sending">
         <el-radio-button value="all">公共频道</el-radio-button>
         <el-radio-button value="evil">邪恶频道</el-radio-button>
       </el-radio-group>
@@ -25,9 +25,10 @@
           @keyup.enter="send" 
           :placeholder="getInputPlaceholder()"
           :maxlength="MAX_CHAT_LENGTH"
+          :disabled="sending || !props.connected"
           style="flex:1; margin-right:8px;" 
         />
-        <el-button type="primary" @click="send" :disabled="!canSend">发送</el-button>
+        <el-button type="primary" @click="send" :disabled="!canSend" :loading="sending">发送</el-button>
       </div>
     </div>
   </div>
@@ -38,6 +39,7 @@ import { ref, nextTick, watch, computed } from 'vue';
 import { MAX_CHAT_LENGTH } from '../utils/messages';
 import { safeHtml } from '../utils/html';
 import { formatPlayerNameById } from '../utils/playerName';
+import { useChatActionFeedback } from '../utils/chatActionFeedback';
 
 interface Props {
   messages: any[]
@@ -45,14 +47,11 @@ interface Props {
   nickname?: string
   currentUserId?: string
   socket?: any
+  connected?: boolean
   playerRole?: string  // 玩家角色
   playerTeam?: string  // 玩家阵营 'blue' | 'red'
   gameState?: any      // 游戏状态
 }
-
-const emit = defineEmits<{
-  'send-message': [message: string, channel: string]
-}>()
 
 const props = withDefaults(defineProps<Props>(), {
   messages: () => [],
@@ -60,6 +59,7 @@ const props = withDefaults(defineProps<Props>(), {
   nickname: '',
   currentUserId: '',
   socket: null,
+  connected: false,
   playerRole: '',
   playerTeam: '',
   gameState: null
@@ -68,6 +68,7 @@ const props = withDefaults(defineProps<Props>(), {
 type ChatChannel = 'all' | 'evil';
 
 const input = ref('');
+const { sending, sendChat } = useChatActionFeedback(input);
 const activeChannel = ref<ChatChannel>('all');
 const chatContainer = ref<HTMLElement>();
 
@@ -77,7 +78,9 @@ const canUseEvilChannel = computed(() =>
 
 // 检查是否可以发送消息
 const canSend = computed(() => {
-  if (!props.socket || !props.roomId || !props.nickname || !input.value.trim()) return false;
+  if (!props.connected || !props.roomId || !props.currentUserId || !input.value.trim() || sending.value) {
+    return false;
+  }
   return activeChannel.value !== 'evil' || canUseEvilChannel.value;
 });
 
@@ -89,9 +92,12 @@ const filteredMessages = computed(() => {
   });
 });
 
-const getInputPlaceholder = () => activeChannel.value === 'evil'
-  ? '输入邪恶阵营消息...'
-  : '输入公共聊天消息...';
+const getInputPlaceholder = () => {
+  if (!props.connected) return '连接已断开，请等待重连...';
+  return activeChannel.value === 'evil'
+    ? '输入邪恶阵营消息...'
+    : '输入公共聊天消息...';
+};
 
 // 滚动到底部
 const scrollToBottom = () => {
@@ -230,11 +236,15 @@ watch(activeChannel, () => {
   scrollToBottom();
 });
 
-function send() {
-  if (canSend.value) {
-    emit('send-message', input.value.trim(), activeChannel.value);
-    input.value = '';
-  }
+async function send() {
+  if (!canSend.value) return;
+
+  await sendChat({
+    socket: props.socket,
+    roomId: props.roomId,
+    playerId: props.currentUserId,
+    channel: activeChannel.value
+  });
 }
 </script>
 

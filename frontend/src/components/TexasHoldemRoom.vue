@@ -180,6 +180,7 @@
             :nickname="store.nickname"
             :player-id="store.playerId"
             :socket="store.socket"
+            :connected="connected"
           />
         </section>
       </div>

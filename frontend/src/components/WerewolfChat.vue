@@ -1,7 +1,7 @@
 <template>
   <div class="werewolf-chat-wrapper">
     <div v-if="canUseWerewolfChannel" class="chat-tabs">
-      <el-radio-group v-model="activeChannel" size="small">
+      <el-radio-group v-model="activeChannel" size="small" :disabled="sending">
         <el-radio-button value="all">公共频道</el-radio-button>
         <el-radio-button value="werewolf">狼人频道</el-radio-button>
       </el-radio-group>
@@ -25,10 +25,10 @@
           @keyup.enter="send"
           :placeholder="getInputPlaceholder()"
           :maxlength="MAX_CHAT_LENGTH"
-          :disabled="!canSendMessage"
+          :disabled="!canSendMessage || sending || !props.connected"
           style="flex:1; margin-right:8px;"
         />
-        <el-button type="primary" @click="send" :disabled="!canSend">发送</el-button>
+        <el-button type="primary" @click="send" :disabled="!canSend" :loading="sending">发送</el-button>
       </div>
     </div>
   </div>
@@ -39,6 +39,7 @@ import { ref, nextTick, watch, computed } from 'vue';
 import { MAX_CHAT_LENGTH } from '../utils/messages';
 import { safeHtml } from '../utils/html';
 import { formatPlayerNameById } from '../utils/playerName';
+import { useChatActionFeedback } from '../utils/chatActionFeedback';
 
 interface Props {
   messages: any[]
@@ -50,6 +51,7 @@ interface Props {
   gameState?: any
   isAlive?: boolean
   socket?: any
+  connected?: boolean
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -61,16 +63,14 @@ const props = withDefaults(defineProps<Props>(), {
   playerTeam: '',
   gameState: null,
   isAlive: true,
-  socket: null
+  socket: null,
+  connected: false
 })
-
-const emit = defineEmits<{
-  sendMessage: [message: string, channel: string]
-}>()
 
 type ChatChannel = 'all' | 'werewolf';
 
 const input = ref('');
+const { sending, sendChat } = useChatActionFeedback(input);
 const activeChannel = ref<ChatChannel>('all');
 const chatContainer = ref<HTMLElement>();
 
@@ -89,7 +89,13 @@ const canSendMessage = computed(() => {
 });
 
 const canSend = computed(() => {
-  return Boolean(props.socket && props.roomId && input.value.trim()) && canSendMessage.value;
+  return Boolean(
+    props.connected &&
+    props.roomId &&
+    props.currentUserId &&
+    input.value.trim() &&
+    !sending.value
+  ) && canSendMessage.value;
 });
 
 const filteredMessages = computed(() => {
@@ -101,16 +107,21 @@ const filteredMessages = computed(() => {
 });
 
 const getInputPlaceholder = () => {
+  if (!props.connected) return '连接已断开，请等待重连...';
   if (!props.isAlive) return '死亡玩家无法发言...';
   if (!canSendMessage.value) return '当前阶段无法使用此频道...';
-  return activeChannel.value === 'werewolf' ? '输入狼人频道消息...' : '输入公聊消息...';
+  return activeChannel.value === 'werewolf' ? '输入狼人频道消息...' : '输入公共聊天消息...';
 };
 
-const send = () => {
+const send = async () => {
   if (!canSend.value) return;
 
-  emit('sendMessage', input.value.trim(), activeChannel.value);
-  input.value = '';
+  await sendChat({
+    socket: props.socket,
+    roomId: props.roomId,
+    playerId: props.currentUserId,
+    channel: activeChannel.value
+  });
 };
 
 const scrollToBottom = () => {

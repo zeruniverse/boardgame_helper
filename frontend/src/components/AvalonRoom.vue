@@ -157,11 +157,11 @@
           :room-id="roomId"
           :nickname="nickname"
           :socket="store.socket"
+          :connected="store.connected"
           :player-role="playerSecret?.role"
           :player-team="playerSecret?.team"
           :game-state="gameState"
           :current-user-id="currentUserId"
-          @send-message="handleSendMessage"
         />
       </el-aside>
     </el-container>
@@ -326,10 +326,6 @@ const handleTransferHost = (playerId: string) => {
 
 const handleKickPlayer = (playerId: string) => {
   store.sendGameAction('kickPlayer', { playerId })
-}
-
-const handleSendMessage = (message: string, channel: string) => {
-  store.sendMessage(message, channel)
 }
 
 const scrollToSelector = (selector: string) => {

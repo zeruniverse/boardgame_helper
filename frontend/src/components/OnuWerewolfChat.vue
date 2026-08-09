@@ -33,15 +33,16 @@
     <div class="chat-input" v-if="canChat">
       <el-input
         v-model="inputMessage"
-        placeholder="输入消息..."
+        :placeholder="inputPlaceholder"
         @keyup.enter="sendMessage"
-        :disabled="!canSendMessage"
+        :disabled="!canSendMessage || sending"
         :maxlength="MAX_CHAT_LENGTH"
       >
         <template #append>
           <el-button 
             @click="sendMessage" 
-            :disabled="!canSendMessage || !inputMessage.trim()"
+            :disabled="!canSendMessage || !inputMessage.trim() || sending"
+            :loading="sending"
             type="primary"
           >
             发送
@@ -66,6 +67,7 @@ import { MAX_CHAT_LENGTH } from '../utils/messages';
 import type { Socket } from 'socket.io-client';
 import { formatPlayerNameById } from '../utils/playerName';
 import { OnuWerewolfGameStatus } from '../store/onuWerewolf';
+import { useChatActionFeedback } from '../utils/chatActionFeedback';
 
 interface Message {
   id: number;
@@ -87,14 +89,12 @@ const props = defineProps<{
   nickname: string;
   currentUserId?: string;
   socket?: Socket | null;
+  connected?: boolean;
   gameState?: GameState | null;
 }>();
 
-const emit = defineEmits<{
-  'send-message': [message: string];
-}>();
-
 const inputMessage = ref('');
+const { sending, sendChat } = useChatActionFeedback(inputMessage);
 const messagesContainer = ref<HTMLElement>();
 
 const getMessageSenderName = (message: Message): string => {
@@ -113,15 +113,24 @@ const canChat = computed(() => {
 });
 
 const canSendMessage = computed(() => {
-  return canChat.value && props.socket?.connected;
+  return Boolean(canChat.value && props.connected && props.roomId && props.currentUserId);
+});
+
+const inputPlaceholder = computed(() => {
+  if (!props.connected) return '连接已断开，请等待重连...';
+  return '输入公共聊天消息...';
 });
 
 // 方法
-const sendMessage = () => {
-  if (!inputMessage.value.trim() || !canSendMessage.value) return;
-  
-  emit('send-message', inputMessage.value.trim());
-  inputMessage.value = '';
+const sendMessage = async () => {
+  if (!inputMessage.value.trim() || !canSendMessage.value || sending.value) return;
+
+  await sendChat({
+    socket: props.socket,
+    roomId: props.roomId,
+    playerId: props.currentUserId,
+    channel: 'all'
+  });
 };
 
 const getMessageClass = (message: Message) => {
@@ -141,7 +150,7 @@ const formatTime = (timestamp: number) => {
 };
 
 const getChatStatusText = () => {
-  if (!props.socket?.connected) {
+  if (!props.connected) {
     return '连接断开';
   }
   if (!canChat.value) {

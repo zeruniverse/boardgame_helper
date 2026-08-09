@@ -1,17 +1,23 @@
 <template>
   <div class="botc-chat-wrapper">
     <div class="chat-tabs">
-      <el-radio-group v-model="currentChannel" size="small">
-        <el-radio-button label="all">公共聊天</el-radio-button>
-        <el-radio-button label="storyteller">说书人频道</el-radio-button>
-        <el-radio-button label="private">
+      <el-radio-group v-model="currentChannel" size="small" :disabled="sending">
+        <el-radio-button value="all">公共聊天</el-radio-button>
+        <el-radio-button value="storyteller">说书人频道</el-radio-button>
+        <el-radio-button value="private">
           {{ privateTarget ? `私聊：${getPlayerName(privateTarget)}` : '私聊' }}
         </el-radio-button>
       </el-radio-group>
     </div>
 
     <div class="private-chat-selector" v-if="showPrivateSelector">
-      <el-select v-model="privateTarget" placeholder="选择私聊对象" size="small" @change="onPrivateTargetChange">
+      <el-select
+        v-model="privateTarget"
+        placeholder="选择私聊对象"
+        size="small"
+        :disabled="sending"
+        @change="onPrivateTargetChange"
+      >
         <el-option
           v-for="player in availablePrivateTargets"
           :key="player.id"
@@ -19,7 +25,7 @@
           :value="player.id"
         />
       </el-select>
-      <el-button size="small" @click="closePrivateSelector">取消</el-button>
+      <el-button size="small" :disabled="sending" @click="closePrivateSelector">取消</el-button>
     </div>
 
     <el-card ref="chatContainer" class="chat-messages">
@@ -42,12 +48,14 @@
           @keyup.enter="send" 
           :placeholder="getInputPlaceholder()"
           :maxlength="MAX_CHAT_LENGTH"
+          :disabled="inputDisabled"
           style="flex:1; margin-right:8px;"
         />
         <el-button type="primary" @click="send" :disabled="!canSend" :loading="sending">发送</el-button>
         <el-button 
           type="info" 
           plain
+          :disabled="sending"
           @click="togglePrivateSelector"
         >
           {{ currentChannel === 'private' ? '选择对象' : '私聊' }}
@@ -58,17 +66,17 @@
 </template>
 
 <script lang="ts" setup>
-import { ref, nextTick, watch, computed, onUnmounted } from 'vue';
+import { ref, nextTick, watch, computed } from 'vue';
 import { MAX_CHAT_LENGTH } from '../utils/messages';
-import { emitChatAction } from '../utils/gameSocket';
 import { formatPlayerName } from '../utils/playerName';
-import { showErrorFeedback } from '../utils/uiFeedback';
+import { useChatActionFeedback } from '../utils/chatActionFeedback';
 
 interface Props {
   messages: any[]
   roomId?: string
-  nickname?: string
+  currentUserId?: string
   socket?: any
+  connected?: boolean
   playerRole?: string
   playerTeam?: string
   gameState?: any
@@ -79,8 +87,9 @@ interface Props {
 const props = withDefaults(defineProps<Props>(), {
   messages: () => [],
   roomId: '',
-  nickname: '',
+  currentUserId: '',
   socket: null,
+  connected: false,
   playerRole: '',
   playerTeam: '',
   gameState: null,
@@ -89,31 +98,31 @@ const props = withDefaults(defineProps<Props>(), {
 })
 
 const input = ref('');
+const { sending, sendChat } = useChatActionFeedback(input);
 const chatContainer = ref<HTMLElement>();
 const currentChannel = ref<'all' | 'storyteller' | 'private'>('all');
 const privateTarget = ref<string>('');
 const showPrivateSelector = ref(false);
-const sending = ref(false);
-let sendTimeout: ReturnType<typeof setTimeout> | null = null;
-let sendAttemptId = 0;
 
 const availablePrivateTargets = computed(() => {
-  return props.players.filter(player => player.id !== props.nickname && player.online !== false)
+  return props.players.filter(player => player.id !== props.currentUserId && player.online !== false)
+});
+
+const inputDisabled = computed(() => {
+  return Boolean(
+    sending.value ||
+    !props.connected ||
+    !props.roomId ||
+    !props.currentUserId ||
+    (currentChannel.value === 'private' && !privateTarget.value)
+  )
 });
 
 const canSend = computed(() => {
-  if (sending.value || !props.socket?.connected || !props.roomId || !input.value.trim()) {
-    return false
-  }
-  
-  if (currentChannel.value === 'private' && !privateTarget.value) {
-    return false
-  }
-  
-  return true
+  return !inputDisabled.value && Boolean(input.value.trim())
 });
 const isPrivateMessageForCurrentUser = (msg: any) => {
-  return msg.from === props.nickname || msg.to === props.nickname || msg.playerId === props.nickname
+  return msg.from === props.currentUserId || msg.to === props.currentUserId || msg.playerId === props.currentUserId
 }
 
 const filteredMessages = computed(() => {
@@ -139,8 +148,8 @@ const filteredMessages = computed(() => {
         return msg.channel === 'private' && isPrivateMessageForCurrentUser(msg)
       }
       return msg.channel === 'private' && 
-             ((msg.from === props.nickname && msg.to === privateTarget.value) ||
-              (msg.from === privateTarget.value && msg.to === props.nickname))
+             ((msg.from === props.currentUserId && msg.to === privateTarget.value) ||
+              (msg.from === privateTarget.value && msg.to === props.currentUserId))
     }
     
     return false
@@ -159,6 +168,7 @@ const getChannelName = () => {
 }
 
 const getInputPlaceholder = () => {
+  if (!props.connected) return '连接已断开，请等待重连...'
   switch (currentChannel.value) {
     case 'storyteller':
       return '向说书人发送消息...'
@@ -198,7 +208,7 @@ const getMessageClass = (msg: any) => {
     classes.push('system-message');
   }
 
-  if (from === props.nickname) {
+  if (from === props.currentUserId) {
     classes.push('own-message');
   }
   
@@ -229,7 +239,7 @@ const getPlayerName = (playerId: string, preferredName?: string) => {
   const player = props.players.find(p => p.id === playerId)
   return formatPlayerName(
     { id: playerId, name: preferredName || player?.name, nickname: player?.nickname },
-    props.nickname,
+    props.currentUserId,
     playerId
   )
 }
@@ -250,58 +260,18 @@ const formatTime = (timestamp?: number) => {
   })
 }
 
-const send = () => {
+const send = async () => {
   if (!canSend.value) return;
-  
-  const message = input.value.trim();
-  if (!message) return;
 
   const channel = currentChannel.value;
   const targetId = channel === 'private' ? privateTarget.value : undefined;
-  const attemptId = ++sendAttemptId;
-  sending.value = true;
-
-  if (sendTimeout) clearTimeout(sendTimeout);
-  const timeoutId = setTimeout(() => {
-    if (sendAttemptId === attemptId) {
-      sending.value = false;
-      sendTimeout = null;
-      showErrorFeedback('消息发送超时，请检查网络后重试', '消息发送失败')
-    }
-  }, 10000);
-  sendTimeout = timeoutId;
-
-  const emitted = emitChatAction(
-    props.socket,
-    props.roomId,
-    props.nickname,
-    message,
+  await sendChat({
+    socket: props.socket,
+    roomId: props.roomId,
+    playerId: props.currentUserId,
     channel,
-    targetId,
-    (response: any) => {
-      clearTimeout(timeoutId);
-      // 超时后用户可能已经发送了下一条消息；旧 acknowledgement 不能解除
-      // 新请求的 loading、清除新请求的超时器或误删当前输入。
-      if (sendAttemptId !== attemptId) return;
-
-      sendTimeout = null;
-      sending.value = false;
-      if (response?.success === true && input.value.trim() === message) {
-        input.value = '';
-      } else if (response?.success === false) {
-        showErrorFeedback(response, '消息发送失败')
-      }
-    }
-  );
-
-  if (!emitted) {
-    clearTimeout(timeoutId);
-    if (sendAttemptId === attemptId) {
-      sendTimeout = null;
-      sending.value = false;
-    }
-    showErrorFeedback('连接未建立，请稍后重试', '消息发送失败')
-  }
+    targetId
+  });
 };
 
 const togglePrivateSelector = () => {
@@ -332,13 +302,6 @@ watch(
   }
 );
 
-onUnmounted(() => {
-  sendAttemptId += 1;
-  if (sendTimeout) {
-    clearTimeout(sendTimeout);
-    sendTimeout = null;
-  }
-});
 
 defineExpose({
   startPrivateChat
