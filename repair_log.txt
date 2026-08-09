@@ -3137,3 +3137,42 @@ Commit: fix(round19): 修复房间就绪竞态与跨游戏路由串线
   - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts 检查，仅有正常的可选依赖提示。
   - 正式 npm run build 已在最终源码上执行。当前工作区 node_modules 不完整，backend tsc 报缺失 body-parser/connect/cors/express/node/uuid/ws 等 package.json 已声明依赖的类型目录并中止，未进入 frontend vue-tsc/Vite；这不等同于上述源码静态检查、backend strict 隔离编译或 Worker 烟雾失败。完整 npm ci、正式 backend tsc、frontend vue-tsc/Vite、Docker 镜像与实际部署仍需在依赖源正常的本地或 CI 最终确认。
 备注: 本轮未删除文件，未创建根目录 src/；修复包只包含上述修改/新增文件与更新后的 repair_log.txt，可按项目相对路径直接覆盖。
+
+=== 当前会话第 20 轮修复记录 ===
+时间: 2026-08-09 18:02:23 UTC
+Commit: fix(round20): 修复跨局身份残留并统一钟楼私聊交互
+修改/新增文件:
+  - backend/src/workers/botcWorker.ts
+  - backend/src/workers/werewolfWorker.ts
+  - frontend/src/components/BOTCChat.vue
+  - frontend/src/components/BOTCPlayerList.vue
+  - frontend/src/components/BOTCRoom.vue
+  - frontend/src/components/Lobby.vue
+  - frontend/src/components/MafiaChat.vue
+  - frontend/src/components/MafiaRoom.vue
+  - frontend/src/store/botc.ts
+  - frontend/src/store/werewolf.ts
+  - repair_log.txt
+删除文件: 无
+构建测试: 部分通过（backend/src 全部 35 个 TypeScript 文件以 strict 配置完成隔离 CommonJS 编译；六个实际游戏 Worker 使用编译产物完成 prepare_room 并正确拒绝未知任务；BOTC 准备阶段重连和进行中旁观加入的私密身份清理运行回归通过；backend/src + frontend/src 全量静态检查、25 项本轮前端/状态同步专项断言及 package-lock 依赖树检查通过。正式 npm run build 已执行，但附件中 node_modules 只有空目录/不完整依赖，backend tsc 因 body-parser、connect、cors、express、node、uuid、ws 等类型定义缺失而中止，未进入 frontend vue-tsc/Vite；完整生产构建和直接部署仍需在依赖可正常安装的本地或 CI 执行 npm ci && npm run build 终验）
+本轮修复:
+  - 修复血染钟楼跨局/重连时旧身份与夜间信息可能残留的隐私问题。旧 Worker 在 SETUP 阶段或进行中加入的旁观者没有 gamePlayers 记录时会省略 roleAssigned；若浏览器离线期间错过 gameReset，前端会无限保留上一局角色、能力状态、已知身份和夜间信息。现在 roleAssigned 被作为权威私密快照：准备阶段、旁观者或不在本局的成员会明确收到 role=null、nightInfo=null、空 abilityState/knownIdentities，正常本局玩家则补发当前角色快照。
+  - BOTC Store 增加防御性清理：收到 setup 的公开 gameState 或明确 isSpectator=true 时立即清空 playerRole/nightInfo，同时兼容旧 Worker、消息丢失和升级期间前后端版本短暂不一致。
+  - 修复狼人杀 game_state_sync 无法清除旧私密身份。后端过去在没有本局玩家记录时返回空对象，前端又只在 secretInfo 为 truthy 时赋值，导致旁观、重开或座位移除后的旧角色、药剂、验人结果继续显示。现在协议统一为 null，前端无条件用权威快照覆盖并清空旧值。
+  - 血染钟楼前端完整落实 allowPrivateChat：创建房间时新增“游戏中私聊”开关并把配置发送给 Worker；准备阶段仍按后端规则允许交流，开局后关闭时私聊页签、对象选择、快捷按钮和发送入口统一禁用，已有私聊频道自动退回公共频道，玩家列表提供一致的禁用提示，避免用户操作后才收到后端拒绝。
+  - 统一 BOTC 聊天布局与主题。移除原先固定 height:50% 和 300px 消息上限造成的狭窄区域，改为与阿瓦隆、杀人游戏、德州扑克聊天相同的 300/350px 响应式最小高度和 500/600px 大屏上限；卡片、边框、文本和暗色模式颜色改用全局主题变量，减少房间页面风格漂移。
+  - 收敛杀人游戏聊天组件依赖。MafiaChat 不再在组件内部再次读取 Pinia 全局 Store，而与其他聊天组件一致由 MafiaRoom 显式传入 socket/connected/currentUserId；发送、禁用态和占位文案使用同一组 props，降低组件复用、测试和房间实例切换时读取到错误 Store 状态的风险。
+审查结果/本轮未改动重点:
+  - 本轮继续结合 repair_log 前 19 轮记录检查 backend/src 与 frontend/src 全部当前代码，重点复核六个 Worker 的准备/状态同步入口、BOTC 私密状态与聊天权限、狼人杀重连私密快照、六套 Chat/Room 的连接事实源及前端布局复用。当前最重要且可低风险确定修复的问题集中在跨局私密状态残留和 BOTC 私聊配置前后端不一致，因此本批次没有重写既有核心规则状态机。
+  - 狼人杀继续复核角色配置、狼人共识、预言家/女巫/守卫夜序、警长权重、平票与放逐；杀人游戏继续复核杀手/警察/医生/狙击手、夜间结算、遗言与白天投票；一夜狼人继续复核角色与中心牌数量、夜序换牌、最终身份和阵营胜负；阿瓦隆继续复核任务人数、7 人以上第 4 任务双失败、连续 5 次否决、刺杀与湖上夫人；德州扑克继续复核盲注、行动顺序、完整加注/短码 all-in、未跟注返还及主边池；血染钟楼继续复核说书人/旁观者可见性、提名投票、处决和夜间信息。本轮六 Worker 初始化与未知任务拒绝均通过，未发现优先级高于本轮隐私/同步问题且适合当前批次安全落地的新确定性主流程阻断项。
+  - 血染钟楼仍保留前序 repair_log 已记录、需要扩展状态模型或真人说书人逐次裁决 UI 才能完整覆盖的架构级边界：特殊自定义夜序下 Pit-Hag 创建 Demon 后无法安全逆向更早已落地并触发被动的死亡；Recluse/Spy registration 缺逐次人工裁决 UI；自由文本及多重效果抵消下 Mathematician 极端统计缺统一逐次最终基准审计。本轮没有用近似逻辑强行覆盖。
+  - 项目根目录不存在 src/；所有后端源码修改仅位于 backend/src/，所有前端源码修改仅位于 frontend/src/，保持原有目录结构。
+验证:
+  - 全量静态检查通过：backend/src + frontend/src 共 63 个 .ts、31 个 .vue、1 个 .css、1 个 .svg；94 个 TypeScript/Vue script 解析单元、288 次相对本地导入和全部 Vue/CSS 样式花括号检查通过，未发现语法错误、失效本地导入、真实合并冲突标记或根目录 src/。
+  - 本轮 25 项结构/状态专项断言通过，覆盖 BOTC Worker 权威私密快照、加入与重连补发、狼人杀 null 私密协议、BOTC Store 防御清理、创建房间私聊开关透传、聊天/玩家列表禁用态和自动退回公共频道、主题布局，以及 MafiaChat 去 Store 耦合和 Room 显式传参。
+  - backend/src 全部 35 个 TypeScript 文件使用全局 TypeScript 5.8.3、strict 模式、真实全局 Node 类型及项目外部声明桩成功完成隔离 CommonJS 编译。
+  - 六个实际 Worker 使用最终隔离产物完成合法 prepare_room，并确认未知任务返回 success=false：狼人杀、杀人游戏、一夜狼人、阿瓦隆、血染钟楼、德州扑克全部通过。
+  - BOTC 私密状态专项运行回归确认：准备阶段重连会依次收到 gameState 与 roleAssigned(null)；进行中允许旁观的新成员会被标记 isSpectator=true，并收到显式空角色、空夜间信息和空已知身份，不再继承同一浏览器上一局私密状态。
+  - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts 检查，仅有正常的可选依赖提示。
+  - 正式 npm run build 已在最终源码上执行。当前附件内 node_modules 为不完整空目录集合，backend tsc 报缺失 body-parser/connect/cors/express/node/uuid/ws 等 package.json 已声明依赖的类型定义并中止，未进入 frontend vue-tsc/Vite；这不等同于上述 backend strict 隔离编译、六 Worker 运行烟雾或源码静态检查失败。完整 npm ci、正式 backend tsc、frontend vue-tsc/Vite、Docker 镜像和实际部署仍需在依赖源正常的本地或 CI 最终确认。
+备注: 本轮未删除文件，未创建根目录 src/；修复包只包含上述修改/新增文件与更新后的 repair_log.txt，可按项目相对路径直接覆盖。

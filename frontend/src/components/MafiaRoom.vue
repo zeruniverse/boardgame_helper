@@ -152,6 +152,8 @@
           :player-role="playerSecret?.role"
           :player-team="playerSecret?.team"
           :game-state="gameState"
+          :socket="store.socket"
+          :connected="store.connected"
         />
       </el-aside>
     </el-container>

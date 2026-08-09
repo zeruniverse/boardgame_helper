@@ -718,6 +718,13 @@
                   <el-option label="无限制" :value="0" />
                 </el-select>
               </el-form-item>
+              <el-form-item label="游戏中私聊">
+                <el-switch
+                  v-model="createRoomForm.allowPrivateChat"
+                  active-text="允许"
+                  inactive-text="关闭"
+                />
+              </el-form-item>
             </template>
           </el-form>
         </div>
@@ -787,6 +794,7 @@ const createRoomDialogVisible = ref(false);
 const createRoomForm = ref({
   maxPlayers: 8,
   allowSystemDealing: true,
+  allowPrivateChat: true,
   enableLady: false,
   nickname: '',
   gameType: '',
@@ -1077,6 +1085,7 @@ async function confirmCreateRoom() {
       gameConfig.playerCount = createRoomForm.value.maxPlayers;
       gameConfig.dayTime = createRoomForm.value.dayTime;
       gameConfig.nightTime = createRoomForm.value.nightTime;
+      gameConfig.allowPrivateChat = createRoomForm.value.allowPrivateChat;
     } else if (createRoomForm.value.gameType === 'werewolf') {
       gameConfig.playerCount = createRoomForm.value.maxPlayers;
       gameConfig.speakTime = createRoomForm.value.speakTime;
@@ -1203,7 +1212,12 @@ function selectGame(gameType: string) {
       Object.assign(createRoomForm.value, { nightTime: 180, votingTime: 300, discussTime: 180 });
       break;
     case 'blood-on-the-clocktower':
-      Object.assign(createRoomForm.value, { dayTime: 600, nightTime: 300, edition: 'tb' });
+      Object.assign(createRoomForm.value, {
+        dayTime: 600,
+        nightTime: 300,
+        edition: 'tb',
+        allowPrivateChat: true
+      });
       break;
     case 'avalon':
       createRoomForm.value.enableLady = false;

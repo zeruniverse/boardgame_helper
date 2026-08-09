@@ -10,7 +10,7 @@
       v-model="input"
       :placeholder="inputPlaceholder"
       :max-length="MAX_CHAT_LENGTH"
-      :disabled="!canSpeak || !store.connected"
+      :disabled="!canSpeak || !props.connected"
       :can-send="canSend"
       :sending="sending"
       @send="send"
@@ -23,7 +23,6 @@ import { ref, nextTick, watch, computed } from 'vue';
 import { MAX_CHAT_LENGTH } from '../utils/messages';
 import { safeHtml } from '../utils/html';
 import { formatPlayerNameById } from '../utils/playerName';
-import { useMafiaGameStore } from '../store/mafia';
 import { useChatActionFeedback } from '../utils/chatActionFeedback';
 import GameChatComposer from './GameChatComposer.vue';
 
@@ -35,6 +34,8 @@ interface Props {
   playerRole?: 'KILLER' | 'COP' | 'DOCTOR' | 'SNIPER' | 'CIVILIAN' | 'GUEST'
   playerTeam?: 'RED' | 'BLUE' | 'NONE'
   gameState?: any
+  socket?: any
+  connected?: boolean
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -44,16 +45,16 @@ const props = withDefaults(defineProps<Props>(), {
   currentUserId: '',
   playerRole: undefined,
   playerTeam: undefined,
-  gameState: null
+  gameState: null,
+  socket: null,
+  connected: false
 })
-
-const store = useMafiaGameStore();
 
 const input = ref('');
 const { sending, sendChat } = useChatActionFeedback(input);
 const chatContainer = ref<HTMLElement>();
 
-const playerId = computed(() => props.currentUserId || store.currentUserId)
+const playerId = computed(() => props.currentUserId)
 
 const isMuted = computed(() => {
   return Boolean(playerId.value && props.gameState?.muteList?.includes(playerId.value))
@@ -65,7 +66,7 @@ const canSpeak = computed(() => Boolean(playerId.value) && !isMuted.value)
 
 const canSend = computed(() => {
   return Boolean(
-    store.connected &&
+    props.connected &&
     props.roomId &&
     playerId.value &&
     input.value.trim() &&
@@ -75,7 +76,7 @@ const canSend = computed(() => {
 })
 
 const inputPlaceholder = computed(() => {
-  if (!store.connected) return '连接未就绪，请稍候...'
+  if (!props.connected) return '连接未就绪，请稍候...'
   if (isMuted.value) return '当前阶段无法发言...'
   return '输入公共聊天消息...'
 })
@@ -164,7 +165,7 @@ async function send() {
   if (!canSend.value) return
 
   await sendChat({
-    socket: store.socket,
+    socket: props.socket,
     roomId: props.roomId,
     playerId: playerId.value,
     channel: 'all'

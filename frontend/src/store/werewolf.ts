@@ -480,9 +480,9 @@ export const useWerewolfStore = defineStore('werewolf', {
         if (data.gameInfo) {
           this.updateGameStateFromGameInfo(data.gameInfo);
         }
-        if (data.secretInfo) {
-          this.playerSecret = data.secretInfo;
-        }
+        // game_state_sync 是重连后的权威私密快照；null 必须清除上一局身份，
+        // 不能因为 truthy 判断而把旧角色、药剂或查验结果继续留在界面上。
+        this.playerSecret = data.secretInfo ?? null;
         if (data.currentUserId) {
           this.currentUserId = data.currentUserId;
         }

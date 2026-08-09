@@ -356,6 +356,31 @@ export class BOTCWorker extends BaseGameWorker {
     this.sendToPlayer(playerId, 'roleAssigned', this.buildRoleAssignedPayload(player, includeNightInfo));
   }
 
+  private sendClearedRoleStateToPlayer(playerId: string): void {
+    this.sendToPlayer(playerId, 'roleAssigned', {
+      role: null,
+      seat: -1,
+      isEvil: false,
+      nightInfo: null,
+      abilityState: {},
+      knownIdentities: []
+    });
+  }
+
+  /**
+   * roleAssigned is the authoritative private-state snapshot for BOTC clients.
+   * Reconnects can happen after a reset or after the same browser has become a
+   * spectator, so omitting the event when no game-player exists leaves the
+   * previous round's role and night information visible indefinitely.
+   */
+  private syncPrivateRoleStateToPlayer(playerId: string): void {
+    if (this.gameState.phase === GamePhase.SETUP || !this.gamePlayers.has(playerId)) {
+      this.sendClearedRoleStateToPlayer(playerId);
+      return;
+    }
+    this.sendRoleStateToPlayer(playerId);
+  }
+
   /**
    * In standard 7+ player games, every Demon learns three good characters that are not in play.
    * Keep the generated bluff set in the Demon's private nightInfo so reconnects
@@ -2469,14 +2494,7 @@ export class BOTCWorker extends BaseGameWorker {
 
   private clearPrivateRoleState(): void {
     for (const roomPlayer of this.room.players) {
-      this.sendToPlayer(roomPlayer.id, 'roleAssigned', {
-        role: null,
-        seat: -1,
-        isEvil: false,
-        nightInfo: null,
-        abilityState: {},
-        knownIdentities: []
-      });
+      this.sendClearedRoleStateToPlayer(roomPlayer.id);
     }
   }
 
@@ -2989,6 +3007,7 @@ export class BOTCWorker extends BaseGameWorker {
       isSpectator: isGameInProgress,
       gameConfig: this.gameConfig
     });
+    this.syncPrivateRoleStateToPlayer(roomPlayer.id);
   }
 
   async playerOnline(playerId: string): Promise<void> {
@@ -3001,12 +3020,11 @@ export class BOTCWorker extends BaseGameWorker {
       gameConfig: this.gameConfig
     });
 
-    // 进行中的局在刷新/重连后必须补发私有状态，否则前端会丢失身份与夜间信息，无法继续提交对应角色行动。
-    if (this.gameState.phase !== GamePhase.SETUP) {
-      this.sendRoleStateToPlayer(playerId);
-      if (playerId === this.gameConfig.storytellerId) {
-        this.sendStorytellerFullInfo(playerId);
-      }
+    // 每次在线恢复都发送权威私有快照。SETUP/旁观者也必须显式发送空角色，
+    // 否则错过 gameReset 的客户端会继续显示上一局身份和夜间信息。
+    this.syncPrivateRoleStateToPlayer(playerId);
+    if (this.gameState.phase !== GamePhase.SETUP && playerId === this.gameConfig.storytellerId) {
+      this.sendStorytellerFullInfo(playerId);
     }
   }
 

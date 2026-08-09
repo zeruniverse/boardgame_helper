@@ -198,6 +198,13 @@ export const useBOTCGameStore = defineStore('botc', () => {
           gameState.value = data.gameState
           if (data.gameConfig) gameConfig.value = data.gameConfig
           isStoryteller.value = data.isStoryteller || false
+          // gameState 是重连/加入后的公开权威快照。处于 setup，或明确以旁观者
+          // 身份加入进行中对局时，必须立即丢弃旧局的私密角色和夜间信息；新版
+          // Worker 还会补发 roleAssigned(null)，这里同时兼容旧 Worker 与事件丢失。
+          if (data.gameState?.phase === 'setup' || data.isSpectator === true) {
+            playerRole.value = null
+            nightInfo.value = null
+          }
           syncSetupPlayerCountFromRoom()
         })
 

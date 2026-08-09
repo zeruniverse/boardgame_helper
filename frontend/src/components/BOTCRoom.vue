@@ -119,6 +119,7 @@
               :storyteller-id="store.gameConfig?.storytellerId"
               :game-config="store.gameConfig"
               :player-role="store.playerRole"
+              :private-chat-enabled="privateChatEnabled"
               @transfer-host="handleTransferHost"
               @kick-player="handleKickPlayer"
               @start-private-chat="handleStartPrivateChat"
@@ -164,6 +165,7 @@
           :game-state="store.gameState"
           :is-storyteller="store.isStoryteller"
           :players="store.room?.players || []"
+          :private-chat-enabled="privateChatEnabled"
         />
       </el-aside>
     </el-container>
@@ -193,6 +195,10 @@ const roomId = route.params.id as string
 const room = computed(() => store.room)
 const gameConfig = computed(() => store.gameConfig)
 const isHost = computed(() => Boolean(store.currentUserId && room.value?.hostId === store.currentUserId))
+// 后端允许准备阶段交流；开局后严格遵循房间 allowPrivateChat 配置。
+const privateChatEnabled = computed(() =>
+  store.gameState?.phase === 'setup' || store.gameConfig?.allowPrivateChat !== false
+)
 
 // 游戏状态
 const editionInfo = ref<any>(null)
@@ -401,6 +407,10 @@ const handleKickPlayer = (targetId: string) => {
 
 // 处理开始私聊 - 使用ref代替DOM操作
 const handleStartPrivateChat = (targetId: string) => {
+  if (!privateChatEnabled.value) {
+    showErrorFeedback('当前房间已关闭游戏中的私聊', '当前房间已关闭游戏中的私聊')
+    return
+  }
   if (chatComponentRef.value?.startPrivateChat) {
     chatComponentRef.value.startPrivateChat(targetId)
   }

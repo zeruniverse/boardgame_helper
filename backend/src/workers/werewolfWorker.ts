@@ -596,7 +596,10 @@ class WerewolfWorker extends BaseGameWorker {
 
   private getSecretForPlayer(playerId: string): any {
     const gamePlayer = this.gameState.players[playerId];
-    if (!gamePlayer) return {};
+    // 等待阶段、旁观者或已被移出本局的座位没有私密身份。返回 null 与
+    // game_state_sync 的协议一致，并让客户端能够明确清除上一局缓存，而不是
+    // 用一个看似存在但缺少 role/team 的空对象继续渲染旧状态。
+    if (!gamePlayer) return null;
 
     // 返回前端期望格式的secret
     const secret: any = {

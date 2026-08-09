@@ -4,7 +4,7 @@
       <el-radio-group v-model="currentChannel" size="small" :disabled="sending">
         <el-radio-button value="all">公共聊天</el-radio-button>
         <el-radio-button value="storyteller">说书人频道</el-radio-button>
-        <el-radio-button value="private">
+        <el-radio-button value="private" :disabled="!props.privateChatEnabled">
           {{ privateTarget ? `私聊：${getPlayerName(privateTarget)}` : '私聊' }}
         </el-radio-button>
       </el-radio-group>
@@ -15,7 +15,7 @@
         v-model="privateTarget"
         placeholder="选择私聊对象"
         size="small"
-        :disabled="sending || !props.connected"
+        :disabled="sending || !props.connected || !props.privateChatEnabled"
         @change="onPrivateTargetChange"
       >
         <el-option
@@ -54,10 +54,10 @@
         <el-button
           type="info"
           plain
-          :disabled="sending || !props.connected"
+          :disabled="sending || !props.connected || !props.privateChatEnabled"
           @click="togglePrivateSelector"
         >
-          {{ currentChannel === 'private' ? '选择对象' : '私聊' }}
+          {{ !props.privateChatEnabled ? '私聊已关闭' : (currentChannel === 'private' ? '选择对象' : '私聊') }}
         </el-button>
       </template>
     </GameChatComposer>
@@ -82,6 +82,7 @@ interface Props {
   gameState?: any
   isStoryteller?: boolean
   players?: any[]
+  privateChatEnabled?: boolean
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -94,7 +95,8 @@ const props = withDefaults(defineProps<Props>(), {
   playerTeam: '',
   gameState: null,
   isStoryteller: false,
-  players: () => []
+  players: () => [],
+  privateChatEnabled: true
 })
 
 const input = ref('');
@@ -114,6 +116,7 @@ const inputDisabled = computed(() => {
     !props.connected ||
     !props.roomId ||
     !props.currentUserId ||
+    (currentChannel.value === 'private' && !props.privateChatEnabled) ||
     (currentChannel.value === 'private' && !privateTarget.value)
   )
 });
@@ -169,6 +172,7 @@ const getChannelName = () => {
 
 const getInputPlaceholder = () => {
   if (!props.connected) return '连接未就绪，请稍候...'
+  if (currentChannel.value === 'private' && !props.privateChatEnabled) return '当前房间已关闭游戏中的私聊'
   switch (currentChannel.value) {
     case 'storyteller':
       return '向说书人发送消息...'
@@ -220,15 +224,15 @@ const getMessageColor = (type: string) => {
     case 'private':
       return '#7c3aed'
     case 'storyteller':
-      return '#dc2626'
+      return 'var(--app-danger)'
     case 'system':
-      return '#909399'
+      return 'var(--app-text-secondary)'
     case 'game':
-      return '#409eff'
+      return 'var(--app-primary)'
     case 'role':
       return '#7c3aed'
     case 'night':
-      return '#1f2937'
+      return 'var(--app-text)'
     default:
       return undefined
   }
@@ -275,6 +279,7 @@ const send = async () => {
 };
 
 const togglePrivateSelector = () => {
+  if (!props.privateChatEnabled) return;
   showPrivateSelector.value = !showPrivateSelector.value;
 }
 
@@ -283,13 +288,14 @@ const closePrivateSelector = () => {
 }
 
 const onPrivateTargetChange = (targetId: string) => {
-  if (targetId) {
+  if (targetId && props.privateChatEnabled) {
     currentChannel.value = 'private';
     showPrivateSelector.value = false;
   }
 }
 
 const startPrivateChat = (targetId: string) => {
+  if (!props.privateChatEnabled) return;
   privateTarget.value = targetId;
   currentChannel.value = 'private';
   showPrivateSelector.value = false;
@@ -323,6 +329,19 @@ watch(
   }
 );
 
+watch(
+  () => props.privateChatEnabled,
+  (enabled) => {
+    if (enabled) return
+    privateTarget.value = ''
+    showPrivateSelector.value = false
+    if (currentChannel.value === 'private') {
+      currentChannel.value = 'all'
+    }
+  },
+  { immediate: true }
+)
+
 defineExpose({
   startPrivateChat
 });
@@ -330,15 +349,16 @@ defineExpose({
 
 <style scoped>
 .botc-chat-wrapper {
-  height: 50%;
+  height: 100%;
+  width: 100%;
+  min-height: 300px;
   display: flex;
   flex-direction: column;
-  border-top: 1px solid #e4e7ed;
 }
 
 .chat-tabs {
-  padding: 8px;
-  border-bottom: 1px solid #f0f0f0;
+  margin-bottom: 8px;
+  text-align: center;
 }
 
 .private-chat-selector {
@@ -346,17 +366,24 @@ defineExpose({
   display: flex;
   gap: 8px;
   align-items: center;
-  background: #f8f9fa;
-  border-bottom: 1px solid #e9ecef;
+  margin-bottom: 8px;
+  background: var(--app-panel-strong);
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-sm);
 }
 
 .chat-messages {
   flex: 1;
   overflow-y: auto;
-  max-height: 300px;
-  margin: 0;
-  border: none;
-  box-shadow: none;
+  min-height: 250px;
+  max-height: 500px;
+  margin: 0 0 8px;
+  background: var(--app-panel);
+  border: 1px solid var(--app-border);
+}
+
+.chat-messages :deep(.el-card__body) {
+  padding: 12px;
 }
 
 .chat-message {
@@ -369,26 +396,26 @@ defineExpose({
 }
 
 .chat-message:hover {
-  background: #f8f9fa;
+  background: rgba(64, 158, 255, 0.08);
 }
 
 .own-message {
-  background: #e3f2fd;
+  background: rgba(64, 158, 255, 0.12);
   margin-left: 20px;
 }
 
 .private-message {
-  background: #f3e5f5;
+  background: rgba(124, 58, 237, 0.1);
   border-left: 3px solid #7c3aed;
 }
 
 .storyteller-message {
-  background: #ffebee;
+  background: rgba(220, 38, 38, 0.1);
   border-left: 3px solid #dc2626;
 }
 
 .system-message {
-  background: #f0f0f0;
+  background: var(--app-panel-strong);
   font-style: italic;
   text-align: center;
   color: var(--app-text-secondary) !important;
@@ -405,7 +432,7 @@ defineExpose({
 
 .message-time {
   font-size: 10px;
-  color: #999;
+  color: var(--app-text-secondary);
   margin-left: 8px;
   opacity: 0.7;
 }
@@ -414,8 +441,25 @@ defineExpose({
   font-size: 12px;
   color: #7c3aed;
   font-weight: bold;
-  background: #f3e5f5;
+  background: rgba(124, 58, 237, 0.1);
   padding: 2px 6px;
   border-radius: 3px;
+}
+
+@media (max-width: 991px) {
+  .botc-chat-wrapper {
+    min-height: 350px;
+  }
+
+  .chat-messages {
+    min-height: 300px;
+    max-height: 400px;
+  }
+}
+
+@media (min-width: 1200px) {
+  .chat-messages {
+    max-height: 600px;
+  }
 }
 </style>

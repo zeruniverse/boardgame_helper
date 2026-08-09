@@ -90,13 +90,14 @@
         <!-- 操作按钮 -->
         <div class="player-actions">
           <!-- 私聊按钮 -->
-          <el-tooltip content="私聊" placement="top">
+          <el-tooltip :content="privateChatEnabled ? '私聊' : '当前房间已关闭游戏中的私聊'" placement="top">
             <el-button 
               v-if="player.id !== currentUserId"
               size="small"
               type="primary"
               plain
               circle
+              :disabled="!privateChatEnabled"
               @click="startPrivateChat(player.id)"
             >
               <el-icon><ChatDotRound /></el-icon>
@@ -212,6 +213,7 @@ interface Props {
   storytellerId?: string
   gameConfig?: any
   playerRole?: any
+  privateChatEnabled?: boolean
 }
 
 interface Emits {
@@ -225,7 +227,8 @@ interface Emits {
 const props = withDefaults(defineProps<Props>(), {
   players: () => [],
   gamePlayers: () => [],
-  isStoryteller: false
+  isStoryteller: false,
+  privateChatEnabled: true
 })
 
 const emit = defineEmits<Emits>()
@@ -409,6 +412,7 @@ const getPlayerAvatarStyle = (playerId: string) => {
 
 // 开始私聊
 const startPrivateChat = (targetId: string) => {
+  if (!props.privateChatEnabled) return
   emit('start-private-chat', targetId)
 }
 
