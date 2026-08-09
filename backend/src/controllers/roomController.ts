@@ -2786,30 +2786,36 @@ export function roomController(io: Server) {
       }
     });
 
-    // 重连房间
-    socket.on('reconnect_room', async (data: { roomId: string; playerId: string; sessionToken?: string }) => {
+    // 重连房间。与创建/加入/离房一样提供 acknowledgement：网络恢复后客户端
+    // 必须知道座位迁移究竟是否提交成功，不能只凭 socket 已重新 connect 就继续显示
+    // 可操作页面。带 ack 的新版客户端不会再同时收到全局 error，从而避免重复提示；
+    // 未带 ack 的旧客户端仍沿用 error 事件。
+    socket.on('reconnect_room', async (
+      data: { roomId: string; playerId: string; sessionToken?: string },
+      ack?: (response: any) => void
+    ) => {
       let connectionClaimed = false;
       try {
         if (!data || !isValidRoomId(data.roomId) || !isValidPlayerId(data.playerId)) {
-          socket.emit('error', { message: '重连失败，无效的房间ID或玩家ID' });
+          sendErrorResponse(socket, '重连失败，无效的房间ID或玩家ID', ack, { clearSession: true });
           return;
         }
         const { roomId, playerId } = data;
         const room = rooms.get(roomId);
         if (room && isPendingRoomCreation(room.id)) {
-          rejectPendingRoomCreation(socket);
+          rejectPendingRoomCreation(socket, ack);
           return;
         }
         const player = room?.players.find(p => p.id === playerId);
 
         if (room && player) {
-          if (!beginSocketRoomConnection(socket, room.id)) {
+          if (!beginSocketRoomConnection(socket, room.id, ack)) {
             return;
           }
           connectionClaimed = true;
 
           if (!isValidPlayerSessionToken(room.id, player.id, data.sessionToken)) {
-            rejectInvalidPlayerSession(socket);
+            rejectInvalidPlayerSession(socket, ack);
             return;
           }
 
@@ -2823,13 +2829,14 @@ export function roomController(io: Server) {
             });
           } catch (error) {
             if (error instanceof InvalidPlayerSessionError) {
-              rejectInvalidPlayerSession(socket);
+              rejectInvalidPlayerSession(socket, ack);
               return;
             }
             throw error;
           }
           socket.emit('room_joined', result.payload);
           socket.emit('room_update', toClientRoom(result.room));
+          ack?.({ success: true, ...result.payload });
 
           // 向房间内其他玩家广播玩家重新连接的消息
           socket.to(roomId).emit('chat_broadcast', { message: `${result.player.nickname} 已重新连接` });
@@ -2839,11 +2846,13 @@ export function roomController(io: Server) {
             broadcastLobbyUpdate();
           }
         } else {
-          socket.emit('error', { message: '重连失败，房间或玩家不存在' });
+          // 房间或座位已确定不存在，本地 token 不可能再次成功；明确要求客户端清理，
+          // 避免每次底层 socket 重连都重复提交同一份失效会话并停留在假在线页面。
+          sendErrorResponse(socket, '重连失败，房间或玩家不存在', ack, { clearSession: true });
         }
       } catch (error) {
         console.error('重连房间失败:', error);
-        socket.emit('error', { message: '重连房间时发生服务器错误' });
+        sendErrorResponse(socket, '重连房间时发生服务器错误', ack);
       } finally {
         if (connectionClaimed) {
           endSocketRoomConnection(socket);

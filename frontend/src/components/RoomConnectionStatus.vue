@@ -20,7 +20,8 @@ withDefaults(defineProps<{
   disconnectedLabel?: string;
 }>(), {
   connectedLabel: '已连接',
-  disconnectedLabel: '连接已断开'
+  // 同时覆盖传输断线和“Socket 已恢复但房间座位仍待 ACK”两种状态。
+  disconnectedLabel: '连接未就绪'
 });
 </script>
 

@@ -2,7 +2,8 @@ import { defineStore } from 'pinia';
 import { io, Socket } from 'socket.io-client';
 import { SOCKET_URL } from '../config';
 import { clearGameSession, clearGameSessionIfMatches, ensureGameSession, getStoredSessionToken, rememberGameSession } from '../utils/gameSession';
-import { emitChatAction, emitRoomReconnect, joinGameRoom, leaveRoomAndDisconnect, shouldClearSessionAfterSocketError } from '../utils/gameSocket';
+import { emitChatAction, joinGameRoom, leaveRoomAndDisconnect, shouldClearSessionAfterSocketError } from '../utils/gameSocket';
+import { recoverRoomConnection } from '../utils/roomReconnect';
 import { requestGameActionWithFeedback } from '../utils/gameActionFeedback';
 import { appendLimitedMessage, createSystemMessage, normalizeErrorMessage, normalizeIncomingMessage, normalizeSystemMessage } from '../utils/messages';
 import { getForcedExitMessage, redirectToLobbyAfterForcedExit, shouldClearSessionOnForcedExit } from '../utils/forcedExit';
@@ -231,9 +232,22 @@ export const useMafiaStore = defineStore('mafia', {
 
       on('connect', () => {
         console.log('Mafia socket connected');
-        this.connected = true;
-        if (hasConnectedOnce) {
-          emitRoomReconnect(this.socket, 'mafia', this.currentRoomId, this.currentUserId);
+        if (hasConnectedOnce && this.currentRoomId) {
+          const reconnectingSocket = this.socket;
+          const reconnectingRoomId = this.currentRoomId;
+          this.connected = false;
+          recoverRoomConnection({
+            socket: reconnectingSocket,
+            gameType: 'mafia',
+            roomId: reconnectingRoomId,
+            playerId: this.currentUserId,
+            onSessionInvalidated: () => this.cleanup(),
+            isAttemptCurrent: () => this.socket === reconnectingSocket && this.currentRoomId === reconnectingRoomId,
+            onRecovered: () => { this.connected = true; },
+            onRecoverableError: (error) => this.addSystemMessage(`房间重连失败：${error instanceof Error ? error.message : '未知错误'}`)
+          });
+        } else {
+          this.connected = true;
         }
         hasConnectedOnce = true;
       });
@@ -270,6 +284,8 @@ export const useMafiaStore = defineStore('mafia', {
 
       // 房间事件
       on('room_joined', (data: { room: any; player?: any; playerId?: string; sessionToken?: string }) => {
+        if (!data.room?.id || (this.currentRoomId && String(data.room.id).toUpperCase() !== this.currentRoomId.toUpperCase())) return;
+        this.connected = true;
         this.room = normalizeRoom(data.room);
         this.currentUserId = data.player?.id || data.playerId || this.currentUserId;
         this.currentRoomId = data.room.id;
@@ -540,6 +556,7 @@ export const useMafiaStore = defineStore('mafia', {
 
       this.currentUserId = userId;
       this.currentRoomId = roomId;
+      this.connected = false;
 
       try {
         return await joinGameRoom(this.socket, {
@@ -597,6 +614,10 @@ export const useMafiaStore = defineStore('mafia', {
 
     // 游戏动作
     sendGameAction(actionType: string, actionData: any) {
+      if (!this.connected) {
+        showErrorFeedback('房间连接尚未恢复，请稍后重试', '房间连接尚未恢复，请稍后重试');
+        return Promise.resolve(false);
+      }
       return requestGameActionWithFeedback(this.socket, this.currentRoomId, this.currentUserId, actionType, actionData);
     },
 

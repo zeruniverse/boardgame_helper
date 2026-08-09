@@ -315,26 +315,46 @@ export function emitChatAction(
   );
 }
 
+export interface ReconnectRoomResponse extends SocketAckResponse {
+  room?: any;
+  player?: any;
+  playerId?: string;
+  sessionToken?: string;
+}
+
 /**
  * Socket.IO 在底层连接恢复后会分配新的 socket.id，但服务端房间和玩家座位不会自动迁移。
- * 所有游戏统一通过受 sessionToken 保护的 reconnect_room 重新绑定原座位。
+ * 重连同样属于需要 Worker/Controller 事务提交的写操作，必须等待 acknowledgement；
+ * 仅发送 fire-and-forget 会让页面把“传输已连接”误当成“座位已恢复”，之后所有操作都会
+ * 以“您不在此房间中”失败。缺失 token 是确定失效的本地会话，按服务端拒绝的同一格式返回。
  */
-export function emitRoomReconnect(
-  socket: SocketEmitter | null | undefined,
+export function reconnectGameRoom(
+  socket: TimeoutCapableSocket | null | undefined,
   gameType: string,
   roomId: string | null | undefined,
-  playerId?: string | null
-): boolean {
-  if (!socket || !roomId) return false;
+  playerId?: string | null,
+  options: SocketRequestOptions = {}
+): Promise<ReconnectRoomResponse> {
+  if (!roomId) {
+    return Promise.reject(new Error('缺少房间信息，无法恢复连接'));
+  }
 
   const session = ensureGameSession(gameType, undefined, roomId);
   const reconnectPlayerId = playerId || session.playerId;
-  if (!reconnectPlayerId || !session.sessionToken) return false;
+  if (!reconnectPlayerId || !session.sessionToken) {
+    return Promise.reject(new SocketRequestError('房间会话已失效，请重新加入', {
+      success: false,
+      clearSession: true
+    }));
+  }
 
-  socket.emit('reconnect_room', {
+  return emitSocketRequest<ReconnectRoomResponse>(socket, 'reconnect_room', {
     roomId,
     playerId: reconnectPlayerId,
     sessionToken: session.sessionToken
+  }, {
+    timeoutMessage: '恢复房间连接超时，请检查网络后重试',
+    failureMessage: '恢复房间连接失败',
+    ...options
   });
-  return true;
 }

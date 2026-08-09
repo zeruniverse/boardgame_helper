@@ -1,18 +1,18 @@
 <template>
   <div class="texas-action-bar">
     <el-button @click="extendTime"
-               :disabled="!canExtend || !!store.pendingActionKey"
+               :disabled="!store.roomConnected || !canExtend || !!store.pendingActionKey"
                :loading="store.pendingActionKey === 'extendTime'"
                :class="{ 'colored-border': store.gameActive && isMyTurn && isInGame, 'disabled-border': !store.gameActive || !isMyTurn || !isInGame }">
       延长行动时间
     </el-button>
-    <el-button :disabled="!canCheck || !!store.pendingActionKey"
+    <el-button :disabled="!store.roomConnected || !canCheck || !!store.pendingActionKey"
                :loading="store.pendingActionKey === 'playerAction:check'"
                @click="action('check')"
                :class="{ 'colored-border': canCheck, 'disabled-border': !canCheck }">
       过牌
     </el-button>
-    <el-button :disabled="!canCall || !!store.pendingActionKey"
+    <el-button :disabled="!store.roomConnected || !canCall || !!store.pendingActionKey"
                :loading="store.pendingActionKey === 'playerAction:call'"
                @click="action('call')"
                :class="{ 'colored-border': store.gameActive && canCall && isInGame, 'disabled-border': !store.gameActive || !canCall || !isInGame }">
@@ -20,9 +20,9 @@
     </el-button>
     <div class="raise-row">
       <el-input v-model.number="raiseAmount" type="number" placeholder="额外加注筹码"
-                :disabled="!canRaise || !!store.pendingActionKey" />
+                :disabled="!store.roomConnected || !canRaise || !!store.pendingActionKey" />
       <el-button type="warning"
-                 :disabled="!canRaise || !!store.pendingActionKey"
+                 :disabled="!store.roomConnected || !canRaise || !!store.pendingActionKey"
                  :loading="store.pendingActionKey === 'playerAction:raise'"
                  @click="raise"
                  :class="{ 'colored-border': store.gameActive && canRaise, 'disabled-border': !store.gameActive || !canRaise }">
@@ -30,14 +30,14 @@
       </el-button>
     </div>
     <el-button type="primary"
-               :disabled="!canAllIn || !!store.pendingActionKey"
+               :disabled="!store.roomConnected || !canAllIn || !!store.pendingActionKey"
                :loading="store.pendingActionKey === 'playerAction:allin'"
                @click="action('allin')"
                :class="{ 'colored-border': canAllIn, 'disabled-border': !canAllIn }">
       全下
     </el-button>
     <el-button type="danger"
-               :disabled="!canFold || !!store.pendingActionKey"
+               :disabled="!store.roomConnected || !canFold || !!store.pendingActionKey"
                :loading="store.pendingActionKey === 'playerAction:fold'"
                @click="action('fold')"
                :class="{ 'colored-border': store.gameActive && isMyTurn && isInGame, 'disabled-border': !store.gameActive || !isMyTurn || !isInGame }">

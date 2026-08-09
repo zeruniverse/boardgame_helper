@@ -3050,3 +3050,44 @@ Commit: fix(round15): 修复阿瓦隆开局同步并统一房间导航与德州�
   - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts 检查，仅显示正常的可选原生依赖缺失提示。
   - 正式 npm ci --ignore-scripts --no-audit --no-fund --registry=https://registry.npmjs.org 已尝试，下载过程中公共 registry 域名解析多次 EAI_AGAIN，依赖未能完整安装。正式 npm run build 已在最终源码上执行；因 node_modules 不完整，backend tsc 报 body-parser/connect/cors/express/node/uuid/ws 等类型目录缺失并中止，未进入 frontend vue-tsc/Vite。这不等同于本轮源码 strict 编译或 Worker 运行回归失败；完整生产构建、Vite 产物、Docker 镜像和实际部署仍需在依赖源正常的本地或 CI 最终确认。
 备注: 本轮未删除文件，未创建根目录 src/；修复包只包含本轮修改文件与更新后的 repair_log.txt，可按项目相对路径直接覆盖。
+
+=== 当前会话第 18 轮修复记录 ===
+时间: 2026-08-09 17:11:34 UTC
+Commit: fix(round18): 修复六类游戏重连回执与房间就绪竞态
+修改/新增文件:
+  - backend/src/controllers/roomController.ts
+  - frontend/src/components/RoomConnectionStatus.vue
+  - frontend/src/components/TexasHoldemActionBar.vue
+  - frontend/src/components/TexasHoldemRoom.vue
+  - frontend/src/store/avalon.ts
+  - frontend/src/store/botc.ts
+  - frontend/src/store/mafia.ts
+  - frontend/src/store/onuWerewolf.ts
+  - frontend/src/store/texas_holdem.ts
+  - frontend/src/store/werewolf.ts
+  - frontend/src/utils/gameSocket.ts
+  - frontend/src/utils/roomReconnect.ts（新增）
+  - repair_log.txt
+删除文件: 无
+构建测试: 部分通过（backend/src + frontend/src 当前全部 95 个源码/样式/资源文件完成静态审查；62 个 TypeScript/TSX 文件、31 个 Vue script、31 个 CSS/Vue style 单元及 293 次本地相对导入解析通过；六套 Store、本轮修改的 Vue script、共享重连工具和 backend/src 全部 35 个 TypeScript 文件均完成 strict 语义检查；backend 隔离 CommonJS 编译、六游戏 Worker prepare_room/未知任务拒绝烟雾、重连 ACK/会话代际专项运行回归和 package-lock 依赖树检查均通过。正式 npm ci 被当前内部 npm 镜像缺失 package-lock 锁定的 typescript-5.8.3.tgz 的 404 阻塞；正式 npm run build 因 node_modules 不完整而在 backend 缺失 Node/Express/CORS/Socket.IO/UUID 等依赖类型阶段中止，未进入 frontend vue-tsc/Vite，因此完整生产构建和直接部署仍需在依赖源正常的本地或 CI 执行 npm ci && npm run build 终验）
+本轮修复:
+  - 为 roomController 的 reconnect_room 增加与 create/join/leave 一致的 Socket.IO acknowledgement。重连现在只有在 Controller 与 Worker 的座位迁移事务提交后才返回 success=true；新版客户端不会再把底层 Socket 已 connect 误判为已经重新加入房间，旧版无 ACK 客户端仍可通过 error 事件获知失败。
+  - 为无效 roomId/playerId、失效 sessionToken、房间或座位已不存在等确定性失败统一返回 clearSession=true；服务器忙、创建中、连接互斥、超时或内部错误等可恢复失败不会误删仍可能有效的本地会话。
+  - gameSocket 新增 reconnectGameRoom Promise API，统一 12 秒超时、空回执、success=false 和结构化错误；移除六套 Store 过去 fire-and-forget 的 emitRoomReconnect 路径。
+  - 新增 roomReconnect 共享工具，使用 roomId + sessionToken 会话代际和 Store/页面当前性双重校验处理迟到 ACK。旧重连失败不能清除用户随后获得的新 token，旧成功也不能在已经离房或切换房间后重新开放操作；room_joined 先于 ACK 到达并轮换 token 的正常顺序仍可识别。
+  - 狼人杀、杀人游戏、一夜狼人、阿瓦隆、血染钟楼五套专用 Socket Store 在重连确认前保持 connected=false，加入新房间时也先进入未就绪状态；room_joined 仅接受当前房间，所有游戏动作在座位尚未恢复时给出一致提示并拒绝发送。
+  - 德州扑克复用大厅主 Socket，现新增独立 roomConnected 状态区分“大厅传输在线”和“德州座位已绑定”。断线/重连期间下注、延时、房间管理、筹码和领取操作统一禁用，状态轮询也只在房间连接确认后执行；会话失效只卸载德州房间监听和状态，不会错误断开大厅共享 Socket。
+  - RoomConnectionStatus 的默认离线文案改为“连接未就绪”，准确覆盖传输断线和 Socket 已恢复但房间 ACK 尚未完成两种状态；德州页面与操作条统一使用同一房间就绪事实源。
+审查结果/本轮未改动重点:
+  - 本轮继续结合 repair_log 既有记录检查 backend/src 与 frontend/src 当前全部代码，重点复核 roomController、RoomThreadManager、BaseGameWorker、六个 Worker、六套 Store/Room/ActionPanel/ActionBar/PlayerList/Chat，以及 session/socket/action feedback/state 同步工具。当前最重要且可低风险确定修复的问题，是所有游戏重连仍缺可靠回执、传输连接与房间座位连接混用导致的假在线和迟到回执竞态，因此本批次集中收敛这一跨游戏基础链路。
+  - 狼人杀、杀人游戏、一夜狼人、阿瓦隆、德州扑克和血染钟楼的现有主流程、Worker 初始化与未知任务拒绝继续复核，本轮没有修改角色、投票、任务、夜序、胜负、牌型或奖池规则；未发现优先级高于上述重连竞态、且适合本批次确定落地的新核心规则阻断项。
+  - 血染钟楼仍保留 repair_log 已记录、需要更大状态模型或真人说书人逐次裁决 UI 才能完整覆盖的架构级边界，包括特殊夜序下 Pit-Hag 创建 Demon 后无法安全逆向更早已落地并触发被动的死亡、Recluse/Spy registration 缺逐次人工裁决，以及自由文本/多重效果抵消下 Mathematician 极端统计。本轮没有用近似逻辑强行覆盖。
+  - 项目根目录不存在 src/；所有后端源码修改仅位于 backend/src/，所有前端源码修改/新增仅位于 frontend/src/，原有目录结构保持不变。
+验证:
+  - 全量静态检查通过：62 个 .ts/.tsx 文件和 31 个 Vue script 均可由 TypeScript 解析，31 个 standalone/Vue style 单元花括号与字符串/注释状态平衡，293 次相对本地 import/require 均可解析；9 个 JSON/JSONC 配置和 2 个 SVG 资源可解析；未发现真实合并冲突标记、旧 emitRoomReconnect 引用或根目录 src/。
+  - 前端共享 gameSocket/roomReconnect 工具完成 strict TypeScript 检查；狼人杀、杀人游戏、一夜狼人、阿瓦隆、血染钟楼、德州扑克六套本轮修改 Store 及 RoomConnectionStatus、TexasHoldemRoom、TexasHoldemActionBar 的 script 完成带外部依赖声明桩的 strict 语义检查。
+  - 重连专项运行回归通过：覆盖正确 payload 与 ACK 超时、缺失 token 的 clearSession、确定性失败清理、旧失败不得清除新 token、room_joined 先写入轮换 token 后 ACK 仍恢复、不同房间迟到成功不得开放，以及页面已 detach 后迟到失败不得清理保留会话。
+  - backend/src 全部 35 个 TypeScript 文件完成 strict/noEmit 和隔离 CommonJS 编译；六个实际游戏 Worker 使用最终隔离产物执行合法 prepare_room，并确认未知任务明确返回 success=false：狼人杀、杀人游戏、阿瓦隆、一夜狼人、血染钟楼、德州扑克全部通过。
+  - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts 检查，仅有可选依赖提示。
+  - 正式 npm ci --ignore-scripts --prefer-offline --no-audit --no-fund 已执行，当前内部 npm 镜像对 typescript-5.8.3.tgz 返回 404。正式 npm run build 也已在最终源码上执行；因为依赖安装未完成，backend tsc 在 Node/Express/CORS/Socket.IO/UUID 等 package.json 已声明依赖的类型解析阶段中止，未进入 frontend vue-tsc/Vite。这不等同于上述源码 strict 检查、隔离编译、Worker 烟雾或重连运行回归失败；完整生产构建、Docker 镜像和实际部署仍需在依赖源正常的本地或 CI 最终确认。
+备注: 本轮未删除文件，未创建根目录 src/；修复包只包含上述修改/新增文件与更新后的 repair_log.txt，可按项目相对路径直接覆盖。

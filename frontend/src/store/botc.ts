@@ -4,7 +4,8 @@ import { io, Socket } from 'socket.io-client'
 import { ElMessage } from 'element-plus'
 import { SOCKET_URL } from '../config'
 import { clearGameSession, clearGameSessionIfMatches, ensureGameSession, getStoredSessionToken, rememberGameSession } from '../utils/gameSession'
-import { emitChatAction, emitRoomReconnect, joinGameRoom, leaveRoomAndDisconnect, shouldClearSessionAfterSocketError } from '../utils/gameSocket'
+import { emitChatAction, joinGameRoom, leaveRoomAndDisconnect, shouldClearSessionAfterSocketError } from '../utils/gameSocket'
+import { recoverRoomConnection } from '../utils/roomReconnect'
 import { requestGameActionWithFeedback } from '../utils/gameActionFeedback'
 import { appendLimitedMessage, normalizeIncomingMessage } from '../utils/messages'
 import { getForcedExitMessage, redirectToLobbyAfterForcedExit, shouldClearSessionOnForcedExit } from '../utils/forcedExit'
@@ -99,9 +100,21 @@ export const useBOTCGameStore = defineStore('botc', () => {
 
         on('connect', () => {
           console.log('血染钟楼: 连接到服务器成功')
-          connected.value = true
-          if (hasConnectedOnce) {
-            emitRoomReconnect(socket.value, 'blood-on-the-clocktower', currentRoomId.value, currentUserId.value)
+          if (hasConnectedOnce && currentRoomId.value) {
+            const reconnectingSocket = socket.value
+            const reconnectingRoomId = currentRoomId.value
+            connected.value = false
+            recoverRoomConnection({
+              socket: reconnectingSocket,
+              gameType: 'blood-on-the-clocktower',
+              roomId: reconnectingRoomId,
+              playerId: currentUserId.value,
+              onSessionInvalidated: disconnect,
+              isAttemptCurrent: () => socket.value === reconnectingSocket && currentRoomId.value === reconnectingRoomId,
+              onRecovered: () => { connected.value = true }
+            })
+          } else {
+            connected.value = true
           }
           hasConnectedOnce = true
           resolve(void 0)
@@ -138,6 +151,8 @@ export const useBOTCGameStore = defineStore('botc', () => {
         // 监听房间事件
         on('room_joined', (data) => {
           console.log('血染钟楼: 成功加入房间:', data)
+          if (!data.room?.id || (currentRoomId.value && String(data.room.id).toUpperCase() !== currentRoomId.value.toUpperCase())) return
+          connected.value = true
           room.value = data.room
           currentRoomId.value = data.room.id
           currentUserId.value = data.player?.id || data.playerId || currentUserId.value
@@ -557,6 +572,7 @@ export const useBOTCGameStore = defineStore('botc', () => {
 
       currentUserId.value = userId
       currentRoomId.value = roomId
+      connected.value = false
       try {
         return await joinGameRoom(socket.value, {
           roomId,
@@ -606,6 +622,10 @@ export const useBOTCGameStore = defineStore('botc', () => {
 
   // 发送游戏操作
   const sendGameAction = (action: string, data: any = {}) => {
+    if (!connected.value) {
+      showErrorFeedback('房间连接尚未恢复，请稍后重试', '房间连接尚未恢复，请稍后重试')
+      return Promise.resolve(false)
+    }
     return requestGameActionWithFeedback(
       socket.value,
       currentRoomId.value,

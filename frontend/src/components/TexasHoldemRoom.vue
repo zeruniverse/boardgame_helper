@@ -218,7 +218,9 @@ const roomPreparing = ref(true); // 默认显示准备中
 const roomName = ref('');
 // 显示的房间号（优先使用服务器返回的名称，否则使用URL中的ID）
 const displayRoomName = computed(() => roomName.value || roomId);
-const connected = computed(() => mainStore.connected);
+// 大厅主 Socket 的传输连接与德州座位绑定是两层状态；重连 ACK 返回前不能
+// 把房间显示为已连接，也不能开放下注、房间管理或分池操作。
+const connected = computed(() => mainStore.connected && store.roomConnected);
 const isHost = computed(() => store.isHost);
 const {
   ownChips,
@@ -252,7 +254,7 @@ let componentActive = true;
 
 // 请求房间状态的函数
 const requestRoomState = () => {
-  if (store.socket && roomId) {
+  if (store.socket && roomId && connected.value) {
     console.log(`请求房间 ${roomId} 的状态...`);
     store.socket.emit('get_room_state', { roomId });
   }
@@ -307,7 +309,9 @@ onMounted(async () => {
       router.replace({ name: 'Lobby' });
       return;
     }
+    if (String(data.room.id).toUpperCase() !== roomId.toUpperCase()) return;
     console.log('房间加入成功，类型匹配');
+    store.roomConnected = true;
     // 保存后端分配的playerId
     if (data.player && data.player.id) {
       store.playerId = data.player.id;
@@ -496,7 +500,7 @@ const canStartGame = computed(() => {
   return isHost.value && eligiblePlayers.length >= 2;
 });
 const roomActionBusy = computed(() =>
-  cashInPending.value || cashOutPending.value || takePending.value || Boolean(store.pendingActionKey)
+  !connected.value || cashInPending.value || cashOutPending.value || takePending.value || Boolean(store.pendingActionKey)
 );
 
 interface TexasQuickAction {

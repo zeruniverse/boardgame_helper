@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia';
 import { useMainStore } from './index';
-import { emitRoomReconnect, queueSharedSocketRoomTransition } from '../utils/gameSocket';
+import { queueSharedSocketRoomTransition } from '../utils/gameSocket';
+import { recoverRoomConnection } from '../utils/roomReconnect';
 import { requestGameActionWithFeedback } from '../utils/gameActionFeedback';
 import { appendLimitedMessage, normalizeIncomingMessage } from '../utils/messages';
 import { GAME_STORAGE_KEYS } from '../utils/gameMeta';
@@ -44,6 +45,9 @@ export const useTexasHoldemStore = defineStore('texas_holdem', {
     stage: 'idle' as 'idle' | 'playing' | 'distribution',
     pendingActionKey: '' as string,
     actionRequestVersion: 0,
+    // 大厅主 Socket 已连接并不代表德州座位已迁移到新的 socket.id。
+    // 只有 room_joined / reconnect ACK 成功后才开放房间操作。
+    roomConnected: false,
     socketListeners: [] as Array<[string, (...args: any[]) => void]>,
   }),
 
@@ -105,10 +109,29 @@ export const useTexasHoldemStore = defineStore('texas_holdem', {
       // 主 socket 在网络闪断后会获得新的 socket.id；重新绑定原座位后，
       // 服务端才能继续接受行动并把私有手牌/牌局状态发到新连接。
       on('connect', () => {
-        if (hasConnectedOnce) {
-          emitRoomReconnect(mainStore.socket, 'texas-holdem', this.currentRoom, this.playerId);
+        if (hasConnectedOnce && this.currentRoom) {
+          const reconnectingSocket = mainStore.socket;
+          const reconnectingRoomId = this.currentRoom;
+          this.roomConnected = false;
+          recoverRoomConnection({
+            socket: reconnectingSocket,
+            gameType: 'texas-holdem',
+            roomId: reconnectingRoomId,
+            playerId: this.playerId,
+            // 德州复用大厅主 Socket；会话失效时只移除德州监听和页面状态，不能断开大厅。
+            onSessionInvalidated: () => this.detachFromRoom(),
+            isAttemptCurrent: () => mainStore.socket === reconnectingSocket && this.currentRoom === reconnectingRoomId,
+            onRecovered: () => { this.roomConnected = true; },
+            onRecoverableError: (error) => this.addMessage({
+              message: `[系统] 房间重连失败：${error instanceof Error ? error.message : '未知错误'}`
+            })
+          });
         }
         hasConnectedOnce = true;
+      });
+
+      on('disconnect', () => {
+        this.roomConnected = false;
       });
 
       // 接收手牌
@@ -332,6 +355,8 @@ export const useTexasHoldemStore = defineStore('texas_holdem', {
         // Lobby 也通过同一个主 Socket 加入其他游戏。德州监听器只接受德州房间，
         // 否则从德州返回大厅后再加入阿瓦隆等游戏会污染德州 store。
         if (data.room?.type !== 'texas-holdem') return;
+        if (this.currentRoom && String(data.room?.id).toUpperCase() !== this.currentRoom.toUpperCase()) return;
+        this.roomConnected = true;
         if (data.room?.id) {
           this.currentRoom = data.room.id;
         }
@@ -449,6 +474,10 @@ export const useTexasHoldemStore = defineStore('texas_holdem', {
       actionData: Record<string, any> = {},
       actionKey = actionType
     ): Promise<boolean> {
+      if (!this.roomConnected) {
+        showErrorFeedback('房间连接尚未恢复，请稍后重试', '德州扑克房间连接尚未恢复');
+        return false;
+      }
       if (this.pendingActionKey) {
         showInfoFeedback('上一项操作正在处理中，请稍候');
         return false;
@@ -516,6 +545,7 @@ export const useTexasHoldemStore = defineStore('texas_holdem', {
     detachFromRoom() {
       this.actionRequestVersion += 1;
       this.pendingActionKey = '';
+      this.roomConnected = false;
       this.removeSocketListeners();
       this.resetGameState();
       this.messages = [];
@@ -540,6 +570,8 @@ export const useTexasHoldemStore = defineStore('texas_holdem', {
         this.currentRoom = roomId;
         this.nickname = nickname;
         this.playerId = playerId;
+        // 此入口仅由大厅的 room_joined 处理器调用，座位已获服务端确认。
+        this.roomConnected = true;
         localStorage.setItem(TEXAS_STORAGE.nickname, nickname);
         localStorage.setItem(TEXAS_STORAGE.id, playerId);
         localStorage.setItem(TEXAS_ROOM_KEY, roomId);
