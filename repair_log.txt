@@ -2675,3 +2675,36 @@ Commit: fix(round2): 延迟德州离线玩家自动行动并补齐配置协议
   - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts 校验，仅显示可选原生依赖提示。
   - 正式 npm run build 已在最终源码上执行；由于当前容器无法从内部 npm 镜像安装完整依赖，backend tsc 在 Node 内建类型和 Express/CORS/Socket.IO/UUID 等 package.json 已声明依赖解析阶段中止，未进入 frontend vue-tsc/Vite。安装/构建残留的 node_modules、backend/dist、frontend/dist 已清理；相同源码已通过上述 strict/noEmit、六 Worker 隔离编译/运行烟雾和德州专项回归。完整生产构建与“可直接部署”仍需在依赖镜像正常的本地或 CI 执行 npm ci && npm run build 最终确认。
 备注: 本轮未删除文件，未创建根目录 src/；所有后端源码修改仅位于 backend/src/，本轮没有 frontend/src/ 源码修改；修复包只包含 backend/src/controllers/roomController.ts、backend/src/workers/texasHoldemWorker.ts、doc/texas-holdem.md 与更新后的 repair_log.txt，可按相对路径直接覆盖。
+
+=== 当前会话第 1 轮修复记录 ===
+时间: 2026-08-09 12:50:26 UTC
+Commit: fix(round1): 修复大厅房间交互与回执错误同步
+修改/新增文件:
+  - backend/src/controllers/roomController.ts
+  - frontend/src/components/Lobby.vue
+  - frontend/src/utils/gameSocket.ts
+  - repair_log.txt
+删除文件: 无
+构建测试: 部分通过（backend/src + frontend/src 当前全部 86 个源码文件静态扫描、backend/src 全部 35 个 TypeScript strict/noEmit 与隔离 CommonJS 编译、前端共享 Socket/会话/游戏元数据工具 strict 类型检查、六游戏 Worker prepare_room 烟雾、Socket 回执/超时与 Controller 单通道错误响应专项回归、package-lock 依赖树检查均通过；正式 npm ci 被当前内部 npm 镜像缺失 TypeScript 5.8.3 tarball 的 404 阻塞，正式 npm run build 因没有完整 node_modules 在 backend 的 Node/Express/CORS/Socket.IO/UUID 依赖与类型解析阶段中止，未进入 frontend vue-tsc/Vite，因此完整生产构建与直接部署仍需在依赖镜像正常的本地或 CI 执行 npm ci && npm run build 终验）
+本轮修复:
+  - 新增 frontend/src/utils/gameSocket.ts 的 emitSocketRequest，共享处理需要 acknowledgement 的 Socket.IO 请求。创建/加入房间现在统一校验空回执与 success=false，并同时支持 Socket.IO 原生 timeout 和兼容性回退计时器；网络闪断或服务端未回执时会明确超时，不再让“创建中/加入中”按钮永久卡住。
+  - 修复 Controller 同一失败同时走 acknowledgement 与全局 error 事件的重复反馈。sendErrorResponse 现在把两者作为替代通道：有 ack 时只返回 { success: false, error }，无 ack 的旧调用才发送 error 事件；创建、加入、通过链接加入、游戏行动、转让房主、聊天、踢人及会话校验等相关分支统一复用该逻辑，避免前端弹出两条相同错误消息。
+  - 大厅房间卡片进入流程不再调用浏览器原生 prompt，统一使用现有 Element Plus 加入房间对话框，并按游戏元数据预填本地昵称。房间号、昵称校验、loading、取消和错误提示现在与“输入房间号加入”的入口一致，移动端及键盘操作也更友好。
+  - 大厅的“重连”标记与锁房/满房绕过改为 hasExactStoredRoomSession，只有本地 playerId、sessionToken 和精确 roomId 都匹配时才视为可恢复座位；旧版仅有模糊本地标记的会话不再把其他房间误显示为“重连”或错误启用进入按钮。
+  - 六个游戏选择卡片改为复用 GAME_TYPE_LIST/GAME_META 的数据驱动渲染，展示名称、描述和人数边界的事实源统一。由此修正大厅硬编码的杀人游戏 8–16 人（实际 6–20）和狼人杀 6–16 人（实际 6–18）范围，并减少后续新增或调整游戏时的重复模板漂移。
+  - 修复创建房间表单跨游戏复用造成的隐藏配置泄漏：每次打开对话框完整重置 edition/dayTime 等此前遗漏字段；切换游戏时把 maxPlayers 收敛到目标游戏合法范围，并恢复该游戏的计时、发牌、湖上夫人或剧本默认值，避免从 2 人德州切到阿瓦隆后提交非法人数，或把血染钟楼的 nightTime 静默带入杀人游戏。
+  - 游戏选择卡片补充 role、tabindex、aria-pressed 以及 Enter/Space 操作，统一卡片高度和悬浮反馈，减少两列卡片因文案长度不同造成的布局跳动。
+审查结果/本轮未改动重点:
+  - 本轮检查 backend/src 与 frontend/src 当前全部 86 个源码文件，并结合附件中的既有 repair_log 重点复核六个 Worker、Controller/RoomThreadManager、前端六套 Room/Store/ActionPanel/ActionBar/PlayerList/Chat 及共享 session/socket/gameMeta/config/state 工具。当前最适合低风险落地的确定性问题集中在大厅配置事实源、Socket 回执生命周期和错误通道一致性，因此本批次优先修复这些跨前后端交互问题。
+  - 狼人杀、杀人游戏、一夜狼人、阿瓦隆、德州扑克和血染钟楼的主流程继续按项目文档及当前规则实现交叉检查；六个实际 Worker 均可完成合法 prepare_room。本轮未发现优先级高于上述交互/配置问题、且能在当前小批次安全修改的新确定性规则阻断错误。
+  - 血染钟楼仍保留既有 repair_log 已记录、需要更大状态模型或真人说书人逐次裁决 UI 才能完整解决的架构级边界：特殊自定义夜序下 Pit-Hag 创建 Demon 后无法安全逆向更早已真实落地并触发被动的死亡；Recluse/Spy registration 缺逐次人工裁决 UI；自由文本与多重效果抵消等 Mathematician 极端情况缺统一逐次最终基准审计。本轮没有用近似逻辑强行覆盖。
+  - Worker/Controller 的单房间任务串行、workerStateVersion/connectionStateVersion/hostStateVersion 合并和既有座位事务机制保持不变；本轮后端只收敛请求失败的响应通道，不改变 Worker 消息协议或游戏状态事实源。
+验证:
+  - backend/src + frontend/src 全量静态扫描通过：共 86 个源码文件、84 个 TypeScript/Vue script 解析单元、28 个 style/CSS 单元和 228 次本地相对/@ 导入检查；未发现语法错误、CSS 花括号错误、真实合并冲突标记、失效本地导入或根目录 src/。
+  - backend/src 全部 35 个 TypeScript 文件使用 strict 配置、真实全局 Node 类型及项目目录外 Express/CORS/Socket.IO/UUID 临时声明桩完成 noEmit 检查，并成功生成隔离 CommonJS 测试产物；临时声明、脚本及产物不进入修复包。
+  - frontend/src/utils/gameSocket.ts、gameSession.ts、gameMeta.ts 通过 strict TypeScript 检查；emitSocketRequest 运行回归覆盖成功回执、success=false、Socket.IO 原生超时、无 timeout API 的回退计时和空 socket，全部通过。
+  - Controller acknowledgement 专项回归直接提取本轮 sendErrorResponse 执行：有 ack 的失败只调用一次 ack 且不发送 error；无 ack 的旧调用只发送 error。大厅专项断言确认六游戏元数据人数与后端配置一致、已移除原生 prompt/旧硬编码人数、并使用精确房间会话判断。
+  - 狼人杀、杀人游戏、血染钟楼、一夜狼人、阿瓦隆、德州扑克六个 Worker 使用本轮隔离编译产物执行 prepare_room 烟雾均通过。
+  - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts 检查，仅显示可选原生依赖提示；backend/start-multithreaded.js、package/config/tsconfig JSON/JSONC、frontend/vite.config.ts 和 SVG 解析检查均通过。
+  - 正式 npm ci --ignore-scripts --no-audit --no-fund 已执行，当前内部 npm 镜像请求 package-lock 锁定的 typescript-5.8.3.tgz 返回 404。正式 npm run build 也已执行；由于依赖未安装，backend tsc 在 Node/Express/CORS/Socket.IO/UUID 等 package.json 已声明依赖和类型解析阶段中止，未进入 frontend vue-tsc/Vite。失败安装/构建残留已清理；完整生产构建与“可直接部署”仍需在依赖可正常安装的本地或 CI 最终确认。
+备注: 本轮未删除文件，未创建根目录 src/；所有后端源码修改仅位于 backend/src/，所有前端源码修改仅位于 frontend/src/。修复包只包含上述 4 个修改文件，可按相对路径直接覆盖。

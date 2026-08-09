@@ -179,8 +179,7 @@ function clearRoomSessionTokens(roomId: string): void {
 }
 
 function rejectInvalidPlayerSession(socket: Socket, ack?: (response: any) => void): void {
-  socket.emit('error', { message: INVALID_PLAYER_SESSION_MESSAGE });
-  ack?.({ success: false, error: INVALID_PLAYER_SESSION_MESSAGE });
+  sendErrorResponse(socket, INVALID_PLAYER_SESSION_MESSAGE, ack);
 }
 
 function findSocketOwnedSeat(socketId: string): { room: Room; player: Player } | undefined {
@@ -800,8 +799,15 @@ function validateRoomExists(roomId: string, rooms: Map<string, Room>): Room | nu
 }
 
 function sendErrorResponse(socket: Socket, message: string, ack?: (response: any) => void): void {
+  const response = { success: false, error: message };
+  // acknowledgement 和 error 事件是两种替代响应通道，不能同时发送。大厅等新版
+  // 客户端会为 create/join 请求等待 ack，同时又有全局 error 监听；旧实现会让同一
+  // 次拒绝弹出两条完全相同的错误提示。无 ack 的旧客户端仍通过 error 事件获知失败。
+  if (typeof ack === 'function') {
+    ack(response);
+    return;
+  }
   socket.emit('error', { message });
-  ack?.({ success: false, error: message });
 }
 
 function isLegacyGuestNickname(nickname: string): boolean {
@@ -2758,8 +2764,11 @@ export function roomController(io: Server) {
           pendingRoomCreation = undefined;
         }
         console.error('创建房间失败:', error);
-        socket.emit('error', { message: '创建房间失败' });
-        ack?.({ success: false, error: error instanceof Error ? error.message : '创建房间失败' });
+        sendErrorResponse(
+          socket,
+          error instanceof Error ? error.message : '创建房间失败',
+          ack
+        );
       } finally {
         clearNewSeatConnection(provisionalNewSeat);
         clearPendingRoomCreation(pendingRoomCreation);
@@ -2928,15 +2937,13 @@ export function roomController(io: Server) {
 
         // 检查房间是否已满。有效会话重连已在上方完成，因此满房仍可恢复原座位。
         if (room.players.length >= room.maxPlayers) {
-          socket.emit('error', { message: '房间已满' });
-          ack?.({ success: false, error: '房间已满' });
+          sendErrorResponse(socket, '房间已满', ack);
           return;
         }
 
         // 检查当前 socket 是否已在房间中
         if (room.players.some(p => p.socketId === socket.id)) {
-          socket.emit('error', { message: '您已在此房间中' });
-          ack?.({ success: false, error: '您已在此房间中' });
+          sendErrorResponse(socket, '您已在此房间中', ack);
           return;
         }
 
@@ -3022,8 +3029,11 @@ export function roomController(io: Server) {
         console.log(`玩家 ${player.nickname} 加入了房间 ${room.name}`);
       } catch (error) {
         console.error('加入房间失败:', error);
-        socket.emit('error', { message: '加入房间失败' });
-        ack?.({ success: false, error: error instanceof Error ? error.message : '加入房间失败' });
+        sendErrorResponse(
+          socket,
+          error instanceof Error ? error.message : '加入房间失败',
+          ack
+        );
       } finally {
         clearNewSeatConnection(provisionalNewSeat);
         if (connectionClaimed) {
@@ -3118,15 +3128,13 @@ export function roomController(io: Server) {
 
         // 检查房间是否已满。有效会话重连已在上方完成，因此满房仍可恢复原座位。
         if (room.players.length >= room.maxPlayers) {
-          socket.emit('error', { message: '房间已满' });
-          ack?.({ success: false, error: '房间已满' });
+          sendErrorResponse(socket, '房间已满', ack);
           return;
         }
 
         // 检查玩家是否已在房间中
         if (room.players.some(p => p.socketId === socket.id)) {
-          socket.emit('error', { message: '您已在此房间中' });
-          ack?.({ success: false, error: '您已在此房间中' });
+          sendErrorResponse(socket, '您已在此房间中', ack);
           return;
         }
 
@@ -3212,8 +3220,11 @@ export function roomController(io: Server) {
         console.log(`玩家 ${player.nickname} 通过链接加入了房间 ${room.name}`);
       } catch (error) {
         console.error('通过链接加入房间失败:', error);
-        socket.emit('error', { message: '加入房间失败' });
-        ack?.({ success: false, error: error instanceof Error ? error.message : '加入房间失败' });
+        sendErrorResponse(
+          socket,
+          error instanceof Error ? error.message : '加入房间失败',
+          ack
+        );
       } finally {
         clearNewSeatConnection(provisionalNewSeat);
         if (connectionClaimed) {
@@ -3673,8 +3684,11 @@ export function roomController(io: Server) {
         ack?.({ success: true });
       } catch (error) {
         console.error('处理游戏行动失败:', error);
-        socket.emit('error', { message: '操作失败' });
-        ack?.({ success: false, error: error instanceof Error ? error.message : '操作失败' });
+        sendErrorResponse(
+          socket,
+          error instanceof Error ? error.message : '操作失败',
+          ack
+        );
       }
     });
 
@@ -3707,13 +3721,17 @@ export function roomController(io: Server) {
 
         const result = await transferHostInRoom(room, player, newHostId);
         if (!result.success) {
-          socket.emit('error', { message: result.error || '转让房主失败' });
+          sendErrorResponse(socket, result.error || '转让房主失败', ack);
+          return;
         }
         ack?.(result);
       } catch (error) {
         console.error('转让房主失败:', error);
-        socket.emit('error', { message: '转让房主失败' });
-        ack?.({ success: false, error: error instanceof Error ? error.message : '转让房主失败' });
+        sendErrorResponse(
+          socket,
+          error instanceof Error ? error.message : '转让房主失败',
+          ack
+        );
       }
     });
 
@@ -3758,8 +3776,11 @@ export function roomController(io: Server) {
         ack?.({ success: true });
       } catch (error) {
         console.error('处理聊天消息失败:', error);
-        socket.emit('error', { message: '发送聊天失败' });
-        ack?.({ success: false, error: error instanceof Error ? error.message : '发送聊天失败' });
+        sendErrorResponse(
+          socket,
+          error instanceof Error ? error.message : '发送聊天失败',
+          ack
+        );
       }
     });
 
@@ -3803,8 +3824,7 @@ export function roomController(io: Server) {
         if (room.hostId === player.id && targetId !== player.id) {
           const result = await kickPlayerFromRoom(room, player, targetId);
           if (!result.success) {
-            socket.emit('error', { message: result.error || '当前状态不允许踢出该玩家' });
-            ack?.(result);
+            sendErrorResponse(socket, result.error || '当前状态不允许踢出该玩家', ack);
             return;
           }
 
@@ -3883,8 +3903,7 @@ export function roomController(io: Server) {
           } else {
             // 检查玩家是否已经投过票
             if (voteData.voters.has(player.id)) {
-              socket.emit('error', { message: '您已经投过票了' });
-              ack?.({ success: false, error: '您已经投过票了' });
+              sendErrorResponse(socket, '您已经投过票了', ack);
               return;
             }
             // 添加投票
@@ -3995,12 +4014,14 @@ export function roomController(io: Server) {
           }
         }
 
-        socket.emit('error', { message: '无法踢出自己' });
-        ack?.({ success: false, error: '无法踢出自己' });
+        sendErrorResponse(socket, '无法踢出自己', ack);
       } catch (error) {
         console.error('踢出玩家失败:', error);
-        socket.emit('error', { message: '踢出玩家失败' });
-        ack?.({ success: false, error: error instanceof Error ? error.message : '踢出玩家失败' });
+        sendErrorResponse(
+          socket,
+          error instanceof Error ? error.message : '踢出玩家失败',
+          ack
+        );
       }
     });
 

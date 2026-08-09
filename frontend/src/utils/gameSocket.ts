@@ -4,6 +4,95 @@ export interface SocketEmitter {
   emit(event: string, ...args: any[]): any;
 }
 
+export interface TimeoutCapableSocket extends SocketEmitter {
+  timeout?(timeoutMs: number): SocketEmitter;
+}
+
+export interface SocketAckResponse {
+  success?: boolean;
+  error?: string;
+  [key: string]: any;
+}
+
+export interface SocketRequestOptions {
+  timeoutMs?: number;
+  timeoutMessage?: string;
+  failureMessage?: string;
+}
+
+/**
+ * 统一处理需要服务端 acknowledgement 的 Socket.IO 请求。
+ *
+ * 大厅的创建/加入房间过去分别使用 Promise 和回调：创建请求没有超时，网络闪断时
+ * 按钮会永久停留在 loading；加入请求则在组件内重复实现超时与错误分支。这里将
+ * 超时、空回执和 success=false 收敛为同一种 Promise 错误，调用方只负责展示文案。
+ */
+export function emitSocketRequest<TResponse extends SocketAckResponse = SocketAckResponse>(
+  socket: TimeoutCapableSocket | null | undefined,
+  event: string,
+  payload: unknown,
+  options: SocketRequestOptions = {}
+): Promise<TResponse> {
+  if (!socket) {
+    return Promise.reject(new Error('连接未建立，请稍后重试'));
+  }
+
+  const timeoutMs = Math.max(100, options.timeoutMs ?? 12000);
+  const timeoutMessage = options.timeoutMessage || '请求超时，请稍后重试';
+  const failureMessage = options.failureMessage || '请求失败';
+
+  return new Promise<TResponse>((resolve, reject) => {
+    let settled = false;
+    let fallbackTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const finish = (callback: () => void): void => {
+      if (settled) return;
+      settled = true;
+      if (fallbackTimer) {
+        clearTimeout(fallbackTimer);
+        fallbackTimer = null;
+      }
+      callback();
+    };
+
+    const handleResponse = (response?: TResponse): void => {
+      if (!response || typeof response !== 'object') {
+        finish(() => reject(new Error(`${failureMessage}：服务器未返回有效结果`)));
+        return;
+      }
+      if (response.success === false) {
+        finish(() => reject(new Error(response.error || failureMessage)));
+        return;
+      }
+      finish(() => resolve(response));
+    };
+
+    try {
+      if (typeof socket.timeout === 'function') {
+        socket.timeout(timeoutMs).emit(
+          event,
+          payload,
+          (timeoutError: Error | null, response?: TResponse) => {
+            if (timeoutError) {
+              finish(() => reject(new Error(timeoutMessage)));
+              return;
+            }
+            handleResponse(response);
+          }
+        );
+        return;
+      }
+
+      fallbackTimer = setTimeout(() => {
+        finish(() => reject(new Error(timeoutMessage)));
+      }, timeoutMs);
+      socket.emit(event, payload, (response?: TResponse) => handleResponse(response));
+    } catch (error) {
+      finish(() => reject(error instanceof Error ? error : new Error(failureMessage)));
+    }
+  });
+}
+
 export interface DisconnectableSocket extends SocketEmitter {
   connected?: boolean;
   disconnect(): any;

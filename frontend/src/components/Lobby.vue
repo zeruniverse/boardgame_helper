@@ -457,90 +457,29 @@
         <!-- 第一步：选择游戏类型 -->
         <div v-if="createRoomStep === 0" class="game-selection">
           <h3 style="text-align: center; margin: 20px 0;">选择游戏类型</h3>
-          <el-row :gutter="20">
-            <el-col :span="12" :xs="24">
-              <el-card 
+          <el-row :gutter="20" class="game-option-grid">
+            <el-col
+              v-for="game in gameOptions"
+              :key="game.type"
+              :span="12"
+              :xs="24"
+              class="game-option-col"
+            >
+              <el-card
                 class="game-card"
-                :class="{ 'selected': createRoomForm.gameType === 'texas-holdem' }"
-                @click="selectGame('texas-holdem')"
+                :class="{ selected: createRoomForm.gameType === game.type }"
                 shadow="hover"
+                role="button"
+                tabindex="0"
+                :aria-pressed="createRoomForm.gameType === game.type"
+                @click="selectGame(game.type)"
+                @keyup.enter="selectGame(game.type)"
+                @keyup.space.prevent="selectGame(game.type)"
               >
                 <div class="game-info">
-                  <h4>德州扑克</h4>
-                  <p>经典扑克游戏</p>
-                  <p>支持2-10人</p>
-                </div>
-              </el-card>
-            </el-col>
-            <el-col :span="12" :xs="24">
-              <el-card 
-                class="game-card"
-                :class="{ 'selected': createRoomForm.gameType === 'avalon' }"
-                @click="selectGame('avalon')"
-                shadow="hover"
-              >
-                <div class="game-info">
-                  <h4>阿瓦隆</h4>
-                  <p>策略推理游戏</p>
-                  <p>支持5-10人</p>
-                </div>
-              </el-card>
-            </el-col>
-            <el-col :span="12" :xs="24">
-              <el-card 
-                class="game-card"
-                :class="{ 'selected': createRoomForm.gameType === 'mafia' }"
-                @click="selectGame('mafia')"
-                shadow="hover"
-              >
-                <div class="game-info">
-                  <h4>杀人游戏</h4>
-                  <p>经典推理游戏</p>
-                  <p>支持8-16人</p>
-                </div>
-              </el-card>
-            </el-col>
-          </el-row>
-          <el-row :gutter="20" style="margin-top: 20px;">
-            <el-col :span="12" :xs="24">
-              <el-card 
-                class="game-card"
-                :class="{ 'selected': createRoomForm.gameType === 'werewolf' }"
-                @click="selectGame('werewolf')"
-                shadow="hover"
-              >
-                <div class="game-info">
-                  <h4>狼人杀</h4>
-                  <p>经典狼人杀游戏</p>
-                  <p>支持6-16人</p>
-                </div>
-              </el-card>
-            </el-col>
-            <el-col :span="12" :xs="24">
-              <el-card 
-                class="game-card"
-                :class="{ 'selected': createRoomForm.gameType === 'one-night-werewolf' }"
-                @click="selectGame('one-night-werewolf')"
-                shadow="hover"
-              >
-                <div class="game-info">
-                  <h4>一夜狼人</h4>
-                  <p>快节奏狼人杀变种</p>
-                  <p>支持3-10人</p>
-                </div>
-              </el-card>
-            </el-col>
-            <el-col :span="12" :xs="24">
-              <el-card 
-                class="game-card"
-                :class="{ 'selected': createRoomForm.gameType === 'blood-on-the-clocktower' }"
-                @click="selectGame('blood-on-the-clocktower')"
-                shadow="hover"
-              >
-                <div class="game-info">
-                  <h4>血染钟楼</h4>
-                  <p>角色扮演推理游戏</p>
-                  <p>支持5-15人</p>
+                  <h4>{{ game.displayName }}</h4>
+                  <p>{{ game.description }}</p>
+                  <p>支持{{ game.minPlayers }}-{{ game.maxPlayers }}人</p>
                 </div>
               </el-card>
             </el-col>
@@ -818,8 +757,9 @@ import { storeToRefs } from 'pinia';
 import { useRoute, useRouter } from 'vue-router';
 import { ElMessage } from 'element-plus';
 import { SOCKET_URL } from '../config';
-import { GAME_META } from '../utils/gameMeta';
-import { ensureGameSession, getStoredSessionToken, hasStoredRoomSession } from '../utils/gameSession';
+import { GAME_META, GAME_TYPE_LIST } from '../utils/gameMeta';
+import { ensureGameSession, getStoredSessionToken, hasExactStoredRoomSession } from '../utils/gameSession';
+import { emitSocketRequest } from '../utils/gameSocket';
 
 const store = useMainStore();
 const { rooms } = storeToRefs(store);
@@ -862,6 +802,7 @@ const createRoomForm = ref({
 });
 const createRoomStep = ref(0);
 const creatingRoom = ref(false);
+const gameOptions = GAME_TYPE_LIST;
 const texasPlayerOptions = Array.from({ length: 9 }, (_, index) => index + 2);
 const mafiaPlayerOptions = Array.from({ length: 15 }, (_, index) => index + 6);
 const werewolfPlayerOptions = Array.from({ length: 13 }, (_, index) => index + 6);
@@ -881,7 +822,7 @@ interface StoredRoomSession {
 }
 
 function hasReconnectSession(room: RoomInfo): boolean {
-  return Boolean(room?.type && hasStoredRoomSession(room.type, room.id));
+  return Boolean(room?.type && hasExactStoredRoomSession(room.type, room.id));
 }
 
 function findStoredSessionForHiddenRoom(roomId: string, nickname: string): StoredRoomSession | undefined {
@@ -954,17 +895,19 @@ onMounted(() => {
 
 
 function enter(roomId: string) {
-  const nickname = prompt('请输入昵称');
-  if (!nickname) return;
-
   const room = rooms.value.find(r => r.id === roomId);
   if (!room) return;
 
+  const gameMeta = GAME_META[room.type as keyof typeof GAME_META];
+  const storedNickname = gameMeta
+    ? localStorage.getItem(gameMeta.storage.nickname) || ''
+    : '';
+
   joinRoomForm.value = {
     roomName: room.id,
-    nickname: nickname.trim()
+    nickname: storedNickname
   };
-  confirmJoinRoom();
+  joinRoomDialogVisible.value = true;
 }
 
 // 显示重置对话框
@@ -987,24 +930,28 @@ function showJoinRoomDialog() {
 
 // 显示创建房间对话框
 function showCreateRoomDialog() {
-  createRoomForm.value.maxPlayers = 8;
-  createRoomForm.value.allowSystemDealing = true;
-  createRoomForm.value.enableLady = false;
-  createRoomForm.value.nickname = '';
-  createRoomForm.value.gameType = '';
-  createRoomForm.value.isPrivate = false;
-  createRoomForm.value.speakTime = 60;
-  createRoomForm.value.actionTime = 60;
-  createRoomForm.value.voteTime = 60;
-  createRoomForm.value.nightTime = 180;
-  createRoomForm.value.votingTime = 300;
-  createRoomForm.value.discussTime = 180;
+  Object.assign(createRoomForm.value, {
+    maxPlayers: 8,
+    allowSystemDealing: true,
+    enableLady: false,
+    nickname: '',
+    gameType: '',
+    isPrivate: false,
+    speakTime: 60,
+    actionTime: 60,
+    voteTime: 60,
+    edition: 'tb',
+    dayTime: 600,
+    nightTime: 180,
+    votingTime: 300,
+    discussTime: 180
+  });
   createRoomStep.value = 0;
   createRoomDialogVisible.value = true;
 }
 
 // 确认加入房间
-function confirmJoinRoom() {
+async function confirmJoinRoom() {
   if (joiningRoom.value) {
     return;
   }
@@ -1031,32 +978,26 @@ function confirmJoinRoom() {
     : findStoredSessionForHiddenRoom(roomId, nickname);
   const playerId = session?.playerId;
 
-  if (!store.socket) {
-    ElMessage.error('连接未建立，请稍后重试');
-    return;
-  }
-
   joiningRoom.value = true;
-  // Bug L4: 参数名使用roomId与后端期望一致（用户输入的是房间号）。
-  // 等待后端确认后再关闭对话框，昵称重复等拒绝原因能直接展示给用户。
-  store.socket.timeout(12000).emit('join_room', {
-    roomId,
-    nickname,
-    playerId,
-    userId: playerId,
-    sessionToken: session?.sessionToken
-  }, (timeoutError: Error | null, response: any) => {
-    joiningRoom.value = false;
-    if (timeoutError) {
-      ElMessage.error('加入房间超时，请稍后重试');
-      return;
-    }
-    if (!response?.success) {
-      ElMessage.error(response?.error || '加入房间失败');
-      return;
-    }
+  try {
+    // 参数名使用 roomId 与后端期望一致。统一 acknowledgement helper 会处理
+    // 连接中的缓冲、超时、空回执和 success=false，避免按钮状态卡死或重复分支。
+    await emitSocketRequest(store.socket, 'join_room', {
+      roomId,
+      nickname,
+      playerId,
+      userId: playerId,
+      sessionToken: session?.sessionToken
+    }, {
+      timeoutMessage: '加入房间超时，请稍后重试',
+      failureMessage: '加入房间失败'
+    });
     joinRoomDialogVisible.value = false;
-  });
+  } catch (error) {
+    ElMessage.error(error instanceof Error ? error.message : '加入房间失败');
+  } finally {
+    joiningRoom.value = false;
+  }
 }
 
 // 确认创建房间
@@ -1120,40 +1061,31 @@ async function confirmCreateRoom() {
     }
 
     // 通过socket创建房间
-    const socket = store.socket;
-    if (socket) {
-      // 如果是德州扑克，设置昵称到store
-      if (createRoomForm.value.gameType === 'texas-holdem') {
-        const texasStore = useTexasHoldemStore();
-        texasStore.nickname = createRoomForm.value.nickname;
-        localStorage.setItem('texas_nickname', createRoomForm.value.nickname);
-        // 设置新加入标记
-        sessionStorage.setItem('texas_newJoin', 'true');
-      }
-      
-      // Bug L6: 检查socket连接状态，避免请求静默失败
-      if (!socket.connected) {
-        ElMessage.error('连接未建立，请刷新页面重试');
-        return;
-      }
-      const response = await new Promise<any>((resolve) => {
-        socket.emit('create_room', {
-          gameType: createRoomForm.value.gameType,
-          gameConfig,
-          isPrivate: createRoomForm.value.isPrivate
-        }, resolve);
-      });
-      if (!response?.success) {
-        ElMessage.error(response?.error || '创建房间失败');
-        return;
-      }
-      ElMessage.success('房间创建成功');
-      createRoomDialogVisible.value = false;
-    } else {
-      ElMessage.error('连接未建立，请刷新页面重试');
+    if (!store.socket) {
+      store.initSocket();
     }
+
+    // 如果是德州扑克，设置昵称到store
+    if (createRoomForm.value.gameType === 'texas-holdem') {
+      const texasStore = useTexasHoldemStore();
+      texasStore.nickname = createRoomForm.value.nickname;
+      localStorage.setItem('texas_nickname', createRoomForm.value.nickname);
+      // 设置新加入标记
+      sessionStorage.setItem('texas_newJoin', 'true');
+    }
+
+    await emitSocketRequest(store.socket, 'create_room', {
+      gameType: createRoomForm.value.gameType,
+      gameConfig,
+      isPrivate: createRoomForm.value.isPrivate
+    }, {
+      timeoutMessage: '创建房间超时，请检查网络后重试',
+      failureMessage: '创建房间失败'
+    });
+    ElMessage.success('房间创建成功');
+    createRoomDialogVisible.value = false;
   } catch (error) {
-    ElMessage.error('创建房间失败');
+    ElMessage.error(error instanceof Error ? error.message : '创建房间失败');
     console.error('创建房间错误:', error);
   } finally {
     creatingRoom.value = false;
@@ -1359,13 +1291,18 @@ function nextStep() {
   padding: 20px;
 }
 
+.game-option-col {
+  margin-bottom: 20px;
+}
+
 .game-card {
+  height: 100%;
   cursor: pointer;
   transition: all 0.3s;
 }
 
 .game-card:hover {
-  transform: scale(1.05);
+  transform: translateY(-3px);
 }
 
 .game-card.selected {
