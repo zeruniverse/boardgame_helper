@@ -1,14 +1,7 @@
 <template>
   <div class="mafia-room">
     <!-- 房间准备中的遮罩 -->
-    <div v-if="roomPreparing" class="room-loading-overlay">
-      <div class="loading-content">
-        <el-icon class="is-loading" size="48">
-          <Loading />
-        </el-icon>
-        <p>房间正在准备中...</p>
-      </div>
-    </div>
+    <RoomLoadingOverlay v-if="roomPreparing" />
 
     <!-- 头部导航 - 始终显示 -->
     <el-header class="room-header">
@@ -173,11 +166,12 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useMafiaGameStore } from '../store/mafia'
-import { Back, Loading } from '@element-plus/icons-vue'
+import { Back } from '@element-plus/icons-vue'
 import MafiaActionPanel from './MafiaActionPanel.vue'
 import MafiaPlayerList from './MafiaPlayerList.vue'
 import MafiaChat from './MafiaChat.vue'
 import RoomConnectionStatus from './RoomConnectionStatus.vue'
+import RoomLoadingOverlay from './RoomLoadingOverlay.vue'
 import { formatPlayerNameById } from '../utils/playerName'
 import { showErrorFeedback } from '../utils/uiFeedback'
 
@@ -370,29 +364,6 @@ const scrollToChat = () => scrollToSelector('.game-sidebar')
   height: 100vh;
   display: flex;
   flex-direction: column;
-}
-
-.room-loading-overlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: rgba(0, 0, 0, 0.8);
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  z-index: 9999;
-}
-
-.loading-content {
-  text-align: center;
-  color: white;
-}
-
-.loading-content p {
-  margin-top: 16px;
-  font-size: 18px;
 }
 
 .room-header {

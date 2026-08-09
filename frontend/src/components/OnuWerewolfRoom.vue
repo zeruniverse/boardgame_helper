@@ -18,14 +18,16 @@
       </div>
     </div>
 
-    <div class="mobile-quick-actions">
+    <RoomLoadingOverlay v-if="roomPreparing" />
+
+    <div v-else class="mobile-quick-actions">
       <span class="mobile-quick-title">快捷操作</span>
       <el-button size="large" type="primary" @click="scrollToActionArea">操作区</el-button>
       <el-button size="large" plain @click="scrollToChat">聊天</el-button>
     </div>
 
     <!-- 游戏主区域 -->
-    <div class="game-layout">
+    <div v-if="!roomPreparing" class="game-layout">
       <div class="mobile-game-info-slot">
         <h3>游戏信息</h3>
         <div class="mobile-info-row"><span>阶段</span><strong>{{ gameState?.status || gameState?.currentPhase || '等待开始' }}</strong></div>
@@ -86,7 +88,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted } from 'vue';
+import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useOnuWerewolfStore, ONU_WEREWOLF_ROLE_NAMES } from '../store/onuWerewolf';
 import { Back } from '@element-plus/icons-vue';
@@ -94,6 +96,7 @@ import OnuWerewolfActionPanel from './OnuWerewolfActionPanel.vue';
 import OnuWerewolfPlayerList from './OnuWerewolfPlayerList.vue';
 import OnuWerewolfChat from './OnuWerewolfChat.vue';
 import RoomConnectionStatus from './RoomConnectionStatus.vue';
+import RoomLoadingOverlay from './RoomLoadingOverlay.vue';
 import { showErrorFeedback } from '../utils/uiFeedback';
 
 const route = useRoute();
@@ -101,6 +104,7 @@ const router = useRouter();
 const roomId = computed(() => route.params.id as string);
 
 const store = useOnuWerewolfStore();
+const roomPreparing = ref(true);
 
 // 从store获取状态
 const connected = computed(() => store.connected);
@@ -123,7 +127,6 @@ const myRoleName = computed(() => {
   return (ONU_WEREWOLF_ROLE_NAMES as Record<string, string>)[myRole.value] || myRole.value;
 });
 const mySeat = computed(() => store.mySeat);
-const socket = computed(() => store.socket);
 const activeRoomPlayerCount = computed(() => {
   return room.value?.players?.filter((player: any) => player.online !== false).length || 0;
 });
@@ -175,8 +178,11 @@ onMounted(async () => {
   try {
     // 等待后端完成房间和 Worker 状态提交，失败时不把用户留在无反馈的空页面。
     await store.connectToRoom(roomId.value, 'one-night-werewolf');
+    if (!componentActive) return;
+    roomPreparing.value = false;
   } catch (error) {
     if (!componentActive) return;
+    roomPreparing.value = false;
     showErrorFeedback(error, '加入一夜狼人房间失败');
     router.replace('/');
   }

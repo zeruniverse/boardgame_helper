@@ -21,8 +21,10 @@
       </div>
     </el-header>
 
+    <RoomLoadingOverlay v-if="roomPreparing" />
+
     <!-- 主游戏区域 -->
-    <el-container class="game-container">
+    <el-container v-else class="game-container">
       <!-- 左侧游戏面板 -->
       <el-main class="game-main">
         <div class="game-content">
@@ -181,6 +183,7 @@ import BOTCActionPanel from './BOTCActionPanel.vue'
 import BOTCPlayerList from './BOTCPlayerList.vue'
 import BOTCChat from './BOTCChat.vue'
 import RoomConnectionStatus from './RoomConnectionStatus.vue'
+import RoomLoadingOverlay from './RoomLoadingOverlay.vue'
 import { formatPlayerName } from '../utils/playerName'
 import { formatBOTCNightInfo } from '../utils/botcNightInfo'
 import { showErrorFeedback } from '../utils/uiFeedback'
@@ -197,6 +200,7 @@ const isHost = computed(() => Boolean(store.currentUserId && room.value?.hostId 
 // 游戏状态
 const editionInfo = ref<any>(null)
 const timeLeft = ref<number>(0)
+const roomPreparing = ref(true)
 const playerReminders = ref<string[]>([])
 const chatComponentRef = ref<any>(null)
 
@@ -228,9 +232,11 @@ onMounted(async () => {
   try {
     await store.connectToRoom(roomId, 'blood-on-the-clocktower')
     if (!componentActive) return
+    roomPreparing.value = false
     startTimer()
   } catch (error) {
     if (!componentActive) return
+    roomPreparing.value = false
     showErrorFeedback(error, '加入血染钟楼房间失败')
     router.replace('/')
   }
@@ -359,9 +365,11 @@ const handleGameAction = (action: any) => {
 }
 
 // 处理说书人回复玩家问题
-const handleStorytellerResponse = (response: { playerId: string, answer: string }) => {
-  store.storytellerAction('answerQuestion', response)
-  store.clearStorytellerQuestion()
+const handleStorytellerResponse = async (response: { playerId: string, answer: string }) => {
+  const succeeded = await store.storytellerAction('answerQuestion', response)
+  if (succeeded) {
+    store.clearStorytellerQuestion()
+  }
 }
 
 // 处理玩家列表中的说书人快捷操作

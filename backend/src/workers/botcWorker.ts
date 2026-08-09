@@ -7070,6 +7070,26 @@ export class BOTCWorker extends BaseGameWorker {
     this.sendToRoom('gameEnded', gameResult);
   }
 
+  private toPublicVote(vote: Vote): Pick<Vote, 'playerId' | 'vote' | 'timestamp'> {
+    return {
+      playerId: vote.playerId,
+      vote: vote.vote,
+      timestamp: vote.timestamp
+    };
+  }
+
+  private getPublicNominations(): Array<Omit<Nomination, 'votes' | 'nominatorRoleIdAtNomination' | 'nominatorTeamAtNomination'> & { votes: Array<Pick<Vote, 'playerId' | 'vote' | 'timestamp'>> }> {
+    return this.gameState.nominations.map(nomination => ({
+      nominator: nomination.nominator,
+      nominee: nomination.nominee,
+      votes: nomination.votes.map(vote => this.toPublicVote(vote)),
+      votesFor: nomination.votesFor,
+      votesAgainst: nomination.votesAgainst,
+      isOnTrial: nomination.isOnTrial,
+      timestamp: nomination.timestamp
+    }));
+  }
+
   /**
    * 获取公开的游戏状态
    */
@@ -7163,8 +7183,10 @@ export class BOTCWorker extends BaseGameWorker {
       day: this.gameState.day,
       isFirstDay: this.gameState.isFirstDay,
       livingPlayers: publicLivingPlayers,
-      nominations: this.gameState.nominations,
-      votes: this.gameState.votes,
+      // 提名/投票历史包含 Town Crier、Flowergirl 等能力所需的角色/阵营快照。
+      // 这些字段只能保留在 Worker 内部，绝不能随公开状态广播给普通玩家。
+      nominations: this.getPublicNominations(),
+      votes: this.gameState.votes.map(vote => this.toPublicVote(vote)),
       execution: this.gameState.execution,
       players: allPlayers.map(p => {
         const publicLifeState = publicLifeStateFor(p);

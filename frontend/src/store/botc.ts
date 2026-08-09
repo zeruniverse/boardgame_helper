@@ -278,16 +278,27 @@ export const useBOTCGameStore = defineStore('botc', () => {
 
         // 监听提名和投票
         on('nominationCreated', (data) => {
-          if (gameState.value) {
-            if (!gameState.value.nominations) gameState.value.nominations = []
-            gameState.value.nominations.push({
-              ...data.nomination,
-              isOnTrial: true,
-              votes: [],
-              votesFor: 0,
-              votesAgainst: 0
-            })
-          }
+          if (!gameState.value) return
+
+          const nominator = data?.nomination?.nominator?.id || data?.nomination?.nominator
+          const nominee = data?.nomination?.nominee?.id || data?.nomination?.nominee
+          if (!nominator || !nominee) return
+
+          if (!gameState.value.nominations) gameState.value.nominations = []
+          const existing = gameState.value.nominations.find((nomination: any) =>
+            nomination.isOnTrial && nomination.nominator === nominator && nomination.nominee === nominee
+          )
+          if (existing) return
+
+          gameState.value.nominations.push({
+            nominator,
+            nominee,
+            isOnTrial: true,
+            votes: [],
+            votesFor: 0,
+            votesAgainst: 0,
+            timestamp: Date.now()
+          })
         })
 
         on('votingStarted', (_data) => {
@@ -295,17 +306,23 @@ export const useBOTCGameStore = defineStore('botc', () => {
         })
 
         on('voteSubmitted', (data) => {
-          if (gameState.value?.nominations) {
-            const activeNom = gameState.value.nominations.find((n: any) => n.isOnTrial)
-            if (activeNom) {
-              activeNom.votesFor = data.currentVotes?.for || 0
-              activeNom.votesAgainst = data.currentVotes?.against || 0
-              if (!activeNom.votes) activeNom.votes = []
-              activeNom.votes.push({
-                playerId: data.playerId,
-                vote: data.vote
-              })
-            }
+          if (!gameState.value?.nominations) return
+
+          const activeNom = gameState.value.nominations.find((nomination: any) => nomination.isOnTrial)
+          if (!activeNom || !data?.playerId) return
+
+          activeNom.votesFor = data.currentVotes?.for || 0
+          activeNom.votesAgainst = data.currentVotes?.against || 0
+          if (!activeNom.votes) activeNom.votes = []
+
+          const existingVote = activeNom.votes.find((vote: any) => vote.playerId === data.playerId)
+          if (existingVote) {
+            existingVote.vote = data.vote
+          } else {
+            activeNom.votes.push({
+              playerId: data.playerId,
+              vote: data.vote
+            })
           }
         })
 
@@ -477,8 +494,16 @@ export const useBOTCGameStore = defineStore('botc', () => {
           if (data?.message) ElMessage.info(data.message)
         })
 
+        on('storytellerQuestionAnswered', (data) => {
+          if (!data?.playerId || storytellerQuestion.value?.playerId === data.playerId) {
+            storytellerQuestion.value = null
+          }
+          const text = data?.message || (data?.playerName ? `已回复 ${data.playerName} 的问题` : '问题已回复')
+          ElMessage.success(text)
+        })
+
         // 说书人夜间信息/决定类通知
-        const storytellerInfoEvents = ['storytellerNightInfo', 'storytellerDecision', 'storytellerQuestionAnswered', 'playerProtected', 'sweetheartEffect']
+        const storytellerInfoEvents = ['storytellerNightInfo', 'storytellerDecision', 'playerProtected', 'sweetheartEffect']
         storytellerInfoEvents.forEach((eventName) => {
           on(eventName, (data) => {
             const text = data?.message || data?.info || ''
@@ -627,22 +652,22 @@ export const useBOTCGameStore = defineStore('botc', () => {
 
   // 开始游戏
   const startGame = () => {
-    sendGameAction('ready', {})
+    return sendGameAction('ready', {})
   }
 
   // 提名
   const nominate = (targetId: string) => {
-    sendGameAction('nominate', { nomineeId: targetId })
+    return sendGameAction('nominate', { nomineeId: targetId })
   }
 
   // 投票
   const vote = (voteChoice: 'for' | 'against' | 'abstain') => {
-    sendGameAction('vote', { vote: voteChoice })
+    return sendGameAction('vote', { vote: voteChoice })
   }
 
   // 夜晚行动
   const nightAction = (actionType: string, targets?: string[], data?: any) => {
-    sendGameAction('nightAction', {
+    return sendGameAction('nightAction', {
       actionType,
       targets,
       data
@@ -651,7 +676,7 @@ export const useBOTCGameStore = defineStore('botc', () => {
 
   // 说书人操作
   const storytellerAction = (actionType: string, data?: any) => {
-    sendGameAction('storytellerAction', {
+    return sendGameAction('storytellerAction', {
       actionType,
       ...data
     })

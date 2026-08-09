@@ -19,14 +19,7 @@
     </el-header>
 
     <!-- 房间准备中的遮罩 -->
-    <div v-if="roomPreparing" class="room-loading-overlay">
-      <div class="loading-content">
-        <el-icon class="is-loading" size="48">
-          <Loading />
-        </el-icon>
-        <p>房间正在准备中...</p>
-      </div>
-    </div>
+    <RoomLoadingOverlay v-if="roomPreparing" />
 
     <!-- 主游戏区域 -->
     <template v-else>
@@ -160,11 +153,12 @@
 import { ref, onMounted, onUnmounted, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAvalonStore as useGameStore } from '../store/avalon'
-import { Back, Loading } from '@element-plus/icons-vue'
+import { Back } from '@element-plus/icons-vue'
 import AvalonActionPanel from './AvalonActionPanel.vue'
 import AvalonPlayerList from './AvalonPlayerList.vue'
 import AvalonChat from './AvalonChat.vue'
 import RoomConnectionStatus from './RoomConnectionStatus.vue'
+import RoomLoadingOverlay from './RoomLoadingOverlay.vue'
 import { formatPlayerNameById } from '../utils/playerName'
 import { showErrorFeedback } from '../utils/uiFeedback'
 
@@ -337,29 +331,6 @@ const scrollToChat = () => scrollToSelector('.game-sidebar')
 .avalon-room {
   height: 100vh;
   background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
-}
-
-.room-loading-overlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: rgba(0, 0, 0, 0.8);
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  z-index: 9999;
-}
-
-.loading-content {
-  text-align: center;
-  color: white;
-}
-
-.loading-content p {
-  margin-top: 16px;
-  font-size: 18px;
 }
 
 .room-header {
@@ -627,10 +598,6 @@ const scrollToChat = () => scrollToSelector('.game-sidebar')
 .vision-player {
   background: var(--app-panel-strong);
   color: var(--app-text) !important;
-}
-
-.loading-content {
-  color: var(--app-text);
 }
 
 .my-role.blue {

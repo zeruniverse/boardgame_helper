@@ -2924,3 +2924,41 @@ Commit: fix(round8): 统一房间加入回执并移除重复玩家面板
   - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts 检查，仅显示可选原生依赖提示。
   - 正式 npm ci 与 npm run build 已尝试。npm ci 被当前内部 npm 镜像 404 阻塞；无完整 node_modules 时 npm run build 在 backend 依赖/类型解析阶段失败，未进入 frontend。Dockerfile 已做静态路径和构建阶段复核，但当前环境无 Docker/Podman，不能声称镜像已实际构建成功。
 备注: 本轮未删除文件，未创建根目录 src/；所有后端源码修改仅位于 backend/src/，所有前端源码修改仅位于 frontend/src/。修复包只包含本轮修改/新增文件与更新后的 repair_log.txt，可按项目相对路径直接覆盖。
+
+=== 当前会话第 10 轮修复记录 ===
+时间: 2026-08-09 15:37:13 UTC
+Commit: fix(round10): 修复钟楼公开状态泄密并统一房间加载反馈
+修改/新增文件:
+  - backend/src/workers/botcWorker.ts
+  - frontend/src/components/RoomLoadingOverlay.vue（新增）
+  - frontend/src/components/WerewolfRoom.vue
+  - frontend/src/components/MafiaRoom.vue
+  - frontend/src/components/AvalonRoom.vue
+  - frontend/src/components/OnuWerewolfRoom.vue
+  - frontend/src/components/BOTCRoom.vue
+  - frontend/src/components/TexasHoldemRoom.vue
+  - frontend/src/store/botc.ts
+  - repair_log.txt
+删除文件: 无
+构建测试: 部分通过（backend/src + frontend/src 当前全部 93 个源码/样式/资源文件完成 TypeScript/Vue script 语法与本地导入静态检查；六个游戏 Worker strict 编译和 prepare_room 运行烟雾通过；BOTC 提名/投票公开状态隐私专项运行回归通过；本轮 7 个修改/新增 Vue script 及 BOTC Store 完成隔离语义检查；package-lock 依赖树检查通过。正式 npm run build 已执行，但当前 node_modules 是依赖安装失败后的不完整目录，backend tsc 在缺失 Node/Express/CORS/Socket.IO/UUID 等类型定义时中止，未进入 frontend vue-tsc/Vite；完整生产构建和直接部署仍需在 npm 依赖源正常的本地或 CI 终验）
+本轮修复:
+  - 修复血染钟楼公开状态的严重隐藏身份泄漏。Worker 为 Town Crier、Flowergirl 等规则在提名和投票记录中保存了提名者/投票者当时的角色与阵营快照，但 getPublicGameState 过去直接广播原始 nominations/votes，普通玩家可从 Socket 状态读取其他人的隐藏角色和阵营。现在公开状态只输出 playerId、投票选择、时间、票数及提名关系；角色/阵营快照继续只保留在 Worker 内部供规则结算使用。
+  - 修复 BOTC 前端 nominationCreated 的数据结构漂移。实时事件使用 {id,name} 对象，而完整 gameState 使用玩家 ID 字符串；旧逻辑直接混存，导致提名者/被提名者名称解析和后续同步不稳定。现在实时事件统一归一化为 ID，并防止同一活动提名重复插入。
+  - 修复 BOTC voteSubmitted 在事件重放、重连或重复通知时向本地 votes 反复 push 的问题。现在按 playerId 更新已有投票，不再制造重复票记录和界面票数/明细不一致。
+  - 修复说书人回复问题时先清空待回复问题、再等待服务端结果的状态丢失。storytellerAction 现在返回统一 ACK Promise；组件仅在成功后清空问题，服务端拒绝或网络失败时保留原问题供重试。新增 storytellerQuestionAnswered 专项监听，在服务端确认后同步清理并给出成功反馈，避免与通用信息事件重复提示。
+  - 新增 RoomLoadingOverlay 共享组件，六个游戏房间统一使用相同的加载文案、状态语义、ARIA live 提示和全局主题样式；血染钟楼与一夜狼人补上加入房间期间的明确 loading，避免初始化时先显示空白或半成品界面。
+  - 删除狼人杀、杀人游戏、阿瓦隆、德州扑克房间中已经被共享组件替代的局部 loading CSS。Vue scoped CSS 会作用到子组件根节点，若保留这些旧规则，同一个共享遮罩仍会被四个页面分别覆盖成白底、黑底、不同透明度和不同 z-index，无法真正统一；现在只由 frontend/src/style.css 与 RoomLoadingOverlay 自身控制视觉。
+  - 修正共享加载文案使用未定义 CSS 变量 --app-text-primary 的问题，改用项目实际定义的 --app-text，保证明暗主题均有稳定文字颜色。
+审查结果/本轮未改动重点:
+  - 本轮继续结合 repair_log 前 9 轮记录复核 backend/src 与 frontend/src 当前 93 个源码/资源文件，重点检查六个 Worker、BOTC 公开/私有状态边界、六套 Room/Store/ActionPanel/ActionBar/PlayerList/Chat、共享 Socket/ACK/session/state/config 工具以及前端重复样式。当前最重要且可低风险确定修复的问题，是 BOTC 公开状态泄露隐藏身份、实时事件结构漂移、说书人回复失败后丢失待办，以及房间 loading 组件虽复用但仍被旧 scoped CSS 覆盖，因此本批次集中处理这些问题。
+  - 狼人杀继续复核狼人共识、预言家/女巫/守卫夜序、警长权重、平票与放逐；杀人游戏继续复核杀手/警察/医生/狙击手、夜间结算与白天投票；一夜狼人继续复核中心牌、夜间换牌顺序、最终身份和阵营胜负；阿瓦隆继续复核任务人数、7 人以上第 4 任务双失败、连续 5 次否决、刺杀与湖上夫人；德州扑克继续复核盲注、行动顺序、完整加注/短码 all-in、未跟注返还和主边池；血染钟楼继续复核提名、投票、处决、夜间信息与说书人定向操作。本轮六 Worker 初始化均通过，未发现优先级高于上述隐私与状态一致性问题、且适合当前批次安全落地的新确定性主流程阻断项。
+  - 血染钟楼仍保留既有 repair_log 已记录、需要更大状态模型或真人说书人逐次裁决 UI 才能完整覆盖的架构级边界，包括特殊自定义夜序下 Pit-Hag 创建 Demon 后无法安全逆向更早已落地并触发被动的死亡、Recluse/Spy registration 缺逐次人工裁决 UI，以及自由文本/多重效果抵消下 Mathematician 极端统计。本轮没有使用近似逻辑强行覆盖。
+  - 未创建项目根目录 src/；后端修改仅位于 backend/src/，前端修改/新增仅位于 frontend/src/，原有目录结构保持不变。
+验证:
+  - 全量静态扫描通过：backend/src + frontend/src 共 93 个文件，其中 61 个 .ts、30 个 .vue、1 个 .css、1 个 .svg；91 个 TypeScript/Vue script 解析单元、31 个 style/CSS 单元和 277 次相对本地导入解析均无语法错误、失效导入、真实合并冲突标记或根目录 src/。
+  - 六个实际游戏 Worker 使用全局 TypeScript 5.8.3、strict 模式和真实 Node 类型完成隔离 CommonJS 编译；狼人杀、杀人游戏、血染钟楼、一夜狼人、阿瓦隆、德州扑克均使用编译产物完成 prepare_room 运行烟雾。
+  - BOTC 隐私专项运行回归构造包含 nominatorRoleIdAtNomination、nominatorTeamAtNomination、voterRoleIdAtVote、voterTeamAtVote 的内部提名/投票记录，断言普通玩家公开状态只保留安全字段，序列化结果不包含任何隐藏角色值，测试通过。
+  - 本轮修改/新增的 7 个 Vue script 完成隔离 TypeScript 语义检查；frontend/src/store/botc.ts 完成隔离语义检查。结构断言确认六个活动房间均导入并使用 RoomLoadingOverlay，旧房间局部 room-loading-overlay/loading-content scoped 样式已清理。
+  - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts 检查，仅显示可选原生依赖提示。
+  - 正式 npm run build 已执行。由于 npm ci 在当前环境先前被内部镜像缺失锁定 tarball 的 404、切换公共 registry 后的网络超时阻塞，node_modules 不完整；本次 build 在 backend 缺失类型定义阶段失败，并非本轮 botcWorker strict 编译或 Worker 运行回归失败。完整 npm ci、backend 全量正式 tsc、frontend vue-tsc/Vite 生产构建、Docker 镜像与实际部署仍需在依赖源正常的本地或 CI 最终确认。
+备注: 本轮未删除文件；修复包只包含上述修改/新增文件与更新后的 repair_log.txt，可按项目相对路径直接覆盖。

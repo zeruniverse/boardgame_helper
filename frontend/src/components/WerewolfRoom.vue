@@ -20,14 +20,7 @@
     </el-header>
 
     <!-- 房间准备中的遮罩 -->
-    <div v-if="!gameState && roomPreparing" class="room-loading-overlay">
-      <div class="loading-content">
-        <el-icon class="is-loading" size="48">
-          <Loading />
-        </el-icon>
-        <p>房间正在准备中...</p>
-      </div>
-    </div>
+    <RoomLoadingOverlay v-if="!gameState && roomPreparing" />
 
     <!-- 主游戏区域 -->
     <el-container v-if="gameState || !roomPreparing" class="game-container">
@@ -157,11 +150,12 @@
 import { ref, onMounted, onUnmounted, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useWerewolfStore } from '../store/werewolf'
-import { Back, Loading } from '@element-plus/icons-vue'
+import { Back } from '@element-plus/icons-vue'
 import WerewolfActionPanel from './WerewolfActionPanel.vue'
 import WerewolfPlayerList from './WerewolfPlayerList.vue'
 import WerewolfChat from './WerewolfChat.vue'
 import RoomConnectionStatus from './RoomConnectionStatus.vue'
+import RoomLoadingOverlay from './RoomLoadingOverlay.vue'
 import { formatPlayerName, formatPlayerNameById } from '../utils/playerName'
 import { showErrorFeedback } from '../utils/uiFeedback'
 
@@ -345,29 +339,6 @@ onUnmounted(() => {
   height: 100vh;
   display: flex;
   flex-direction: column;
-}
-
-.room-loading-overlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: rgba(255, 255, 255, 0.9);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 1000;
-}
-
-.loading-content {
-  text-align: center;
-}
-
-.loading-content p {
-  margin-top: 16px;
-  font-size: 16px;
-  color: #666;
 }
 
 .room-header {
@@ -636,8 +607,7 @@ onUnmounted(() => {
 }
 
 .room-id,
-.status-info,
-.loading-content p {
+.status-info {
   color: var(--app-text-secondary);
 }
 

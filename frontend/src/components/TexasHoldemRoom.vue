@@ -30,14 +30,7 @@
     </el-header>
 
     <!-- 房间准备中的遮罩 -->
-    <div v-if="roomPreparing" class="room-loading-overlay">
-      <div class="loading-content">
-        <el-icon class="is-loading" size="48">
-          <Loading />
-        </el-icon>
-        <p>房间正在准备中...</p>
-      </div>
-    </div>
+    <RoomLoadingOverlay v-if="roomPreparing" />
 
     <el-main v-else class="game-main">
       <!-- 快捷操作区：保持在游戏信息之前 -->
@@ -193,12 +186,13 @@ import { onMounted, computed, ref, onUnmounted } from 'vue';
 import { useTexasHoldemStore, useMainStore } from '../store';
 import { storeToRefs } from 'pinia';
 import { useRouter, useRoute } from 'vue-router';
-import { Loading, Back } from '@element-plus/icons-vue';
+import { Back } from '@element-plus/icons-vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import TexasHoldemChat from './TexasHoldemChat.vue';
 import TexasHoldemPlayerList from './TexasHoldemPlayerList.vue';
 import TexasHoldemActionBar from './TexasHoldemActionBar.vue';
 import RoomConnectionStatus from './RoomConnectionStatus.vue';
+import RoomLoadingOverlay from './RoomLoadingOverlay.vue';
 import { emitGameActionRequest, joinGameRoom, shouldClearSessionAfterSocketError, waitForSharedSocketRoomTransition } from '../utils/gameSocket';
 import { clearGameSession, ensureGameSession, rememberGameSession } from '../utils/gameSession';
 import { formatPlayerName } from '../utils/playerName';
@@ -868,40 +862,6 @@ function formatCards(cards: string[]): string {
 
 .chat-component :deep(.texas-chat-wrapper) {
   height: 100%;
-}
-
-.room-loading-overlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  background-color: rgba(0, 0, 0, 0.6);
-  backdrop-filter: blur(2px);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 9999;
-}
-
-.loading-content {
-  text-align: center;
-  padding: 40px;
-  background: var(--app-panel);
-  color: var(--app-text);
-  border-radius: 12px;
-  box-shadow: var(--app-shadow-lg, 0 4px 20px rgba(0, 0, 0, 0.1));
-}
-
-.loading-content .el-icon {
-  margin-bottom: 16px;
-  color: #409eff;
-}
-
-.loading-content p {
-  margin: 0;
-  font-size: 16px;
-  color: var(--app-text-secondary);
 }
 
 @media (max-width: 768px) {
