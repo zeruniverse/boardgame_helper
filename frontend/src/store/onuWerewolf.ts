@@ -116,6 +116,7 @@ interface OnuWerewolfGameState {
     votingTime: number;
     discussTime: number;
     autoRoles?: boolean;
+    allowRoleReveal?: boolean;
   };
 }
 
@@ -566,8 +567,16 @@ export const useOnuWerewolfStore = defineStore('onuWerewolf', {
           this.gameState.timeLeft = 0;
         }
         if (!this.playerSecret) this.playerSecret = {};
-        this.playerSecret.vision = data.vision;
+        // 终局关闭“全量揭示”时，服务端只补充当前玩家可见的牌面。
+        // 必须合并而不是覆盖，避免丢失夜间已经获得的私有视野。
+        mergeVision(data.vision);
         this.playerSecret.gameResult = data.gameResult;
+        const ownResult = data.gameResult?.players?.find(
+          (player: any) => player.seat === this.playerSecret?.mySeat
+        );
+        if (ownResult?.finalRole !== undefined) {
+          this.playerSecret.finalRole = ownResult.finalRole;
+        }
         this.playerSecret.canUseSkill = false;
         this.playerSecret.canVote = false;
       };

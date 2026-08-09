@@ -63,6 +63,10 @@
         <h4>当前游戏配置</h4>
         <div v-if="gameState?.config" class="current-config">
           <div class="config-item">
+            <strong>终局揭示:</strong>
+            <span>{{ gameState.config.allowRoleReveal ? '揭示全部最终角色' : '仅显示本人、已公开与被处决角色' }}</span>
+          </div>
+          <div class="config-item">
             <strong>角色列表:</strong>
             <div class="role-list">
               <span 
@@ -525,12 +529,22 @@
               <div class="player-info">
                 <strong>{{ displayResultPlayerName(player) }}</strong> (座位{{ player.seat }})
               </div>
-              <div class="role-info">
-                初始: {{ getRoleName(player.initialRole) }} 
+              <div v-if="player.initialRole !== undefined && player.finalRole !== undefined" class="role-info">
+                初始: {{ getRoleName(player.initialRole) }}
                 → 最终: {{ getRoleName(player.finalRole) }}
               </div>
+              <div v-else-if="player.finalRole !== undefined" class="role-info">
+                最终: {{ getRoleName(player.finalRole) }}
+              </div>
+              <div v-else class="role-info role-hidden-hint">
+                角色未公开
+              </div>
               <div class="result-info">
-                {{ player.won ? '胜利' : '失败' }} ({{ getTeamName(player.team) }})
+                <template v-if="player.won !== undefined">
+                  {{ player.won ? '胜利' : '失败' }}
+                  <template v-if="player.team !== undefined"> ({{ getTeamName(player.team) }})</template>
+                </template>
+                <template v-else>结果未公开</template>
               </div>
             </div>
           </div>
@@ -636,10 +650,10 @@ interface PlayerSecret {
     players: Array<{
       seat: number;
       name: string;
-      initialRole: OnuWerewolfRole;
-      finalRole: OnuWerewolfRole;
-      team: OnuWerewolfTeam;
-      won: boolean;
+      initialRole?: OnuWerewolfRole;
+      finalRole?: OnuWerewolfRole;
+      team?: OnuWerewolfTeam;
+      won?: boolean;
     }>;
   };
 }
@@ -670,7 +684,7 @@ const countRoleIn = (roles: OnuWerewolfRole[], role: OnuWerewolfRole) => roles.f
 
 // 响应式数据
 const selectedRoles = ref<OnuWerewolfRole[]>([]);
-const allowRoleReveal = ref(true);
+const allowRoleReveal = ref(false);
 const hasSkippedDiscussion = ref(false);
 
 // 技能选择状态 (H1 fix)
@@ -1052,7 +1066,11 @@ const getWinnerText = (result: NonNullable<PlayerSecret['gameResult']>) => {
   // 结果反推，避免“狼人和皮匠同时死亡”只显示村民获胜而漏报皮匠个人胜利。
   const winningTeams = result.winningTeams?.length
     ? result.winningTeams
-    : Array.from(new Set(result.players.filter(player => player.won).map(player => player.team)));
+    : Array.from(new Set(
+        result.players
+          .filter(player => player.won && player.team !== undefined)
+          .map(player => player.team as OnuWerewolfTeam)
+      ));
 
   if (winningTeams.includes(OnuWerewolfTeam.Villager) && winningTeams.includes(OnuWerewolfTeam.Tanner)) {
     return '村民阵营获胜，皮匠也达成个人胜利！';
@@ -1087,6 +1105,7 @@ const getTeamName = (team: OnuWerewolfTeam) => {
 const watchConfig = watch(() => props.gameState?.config, (newConfig) => {
   if (newConfig) {
     selectedRoles.value = [...newConfig.roles];
+    allowRoleReveal.value = newConfig.allowRoleReveal === true;
   }
 }, { immediate: true });
 
@@ -1497,6 +1516,10 @@ onUnmounted(() => {
   font-size: 13px;
   color: var(--app-text-secondary);
   margin-bottom: 5px;
+}
+
+.role-hidden-hint {
+  font-style: italic;
 }
 
 .result-info {

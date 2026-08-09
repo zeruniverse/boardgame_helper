@@ -179,8 +179,8 @@ interface PlayerSecret {
   gameResult?: {
     players?: Array<{
       seat: number;
-      initialRole: OnuWerewolfRole;
-      finalRole: OnuWerewolfRole;
+      initialRole?: OnuWerewolfRole;
+      finalRole?: OnuWerewolfRole;
     }>;
   };
 }
@@ -320,7 +320,7 @@ const getPlayerFinalRole = (seat?: number) => {
   const gameResult = props.playerSecret?.gameResult;
   if (gameResult?.players) {
     const player = gameResult.players.find((p: any) => p.seat === seat);
-    if (player) return player.finalRole;
+    if (player?.finalRole !== undefined) return player.finalRole;
   }
   // 回退到vision数据
   return getPlayerInitialRole(seat);

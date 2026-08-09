@@ -2962,3 +2962,45 @@ Commit: fix(round10): 修复钟楼公开状态泄密并统一房间加载反馈
   - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts 检查，仅显示可选原生依赖提示。
   - 正式 npm run build 已执行。由于 npm ci 在当前环境先前被内部镜像缺失锁定 tarball 的 404、切换公共 registry 后的网络超时阻塞，node_modules 不完整；本次 build 在 backend 缺失类型定义阶段失败，并非本轮 botcWorker strict 编译或 Worker 运行回归失败。完整 npm ci、backend 全量正式 tsc、frontend vue-tsc/Vite 生产构建、Docker 镜像与实际部署仍需在依赖源正常的本地或 CI 最终确认。
 备注: 本轮未删除文件；修复包只包含上述修改/新增文件与更新后的 repair_log.txt，可按项目相对路径直接覆盖。
+
+=== 当前会话第 11 轮修复记录 ===
+时间: 2026-08-09 16:04:58 UTC
+Commit: fix(round11): 修复房间路由串线并落实一夜狼人终局隐私
+修改/新增文件:
+  - backend/src/workers/onuWerewolfWorker.ts
+  - frontend/src/App.vue
+  - frontend/src/components/RoomQuickNavigation.vue（新增）
+  - frontend/src/components/WerewolfRoom.vue
+  - frontend/src/components/MafiaRoom.vue
+  - frontend/src/components/AvalonRoom.vue
+  - frontend/src/components/BOTCRoom.vue
+  - frontend/src/components/OnuWerewolfRoom.vue
+  - frontend/src/components/OnuWerewolfActionPanel.vue
+  - frontend/src/components/OnuWerewolfPlayerList.vue
+  - frontend/src/store/onuWerewolf.ts
+  - repair_log.txt
+删除文件: 无
+构建测试: 部分通过（backend/src + frontend/src 当前全部 94 个文件、92 个 TypeScript/Vue script 解析单元及 276 次本地导入静态检查通过；31 个 Vue SFC 结构与本轮 26 项前端专项断言通过；backend/src 全部 35 个 TypeScript 文件 strict 编译、六游戏 Worker prepare_room/未知任务拒绝烟雾、一夜狼人终局隐私专项运行回归、package-lock 工作区依赖树检查均通过。正式 npm run build 已在最终源码上执行，但当前 node_modules 是依赖安装失败后的不完整目录，backend tsc 因缺失 Node/Express/CORS/Socket.IO/UUID 等类型定义目录而中止，未进入 frontend vue-tsc/Vite；完整生产构建和直接部署仍需在依赖可正常安装的本地或 CI 终验）
+本轮修复:
+  - 修复同一游戏不同房间路由之间复用 Vue 组件导致的“地址已进入新房间、Socket 仍连接旧房间”问题。五套房间页面都在 setup/onMounted 中按 route.params.id 建立连接，而 Vue Router 默认会复用相同组件实例；App.vue 现在通过 router-view 插槽按 route.path 为页面实例设置 key，房间 ID 改变时会完整卸载旧实例并建立新连接，避免旧轮询、旧监听与新页面串线。
+  - 收敛 App.vue 的全局 error/unhandledrejection 监听生命周期。旧实现使用匿名回调直接注册，无法在应用实例卸载或热更新时移除；现在改为具名处理器并在 onMounted/onUnmounted 对称注册和清理，降低开发热更新及重复挂载时的重复日志/重复处理风险。
+  - 新增 RoomQuickNavigation 共享组件，将狼人杀、杀人游戏、阿瓦隆、血染钟楼和一夜狼人房间中重复的“操作区/聊天”快捷导航模板、主题样式和窄屏布局统一复用。组件使用项目全局主题变量、统一按钮尺寸与文案、ARIA 导航标签，并移除五个房间内三组相互覆盖的重复 CSS，减少后续界面风格漂移。
+  - 修复一夜狼人 allowRoleReveal 配置在终局完全失效的严重隐私问题。旧 Worker 无论配置是否关闭都会向全房间广播所有玩家初始/最终角色、阵营和三张中心牌；现在终局结果按接收者单独生成：关闭全量揭示时仅展示本人、规则已公开及实际被处决玩家的最终身份，并保留该玩家夜间已经合法获得的私有视野；旁观者只看到公开牌面。开启配置时仍恢复完整角色和中心牌。
+  - 进一步阻断通过逐玩家“胜利/失败”状态反推隐藏阵营。未获准展示最终身份的玩家不再附带 team 或 won；前端统一显示“角色未公开 / 结果未公开”，避免虽然隐藏角色名却可从获胜阵营和个人胜负组合推断身份。
+  - 修复一夜狼人配置界面默认值与服务端事实源漂移。前端终局揭示复选框过去默认 true，而后端默认 false；房主只修改角色列表时可能无意把隐私配置翻转为开启。现在本地默认 false，并始终从服务端 gameState.config.allowRoleReveal 同步；非房主也能看到当前揭示模式的明确说明。
+  - 修复一夜狼人终局事件覆盖夜间私有视野的问题。Store 现在合并个性化终局 vision，而不是直接替换已有视野；自己的最终角色从个性化 gameResult 恢复，重连、实时结束事件和 board_info 使用同一可见性规则。
+审查结果/本轮未改动重点:
+  - 本轮继续结合 repair_log 前 10 轮记录检查 backend/src 与 frontend/src 全部代码，重点复核六个 Worker 的初始化/任务拒绝、房间路由和连接生命周期、Worker/Controller 的个性化消息投递与状态同步边界、六套 Room/Store/ActionPanel/PlayerList/Chat 结构，以及前端重复导航样式。当前最高优先级且可安全落地的问题集中在房间实例复用串线、一夜狼人终局配置被绕过及跨游戏快捷导航重复，因此本批次未扩大为高风险核心状态机重写。
+  - 狼人杀、杀人游戏、阿瓦隆、德州扑克和血染钟楼的主流程继续按既有实现、前序专项修复和 Worker 运行烟雾交叉检查；本轮未发现优先级高于上述房间串线与终局隐私问题、且能在当前批次确定修复的新主流程阻断项。
+  - 一夜狼人继续复核角色分发、夜序、中心牌、换牌后的最终身份、投票/处决、猎人连锁、狼人/爪牙/皮匠胜负和终局重连。本轮改动不改变胜负结算，只收紧结果可见性；allowRoleReveal=true 仍提供完整复盘，false 则严格遵循最小可见信息。
+  - 血染钟楼仍保留既有 repair_log 已记录、需要更大状态模型或真人说书人逐次裁决 UI 才能完整覆盖的架构级边界：特殊自定义夜序下 Pit-Hag 创建 Demon 后无法安全逆向更早已落地并触发被动的死亡；Recluse/Spy registration 缺逐次人工裁决 UI；自由文本和多重效果抵消下 Mathematician 极端统计缺统一逐次最终基准审计。本轮未使用近似逻辑强行覆盖。
+  - 项目根目录不存在 src/；所有后端源码修改仅位于 backend/src/，所有前端源码修改/新增仅位于 frontend/src/。未改变原有目录结构，也未删除文件。
+验证:
+  - 全量静态扫描通过：backend/src + frontend/src 共 94 个文件、92 个 TypeScript/Vue script 解析单元、276 次相对或 @ 本地导入检查；未发现 TypeScript 语法错误、失效本地导入或根目录 src/。
+  - 前端结构检查覆盖全部 31 个 Vue SFC，标签和 CSS 花括号平衡；本轮 26 项专项断言确认 App 按 route.path 重建页面并清理全局监听，五个目标房间均只导入/使用一次 RoomQuickNavigation、旧 mobile-quick-actions/mobile-quick-title 重复实现已移除，共享组件包含 ARIA 与窄屏布局，一夜狼人配置和隐藏结果文案均与服务端一致。
+  - backend/src 全部 35 个 TypeScript 文件使用全局 TypeScript 5.8.3、strict 模式、真实全局 Node 类型及项目目录外依赖声明桩成功完成隔离 CommonJS 编译；临时声明、脚本和编译产物位于 /mnt/data/boardgame_round11_validation，不进入修复包。
+  - 一夜狼人 allowRoleReveal 专项运行回归通过：关闭时本人角色、被处决角色和既有夜间私有视野可见，其他玩家初始/最终角色、阵营、个人胜负及未知中心牌不可见，旁观者只能看到公开/被处决牌；开启后所有角色、阵营、胜负和中心牌恢复完整展示。
+  - 六个实际游戏 Worker 使用本轮最新隔离编译产物完成合法 prepare_room，并确认未知任务明确返回 success=false：狼人杀、杀人游戏、阿瓦隆、血染钟楼、一夜狼人、德州扑克全部通过。
+  - package-lock 工作区依赖树通过 npm ls --package-lock-only --all --ignore-scripts 检查，仅显示正常的可选依赖缺失提示。
+  - 正式 npm run build 已在最终源码上执行。当前工作区 node_modules 不完整，backend tsc 报缺失 body-parser/connect/cors/express/node/uuid/ws 等类型定义目录并中止，未进入 frontend vue-tsc/Vite；这不是本轮 Worker strict 编译或专项运行回归失败。完整 npm ci、正式 backend tsc、frontend vue-tsc/Vite、Docker 镜像和实际部署仍需在依赖源正常的本地或 CI 最终确认。
+备注: 本轮未删除文件，未创建根目录 src/；修复包只包含本轮修改/新增文件与更新后的 repair_log.txt，可按项目相对路径直接覆盖。

@@ -26,11 +26,10 @@
       <!-- 左侧游戏面板 -->
       <el-main class="game-main">
         <div class="game-content">
-          <div class="mobile-quick-actions">
-            <span class="mobile-quick-title">快捷操作</span>
-            <el-button size="large" type="primary" @click="scrollToActionArea">操作区</el-button>
-            <el-button size="large" plain @click="scrollToChat">聊天</el-button>
-          </div>
+          <RoomQuickNavigation
+            @go-action="scrollToActionArea"
+            @go-chat="scrollToChat"
+          />
 
           <!-- 游戏状态显示 -->
           <div class="game-status" v-if="gameState">
@@ -172,6 +171,7 @@ import MafiaPlayerList from './MafiaPlayerList.vue'
 import MafiaChat from './MafiaChat.vue'
 import RoomConnectionStatus from './RoomConnectionStatus.vue'
 import RoomLoadingOverlay from './RoomLoadingOverlay.vue'
+import RoomQuickNavigation from './RoomQuickNavigation.vue'
 import { formatPlayerNameById } from '../utils/playerName'
 import { showErrorFeedback } from '../utils/uiFeedback'
 
@@ -702,9 +702,6 @@ const scrollToChat = () => scrollToSelector('.game-sidebar')
   color: var(--app-text-secondary);
 }
 
-.mobile-quick-actions {
-  display: none;
-}
 
 .full-action-area {
   margin-bottom: var(--app-space-5);
@@ -742,25 +739,6 @@ const scrollToChat = () => scrollToSelector('.game-sidebar')
     border-top: 1px solid var(--app-border);
   }
 
-  .mobile-quick-actions {
-    position: sticky;
-    top: 0;
-    z-index: 20;
-    display: flex;
-    align-items: center;
-    gap: var(--app-space-2);
-    padding: var(--app-space-3);
-    background: var(--app-panel);
-    border: 1px solid var(--app-border);
-    border-radius: var(--app-radius);
-    box-shadow: var(--app-shadow-sm);
-  }
-
-  .mobile-quick-title {
-    flex: 1;
-    font-weight: 700;
-    color: var(--app-text);
-  }
 
   .game-status,
   .death-info,
@@ -803,22 +781,6 @@ const scrollToChat = () => scrollToSelector('.game-sidebar')
   gap: var(--app-space-4);
 }
 
-.mobile-quick-actions {
-  display: flex;
-  align-items: center;
-  gap: var(--app-space-2);
-  padding: var(--app-space-3);
-  background: var(--app-panel);
-  border: 1px solid var(--app-border);
-  border-radius: var(--app-radius);
-  box-shadow: var(--app-shadow-sm);
-}
-
-.mobile-quick-title {
-  flex: 1;
-  font-weight: 700;
-  color: var(--app-text);
-}
 
 .game-sidebar {
   padding: var(--app-space-4);

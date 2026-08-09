@@ -20,11 +20,12 @@
 
     <RoomLoadingOverlay v-if="roomPreparing" />
 
-    <div v-else class="mobile-quick-actions">
-      <span class="mobile-quick-title">快捷操作</span>
-      <el-button size="large" type="primary" @click="scrollToActionArea">操作区</el-button>
-      <el-button size="large" plain @click="scrollToChat">聊天</el-button>
-    </div>
+    <RoomQuickNavigation
+      v-else
+      class="onu-quick-navigation"
+      @go-action="scrollToActionArea"
+      @go-chat="scrollToChat"
+    />
 
     <!-- 游戏主区域 -->
     <div v-if="!roomPreparing" class="game-layout">
@@ -97,6 +98,7 @@ import OnuWerewolfPlayerList from './OnuWerewolfPlayerList.vue';
 import OnuWerewolfChat from './OnuWerewolfChat.vue';
 import RoomConnectionStatus from './RoomConnectionStatus.vue';
 import RoomLoadingOverlay from './RoomLoadingOverlay.vue';
+import RoomQuickNavigation from './RoomQuickNavigation.vue';
 import { showErrorFeedback } from '../utils/uiFeedback';
 
 const route = useRoute();
@@ -329,7 +331,6 @@ onUnmounted(() => {
   padding: var(--app-space-4);
 }
 
-.mobile-quick-actions,
 .mobile-game-info-slot {
   display: none;
 }
@@ -342,23 +343,6 @@ onUnmounted(() => {
     gap: var(--app-space-3);
   }
 
-  .mobile-quick-actions {
-    display: flex;
-    align-items: center;
-    gap: var(--app-space-2);
-    margin: var(--app-space-4) var(--app-space-4) 0;
-    padding: var(--app-space-3);
-    background: var(--app-panel);
-    border: 1px solid var(--app-border);
-    border-radius: var(--app-radius);
-    box-shadow: var(--app-shadow-sm);
-  }
-
-  .mobile-quick-title {
-    flex: 1;
-    font-weight: 700;
-    color: var(--app-text);
-  }
 
   .game-layout {
     padding: var(--app-space-4);
@@ -432,22 +416,8 @@ onUnmounted(() => {
   font-size: 18px;
 }
 
-.mobile-quick-actions {
-  display: flex;
-  align-items: center;
-  gap: var(--app-space-2);
+.onu-quick-navigation {
   margin: var(--app-space-4) var(--app-space-6) 0;
-  padding: var(--app-space-3);
-  background: var(--app-panel);
-  border: 1px solid var(--app-border);
-  border-radius: var(--app-radius);
-  box-shadow: var(--app-shadow-sm);
-}
-
-.mobile-quick-title {
-  flex: 1;
-  font-weight: 700;
-  color: var(--app-text);
 }
 
 .game-layout {
@@ -503,7 +473,7 @@ onUnmounted(() => {
     padding: var(--app-space-3);
   }
 
-  .mobile-quick-actions {
+  .onu-quick-navigation {
     margin: var(--app-space-4) var(--app-space-4) 0;
   }
 
