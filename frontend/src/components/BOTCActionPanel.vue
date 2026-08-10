@@ -800,8 +800,11 @@ const canVoteCurrentNomination = computed(() => {
 })
 
 const nominationTargets = computed(() => {
+  // Dead players may still be nominated/executed in BOTC; only the nominator
+  // must be alive. Exclude just the current player because nominations are
+  // made against another player.
   return props.gameState?.players?.filter((player: any) =>
-    player.id !== props.currentUserId && !player.isDead
+    player.id !== props.currentUserId
   ) || []
 })
 
@@ -950,7 +953,6 @@ const availableTargets = computed(() => {
   const lastNightTargetId = props.playerRole?.abilityState?.lastNightTargetId
   return props.gameState?.players?.filter((p: any) => {
     if (selfExcludedRoles.includes(roleId) && p.id === props.currentUserId) return false
-    if (roleId !== 'professor' && p.isDead) return false
     if (aliveOnlyRoles.includes(roleId) && p.isDead) return false
     if (deadOnlyRoles.includes(roleId) && !p.isDead) return false
     if (['exorcist', 'devilsadvocate'].includes(roleId) && lastNightTargetId && p.id === lastNightTargetId) return false

@@ -1557,10 +1557,6 @@ export class BOTCWorker extends BaseGameWorker {
 
     const targetPlayers = targets.map(targetId => this.gamePlayers.get(targetId));
     if (targetPlayers.some(target => !target)) return '目标玩家不存在';
-    if (roleId !== 'professor' && targetPlayers.some(target => target?.isDead)) {
-      return '死亡玩家不能成为夜晚行动目标';
-    }
-
     const requireTargetCount = (min: number, max: number, message: string): string | null => {
       if (targets.length < min || targets.length > max) return message;
       return null;
@@ -3994,12 +3990,8 @@ export class BOTCWorker extends BaseGameWorker {
       return;
     }
 
-    if (nominee.isDead) {
-      this.sendToPlayer(playerId, 'actionError', { message: '死亡玩家不能被提名' });
-      return;
-    }
-
-    // 提名目标必须是另一名仍存活的玩家。
+    // 标准规则要求提名“另一名玩家”；死亡玩家不能发起提名，但仍可被提名/处决。
+    // 这对僵怖（Zombuul）以及“处决但未造成死亡”的规则交互很重要。
     if (nomineeId === playerId) {
       this.sendToPlayer(playerId, 'actionError', { message: '不能提名自己' });
       return;

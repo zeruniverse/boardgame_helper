@@ -557,19 +557,50 @@ class OnuWerewolfWorker extends BaseGameWorker {
     return result;
   }
 
-  /** 生成终局完整牌面。终局复盘必须向所有玩家展示全部角色与中心牌。 */
-  private getFinalVision(_viewerId?: string): OnuWerewolfVision {
-    const players = Object.values(this.gameState.players).map(player => ({
-      seat: player.seat,
-      role: player.actualRole,
-      artifacts: player.artifacts.size > 0 ? Array.from(player.artifacts) : undefined,
-      shielded: player.shielded || undefined
-    }));
+  /**
+   * 生成终局可见牌面。
+   *
+   * allowRoleReveal=false 时只保留当前玩家夜间已经知道的信息，并补充本人、
+   * 被公开翻开的玩家和实际被处决玩家的最终身份。不能因为游戏进入 COMPLETED
+   * 就绕过房主的“终局揭示”配置，把所有玩家与中心牌直接广播给全房间。
+   */
+  private getFinalVision(viewerId?: string): OnuWerewolfVision {
+    const revealAll = this.config.allowRoleReveal === true;
+    const viewer = viewerId ? this.gameState.players[viewerId] : undefined;
+    const knownPlayers = new Map<number, NonNullable<OnuWerewolfVision['players']>[number]>();
+    for (const item of viewer?.privateVision?.players || []) {
+      knownPlayers.set(item.seat, { ...item });
+    }
 
-    const cards = this.gameState.centerCards.map(card => ({
-      position: card.position,
-      role: card.role
-    }));
+    const lynchedPlayerIds = new Set(this.gameState.lynchResults);
+    const players = Object.values(this.gameState.players).map(player => {
+      const known = knownPlayers.get(player.seat);
+      const revealFinalRole = revealAll ||
+        player.id === viewerId ||
+        player.revealed ||
+        lynchedPlayerIds.has(player.id);
+
+      return {
+        seat: player.seat,
+        role: revealFinalRole ? player.actualRole : (known?.role ?? OnuWerewolfRole.Unknown),
+        ...(revealFinalRole
+          ? {
+              artifacts: player.artifacts.size > 0 ? Array.from(player.artifacts) : undefined,
+              shielded: player.shielded || undefined
+            }
+          : {
+              artifacts: known?.artifacts,
+              shielded: known?.shielded
+            })
+      };
+    });
+
+    const cards = revealAll
+      ? this.gameState.centerCards.map(card => ({
+          position: card.position,
+          role: card.role
+        }))
+      : (viewer?.privateVision?.cards || []).map(card => ({ ...card }));
 
     return {
       players,
@@ -1703,13 +1734,40 @@ class OnuWerewolfWorker extends BaseGameWorker {
     };
   }
 
-  private getVisibleGameResult(_viewerId?: string): any {
+  private getVisibleGameResult(viewerId?: string): any {
     const result = this.getGameResult();
+    const revealAll = this.config.allowRoleReveal === true;
+    const lynchedSeats = new Set(result.lynched);
+    const playersBySeat = new Map(
+      Object.values(this.gameState.players).map(player => [player.seat, player] as const)
+    );
 
     return {
       ...result,
-      players: result.players,
-      centerCards: result.centerCards
+      players: result.players.map(playerResult => {
+        const player = playersBySeat.get(playerResult.seat);
+        const revealOwnRole = Boolean(player && player.id === viewerId);
+        const revealFinalRole = revealAll ||
+          revealOwnRole ||
+          Boolean(player?.revealed) ||
+          lynchedSeats.has(playerResult.seat);
+
+        return {
+          seat: playerResult.seat,
+          name: playerResult.name,
+          // 胜负状态同样会间接泄露阵营；只对已允许展示最终身份的玩家公开。
+          ...(revealFinalRole ? { won: playerResult.won } : {}),
+          ...(revealAll || revealOwnRole ? { initialRole: playerResult.initialRole } : {}),
+          ...(revealFinalRole
+            ? {
+                finalRole: playerResult.finalRole,
+                team: playerResult.team
+              }
+            : {})
+        };
+      }),
+      // 未开启全量揭示时，中心牌仍只通过玩家自己的 privateVision 返回。
+      centerCards: revealAll ? result.centerCards : []
     };
   }
 
