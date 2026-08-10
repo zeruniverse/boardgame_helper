@@ -32,9 +32,10 @@
           </div>
 
           <div class="player-status">
-            <span v-if="!isPlayerAlive(player)" class="status-dead">已死亡</span>
-            <span v-else-if="player.ready && !gameStarted" class="status-ready">已准备</span>
-            <span v-else-if="!player.ready && !gameStarted" class="status-waiting">未准备</span>
+            <span v-if="!isPlayerAlive(player)" class="status-dead">{{ player.online === false ? '离线 · 已死亡' : '已死亡' }}</span>
+            <span v-else-if="player.ready && !isActiveGame" class="status-ready">已准备</span>
+            <span v-else-if="!player.ready && !isActiveGame" class="status-waiting">未准备</span>
+            <span v-else-if="player.online === false" class="status-waiting">离线</span>
             <span v-else class="status-alive">存活</span>
           </div>
 
@@ -164,6 +165,7 @@ interface Player {
   role?: string
   character?: string
   isSheriff?: boolean
+  online?: boolean
 }
 
 interface SeerCheck {
@@ -216,6 +218,10 @@ const emit = defineEmits<{
 }>()
 
 const werewolfRoundText = computed(() => formatWerewolfRound(props.gameState?.day, props.gameState?.status))
+const isActiveGame = computed(() => {
+  const status = props.gameState?.status
+  return Boolean(status && status !== 'preparing' && status !== 'WAITING')
+})
 
 const ROLE_ORDER = ['WEREWOLF', 'VILLAGER', 'SEER', 'WITCH', 'HUNTER', 'GUARD'] as const
 const SINGLE_ACTION_ROLES = new Set<string>(['SEER', 'WITCH', 'GUARD'])
@@ -292,7 +298,19 @@ watch(
 
 // 计算属性
 const sortedPlayers = computed(() => {
-  return [...props.players].sort((a, b) => {
+  return props.players.map(player => {
+    const gamePlayer = props.gamePlayersById?.[player.id] || {}
+    return {
+      ...player,
+      ...gamePlayer,
+      id: player.id,
+      name: player.name ?? gamePlayer.name,
+      nickname: player.nickname ?? gamePlayer.nickname,
+      ready: player.ready,
+      online: player.online,
+      index: gamePlayer.index || player.index || 0
+    } as Player
+  }).sort((a, b) => {
     // 优先使用游戏内的index
     const idxA = props.gamePlayersById?.[a.id]?.index || a.index || 0
     const idxB = props.gamePlayersById?.[b.id]?.index || b.index || 0
@@ -304,7 +322,7 @@ const sortedPlayers = computed(() => {
 const displayPlayerName = (player: Player) => formatPlayerName(player, props.currentUserId)
 
 const isPlayerAlive = (player: Player) => {
-  if (!props.gameStarted || props.gameState?.status === 'preparing' || props.gameState?.status === 'WAITING') {
+  if (!isActiveGame.value) {
     return true
   }
   return (player.alive ?? player.isAlive ?? true) !== false
@@ -651,6 +669,10 @@ const updateTimeConfig = () => {
 
 .game-config {
   margin-top: 16px;
+  padding: 12px;
+  border: 1px solid var(--app-border, #dcdfe6);
+  border-radius: 8px;
+  background: var(--app-panel, #fff);
 }
 
 .config-item {
@@ -667,7 +689,7 @@ const updateTimeConfig = () => {
 
 .role-config {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
   margin-bottom: 8px;
 }
@@ -679,12 +701,17 @@ const updateTimeConfig = () => {
 }
 
 .role-count {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(70px, 1fr) 112px;
   align-items: center;
-  justify-content: space-between;
+  gap: 8px;
   padding: 4px 8px;
   background: var(--app-panel);
   border-radius: 4px;
+}
+
+.role-count :deep(.el-input-number) {
+  width: 112px;
 }
 
 .role-label {
@@ -693,17 +720,28 @@ const updateTimeConfig = () => {
 }
 
 .time-config {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
   margin-bottom: 8px;
 }
 
 .time-setting {
-  display: flex;
+  display: grid;
+  grid-template-columns: 76px minmax(0, 1fr);
   align-items: center;
-  justify-content: space-between;
+  gap: 6px;
   font-size: 12px;
+}
+
+.time-setting :deep(.el-select) {
+  width: 100%;
+}
+
+@media (max-width: 720px) {
+  .time-config {
+    grid-template-columns: 1fr;
+  }
 }
 
 .time-setting span {

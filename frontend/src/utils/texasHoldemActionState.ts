@@ -32,11 +32,14 @@ export function useTexasHoldemActionState(store: TexasHoldemActionStoreLike) {
   const isInGame = computed(() => store.participants.includes(store.playerId))
   const isMyTurn = computed(() => store.currentTurn === store.playerId && isInGame.value)
   const toCall = computed(() => Math.max(Number(store.currentBet || 0) - ownBet.value, 0))
+  const callAmount = computed(() => Math.min(toCall.value, ownChips.value))
+  const isAllInCall = computed(() => toCall.value > 0 && ownChips.value > 0 && toCall.value >= ownChips.value)
   const canCheck = computed(() => store.gameActive && isMyTurn.value && toCall.value === 0)
   const canCall = computed(() => store.gameActive && isMyTurn.value && toCall.value > 0 && ownChips.value > 0)
   const isRaiseLocked = computed(() => store.raiseLocked.includes(store.playerId))
   const minRaiseTo = computed(() => Math.max(Number(store.minRaiseTo || 0), Number(store.currentBet || 0) + 1))
   const minRaiseDelta = computed(() => Math.max(1, minRaiseTo.value - ownBet.value - toCall.value))
+  const maxRaiseDelta = computed(() => Math.max(0, ownChips.value - toCall.value))
   const hasOtherActivePlayerWithChips = computed(() =>
     store.participants.some(playerId => {
       if (playerId === store.playerId || store.folded.includes(playerId)) return false
@@ -70,6 +73,8 @@ export function useTexasHoldemActionState(store: TexasHoldemActionStoreLike) {
     isInGame,
     isMyTurn,
     toCall,
+    callAmount,
+    isAllInCall,
     canCheck,
     canCall,
     canRaise,
@@ -78,6 +83,7 @@ export function useTexasHoldemActionState(store: TexasHoldemActionStoreLike) {
     canExtend,
     minRaiseTo,
     minRaiseDelta,
+    maxRaiseDelta,
     isRaiseLocked,
     hasOtherActivePlayerWithChips
   }

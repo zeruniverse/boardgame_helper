@@ -115,6 +115,8 @@ interface BOTCGameResult {
   winner: 'good' | 'evil';
   reason: string;
   duration: number;
+  /** 终局发生时应显示的天数；若在夜晚结束，夜晚属于下一天。 */
+  day: number;
   players: BOTCGameResultPlayer[];
 }
 
@@ -1555,6 +1557,9 @@ export class BOTCWorker extends BaseGameWorker {
 
     const targetPlayers = targets.map(targetId => this.gamePlayers.get(targetId));
     if (targetPlayers.some(target => !target)) return '目标玩家不存在';
+    if (roleId !== 'professor' && targetPlayers.some(target => target?.isDead)) {
+      return '死亡玩家不能成为夜晚行动目标';
+    }
 
     const requireTargetCount = (min: number, max: number, message: string): string | null => {
       if (targets.length < min || targets.length > max) return message;
@@ -2392,7 +2397,7 @@ export class BOTCWorker extends BaseGameWorker {
       ?? 'neutral';
     const requestedMode = config.storytellerMode === 'player' || config.storytellerMode === 'ai' || config.storytellerMode === 'none'
       ? config.storytellerMode
-      : fallback?.storytellerMode || 'player';
+      : fallback?.storytellerMode || (explicitStorytellerId ? 'player' : 'ai');
     const hasExplicitStoryteller = typeof config.storytellerId === 'string' && config.storytellerId.trim().length > 0;
     let storytellerId = hasExplicitStoryteller
       ? config.storytellerId!.trim()
@@ -3989,8 +3994,12 @@ export class BOTCWorker extends BaseGameWorker {
       return;
     }
 
-    // 标准规则要求提名“另一名玩家”；死亡玩家不能发起提名，但仍可被提名/处决。
-    // 这对僵怖（Zombuul）以及“处决但未造成死亡”的规则交互很重要。
+    if (nominee.isDead) {
+      this.sendToPlayer(playerId, 'actionError', { message: '死亡玩家不能被提名' });
+      return;
+    }
+
+    // 提名目标必须是另一名仍存活的玩家。
     if (nomineeId === playerId) {
       this.sendToPlayer(playerId, 'actionError', { message: '不能提名自己' });
       return;
@@ -7065,6 +7074,10 @@ export class BOTCWorker extends BaseGameWorker {
       return;
     }
 
+    const terminalDay = this.isNightPhase()
+      ? Math.max(1, this.gameState.day + 1)
+      : Math.max(1, this.gameState.day);
+
     this.gameState.phase = GamePhase.ENDED;
     this.isProcessingNight = false;
     this.pendingNightCompletion = null;
@@ -7077,6 +7090,7 @@ export class BOTCWorker extends BaseGameWorker {
       winner,
       reason,
       duration: Date.now() - (this.gameState.grimoire.startTime || Date.now()),
+      day: terminalDay,
       players: Array.from(this.gamePlayers.values()).map(p => ({
         id: p.playerId,
         name: this.getPlayerName(p.playerId),
@@ -7197,6 +7211,7 @@ export class BOTCWorker extends BaseGameWorker {
           reason: this.lastGameResult.reason,
           endReason: this.lastGameResult.reason,
           duration: this.lastGameResult.duration,
+          day: this.lastGameResult.day,
           finalPlayers: this.lastGameResult.players
         }
       : {};
@@ -7204,7 +7219,9 @@ export class BOTCWorker extends BaseGameWorker {
     return {
       ...terminalState,
       phase: this.gameState.phase,
-      day: this.gameState.day,
+      day: this.gameState.phase === GamePhase.ENDED && this.lastGameResult
+        ? this.lastGameResult.day
+        : this.gameState.day,
       isFirstDay: this.gameState.isFirstDay,
       livingPlayers: publicLivingPlayers,
       // 提名/投票历史包含 Town Crier、Flowergirl 等能力所需的角色/阵营快照。

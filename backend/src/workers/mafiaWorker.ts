@@ -404,9 +404,6 @@ class MafiaWorker extends BaseGameWorker {
   async playerOnline(playerId: string): Promise<void> {
     const player = this.room.players.find(p => p.id === playerId);
     if (player) {
-      const message = `${player.nickname}已重新连接`;
-      this.sendToRoom('player_online', { message });
-      
       // 发送游戏状态给重连玩家
       this.syncGameStateToPlayer(player.socketId, playerId);
 
@@ -832,13 +829,17 @@ class MafiaWorker extends BaseGameWorker {
           }))
       };
     } else if (gameState.topSecret.doctor.includes(playerId)) {
+      const lastSave = gameState.doctorSaves[playerId];
       return {
         playerId,
         role: 'DOCTOR',
         team: 'BLUE',
         teammates: [],
         canOperate: this.canPlayerOperate(playerId),
-        actionLock: gameState.doctorActionLock
+        actionLock: gameState.doctorActionLock,
+        lastSaveTarget: lastSave && lastSave.day === gameState.day - 1
+          ? lastSave.target
+          : undefined
       };
     } else if (gameState.topSecret.sniper.includes(playerId)) {
       return {
@@ -1150,11 +1151,6 @@ class MafiaWorker extends BaseGameWorker {
       });
     });
     
-    // 同时发送房间级别的事件用于系统消息
-    this.sendToRoom('game_started_broadcast', {
-      message,
-      gameInfo: this.getGameInfo()
-    });
   }
 
   private handleInspectSuspect(playerId: string, suspectId: string): void {
@@ -1193,14 +1189,15 @@ class MafiaWorker extends BaseGameWorker {
 
     // 执行验人（每个警察独立查验，无需达成一致）
     const result = gameState.topSecret.killer.includes(suspectId);
-    gameState.topSecret.copVersion.push([playerId, suspectId, result, gameState.day]);
+    const nightNumber = Math.max(1, gameState.day - 1);
+    gameState.topSecret.copVersion.push([playerId, suspectId, result, nightNumber]);
 
     const message = `经查证${this.getPlayerName(suspectId)}是${result ? '<span class="red text">坏人!</span>' : '<span class="blue text">好人!</span>'}`;
     this.sendToPlayer(playerId, 'inspect_result', {
       message,
       target: suspectId,
       result: result ? 'RED' : 'BLUE',
-      day: gameState.day
+      day: nightNumber
     });
     this.sendToPlayer(playerId, 'secret_update', this.getSecretForPlayer(playerId));
 

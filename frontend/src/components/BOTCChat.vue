@@ -5,7 +5,7 @@
         <el-radio-button value="all">公共聊天</el-radio-button>
         <el-radio-button value="storyteller">说书人频道</el-radio-button>
         <el-radio-button value="private" :disabled="!props.privateChatEnabled">
-          {{ privateTarget ? `私聊：${getPlayerName(privateTarget)}` : '私聊' }}
+          {{ privateTabLabel }}
         </el-radio-button>
       </el-radio-group>
     </div>
@@ -21,7 +21,7 @@
         <el-option
           v-for="player in availablePrivateTargets"
           :key="player.id"
-          :label="getPlayerName(player.id, player.name)"
+          :label="getPrivateTargetLabel(player)"
           :value="player.id"
         />
       </el-select>
@@ -105,6 +105,24 @@ const chatContainer = ref<HTMLElement>();
 const currentChannel = ref<'all' | 'storyteller' | 'private'>('all');
 const privateTarget = ref<string>('');
 const showPrivateSelector = ref(false);
+const unreadPrivateSenders = ref<Record<string, number>>({});
+let observedMessageCount = props.messages.length;
+
+const totalPrivateUnread = computed(() =>
+  Object.values(unreadPrivateSenders.value).reduce((sum, count) => sum + count, 0)
+);
+const privateUnreadCount = computed(() => privateTarget.value
+  ? (unreadPrivateSenders.value[privateTarget.value] || 0)
+  : 0
+);
+
+const privateTabLabel = computed(() => {
+  if (privateTarget.value) {
+    const unreadSuffix = privateUnreadCount.value > 0 ? `（${privateUnreadCount.value}）` : ''
+    return `私聊：${getPlayerName(privateTarget.value)}${unreadSuffix}`
+  }
+  return totalPrivateUnread.value > 0 ? `私聊（${totalPrivateUnread.value}）` : '私聊'
+})
 
 const availablePrivateTargets = computed(() => {
   return props.players.filter(player => player.id !== props.currentUserId && player.online !== false)
@@ -248,6 +266,18 @@ const getPlayerName = (playerId: string, preferredName?: string) => {
   )
 }
 
+const getPrivateTargetLabel = (player: any) => {
+  const unread = unreadPrivateSenders.value[player.id] || 0
+  return `${getPlayerName(player.id, player.name)}${unread > 0 ? ` · ${unread}条未读` : ''}`
+}
+
+const clearPrivateUnread = (playerId: string) => {
+  if (!playerId || !unreadPrivateSenders.value[playerId]) return
+  const next = { ...unreadPrivateSenders.value }
+  delete next[playerId]
+  unreadPrivateSenders.value = next
+}
+
 const getMessageSenderName = (msg: any) => {
   if (!msg || typeof msg === 'string') return ''
   const senderId = msg.playerId || msg.from || msg.senderId
@@ -289,6 +319,7 @@ const closePrivateSelector = () => {
 
 const onPrivateTargetChange = (targetId: string) => {
   if (targetId && props.privateChatEnabled) {
+    clearPrivateUnread(targetId)
     currentChannel.value = 'private';
     showPrivateSelector.value = false;
   }
@@ -297,13 +328,32 @@ const onPrivateTargetChange = (targetId: string) => {
 const startPrivateChat = (targetId: string) => {
   if (!props.privateChatEnabled) return;
   privateTarget.value = targetId;
+  clearPrivateUnread(targetId)
   currentChannel.value = 'private';
   showPrivateSelector.value = false;
 }
 
 watch(
   () => props.messages.length,
-  () => {
+  (messageCount) => {
+    if (messageCount < observedMessageCount) {
+      observedMessageCount = messageCount
+    }
+    const incomingMessages = props.messages.slice(observedMessageCount, messageCount)
+    incomingMessages.forEach((msg: any) => {
+      if (!msg || typeof msg === 'string' || msg.channel !== 'private') return
+      const senderId = msg.from || msg.playerId || msg.senderId
+      const recipientId = msg.to || msg.targetId
+      if (!senderId || senderId === props.currentUserId || recipientId !== props.currentUserId) return
+      const isConversationOpen = currentChannel.value === 'private' && privateTarget.value === senderId
+      if (!isConversationOpen) {
+        unreadPrivateSenders.value = {
+          ...unreadPrivateSenders.value,
+          [senderId]: (unreadPrivateSenders.value[senderId] || 0) + 1
+        }
+      }
+    })
+    observedMessageCount = messageCount
     scrollToBottom();
   }
 );

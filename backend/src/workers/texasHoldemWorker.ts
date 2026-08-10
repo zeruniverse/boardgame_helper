@@ -3,7 +3,7 @@ import { BaseGameWorker } from './baseGameWorker';
 import { Room } from '../models/Room';
 import { Player } from '../models/Player';
 import { createDeck, shuffleDeck } from '../utils/deck';
-import { evaluateHand } from '../utils/handEvaluator';
+import { evaluateHand, getHandCategoryName } from '../utils/handEvaluator';
 import { calculateUncalledBetReturn, splitPotSidePots, type SidePot } from '../utils/sidePot';
 import { buildChatPayload, normalizeChatText } from '../utils/chat';
 import { mergeRoomGameConfig } from '../utils/roomGameConfig';
@@ -39,6 +39,7 @@ interface TexasHoldemGameState {
   stage: 'idle' | 'playing' | 'distribution';
   // 本局最终实际获得底池的玩家，用于终局状态同步与重连复盘。
   winners: string[];
+  showdown: Record<string, { cards: string[]; handName: string; score: number }>;
   // 线下发牌分池阶段允许领取底池的候选人，不等同于最终实际领取者。
   eligibleWinners: string[];
   claimedWinners: string[];
@@ -117,6 +118,7 @@ class TexasHoldemWorker extends BaseGameWorker {
       actedAtBet: {},
       stage: 'idle',
       winners: [],
+      showdown: {},
       eligibleWinners: [],
       claimedWinners: []
     } as TexasHoldemGameState;
@@ -611,6 +613,7 @@ class TexasHoldemWorker extends BaseGameWorker {
       raiseLocked: [...(gs.raiseLocked || [])],
       stage: gs.stage,
       winners: [...gs.winners],
+      showdown: { ...gs.showdown },
       allowSystemDealing: !this.isManualDealing()
     };
   }
@@ -652,6 +655,7 @@ class TexasHoldemWorker extends BaseGameWorker {
     gs.lastFullBet = 0;
     gs.raiseLocked = [];
     gs.winners = [];
+    gs.showdown = {};
     gs.eligibleWinners = normalizedEligible;
     gs.claimedWinners = [];
 
@@ -999,6 +1003,7 @@ class TexasHoldemWorker extends BaseGameWorker {
     gs.playerHands = {};
     gs.stage = 'playing';
     gs.winners = [];
+    gs.showdown = {};
     gs.eligibleWinners = [];
     gs.claimedWinners = [];
 
@@ -1422,6 +1427,11 @@ class TexasHoldemWorker extends BaseGameWorker {
     // 保留本手最终弃牌列表用于终局复盘和重连；下一局 startGame 会统一清空。
     this.gameState.raiseLocked = [];
     this.gameState.stage = 'idle';
+    this.gameState.bets = {};
+    this.gameState.currentBet = 0;
+    this.gameState.lastRaiseAmount = 0;
+    this.gameState.lastFullBet = 0;
+    this.gameState.round = 0;
     this.gameState.totalBets = {};
     this.gameState.eligibleWinners = [];
     this.gameState.claimedWinners = [];
@@ -2397,6 +2407,22 @@ class TexasHoldemWorker extends BaseGameWorker {
     const gs = this.gameState as TexasHoldemGameState;
     const activeIds = this.participants.filter((id: string) => !gs.folded.includes(id));
     const activePlayers = activeIds.map((id: string) => this.room.players.find((p: Player) => p.id === id)).filter(Boolean) as Player[];
+
+    // 只有真正进入摊牌后才公开未弃牌玩家的底牌与牌型；提前写入公开状态会在
+    // 翻牌/转牌阶段泄露所有人的手牌。
+    gs.showdown = {};
+    if (this.config.allowSystemDealing && gs.playerHands) {
+      activePlayers.forEach((player: Player) => {
+        const cards = gs.playerHands[player.id];
+        if (!cards || cards.length === 0) return;
+        const score = evaluateHand([...cards, ...gs.communityCards]);
+        gs.showdown[player.id] = {
+          cards: [...cards],
+          handName: getHandCategoryName(score),
+          score
+        };
+      });
+    }
 
     // 摊牌阶段展示
     this.sendToRoom('chat_broadcast', { message: '=== 摊牌阶段 ===', type: 'system' });

@@ -52,12 +52,12 @@
             <h4>你的角色</h4>
             <div class="my-role" :class="getTeamClass(store.playerRole.team)">
               <div class="role-avatar">
-                <span class="role-initial">{{ store.playerRole.name?.charAt(0) || '?' }}</span>
+                <span class="role-initial">{{ localizedRoleName.charAt(0) || '?' }}</span>
               </div>
               <div class="role-details">
-                <div class="role-name">{{ store.playerRole.name }}</div>
+                <div class="role-name">{{ localizedRoleName }}</div>
                 <div class="team-name">{{ getTeamName(store.playerRole.team) }}</div>
-                <div class="role-ability">{{ store.playerRole.ability }}</div>
+                <div class="role-ability">{{ localizedRoleAbility }}</div>
               </div>
             </div>
 
@@ -185,6 +185,7 @@ import RoomLoadingOverlay from './RoomLoadingOverlay.vue'
 import RoomQuickNavigation from './RoomQuickNavigation.vue'
 import { formatPlayerName } from '../utils/playerName'
 import { formatBOTCNightInfo } from '../utils/botcNightInfo'
+import { getBOTCRoleAbility, getBOTCRoleName } from '../utils/botcRoleLocalization'
 import { showErrorFeedback } from '../utils/uiFeedback'
 
 const route = useRoute()
@@ -195,6 +196,8 @@ const roomId = route.params.id as string
 const room = computed(() => store.room)
 const gameConfig = computed(() => store.gameConfig)
 const isHost = computed(() => Boolean(store.currentUserId && room.value?.hostId === store.currentUserId))
+const localizedRoleName = computed(() => getBOTCRoleName(store.playerRole?.id, store.playerRole?.name))
+const localizedRoleAbility = computed(() => getBOTCRoleAbility(store.playerRole?.id, store.playerRole?.ability))
 // 后端允许准备阶段交流；开局后严格遵循房间 allowPrivateChat 配置。
 const privateChatEnabled = computed(() =>
   store.gameState?.phase === 'setup' || store.gameConfig?.allowPrivateChat !== false

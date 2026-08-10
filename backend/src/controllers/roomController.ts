@@ -962,12 +962,27 @@ function buildGameConfig(gameType: string, incomingConfig: any): any {
   }
 
   if (gameType === 'blood-on-the-clocktower') {
+    const hasStorytellerId = typeof gameConfig.storytellerId === 'string' && gameConfig.storytellerId.trim().length > 0;
+    const hasStorytellerMode = gameConfig.storytellerMode === 'player' || gameConfig.storytellerMode === 'ai' || gameConfig.storytellerMode === 'none';
+    if (!hasStorytellerId && !hasStorytellerMode) {
+      // 未显式选择说书人时使用中立 AI。旧行为会把房主静默当成真人说书人，
+      // 导致房主开局后没有角色；AI 默认值可确保所有真人玩家都参与角色分配。
+      gameConfig.storytellerMode = 'ai';
+      gameConfig.storytellerId = 'computer_neutral';
+      gameConfig.aiBias = 'neutral';
+    }
+
     // 旧配置曾暴露 storytellerMode="none"，文档语义是“由系统自动主持”。
     // Worker 实际又会为非 ai 模式补一个真人说书人，导致 Controller 先多放一席、
     // Worker 再把房主排除出游戏，配置字段与真实权限/容量发生分叉。
     // 在进入 Worker 前把这个遗留别名收敛为 AI 说书人模式，保持唯一事实源。
     if (gameConfig.storytellerMode === 'none') {
       gameConfig.storytellerMode = 'ai';
+    }
+    if (gameConfig.storytellerMode === 'ai' && !(typeof gameConfig.storytellerId === 'string' && gameConfig.storytellerId.startsWith('computer_'))) {
+      const aiBias = gameConfig.aiBias === 'good' || gameConfig.aiBias === 'evil' ? gameConfig.aiBias : 'neutral';
+      gameConfig.aiBias = aiBias;
+      gameConfig.storytellerId = `computer_${aiBias}`;
     }
 
     // 前端使用 dayTime/nightTime，worker 使用 dayTimer/nightTimer。
@@ -2837,9 +2852,6 @@ export function roomController(io: Server) {
           socket.emit('room_joined', result.payload);
           socket.emit('room_update', toClientRoom(result.room));
           ack?.({ success: true, ...result.payload });
-
-          // 向房间内其他玩家广播玩家重新连接的消息
-          socket.to(roomId).emit('chat_broadcast', { message: `${result.player.nickname} 已重新连接` });
 
           // 更新大厅信息
           if (!result.room.private) {

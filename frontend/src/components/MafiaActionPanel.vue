@@ -87,10 +87,10 @@
             :key="player.id"
             @click="doctorSave(player.id)"
             :loading="isPending(`doctor:${player.id}`)"
-            :disabled="isSubmitting || !canOperate"
+            :disabled="isSubmitting || !canOperate || player.id === playerSecret?.lastSaveTarget"
             size="small"
           >
-            {{ displayPlayerName(player) }}
+            {{ displayPlayerName(player) }}{{ player.id === playerSecret?.lastSaveTarget ? '（昨夜已救）' : '' }}
           </el-button>
           <el-button
             @click="skipDoctorSave"
@@ -298,6 +298,7 @@ interface PlayerSecret {
   actionLock?: boolean
   inspectResults?: Array<{ target: string; day: number; result: 'RED' | 'BLUE' }>
   sniperShot?: boolean
+  lastSaveTarget?: string
 }
 
 interface Props {

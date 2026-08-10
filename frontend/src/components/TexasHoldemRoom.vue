@@ -210,7 +210,11 @@ const { round } = storeToRefs(store);
 const router = useRouter();
 const route = useRoute();
 const roomId = route.params.id as string;
-const roundText = computed(() => ['翻前','翻牌','转牌','河牌'][round.value] || '');
+const roundText = computed(() => {
+  if (store.stage === 'idle') return '等待开始';
+  if (store.stage === 'distribution') return '分配底池';
+  return ['翻前', '翻牌', '转牌', '河牌'][round.value] || '牌局进行中';
+});
 
 // 房间准备状态 - 使用ref来控制状态
 const roomPreparing = ref(true); // 默认显示准备中
@@ -535,7 +539,7 @@ const quickPrimaryAction = computed<TexasQuickAction | null>(() => {
 
   if (toCall.value >= ownChips.value) {
     return canAllIn.value
-      ? { label: '全下', action: 'allin', key: 'playerAction:allin' }
+      ? { label: `全下跟注 ${ownChips.value}`, action: 'allin', key: 'playerAction:allin' }
       : null;
   }
   return canCall.value

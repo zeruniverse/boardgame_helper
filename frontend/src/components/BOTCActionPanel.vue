@@ -571,6 +571,7 @@ import { computed, ref, watch, onUnmounted } from 'vue'
 import { ElMessageBox } from 'element-plus'
 import { formatPlayerName } from '../utils/playerName'
 import { formatBOTCNightInfo } from '../utils/botcNightInfo'
+import { getBOTCRoleName } from '../utils/botcRoleLocalization'
 
 interface Props {
   gameState: any
@@ -799,11 +800,8 @@ const canVoteCurrentNomination = computed(() => {
 })
 
 const nominationTargets = computed(() => {
-  // Dead players may still be nominated/executed in BOTC; only the nominator
-  // must be alive.  Exclude just the current player because nominations are
-  // made against another player.
   return props.gameState?.players?.filter((player: any) =>
-    player.id !== props.currentUserId
+    player.id !== props.currentUserId && !player.isDead
   ) || []
 })
 
@@ -952,6 +950,7 @@ const availableTargets = computed(() => {
   const lastNightTargetId = props.playerRole?.abilityState?.lastNightTargetId
   return props.gameState?.players?.filter((p: any) => {
     if (selfExcludedRoles.includes(roleId) && p.id === props.currentUserId) return false
+    if (roleId !== 'professor' && p.isDead) return false
     if (aliveOnlyRoles.includes(roleId) && p.isDead) return false
     if (deadOnlyRoles.includes(roleId) && !p.isDead) return false
     if (['exorcist', 'devilsadvocate'].includes(roleId) && lastNightTargetId && p.id === lastNightTargetId) return false
@@ -970,7 +969,10 @@ const nightOrderActions = computed(() => {
       return {
         playerId: item,
         playerName: displayPlayerNameById(item, player?.name || player?.playerName),
-        roleName: props.gameState?.players?.find((p: any) => p.id === item)?.role?.name || '未知',
+        roleName: (() => {
+          const role = props.gameState?.players?.find((p: any) => p.id === item)?.role
+          return getBOTCRoleName(role?.id, role?.name)
+        })(),
         isActive: false,
         isCompleted: false
       }
@@ -978,7 +980,7 @@ const nightOrderActions = computed(() => {
     return {
       playerId: item.playerId || '',
       playerName: displayPlayerNameById(item.playerId, item.playerName),
-      roleName: item.roleName || '未知',
+      roleName: getBOTCRoleName(item.roleId, item.roleName),
       isActive: index === 0,
       isCompleted: false
     }
@@ -1086,7 +1088,7 @@ const voteEndDay = (voteChoice: 'agree' | 'disagree') => {
   })
 }
 
-const startEndDayTimer = (endTime: number) => {
+function startEndDayTimer(endTime: number) {
   if (endDayTimerInterval) {
     clearInterval(endDayTimerInterval)
     endDayTimerInterval = null
@@ -1112,7 +1114,7 @@ const startEndDayTimer = (endTime: number) => {
   }, 1000)
 }
 
-const stopEndDayTimer = () => {
+function stopEndDayTimer() {
   if (endDayTimerInterval) {
     clearInterval(endDayTimerInterval)
     endDayTimerInterval = null
@@ -1340,7 +1342,7 @@ const getTeamClass = (team: string) => {
 }
 
 const getRoleActionTitle = () => {
-  return `${props.playerRole?.name || '你的角色'} 行动`
+  return `${getBOTCRoleName(props.playerRole?.id, props.playerRole?.name)}行动`
 }
 
 const getDayAbilityTitle = () => {

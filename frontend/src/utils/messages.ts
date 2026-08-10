@@ -31,20 +31,30 @@ export function createSystemMessage(message: string): any {
   };
 }
 export function normalizeErrorMessage(error: unknown, fallback = '未知错误'): string {
-  if (typeof error === 'string') {
-    return error.trim() || fallback;
-  }
+  const visited = new Set<object>();
 
-  if (error && typeof error === 'object') {
-    const payload = error as { message?: unknown; error?: unknown; detail?: unknown };
-    for (const value of [payload.message, payload.error, payload.detail]) {
-      if (typeof value === 'string' && value.trim()) {
-        return value;
-      }
+  const resolve = (value: unknown, depth = 0): string => {
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+      return trimmed && trimmed !== '[object Object]' ? trimmed : '';
     }
-  }
+    if (value instanceof Error) {
+      return resolve(value.message, depth + 1);
+    }
+    if (!value || typeof value !== 'object' || depth > 4 || visited.has(value)) {
+      return '';
+    }
 
-  return fallback;
+    visited.add(value);
+    const payload = value as Record<string, unknown>;
+    for (const key of ['message', 'error', 'detail', 'reason', 'description']) {
+      const resolved = resolve(payload[key], depth + 1);
+      if (resolved) return resolved;
+    }
+    return '';
+  };
+
+  return resolve(error) || fallback;
 }
 
 export function normalizeSystemMessage(message: unknown, fallback = ''): string {

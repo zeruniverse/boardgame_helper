@@ -209,8 +209,8 @@ async function send() {
 }
 
 .system-message {
-  color: #f56c6c !important;
-  font-weight: bold;
+  color: var(--app-text-secondary, #606266) !important;
+  font-weight: 500;
   text-align: center;
 }
 

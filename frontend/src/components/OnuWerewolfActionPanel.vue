@@ -37,8 +37,8 @@
           </div>
 
           <div class="config-options">
-            <el-checkbox v-model="allowRoleReveal">
-              游戏结束后揭示所有玩家的最终角色
+            <el-checkbox v-model="allowRoleReveal" disabled>
+              游戏结束后揭示所有玩家和中心牌
             </el-checkbox>
           </div>
 
@@ -64,7 +64,7 @@
         <div v-if="gameState?.config" class="current-config">
           <div class="config-item">
             <strong>终局揭示:</strong>
-            <span>{{ gameState.config.allowRoleReveal ? '揭示全部最终角色' : '仅显示本人、已公开与被处决角色' }}</span>
+            <span>揭示全部玩家和中心牌</span>
           </div>
           <div class="config-item">
             <strong>角色列表:</strong>
@@ -558,6 +558,12 @@
           </div>
         </div>
       </div>
+
+      <div v-if="gameState?.status === 5 && isHost" class="restart-section">
+        <el-button type="primary" size="large" @click="restartGame">
+          再来一局
+        </el-button>
+      </div>
     </div>
   </div>
 </template>
@@ -696,7 +702,7 @@ const countRoleIn = (roles: OnuWerewolfRole[], role: OnuWerewolfRole) => roles.f
 
 // 响应式数据
 const selectedRoles = ref<OnuWerewolfRole[]>([]);
-const allowRoleReveal = ref(false);
+const allowRoleReveal = ref(true);
 const hasSkippedDiscussion = ref(false);
 const skillSubmittingAction = ref<'use' | 'skip' | null>(null);
 const discussionSkipSubmitting = ref(false);
@@ -1017,6 +1023,7 @@ const updateConfig = () => {
 const ready = () => emit('game-action', 'ready');
 const unready = () => emit('game-action', 'unready');
 const startGame = () => emit('game-action', 'startGame');
+const restartGame = () => emit('game-action', 'restartGame');
 
 const executeSkill = () => {
   if (skillSubmittingAction.value !== null || !canExecuteSkill.value) return;
@@ -1139,7 +1146,7 @@ const getTeamName = (team: OnuWerewolfTeam) => {
 const watchConfig = watch(() => props.gameState?.config, (newConfig) => {
   if (newConfig) {
     selectedRoles.value = [...newConfig.roles];
-    allowRoleReveal.value = newConfig.allowRoleReveal === true;
+    allowRoleReveal.value = true;
   }
 }, { immediate: true });
 
@@ -1516,9 +1523,15 @@ onUnmounted(() => {
   text-align: center;
   margin-bottom: 30px;
   padding: 20px;
-  background: var(--app-primary);
-  color: white;
+  background: var(--app-panel);
+  color: var(--app-text);
+  border: 1px solid var(--app-border);
   border-radius: 8px;
+}
+
+.restart-section {
+  margin-top: 24px;
+  text-align: center;
 }
 
 .final-roles h5 {

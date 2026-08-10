@@ -74,6 +74,7 @@ interface MafiaSecret {
     result: 'RED' | 'BLUE';
     day: number;
   }>;
+  lastSaveTarget?: string;
 }
 
 interface MafiaRoomState {

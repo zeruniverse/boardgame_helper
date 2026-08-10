@@ -1,9 +1,11 @@
+import { getBOTCRoleName } from './botcRoleLocalization'
+
 export type BOTCPlayerNameResolver = (playerId: string, preferredName?: string) => string
 
 const getRoleLabel = (role: any): string => {
   if (!role) return '未知'
-  if (typeof role === 'string') return role
-  return role.roleName || role.name || role.roleId || role.id || '未知'
+  if (typeof role === 'string') return getBOTCRoleName(role, role)
+  return getBOTCRoleName(role.roleId || role.id, role.roleName || role.name)
 }
 
 const formatRoleList = (roles: any[]): string => roles.map(getRoleLabel).join('、')
@@ -46,6 +48,9 @@ export function formatBOTCNightInfo(
       const names = formatPlayerList(data.players, resolvePlayerName)
       return `${data.message || '恶魔是以下两名玩家之一'}${names ? `：${names}` : ''}`
     }
+    if (typeof data.message === 'string' && data.message.trim()) {
+      return data.message
+    }
     if (Array.isArray(data.demonBluffs)) {
       return data.demonBluffs.length > 0
         ? `恶魔伪装身份（未在场善良角色）：${formatRoleList(data.demonBluffs)}`
@@ -60,18 +65,18 @@ export function formatBOTCNightInfo(
       return data.message || '今晚没有可执行的击杀'
     }
     if (data.playerId) {
-      return `${resolvePlayerName(data.playerId, data.playerName)} 的角色是: ${data.roleName || data.roleId || '未知'}`
+      return `${resolvePlayerName(data.playerId, data.playerName)} 的角色是：${getBOTCRoleName(data.roleId, data.roleName)}`
     }
     if (data.roleId) {
       const playerNames = Array.isArray(data.players)
         ? formatPlayerList(data.players, resolvePlayerName, ', ')
         : ''
-      return `角色: ${data.roleName || data.roleId}, 玩家: ${playerNames || '未知'}`
+      return `角色：${getBOTCRoleName(data.roleId, data.roleName)}，玩家：${playerNames || '未知'}`
     }
     if (data.pairs !== undefined) return `相邻邪恶对数: ${data.pairs}`
     if (data.evilCount !== undefined) return `邪恶邻居数: ${data.evilCount}`
     if (data.grandchild) {
-      return `孙子: ${resolvePlayerName(data.grandchild)}, 角色: ${data.grandchildRole?.name || '未知'}`
+      return `孙子：${resolvePlayerName(data.grandchild)}，角色：${getBOTCRoleName(data.grandchildRole?.id, data.grandchildRole?.name)}`
     }
     if (data.distance !== undefined) return `恶魔最近距离: ${data.distance}`
     if (data.isDemon !== undefined) return data.isDemon ? '是恶魔！' : '不是恶魔'
@@ -98,5 +103,5 @@ export function formatBOTCNightInfo(
   if (info.message) return info.message
 
   const direct = formatInformation(info, info.role)
-  return direct || JSON.stringify(info)
+  return direct || '已收到夜晚信息，请根据行动面板提示操作。'
 }

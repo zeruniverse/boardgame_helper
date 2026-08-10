@@ -4,7 +4,7 @@
       <h4>玩家列表</h4>
       <div class="player-count">
         {{ activePlayerCount }}/{{ maxPlayers }} 人在线
-        <span v-if="gameState?.config?.roles" class="role-count">
+        <span v-if="gameState?.status === 0 && gameState?.config?.roles" class="role-count">
           (需要 {{ gameState.config.roles.length }} 个角色)
         </span>
       </div>
@@ -109,7 +109,7 @@
     </div>
 
     <!-- 游戏状态信息 -->
-    <div class="game-info" v-if="gameState">
+    <div class="game-info" v-if="gameState && gameState.status !== 5">
       <div class="status-text">{{ gameState.currentPhase }}</div>
              <div v-if="timeLeft && timeLeft > 0" class="time-left">
          剩余时间: {{ formatTime(timeLeft) }}
@@ -356,8 +356,9 @@ const handlePlayerAction = (command: { action: string; playerId: string }) => {
 
 .player-list-header {
   padding: 15px 20px;
-  background: linear-gradient(135deg, #ff9a56 0%, #ff6b95 100%);
-  color: white;
+  background: var(--app-panel);
+  color: var(--app-text);
+  border-bottom: 1px solid var(--app-border);
   border-radius: 8px 8px 0 0;
 }
 

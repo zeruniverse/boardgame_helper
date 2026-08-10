@@ -402,6 +402,9 @@ export const useBOTCGameStore = defineStore('botc', () => {
         on('gameEnded', (data) => {
           if (gameState.value) {
             gameState.value.phase = 'ended'
+            if (Number.isFinite(Number(data.day))) {
+              gameState.value.day = Math.max(1, Number(data.day))
+            }
             gameState.value.winner = data.winner
             gameState.value.finalPlayers = data.players
             if (Array.isArray(data.players)) {

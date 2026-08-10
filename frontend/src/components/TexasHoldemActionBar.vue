@@ -16,11 +16,15 @@
                :loading="store.pendingActionKey === 'playerAction:call'"
                @click="action('call')"
                :class="{ 'colored-border': store.gameActive && canCall && isInGame, 'disabled-border': !store.gameActive || !canCall || !isInGame }">
-      跟注 {{ toCall }}
+      {{ callButtonText }}
     </el-button>
     <div class="raise-row">
-      <el-input v-model.number="raiseAmount" type="number" placeholder="额外加注筹码"
-                :disabled="!store.roomConnected || !canRaise || !!store.pendingActionKey" />
+      <div class="raise-input-wrap">
+        <el-input v-model.number="raiseAmount" type="number" placeholder="额外加注筹码"
+                  :min="minRaiseDelta" :max="maxRaiseDelta"
+                  :disabled="!store.roomConnected || !canRaise || !!store.pendingActionKey" />
+        <span class="raise-hint">额外加注范围：{{ minRaiseDelta }}–{{ maxRaiseDelta }}</span>
+      </div>
       <el-button type="warning"
                  :disabled="!store.roomConnected || !canRaise || !!store.pendingActionKey"
                  :loading="store.pendingActionKey === 'playerAction:raise'"
@@ -47,7 +51,7 @@
 </template>
 
 <script lang="ts" setup>
-import { ref } from 'vue';
+import { computed, ref } from 'vue';
 import { ElMessage } from 'element-plus';
 import { useTexasHoldemStore } from '../store';
 import { useTexasHoldemActionState } from '../utils/texasHoldemActionState';
@@ -60,14 +64,21 @@ const {
   isInGame,
   isMyTurn,
   toCall,
+  callAmount,
+  isAllInCall,
   canCall,
   canCheck,
   canRaise,
   canAllIn,
   canFold,
   canExtend,
-  minRaiseDelta
+  minRaiseDelta,
+  maxRaiseDelta
 } = useTexasHoldemActionState(store);
+
+const callButtonText = computed(() =>
+  isAllInCall.value ? `全下跟注 ${callAmount.value}` : `跟注 ${toCall.value}`
+);
 
 // 使用带 acknowledgement 的统一动作入口；store 的房间级在途锁同时约束快捷区，
 // 避免同一回合从两个组件重复提交操作。
@@ -132,6 +143,18 @@ function extendTime() {
 
 .raise-row .el-input {
   flex: 1;
+}
+
+.raise-input-wrap {
+  flex: 1;
+  min-width: 0;
+}
+
+.raise-hint {
+  display: block;
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--app-text-secondary, #606266);
 }
 
 .raise-row .el-button {

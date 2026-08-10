@@ -105,6 +105,7 @@ export const useWerewolfStore = defineStore('werewolf', {
     room: null as WerewolfRoomState | null,
     gameState: null as WerewolfGameState | null,
     playerSecret: null as WerewolfSecret | null,
+    roleAnnounced: false,
     messages: [] as any[],
     errorMessage: '',
     timeLeft: 0,
@@ -317,8 +318,8 @@ export const useWerewolfStore = defineStore('werewolf', {
         if (this.room) {
           this.room.gameStarted = true;
         }
+        this.roleAnnounced = false;
         this.addSystemMessage(data.message || '游戏开始！');
-        this.announceRole();
         this.startTimerFromGameInfo(data.gameInfo);
       });
 
@@ -327,12 +328,20 @@ export const useWerewolfStore = defineStore('werewolf', {
         console.log('收到角色分配:', data.character);
         if (data.secret) {
           this.playerSecret = data.secret;
+          if (!this.roleAnnounced && data.secret.role && data.secret.role !== 'UNKNOWN') {
+            this.announceRole();
+            this.roleAnnounced = true;
+          }
         }
       });
 
       // secret_update - 备用
       on('secret_update', (secret: WerewolfSecret) => {
         this.playerSecret = secret;
+        if (!this.roleAnnounced && secret.role && secret.role !== 'UNKNOWN') {
+          this.announceRole();
+          this.roleAnnounced = true;
+        }
       });
 
       // 状态变更 - 后端发送 {status, day, timeout, message, gameInfo}
@@ -377,6 +386,7 @@ export const useWerewolfStore = defineStore('werewolf', {
         // 重开必须丢弃上一局的终局字段和私密身份；增量合并会保留 winner 等旧数据，
         // 使客户端继续停留在 finished 面板，无法重新准备。
         this.playerSecret = null;
+        this.roleAnnounced = false;
         this.gameState = null;
         this.clearTimer();
         if (data.gameInfo) {
@@ -588,6 +598,7 @@ export const useWerewolfStore = defineStore('werewolf', {
       this.room = null;
       this.gameState = null;
       this.playerSecret = null;
+      this.roleAnnounced = false;
       this.messages = [];
       this.errorMessage = '';
       this.timeLeft = 0;

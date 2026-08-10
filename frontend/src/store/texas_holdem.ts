@@ -26,6 +26,7 @@ export const useTexasHoldemStore = defineStore('texas_holdem', {
     dealerPlayerId: '' as string,
     folded: [] as string[],
     winners: [] as string[],
+    showdown: {} as Record<string, { cards: string[]; handName: string; score: number }>,
     players: [] as any[],
     participants: [] as string[],
     round: 0,
@@ -163,6 +164,7 @@ export const useTexasHoldemStore = defineStore('texas_holdem', {
         dealerPlayerId?: string;
         folded?: string[];
         winners?: string[];
+        showdown?: Record<string, { cards: string[]; handName: string; score: number }>;
         stage?: 'idle' | 'playing' | 'distribution';
         allowSystemDealing?: boolean;
       }) => {
@@ -188,6 +190,9 @@ export const useTexasHoldemStore = defineStore('texas_holdem', {
         this.winners = Array.isArray(data.winners)
           ? data.winners.filter((playerId): playerId is string => typeof playerId === 'string')
           : [];
+        this.showdown = data.showdown && typeof data.showdown === 'object'
+          ? data.showdown
+          : {};
         // game_state 是重连和普通推进共用的权威阶段快照。同步派生标志，避免
         // 线下分池重连后 stage 正确但 gameActive/distributionActive 仍是旧值。
         if (data.stage !== undefined) {
@@ -230,6 +235,7 @@ export const useTexasHoldemStore = defineStore('texas_holdem', {
         this.dealerPlayerId = '';
         this.folded = [];
         this.winners = [];
+        this.showdown = {};
         this.round = 0;
         this.currentBet = 0;
         this.lastRaiseAmount = 0;
@@ -517,6 +523,7 @@ export const useTexasHoldemStore = defineStore('texas_holdem', {
       this.dealerPlayerId = '';
       this.folded = [];
       this.winners = [];
+      this.showdown = {};
       this.players = [];
       this.participants = [];
       this.round = 0;

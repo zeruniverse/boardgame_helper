@@ -193,8 +193,9 @@ watch(() => props.messages.length, scrollToBottom, { flush: 'post' });
 
 .chat-header {
   padding: 15px 20px;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  color: white;
+  background: var(--app-panel);
+  color: var(--app-text);
+  border-bottom: 1px solid var(--app-border);
   border-radius: 8px 8px 0 0;
 }
 

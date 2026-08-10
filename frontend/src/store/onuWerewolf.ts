@@ -491,6 +491,14 @@ export const useOnuWerewolfStore = defineStore('onuWerewolf', {
         this.addSystemMessage(`你的角色是：${ONU_WEREWOLF_ROLE_NAMES[assignedRole] || '未知'}（座位${data.seat}）`);
       });
 
+      // 服务端在每次夜序推进时先广播锁定事件，再只向当前行动者私发 ready。
+      // 主动清理旧角色和多步技能状态，防止断线恢复或延迟事件让多个客户端同时可操作。
+      on('onu_skill_locked', () => {
+        if (!this.playerSecret) this.playerSecret = {};
+        this.playerSecret.canUseSkill = false;
+        delete this.playerSecret.activeSkillRole;
+      });
+
       // Skill ready notification (C4 fix)
       on('onu_skill_ready', (data: any) => {
         if (!this.playerSecret) this.playerSecret = {};

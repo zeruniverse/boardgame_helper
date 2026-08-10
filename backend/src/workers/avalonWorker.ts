@@ -290,15 +290,7 @@ class AvalonWorker extends BaseGameWorker {
       // 如果房间没有房主，将重连的玩家设为房主
       if (!this.room.hostId) {
         this.room.hostId = player.id;
-        this.sendToRoom('chat_broadcast', {
-          message: `${player.nickname} 重新连接并成为房主`,
-          type: 'system'
-        });
-      } else {
-        this.sendToRoom('chat_broadcast', {
-          message: `${player.nickname} 重新连接`,
-          type: 'system'
-        });
+        this.sendToRoom('room_update', this.room);
       }
 
       // 同步游戏状态

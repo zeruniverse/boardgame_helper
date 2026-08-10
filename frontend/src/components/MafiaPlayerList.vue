@@ -87,6 +87,13 @@
             <div class="player-details">
               <div class="player-name">{{ displayPlayerName(player) }}</div>
               <div class="player-status">
+                <el-tag
+                  v-if="player.online === false"
+                  type="info"
+                  size="small"
+                >
+                  离线
+                </el-tag>
                 <el-tag 
                   v-if="!isPlayerAlive(player)" 
                   type="danger" 
@@ -418,7 +425,18 @@ const gameStarted = computed(() => props.gameState?.status !== undefined && prop
 
 const gamePlayersList = computed(() => {
   if (!props.gamePlayersById) return []
-  return Object.values(props.gamePlayersById).sort((a, b) => a.index - b.index)
+  return Object.values(props.gamePlayersById)
+    .map(gamePlayer => {
+      const roomPlayer = props.players.find(player => player.id === gamePlayer.id)
+      return {
+        ...gamePlayer,
+        online: roomPlayer?.online,
+        ready: roomPlayer?.ready ?? gamePlayer.ready,
+        name: roomPlayer?.name ?? gamePlayer.name,
+        nickname: roomPlayer?.nickname ?? gamePlayer.nickname
+      }
+    })
+    .sort((a, b) => a.index - b.index)
 })
 
 const displayPlayerName = (player: Player) => formatPlayerName(player, props.currentUserId)

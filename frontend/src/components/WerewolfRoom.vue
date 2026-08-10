@@ -34,7 +34,7 @@
             <h3 class="status-title">{{ getStatusMessage() }}</h3>
             <div class="status-info">
               <span v-if="werewolfRoundText">{{ werewolfRoundText }}</span>
-              <span v-if="timeLeft > 0" class="time-left">剩余时间: {{ timeLeft }}s</span>
+              <span v-if="timeLeft > 0 && gameState?.status !== 'finished'" class="time-left">剩余时间: {{ timeLeft }}s</span>
               <span v-if="playerSecret && playerSecret.role && playerSecret.role !== 'UNKNOWN'" class="my-role-badge" :class="playerSecret.team">
                 {{ getRoleName(playerSecret.role) }}
               </span>

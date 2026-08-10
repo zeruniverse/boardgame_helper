@@ -11,6 +11,12 @@
       </el-table-column>
       <el-table-column prop="chips" label="筹码"></el-table-column>
       <el-table-column prop="bet" label="本轮下注"></el-table-column>
+      <el-table-column label="摊牌结果" min-width="180">
+        <template #default="{ row }">
+          <span v-if="row.showdownLabel">{{ row.showdownLabel }}</span>
+          <span v-else>-</span>
+        </template>
+      </el-table-column>
       <el-table-column prop="cashinCount" label="Cashin次数"></el-table-column>
       <el-table-column prop="status" label="当前状态">
         <template #default="{ row }">
@@ -37,6 +43,7 @@
           <span>筹码 {{ player.chips }}</span>
           <span>本轮 {{ player.bet }}</span>
           <span>Cashin {{ player.cashinCount }}</span>
+          <span v-if="player.showdownLabel" class="showdown-result">{{ player.showdownLabel }}</span>
         </div>
       </div>
     </div>
@@ -59,6 +66,7 @@ interface PlayerInfo {
   isDealer: boolean;
   status: string;
   statusKind: PlayerStatusKind;
+  showdownLabel: string;
 }
 
 const store = useTexasHoldemStore();
@@ -104,7 +112,10 @@ const mappedPlayers = computed<PlayerInfo[]>(() => {
       cashinCount: Number(player.gameMetadata?.cashinCount) || 0,
       isDealer: player.id === store.dealerPlayerId,
       status: status.text,
-      statusKind: status.kind
+      statusKind: status.kind,
+      showdownLabel: store.showdown[player.id]
+        ? `${store.showdown[player.id].cards.join(' ')} · ${store.showdown[player.id].handName}`
+        : ''
     };
   });
 });
@@ -189,6 +200,11 @@ const mappedPlayers = computed<PlayerInfo[]>(() => {
   gap: 6px;
   font-size: 13px;
   color: var(--app-text-secondary, #606266);
+}
+
+.showdown-result {
+  grid-column: 1 / -1;
+  font-weight: 600;
 }
 
 @media (max-width: 768px) {

@@ -41,7 +41,7 @@
             <!-- 游戏中的角色信息（只有说书人能看到） -->
             <div class="player-role" v-if="isStoryteller && getGamePlayer(player.id) && getGamePlayer(player.id).role">
               <span class="role-name" :class="getTeamClass(getGamePlayer(player.id).role.team)">
-                {{ getGamePlayer(player.id).role.name }}
+                {{ getBOTCRoleName(getGamePlayer(player.id).role.id, getGamePlayer(player.id).role.name) }}
               </span>
               <el-tag 
                 v-if="getGamePlayer(player.id).isDead" 
@@ -202,6 +202,7 @@ import { ref, computed, watch } from 'vue'
 import { ElMessageBox, ElMessage } from 'element-plus'
 import { ChatDotRound, Close, MoreFilled } from '@element-plus/icons-vue'
 import { formatPlayerName } from '../utils/playerName'
+import { getBOTCRoleName } from '../utils/botcRoleLocalization'
 import LocalPlayerMark from './LocalPlayerMark.vue'
 
 interface Props {
@@ -303,7 +304,7 @@ const canStartGame = computed(() => {
 
 const syncConfigSelection = () => {
   selectedEdition.value = props.gameConfig?.edition || selectedEdition.value || 'tb'
-  selectedStoryteller.value = props.storytellerId || props.gameConfig?.storytellerId || props.hostId || props.currentUserId || selectedStoryteller.value
+  selectedStoryteller.value = props.storytellerId || props.gameConfig?.storytellerId || selectedStoryteller.value || 'computer_neutral'
 }
 
 watch(
@@ -321,11 +322,11 @@ const getKnownIdentity = (player: any): { label: string; team?: string } | null 
   const gamePlayer = getGamePlayer(player.id)
 
   if (gamePlayer?.role?.name) {
-    return { label: gamePlayer.role.name, team: gamePlayer.role.team }
+    return { label: getBOTCRoleName(gamePlayer.role.id, gamePlayer.role.name), team: gamePlayer.role.team }
   }
 
   if (player.id === props.currentUserId && props.playerRole?.name) {
-    return { label: props.playerRole.name, team: props.playerRole.team }
+    return { label: getBOTCRoleName(props.playerRole.id, props.playerRole.name), team: props.playerRole.team }
   }
 
   const known = props.playerRole?.knownIdentities?.find((identity: any) => identity.playerId === player.id)

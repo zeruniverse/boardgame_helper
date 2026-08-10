@@ -32,7 +32,7 @@
           <div class="game-status" v-if="gameState">
             <h3 class="status-title">{{ getStatusMessage() }}</h3>
             <div class="status-info">
-              <span v-if="Number(gameState?.day) > 0">第{{ gameState?.day }}天</span>
+              <span v-if="displayDay > 0">第{{ displayDay }}天</span>
               <span v-if="timeLeft > 0">剩余时间: {{ timeLeft }}s</span>
             </div>
           </div>
@@ -54,7 +54,7 @@
           </div>
 
           <!-- 角色信息 -->
-          <div class="role-info" v-if="playerSecret">
+          <div class="role-info" v-if="playerSecret && gameState?.status !== 'WAITING' && playerSecret.role !== 'GUEST'">
             <h4>你的角色</h4>
             <div class="my-role" :class="playerSecret.team.toLowerCase()">
               <div class="role-name">{{ getRoleName(playerSecret.role) }}</div>
@@ -95,11 +95,11 @@
           </div>
 
           <!-- 投票结果 -->
-          <div class="vote-result" v-if="gameState?.voteResult">
+          <div class="vote-result" v-if="hasVoteResult">
             <h4>投票结果</h4>
             <div class="vote-list">
               <div
-                v-for="(target, voter) in gameState.voteResult"
+                v-for="(target, voter) in gameState?.voteResult"
                 :key="voter"
                 class="vote-item"
               >
@@ -187,6 +187,13 @@ const playerSecret = computed(() => store.playerSecret)
 const currentUserId = computed(() => store.currentUserId)
 const timeLeft = computed(() => store.timeLeft)
 const isHost = computed(() => store.isHost)
+const displayDay = computed(() => {
+  const day = Math.max(0, Number(gameState.value?.day) || 0)
+  return gameState.value?.status === 'NIGHT' ? Math.max(1, day - 1) : day
+})
+const hasVoteResult = computed(() => Boolean(
+  gameState.value?.voteResult && Object.keys(gameState.value.voteResult).length > 0
+))
 
 // 房间准备状态 - 使用ref来控制状态
 const roomPreparing = ref(true) // 默认显示准备中
@@ -286,9 +293,18 @@ onUnmounted(() => {
 const getStatusMessage = (): string => {
   if (!gameState.value) return '等待开始'
 
+  if (gameState.value.status === 'NIGHT') {
+    const roleMessages: Record<string, string> = {
+      KILLER: '夜晚 - 选择击杀目标',
+      COP: '夜晚 - 选择查验目标',
+      DOCTOR: '夜晚 - 选择救治目标',
+      SNIPER: '夜晚 - 选择狙击目标'
+    }
+    return roleMessages[playerSecret.value?.role || ''] || '夜晚 - 等待特殊角色行动'
+  }
+
   const statusMessages: Record<string, string> = {
     'WAITING': '等待开始',
-    'NIGHT': '夜晚 - 杀手行动',
     'SPEAK': '白天 - 发言阶段',
     'VOTE': '白天 - 投票阶段',
     'PK': 'PK阶段',

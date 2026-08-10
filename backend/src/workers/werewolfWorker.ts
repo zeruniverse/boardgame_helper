@@ -248,9 +248,6 @@ class WerewolfWorker extends BaseGameWorker {
   async playerOnline(playerId: string): Promise<void> {
     const player = this.room.players.find(p => p.id === playerId);
     if (player) {
-      const message = `${player.nickname}已重新连接`;
-      this.sendToRoom('player_online', { message });
-
       // 发送游戏状态给重连的玩家
       this.syncGameStateToPlayer(player.socketId!, playerId);
 

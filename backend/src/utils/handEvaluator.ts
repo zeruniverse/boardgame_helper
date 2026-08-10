@@ -96,3 +96,16 @@ export function evaluateHand(cards: string[]): number {
   });
   return bestScore;
 }
+
+/** Return the localized poker category represented by evaluateHand(). */
+export function getHandCategoryName(score: number): string {
+  if (score >= 8e12) return '同花顺';
+  if (score >= 7e12) return '四条';
+  if (score >= 6e12) return '葫芦';
+  if (score >= 5e12) return '同花';
+  if (score >= 4e12) return '顺子';
+  if (score >= 3e12) return '三条';
+  if (score >= 2e12) return '两对';
+  if (score >= 1e12) return '一对';
+  return '高牌';
+}
