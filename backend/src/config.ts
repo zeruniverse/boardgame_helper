@@ -100,7 +100,7 @@ function loadConfig(): Config {
           maxPlayers: 10,
           gameSpecificConfig: {
             discussionTime: 300,
-            allowRoleReveal: false
+            allowRoleReveal: true
           }
         },
         "avalon": {

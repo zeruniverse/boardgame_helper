@@ -800,9 +800,7 @@ const canVoteCurrentNomination = computed(() => {
 })
 
 const nominationTargets = computed(() => {
-  // Dead players may still be nominated/executed in BOTC; only the nominator
-  // must be alive. Exclude just the current player because nominations are
-  // made against another player.
+  // 死亡玩家不能发起提名，但仍可被提名/处决；界面保留死亡标签供玩家辨认。
   return props.gameState?.players?.filter((player: any) =>
     player.id !== props.currentUserId
   ) || []
@@ -953,6 +951,7 @@ const availableTargets = computed(() => {
   const lastNightTargetId = props.playerRole?.abilityState?.lastNightTargetId
   return props.gameState?.players?.filter((p: any) => {
     if (selfExcludedRoles.includes(roleId) && p.id === props.currentUserId) return false
+    // “choose a player” 默认允许选择死亡玩家；只按具体角色文本限制存活/死亡目标。
     if (aliveOnlyRoles.includes(roleId) && p.isDead) return false
     if (deadOnlyRoles.includes(roleId) && !p.isDead) return false
     if (['exorcist', 'devilsadvocate'].includes(roleId) && lastNightTargetId && p.id === lastNightTargetId) return false

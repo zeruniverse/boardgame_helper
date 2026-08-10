@@ -1557,6 +1557,11 @@ export class BOTCWorker extends BaseGameWorker {
 
     const targetPlayers = targets.map(targetId => this.gamePlayers.get(targetId));
     if (targetPlayers.some(target => !target)) return '目标玩家不存在';
+
+    // BOTC 中“选择一名玩家”通常同时包含存活与死亡玩家；只有能力文本明确要求
+    // living/alive，或明确要求死亡目标时才在下面的角色分支限制。不能在这里做
+    // 全局存活过滤，否则投毒者、小恶魔、女巫等合法选择死亡玩家的规则会被破坏。
+
     const requireTargetCount = (min: number, max: number, message: string): string | null => {
       if (targets.length < min || targets.length > max) return message;
       return null;
@@ -3990,8 +3995,8 @@ export class BOTCWorker extends BaseGameWorker {
       return;
     }
 
-    // 标准规则要求提名“另一名玩家”；死亡玩家不能发起提名，但仍可被提名/处决。
-    // 这对僵怖（Zombuul）以及“处决但未造成死亡”的规则交互很重要。
+    // 标准规则只禁止死亡玩家发起提名；死亡玩家仍可被提名和处决。
+    // 这也保留僵怖再次被处决、善良双子被处决等既有结算路径。
     if (nomineeId === playerId) {
       this.sendToPlayer(playerId, 'actionError', { message: '不能提名自己' });
       return;

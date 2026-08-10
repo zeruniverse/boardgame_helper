@@ -38,7 +38,7 @@
 
           <div class="config-options">
             <el-checkbox v-model="allowRoleReveal">
-              游戏结束后揭示所有玩家的最终角色
+              游戏结束后揭示所有玩家和中心牌
             </el-checkbox>
           </div>
 
@@ -64,7 +64,7 @@
         <div v-if="gameState?.config" class="current-config">
           <div class="config-item">
             <strong>终局揭示:</strong>
-            <span>{{ gameState.config.allowRoleReveal ? '揭示全部最终角色' : '仅显示本人、已公开与被处决角色' }}</span>
+            <span>{{ gameState.config.allowRoleReveal !== false ? '揭示全部玩家和中心牌' : '仅显示本人、已公开与被处决角色' }}</span>
           </div>
           <div class="config-item">
             <strong>角色列表:</strong>
@@ -702,7 +702,7 @@ const countRoleIn = (roles: OnuWerewolfRole[], role: OnuWerewolfRole) => roles.f
 
 // 响应式数据
 const selectedRoles = ref<OnuWerewolfRole[]>([]);
-const allowRoleReveal = ref(false);
+const allowRoleReveal = ref(true);
 const hasSkippedDiscussion = ref(false);
 const skillSubmittingAction = ref<'use' | 'skip' | null>(null);
 const discussionSkipSubmitting = ref(false);
@@ -1146,7 +1146,7 @@ const getTeamName = (team: OnuWerewolfTeam) => {
 const watchConfig = watch(() => props.gameState?.config, (newConfig) => {
   if (newConfig) {
     selectedRoles.value = [...newConfig.roles];
-    allowRoleReveal.value = newConfig.allowRoleReveal === true;
+    allowRoleReveal.value = newConfig.allowRoleReveal !== false;
   }
 }, { immediate: true });
 

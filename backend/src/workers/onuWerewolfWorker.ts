@@ -131,7 +131,8 @@ class OnuWerewolfWorker extends BaseGameWorker {
       nightTime: normalizeDurationSeconds(getOwnConfigValue(rawConfig, 'nightTime', 'actionTime'), 300),
       votingTime: normalizeDurationSeconds(getOwnConfigValue(rawConfig, 'votingTime', 'voteTime'), 300),
       discussTime: normalizeDurationSeconds(getOwnConfigValue(rawConfig, 'discussTime', 'discussionTime'), 180),
-      allowRoleReveal: normalizeBoolean(rawConfig.allowRoleReveal, false),
+      // 默认公开终局，符合普通一夜狼人复盘习惯；房主仍可显式关闭全量揭示。
+      allowRoleReveal: normalizeBoolean(rawConfig.allowRoleReveal, true),
       autoRoles: normalizeBoolean(rawConfig.autoRoles, false)
     };
 
@@ -196,7 +197,7 @@ class OnuWerewolfWorker extends BaseGameWorker {
         ? this.config.discussTime
         : normalizeDurationSeconds(requestedDiscussTime, this.config.discussTime),
       allowRoleReveal: Object.prototype.hasOwnProperty.call(rawConfig, 'allowRoleReveal')
-        ? normalizeBoolean(rawConfig.allowRoleReveal, this.config.allowRoleReveal ?? false)
+        ? normalizeBoolean(rawConfig.allowRoleReveal, this.config.allowRoleReveal ?? true)
         : this.config.allowRoleReveal,
       autoRoles: hasRoles
         ? false
@@ -560,12 +561,12 @@ class OnuWerewolfWorker extends BaseGameWorker {
   /**
    * 生成终局可见牌面。
    *
-   * allowRoleReveal=false 时只保留当前玩家夜间已经知道的信息，并补充本人、
-   * 被公开翻开的玩家和实际被处决玩家的最终身份。不能因为游戏进入 COMPLETED
-   * 就绕过房主的“终局揭示”配置，把所有玩家与中心牌直接广播给全房间。
+   * 默认配置会完整公开所有玩家与中心牌，修复结算后其他玩家仍显示未知的问题；
+   * 但房主显式关闭 allowRoleReveal 时，仍只保留接收者夜间已知的信息，并补充
+   * 本人、规则已公开以及实际被处决玩家的最终身份，避免把可选隐私模式一并删除。
    */
   private getFinalVision(viewerId?: string): OnuWerewolfVision {
-    const revealAll = this.config.allowRoleReveal === true;
+    const revealAll = this.config.allowRoleReveal !== false;
     const viewer = viewerId ? this.gameState.players[viewerId] : undefined;
     const knownPlayers = new Map<number, NonNullable<OnuWerewolfVision['players']>[number]>();
     for (const item of viewer?.privateVision?.players || []) {
@@ -1736,7 +1737,7 @@ class OnuWerewolfWorker extends BaseGameWorker {
 
   private getVisibleGameResult(viewerId?: string): any {
     const result = this.getGameResult();
-    const revealAll = this.config.allowRoleReveal === true;
+    const revealAll = this.config.allowRoleReveal !== false;
     const lynchedSeats = new Set(result.lynched);
     const playersBySeat = new Map(
       Object.values(this.gameState.players).map(player => [player.seat, player] as const)
@@ -1755,7 +1756,7 @@ class OnuWerewolfWorker extends BaseGameWorker {
         return {
           seat: playerResult.seat,
           name: playerResult.name,
-          // 胜负状态同样会间接泄露阵营；只对已允许展示最终身份的玩家公开。
+          // 阵营和个人胜负也会反推隐藏身份，仅在该玩家身份可见时一并公开。
           ...(revealFinalRole ? { won: playerResult.won } : {}),
           ...(revealAll || revealOwnRole ? { initialRole: playerResult.initialRole } : {}),
           ...(revealFinalRole
@@ -1766,7 +1767,6 @@ class OnuWerewolfWorker extends BaseGameWorker {
             : {})
         };
       }),
-      // 未开启全量揭示时，中心牌仍只通过玩家自己的 privateVision 返回。
       centerCards: revealAll ? result.centerCards : []
     };
   }

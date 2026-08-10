@@ -908,9 +908,17 @@ function buildGameConfig(gameType: string, incomingConfig: any): any {
 
   if (gameType === 'one-night-werewolf') {
     const rawConfig = gameConfig as Record<string, unknown>;
+    const incomingOnuConfig = (incomingConfig && typeof incomingConfig === 'object')
+      ? incomingConfig as Record<string, unknown>
+      : {};
     gameConfig.random = normalizeBoolean(gameConfig.random, true);
     gameConfig.loneWolf = normalizeBoolean(gameConfig.loneWolf, false);
-    gameConfig.allowRoleReveal = normalizeBoolean(gameConfig.allowRoleReveal, false);
+    // 旧服务器配置文件的默认值为 false，会让未显式选择该选项的新房间继续复现
+    // BUG-O2。只有客户端明确提交 allowRoleReveal 时才采用其值；否则默认完整公开。
+    // 房主仍可在房间配置中显式关闭，以保留隐私复盘模式。
+    gameConfig.allowRoleReveal = Object.prototype.hasOwnProperty.call(incomingOnuConfig, 'allowRoleReveal')
+      ? normalizeBoolean(incomingOnuConfig.allowRoleReveal, true)
+      : true;
     gameConfig.discussTime = normalizeDurationSeconds(
       getOwnConfigValue(rawConfig, 'discussTime', 'discussionTime'),
       180
